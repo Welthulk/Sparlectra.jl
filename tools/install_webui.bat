@@ -29,6 +29,10 @@ setlocal
 set "DIR=%~dp0"
 rem the script ships in tools\ inside the checkout; anchor at the checkout
 if exist "%DIR%..\Project.toml" if exist "%DIR%..\start_webui.jl" set "DIR=%DIR%..\"
+rem SPARLECTRA_INSTALL_DIR names the folder that holds (or gets) Sparlectra\.
+rem The update from the Web UI runs a copy of this script from its log folder
+rem and points it back at the installation with this variable.
+if defined SPARLECTRA_INSTALL_DIR set "DIR=%SPARLECTRA_INSTALL_DIR%\"
 set "REPO=Welthulk/Sparlectra.jl"
 
 rem --- 1. Julia --------------------------------------------------------------
@@ -89,6 +93,8 @@ if /i "%DO_UPDATE%"=="n" goto keep_installed
 if /i "%DO_UPDATE%"=="no" goto keep_installed
 if "%DO_UPDATE%"=="0" goto keep_installed
 echo Downloading Sparlectra %LATEST%...
+rem a folder left by an earlier failed update would be picked up below
+if exist "%TEMP%\sparlectra_update" rd /s /q "%TEMP%\sparlectra_update"
 rem Extract into a temp dir first: the existing copy is only replaced after a
 rem complete download, and it survives as Sparlectra.old (one backup slot) so
 rem the update is reversible.
@@ -99,6 +105,12 @@ if not exist "%TEMP%\sparlectra_update" (
 )
 if exist "%DIR%Sparlectra.old" rd /s /q "%DIR%Sparlectra.old"
 move "%SPARLECTRA_DIR%" "%DIR%Sparlectra.old" >nul
+rem Windows refuses to move a folder that a program still uses (an open
+rem console whose working directory it is); the copy then stays as it is
+if errorlevel 1 (
+  echo Could not move the old copy aside, a program still uses its folder - continuing with v%INSTALLED%.
+  goto have_repo
+)
 powershell -NoProfile -Command "Move-Item (Get-ChildItem '%TEMP%\sparlectra_update' -Directory | Select-Object -First 1).FullName '%SPARLECTRA_DIR%'"
 if not exist "%SPARLECTRA_DIR%\Project.toml" (
   echo Update failed - restoring the previous copy.
@@ -182,5 +194,11 @@ echo Skipping the desktop shortcut.
 
 :start_webui
 rem --- 6. Start -----------------------------------------------------------------
+rem SPARLECTRA_START_WEBUI=0 stops here; the update from the Web UI starts the
+rem new copy itself, through start_webui.bat
+if "%SPARLECTRA_START_WEBUI%"=="0" (
+  echo Installation finished, the Web UI is not started ^(SPARLECTRA_START_WEBUI=0^).
+  exit /b 0
+)
 julia --project="%SPARLECTRA_DIR%" "%SPARLECTRA_DIR%\start_webui.jl"
 pause

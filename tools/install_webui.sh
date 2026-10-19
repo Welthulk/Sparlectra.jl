@@ -41,6 +41,12 @@ case "$0" in
     ;;
   *) DIR=$(pwd) ;;
 esac
+# SPARLECTRA_INSTALL_DIR names the folder that holds (or gets) Sparlectra/.
+# The update from the Web UI runs a copy of this script from its log folder
+# and points it back at the installation with this variable.
+if [ -n "${SPARLECTRA_INSTALL_DIR:-}" ]; then
+  DIR=$(CDPATH= cd -- "$SPARLECTRA_INSTALL_DIR" && pwd)
+fi
 REPO_URL="https://github.com/Welthulk/Sparlectra.jl"
 
 # --- 1. Julia ---------------------------------------------------------------
@@ -278,4 +284,10 @@ case "$MAKE_SHORTCUT" in
 esac
 
 # --- 6. Start ----------------------------------------------------------------
+# SPARLECTRA_START_WEBUI=0 stops here; the update from the Web UI starts the
+# new copy itself, through start_webui.sh
+if [ "${SPARLECTRA_START_WEBUI:-1}" = "0" ]; then
+  echo "Installation finished, the Web UI is not started (SPARLECTRA_START_WEBUI=0)."
+  exit 0
+fi
 exec julia --project="$SPARLECTRA_DIR" "$SPARLECTRA_DIR/start_webui.jl"

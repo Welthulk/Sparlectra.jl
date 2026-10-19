@@ -442,6 +442,14 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
       _webui_request_shutdown!(runtime; reason = :explicit_shutdown)
     end
     return _webui_html(render_webui_shutdown())
+  elseif verb == "POST" && path == "/webui/update/check"
+    # POST, not GET: the check goes out to GitHub, and no prefetch, page
+    # refresh or link may trigger that; it runs on the button only
+    return handle_webui_update_check(; operation_log = log_root, output_root)
+  elseif verb == "POST" && path == "/webui/update/install"
+    # the server stops through the same call as Stop Web UI
+    update_shutdown = runtime === nothing ? nothing : () -> _webui_request_shutdown!(runtime; reason = :update_install)
+    return handle_webui_update_install(form; operation_log = log_root, shutdown = update_shutdown, output_root)
   elseif verb == "GET" && path == "/static/sparlectra.css"
     return SparlectraWebUIResponse(200, read(joinpath(@__DIR__, "static", "sparlectra.css"), String); content_type = "text/css; charset=utf-8")
   end

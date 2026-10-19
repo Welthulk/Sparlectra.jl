@@ -187,6 +187,17 @@ nav {
   user-select: text;
 }
 
+/* The update check is a form (POST) that reads as a link in the panel. */
+.update-check-form {
+  display: inline;
+}
+
+.update-commands {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 /* Citation pointer stays at the very bottom of the panel as small print
    (the note and its link must not stand out). */
 .topbar-info-panel .matpower-citation-note {

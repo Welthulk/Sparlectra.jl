@@ -1579,6 +1579,173 @@ function run_webui_fast_tests()
             end
         end)() end
 
+        @testset "update check and install" begin (function ()
+            A = SparlectraApp
+            # every fetch is a stub of the same shape as the Downloads one, so
+            # no test reaches the network
+            answer(status, body; headers = Dict{String,String}()) = (url; timeout) -> (status = status, headers = headers, body = body, error = "", timed_out = false)
+            failure(msg; timed_out = false) = (url; timeout) -> (status = 0, headers = Dict{String,String}(), body = "", error = msg, timed_out = timed_out)
+            release(tag) = "{\"tag_name\": \"$(tag)\", \"html_url\": \"https://github.com/Welthulk/Sparlectra.jl/releases/tag/$(tag)\", \"body\": \"notes \\u00e4\", \"assets\": []}"
+            cur = v"0.50.0"
+            check(fetch) = A.webui_check_for_update(; fetch, current = cur)
+            @test check(answer(200, release("v0.50.0"))).state === :up_to_date
+            # a checkout ahead of the latest release is up to date as well
+            @test check(answer(200, release("v0.49.3"))).state === :up_to_date
+            newer = check(answer(200, release("v0.51.0")))
+            @test (newer.state, newer.latest, newer.tag) == (:newer, v"0.51.0", "v0.51.0")
+            @test newer.release_url == "https://github.com/Welthulk/Sparlectra.jl/releases/tag/v0.51.0"
+            offline = check(failure("Could not resolve host: api.github.com"))
+            @test (offline.state, offline.failure) == (:failed, :network)
+            @test occursin("Could not resolve host", offline.message)
+            @test check(failure("Operation timed out"; timed_out = true)).failure === :timeout
+            limited = check(answer(403, "{}"; headers = Dict("x-ratelimit-remaining" => "0", "x-ratelimit-reset" => string(round(Int, time()) + 590))))
+            @test limited.failure === :rate_limit
+            @test occursin("10 min", limited.message)
+            @test check(answer(429, "")).failure === :rate_limit
+            @test check(answer(500, "")).failure === :http
+            # an answer that is not a release: no exception, a named failure
+            for body in ("<html>proxy login</html>", "", "[1, 2]", "{\"tag_name\": 7}", "{\"tag_name\": \"latest\"}", "{\"tag_name\": \"v0.51.0\"")
+                @test (body, check(answer(200, body)).failure) == (body, :malformed)
+            end
+            # a link from the answer that leaves the repository is replaced
+            @test check(answer(200, "{\"tag_name\": \"v0.51.0\", \"html_url\": \"https://example.com/x\"}")).release_url == "https://github.com/Welthulk/Sparlectra.jl/releases/tag/v0.51.0"
+
+            mktempdir() do tmp
+                # --- layout detection
+                checkout = joinpath(tmp, "dev", "Sparlectra")
+                mkpath(joinpath(checkout, ".git"))
+                @test A.webui_install_layout(checkout; flavor_kind = :native) === :git_checkout
+                worktree = joinpath(tmp, "wt")
+                mkpath(worktree)
+                write(joinpath(worktree, ".git"), "gitdir: /elsewhere/.git/worktrees/wt\n")
+                @test A.webui_install_layout(worktree; flavor_kind = :native) === :git_checkout
+                inst = joinpath(tmp, "apps", "Sparlectra")
+                mkpath(joinpath(inst, "tools"))
+                for f in ("Project.toml", "start_webui.jl", "start_webui.sh", "start_webui.bat", joinpath("tools", "install_webui.sh"), joinpath("tools", "install_webui.bat"))
+                    write(joinpath(inst, f), "# fixture\n")
+                end
+                # SPARLECTRA_ROOT carries a trailing separator
+                @test A.webui_install_layout(inst * "/"; flavor_kind = :sysimage) === :installed_copy
+                @test A.webui_install_layout(inst; flavor_kind = :app) === :unknown
+                renamed = joinpath(tmp, "apps", "Sparlectra.jl-0.50.0")
+                cp(inst, renamed)
+                @test A.webui_install_layout(renamed; flavor_kind = :native) === :unknown
+                no_script = joinpath(tmp, "other", "Sparlectra")
+                mkpath(dirname(no_script))
+                cp(inst, no_script)
+                rm(joinpath(no_script, "tools"); recursive = true)
+                @test A.webui_install_layout(no_script; flavor_kind = :native) === :unknown
+
+                # --- the unattended answers follow the current state
+                home = joinpath(tmp, "home")
+                mkpath(home)
+                img = joinpath(tmp, "state", "sysimage", "sparlectra.so")
+                none_yet = A._webui_update_answers(; flavor_kind = :native, sysimage_path = img, app_root = joinpath(inst, "app"), home, windows = false, apple = false)
+                @test none_yet == (build_sysimage = false, create_shortcut = false)
+                mkpath(joinpath(home, ".local", "share", "applications"))
+                write(joinpath(home, ".local", "share", "applications", "sparlectra-webui.desktop"), "[Desktop Entry]\n")
+                mkpath(dirname(img))
+                write(img, "image")
+                mkpath(joinpath(inst, "app"))
+                write(joinpath(dirname(img), "sysimage_meta.toml"), "project_dir = \"$(escape_string(joinpath(inst, "app")))\"\n")
+                @test A._webui_update_answers(; flavor_kind = :native, sysimage_path = img, app_root = joinpath(inst, "app"), home, windows = false, apple = false) == (build_sysimage = true, create_shortcut = true)
+                # the image of another checkout is not this copy's: no build
+                @test A._webui_update_answers(; flavor_kind = :native, sysimage_path = img, app_root = joinpath(checkout, "app"), home, windows = false, apple = false).build_sysimage == false
+                @test A._webui_update_answers(; flavor_kind = :sysimage, sysimage_path = joinpath(tmp, "none.so"), app_root = joinpath(inst, "app"), home, windows = false, apple = false).build_sysimage == true
+
+                # --- the check page offers what the layout allows
+                logs = joinpath(tmp, "logs")
+                out = joinpath(tmp, "runs")
+                mkpath(out)
+                ans = (build_sysimage = true, create_shortcut = false)
+                page(layout, fetch; root = inst, started = true) = String(A.handle_webui_update_check(; operation_log = logs, fetch, layout, root, current = cur, output_root = out, started_by_script = started, answers = ans).body)
+                git_page = page(:git_checkout, answer(200, release("v0.51.0")); root = checkout)
+                @test occursin("git fetch --tags", git_page) && occursin("git checkout v0.51.0", git_page)
+                @test !occursin("/webui/update/install", git_page)
+                unknown_page = page(:unknown, answer(200, release("v0.51.0")); root = renamed)
+                @test occursin(A.WEBUI_UPDATE_ONE_LINE_SH, unknown_page) || occursin(A._webui_escape(A.WEBUI_UPDATE_ONE_LINE_WINDOWS), unknown_page)
+                @test !occursin("/webui/update/install", unknown_page)
+                inst_page = page(:installed_copy, answer(200, release("v0.51.0")))
+                @test occursin("action=\"/webui/update/install\"", inst_page)
+                @test occursin(A._webui_escape(A.webui_update_log_path(logs)), inst_page)
+                @test occursin(A._webui_escape(A._webui_update_token()), inst_page)
+                # a session that does not end on stop cannot update itself
+                @test !occursin("/webui/update/install", page(:installed_copy, answer(200, release("v0.51.0")); started = false))
+                @test !occursin("/webui/update/install", page(:installed_copy, answer(200, release("v0.50.0"))))
+                @test !occursin("/webui/update/install", page(:installed_copy, failure("Could not resolve host: api.github.com")))
+                @test !isdir(A.webui_update_dir(logs))
+                # the Info panel carries the button, and the route reaches the check
+                @test occursin("action=\"/webui/update/check\"", A.render_webui_error(404, "x"))
+                saved_fetch = A._WEBUI_UPDATE_FETCH[]
+                try
+                    A._WEBUI_UPDATE_FETCH[] = answer(200, release("v0.51.0"))
+                    @test A.route_sparlectra_webui("POST", "/webui/update/check"; output_root = out).status == 200
+                finally
+                    A._WEBUI_UPDATE_FETCH[] = saved_fetch
+                end
+
+                # --- the install action
+                spawned = Cmd[]
+                spawn = cmd -> (push!(spawned, cmd); nothing)
+                stopped = Ref(0)
+                good = Dict{String,String}("confirm_update" => "yes", "token" => A._webui_update_token(), "tag" => "v0.51.0")
+                no_job() = nothing
+                busy_job() = Dict{String,Any}("status" => "running")
+                install(form; layout = :installed_copy, started = true, active_job = no_job) = A.handle_webui_update_install(form; operation_log = logs, shutdown = () -> (stopped[] += 1), spawn, layout, root = inst, output_root = out, started_by_script = started, active_job, answers = ans, windows = false)
+                # a git checkout and an unknown layout never start a process
+                @test install(good; layout = :git_checkout).status == 409
+                @test install(good; layout = :unknown).status == 409
+                @test install(good; started = false).status == 409
+                @test install(delete!(copy(good), "confirm_update")).status == 400
+                @test install(merge(good, Dict("token" => "stale"))).status == 403
+                @test install(good; active_job = busy_job).status == 409
+                @test isempty(spawned) && stopped[] == 0
+                @test !isdir(A.webui_update_dir(logs))
+                # through the route: this checkout is a git checkout, so nothing starts
+                @test A.route_sparlectra_webui("POST", "/webui/update/install", good; output_root = out).status == 409
+                @test !isdir(A.webui_update_dir(out))
+
+                accepted = install(good)
+                @test accepted.status == 200
+                @test length(spawned) == 1
+                timedwait(() -> stopped[] == 1, 5.0)
+                @test stopped[] == 1
+                # the command that would run, built and handed to the stub only
+                update_dir = A.webui_update_dir(logs)
+                cmd = only(spawned)
+                updater = cmd.exec[2]
+                @test cmd.exec[1] == "sh"
+                @test dirname(updater) == update_dir
+                @test occursin(r"^sparlectra_update_\d{8}_\d{6}\.sh$", basename(updater))
+                @test cmd.dir == update_dir
+                script = read(updater, String)
+                @test occursin("kill -0 $(getpid())", script)
+                for line in ("SPARLECTRA_UPDATE=1", "SPARLECTRA_BUILD_SYSIMAGE=1", "SPARLECTRA_CREATE_SHORTCUT=0", "SPARLECTRA_START_WEBUI=0", "unset SPARLECTRA_SYSIMAGE_CHECKED", "SPARLECTRA_INSTALL_DIR='$(dirname(inst))'", "sh '$(joinpath(update_dir, "install_webui.sh"))'", "exec sh '$(joinpath(inst, "start_webui.sh"))'")
+                    @test (line, occursin(line, script)) == (line, true)
+                end
+                @test read(joinpath(update_dir, "install_webui.sh"), String) == "# fixture\n"
+                @test startswith(read(joinpath(update_dir, "update.log"), String), "Sparlectra update requested")
+                if Sys.iswindows()
+                    println("  update: sh -n of the updater skipped (Windows)")
+                else
+                    @test success(`sh -n $(updater)`)
+                    println("  update: sh -n of the updater ran")
+                end
+                @test occursin("\"status\":\"started\"", read(A.webui_operation_log_path(logs), String))
+
+                # the Windows plan, built on any platform: start opens the console
+                # window, the batch file has CRLF line ends and the same answers
+                wplan = A.webui_update_plan(; root = inst, current = cur, tag = "v0.51.0", operation_log = joinpath(tmp, "wlogs"), pid = 4242, answers = (build_sysimage = false, create_shortcut = true), windows = true)
+                @test wplan.command.exec[2:end] == ["/c", "start", "\"Sparlectra update\"", "\"$(wplan.updater)\""]
+                @test wplan.command.flags & Base.UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS != 0
+                bat = read(wplan.updater, String)
+                @test count("\r\n", bat) == count("\n", bat)
+                for line in ("tasklist /FI \"PID eq 4242\"", "set \"SPARLECTRA_BUILD_SYSIMAGE=0\"", "set \"SPARLECTRA_CREATE_SHORTCUT=1\"", "set \"SPARLECTRA_INSTALL_DIR=$(dirname(inst))\"", "call \"$(joinpath(inst, "start_webui.bat"))\"")
+                    @test (line, occursin(line, bat)) == (line, true)
+                end
+            end
+        end)() end
+
         @testset "case-scan memo cache" begin (function ()
             mktempdir() do dir
                 p = joinpath(dir, "SCAN.DAT")

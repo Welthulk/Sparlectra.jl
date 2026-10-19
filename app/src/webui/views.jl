@@ -528,6 +528,7 @@ function _webui_powerflow_info_menu(; output_root::AbstractString, config_file::
 <dt>Julia</dt><dd><code>$(_webui_escape(string(VERSION)))</code></dd>
 <dt>Commit</dt><dd><code>$(_webui_escape(commit_text))</code></dd>
 <dt>Started from</dt><dd><code>$(_webui_escape(flavor_text))</code> <a href=\"/webui/sysimage\">Sysimage</a></dd>
+<dt>Updates</dt><dd><form method=\"post\" action=\"/webui/update/check\" class=\"update-check-form\" data-busy=\"Checking…\"><button type=\"submit\" class=\"link-button\">Check for updates</button></form> $(_webui_help_link("webui.update_check", "Check for updates"))</dd>
 <dt>Output root</dt><dd><code>$(_webui_escape(output_root))</code></dd>
 <dt>Config file</dt><dd><code>$(_webui_escape(config_file))</code></dd>
 <dt>Case cache</dt><dd><code>$(_webui_escape(case_directory))</code></dd>

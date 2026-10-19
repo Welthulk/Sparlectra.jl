@@ -1943,6 +1943,8 @@ form:
         "export_cgmes" => "webui.export_cgmes",
         "scf_export" => "webui.scf_export",
         "model_nominal_frequency_hz" => "model.nominal_frequency_hz",
+        # the button of the Info panel in the header of every page
+        "update_check" => "webui.update_check",
       )
       @test all(SparlectraApp.WEBUI_FORM_HELP_TOPICS[field] == help_topic for (field, help_topic) in expected_help_topics)
       # the option fields split across the Runs page (form_html)
@@ -1952,9 +1954,14 @@ form:
       # omissions both fail)
       pages_html = string(form_html, case_page_html, settings_page_html)
       for (field, help_topic) in expected_help_topics
-        # config_maintenance labels a fieldset <legend> and scf_export the
-        # case-export actions row; neither is a named input
-        field in ("config_maintenance", "scf_export") ? (@test occursin(field == "scf_export" ? "Export as SCF case file" : "Configuration maintenance", pages_html)) : (@test occursin("name=\"$(field)\"", pages_html))
+        # config_maintenance labels a fieldset <legend>, scf_export the
+        # case-export actions row and update_check the form of the Info
+        # panel; none is a named input
+        if field == "update_check"
+          @test occursin("action=\"/webui/update/check\"", pages_html)
+        else
+          field in ("config_maintenance", "scf_export") ? (@test occursin(field == "scf_export" ? "Export as SCF case file" : "Configuration maintenance", pages_html)) : (@test occursin("name=\"$(field)\"", pages_html))
+        end
         # the ? of a control opens its in-app help page
         @test occursin("class=\"help-link\" href=\"$(SparlectraApp.webui_help_page_url(help_topic))\"", pages_html)
       end
