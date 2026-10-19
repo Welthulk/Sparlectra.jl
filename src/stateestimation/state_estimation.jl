@@ -4319,14 +4319,26 @@ end
   return summary.global_consistency ? "PASS (globally plausible)" : "FAIL (check objective/residuals)"
 end
 
+# Flag of one ranking row. The ranking comes from the pass with every row
+# active, so one gross error smears into its neighbours and pushes them over
+# the threshold too; only the rows the sequential elimination removed are
+# bad data ("BAD"), the others above the threshold are "over k".
+function _se_ranking_flag(row, eliminated::AbstractSet{Int})::String
+  get(row, :constraint, false) && return "constraint"
+  row.measurement_index in eliminated && return "BAD"
+  return row.suspicious ? "over k" : "OK"
+end
+
 """
-    print_se_diagnostics(io, diag; topN=10)    
+    print_se_diagnostics(io, diag; topN=10)
 
 Pretty-print diagnostics from `validate_measurements` or `runse_diagnostics`
 including:
 - explanation of `global_consistency`
 - tabular measurement ranking
-- BAD/OK marker per measurement
+- marker per measurement: `BAD` for a row the sequential elimination
+  removed, `over k` for a row above the threshold that stayed (smearing of
+  a gross error elsewhere), `OK`, or `constraint`
 - optional rerun comparison if present
 """
 function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol = :plain)
@@ -4334,6 +4346,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
   summary = summarize_se_diagnostics(diag)
 
   nrows = min(topN, length(base.measurement_ranking))
+  eliminated = hasproperty(diag, :eliminations) ? Set{Int}(t.measurement_index for t in diag.eliminations) : Set{Int}()
   # wii/localizable columns exist on 0.10 ranking rows; correlation columns
   # carry values only when the K-matrix report was enabled
   hasWii = !isempty(base.measurement_ranking) && hasproperty(first(base.measurement_ranking), :wii)
@@ -4385,7 +4398,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     for k = 1:nrows
       row = base.measurement_ranking[k]
       # a constraint row (zero_injection = constraint) is no measurement
-      flag = get(row, :constraint, false) ? "constraint" : row.suspicious ? "BAD" : "OK"
+      flag = _se_ranking_flag(row, eliminated)
       if hasWii
         loc = row.localizable ? "yes" : "no"
         if showK
@@ -4444,7 +4457,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     for k = 1:nrows
       row = base.measurement_ranking[k]
       # a constraint row (zero_injection = constraint) is no measurement
-      flag = get(row, :constraint, false) ? "constraint" : row.suspicious ? "BAD" : "OK"
+      flag = _se_ranking_flag(row, eliminated)
       if hasWii
         loc = row.localizable ? "yes" : "no"
         if showK

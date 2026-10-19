@@ -402,7 +402,9 @@ function test_state_estimation_bad_data_diagnostics()::Bool
     @test occursin("State-estimation diagnostics", txt)
     @test occursin("Global consistency: false", txt)
     @test occursin("Flag", txt)
-    @test occursin("BAD", txt)
+    # nothing was eliminated, so a row over the threshold is "over k", not BAD
+    @test occursin("over k", txt)
+    @test !occursin("BAD", txt)
 
     io_md = IOBuffer()
     print_se_diagnostics(io_md, report; topN = 5, format = :markdown)
@@ -427,6 +429,11 @@ function test_state_estimation_bad_data_diagnostics()::Bool
     print_se_diagnostics(io2_md, diag; topN = 5, format = :markdown)
     txt2_md = String(take!(io2_md))
     @test occursin("### Deactivate-and-rerun", txt2_md)
+    # BAD marks exactly the eliminated rows of the ranking; the rows the
+    # gross error smeared into stay "over k"
+    bad_rows = filter(l -> startswith(l, "| ") && endswith(l, "| BAD |"), split(txt2_md, '\n'))
+    @test length(bad_rows) == length(diag.eliminations) == 1
+    @test startswith(only(bad_rows), "| $(idx) |")
   end)() end
 
   return true
