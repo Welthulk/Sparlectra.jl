@@ -30,10 +30,11 @@ function main(; output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "c
   addBus!(net = net, busName = "B3", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
   addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
 
-  # Lines from addACLine!: r and x are per-unit totals of the line (length > 1) ...
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 25.0, r = 0.2, x = 0.39)
-  addACLine!(net = net, fromBus = "B2", toBus = "B3", length = 15.0, r = 0.2, x = 0.39)
-  # ... and one PI-model line (p.u.). The export converts both kinds to Ohm.
+  # Three PI-model lines with per-unit totals; the export converts them to
+  # ohm and siemens. The first two are the per-unit addACLine! lines of 0.42
+  # with the same values.
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.2, x_pu = 0.39, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.2, x_pu = 0.39, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "B3", toBus = "B1", r_pu = 0.02, x_pu = 0.10, b_pu = 0.01, status = 1)
 
   ok, msg = validate!(net = net)

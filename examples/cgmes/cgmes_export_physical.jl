@@ -39,18 +39,17 @@ function build_net()
   addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 40.0, q = 12.0)
   addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
   for (from, to, km, r, x, c) in LINES
-    # totals in ohm and siemens, then per unit on 110 kV and baseMVA
-    b_s = 2π * 50.0 * c * 1e-9 * km
-    r_pu, x_pu, b_pu, _ = toPU_RXBG(r = r * km, x = x * km, b = b_s, v_kv = 110.0, baseMVA = net.baseMVA)
-    addPIModelACLine!(net = net, fromBus = from, toBus = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, status = 1)
+    # b from the capacitance at the system frequency of the net
+    # (net.nominal_frequency_hz, a new Net takes model.nominal_frequency_hz)
+    addACLinePerKm!(net = net, fromBus = from, toBus = to, length_km = km, r_ohm_per_km = r, x_ohm_per_km = x, c_nf_per_km = c)
   end
   return net
 end
 
 function main(; output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "cgmes_export_physical"))
   print_example_banner("examples/cgmes/cgmes_export_physical.jl", "CGMES export of a net built from line data in ohm/km and nF/km, with the re-import")
-
   net = build_net()
+  f_hz = net.nominal_frequency_hz
   ite, erg = runpf!(net, 30, 1e-10, 0)
   erg == 0 || error("power flow did not converge")
   println("power flow: converged in ", ite, " iterations")
@@ -71,7 +70,7 @@ function main(; output_dir::AbstractString = joinpath(@__DIR__, "..", "_out", "c
     b_out = Sparlectra.CGMESImporter.num(seg, :bch)
     println(rpad("$(from)-$(to)", 10), rpad("$(round(r * km; digits = 4)) / $(round(r_out; digits = 4))", 20),
             rpad("$(round(x * km; digits = 4)) / $(round(x_out; digits = 4))", 20),
-            round(2π * 50.0 * c * 1e-9 * km * 1e6; digits = 3), " / ", round(b_out * 1e6; digits = 3))
+            round(2π * f_hz * c * 1e-9 * km * 1e6; digits = 3), " / ", round(b_out * 1e6; digits = 3))
   end
 
   # the re-import solves to the voltages of the source net

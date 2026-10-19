@@ -117,7 +117,7 @@ Y_{ii} = -\sum_{k \neq i} Y_{ik} + \sum_{k \in \mathcal{N}(i)} y_{0,i}^{(ik)} + 
 Only without any shunt (no line charging, no bus shunt) does the row sum
 vanish, $Y_{ii} = -\sum_{k \neq i} Y_{ik}$.
 
-The branch builders (`addACLine!`, `addPIModelACLine!`, `addPIModelTrafo!`)
+The branch builders (`addACLine!`, `addACLinePerKm!`, `addPIModelACLine!`, `addPIModelTrafo!`)
 stamp series admittance plus half shunt on each side unless the four
 terminal values `g_from_pu`, `b_from_pu`, `g_to_pu`, `b_to_pu` are given
 (all four or none); explicit shunts are added as nodal shunt terms when

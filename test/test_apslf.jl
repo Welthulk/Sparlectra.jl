@@ -84,293 +84,146 @@ function run_apslf_tests()
     # one outer set, so a standalone call still runs every group after a
     # failing one (a top-level testset throws at its end)
     @testset "APSLF" begin
-        @testset "APSLF (AnalyticLoadFlow.jl) integration" begin (function ()
-            @testset "Config validation: power_flow.solver / apslf / apslf_start" begin (function ()
-                default_cfg = Sparlectra.SparlectraConfig()
-                @test default_cfg.powerflow.solver === :rectangular
-                @test default_cfg.powerflow.apslf.order == 24
-                @test default_cfg.powerflow.apslf.convergence_radius === true
-                @test default_cfg.powerflow.apslf.nr_polish === false
-                @test default_cfg.powerflow.apslf_start.enabled === false
-                @test default_cfg.powerflow.apslf_start.order == 40
+          @testset "Config validation: power_flow.solver / apslf / apslf_start" begin (function ()
+              default_cfg = Sparlectra.SparlectraConfig()
+              @test default_cfg.powerflow.solver === :rectangular
+              @test default_cfg.powerflow.apslf.order == 24
+              @test default_cfg.powerflow.apslf.convergence_radius === true
+              @test default_cfg.powerflow.apslf.nr_polish === false
+              @test default_cfg.powerflow.apslf_start.enabled === false
+              @test default_cfg.powerflow.apslf_start.order == 40
 
-                @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "polar")))
-                cfg_apslf = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf")))
-                @test cfg_apslf.powerflow.solver === :apslf
+              @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "polar")))
+              cfg_apslf = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf")))
+              @test cfg_apslf.powerflow.solver === :apslf
 
-                @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("order" => 0))))
-                @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("order" => -1))))
+              @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("order" => 0))))
+              @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("order" => -1))))
 
-                # solver=apslf together with apslf_start.enabled=true is rejected (the
-                # start-value generator only makes sense ahead of the NR solve).
-                @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "apslf_start" => Dict("enabled" => true))))
+              # solver=apslf together with apslf_start.enabled=true is rejected (the
+              # start-value generator only makes sense ahead of the NR solve).
+              @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "apslf_start" => Dict("enabled" => true))))
 
-                # apslf_start.enabled=true alone (solver stays rectangular) is fine.
-                cfg_hybrid = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true, "order" => 12))))
-                @test cfg_hybrid.powerflow.apslf_start.enabled
-                @test cfg_hybrid.powerflow.apslf_start.order == 12
-                @test cfg_hybrid.powerflow.solver === :rectangular
+              # apslf_start.enabled=true alone (solver stays rectangular) is fine.
+              cfg_hybrid = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true, "order" => 12))))
+              @test cfg_hybrid.powerflow.apslf_start.enabled
+              @test cfg_hybrid.powerflow.apslf_start.order == 12
+              @test cfg_hybrid.powerflow.solver === :rectangular
 
-                # An unknown key under the new sections is warned about and
-                # dropped like any other file key; the file still loads (a
-                # stored file must keep loading across releases, so an unknown
-                # or removed key is noise, never a failure).
-                bad_key_file = test_scratch_path(".yaml")
-                write(bad_key_file, "power_flow:\n  apslf:\n    bogus_key: 1\n")
-                # the file carries no config_version on purpose; that once-per-session
-                # warning may appear as well and must not reach the test output
-                cfg_bad = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.apslf\.bogus_key is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_key_file; reload=true)
-                @test cfg_bad isa Sparlectra.SparlectraConfig
-                @test cfg_bad.powerflow.apslf.order == Sparlectra.SparlectraConfig().powerflow.apslf.order
-            end)() end
+              # An unknown key under the new sections is warned about and
+              # dropped like any other file key; the file still loads (a
+              # stored file must keep loading across releases, so an unknown
+              # or removed key is noise, never a failure).
+              bad_key_file = test_scratch_path(".yaml")
+              write(bad_key_file, "power_flow:\n  apslf:\n    bogus_key: 1\n")
+              # the file carries no config_version on purpose; that once-per-session
+              # warning may appear as well and must not reach the test output
+              cfg_bad = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.apslf\.bogus_key is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_key_file; reload=true)
+              @test cfg_bad isa Sparlectra.SparlectraConfig
+              @test cfg_bad.powerflow.apslf.order == Sparlectra.SparlectraConfig().powerflow.apslf.order
+          end)() end
 
-            @testset "Controller + APSLF solver: runs without them, with a warning" begin (function ()
-                # the shipped sp_case14 carries a REAL declared tap controller; an
-                # APSLF run does not refuse it any more (0.31.0): it solves the
-                # static setpoints and one warning names what is not applied
-                net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
-                @test length(Sparlectra.collect_outer_controllers(net)) == 1
+          @testset "Controller + APSLF solver: runs without them, with a warning" begin (function ()
+              # the shipped sp_case14 carries a REAL declared tap controller; an
+              # APSLF run does not refuse it any more (0.31.0): it solves the
+              # static setpoints and one warning names what is not applied
+              net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
+              @test length(Sparlectra.collect_outer_controllers(net)) == 1
 
-                cfg = Sparlectra.SparlectraConfig(powerflow=Sparlectra.PowerFlowConfig(solver=:apslf), output=OutputConfig(logfile_results=:off, console_summary=false))
-                res = @test_logs (:warn, r"power_flow.solver=apslf runs without controllers: 1 outer-loop controller") match_mode=:any redirect_stdout(devnull) do
-                    run_sparlectra(net=net, config=cfg)
-                end
-                @test res.final_converged
-            end)() end
+              cfg = Sparlectra.SparlectraConfig(powerflow=Sparlectra.PowerFlowConfig(solver=:apslf), output=OutputConfig(logfile_results=:off, console_summary=false))
+              res = @test_logs (:warn, r"power_flow.solver=apslf runs without controllers: 1 outer-loop controller") match_mode=:any redirect_stdout(devnull) do
+                  run_sparlectra(net=net, config=cfg)
+              end
+              @test res.final_converged
+          end)() end
 
-            @testset "WebUI form parsing for APSLF fields -> effective config" begin (function ()
-                form = Dict{String,Any}(
-                    "casefile" => "case14.m",
-                    "power_flow_solver" => "apslf",
-                    "power_flow_apslf_order" => "25",
-                    "power_flow_apslf_nr_polish" => "true",
-                    "power_flow_apslf_start_enabled" => "false",
-                    "power_flow_apslf_start_order" => "40",
-                )
-                request = SparlectraApp.powerflow_webui_request(form)
-                overrides = request["config_overrides"]
-                @test overrides["power_flow.solver"] == "apslf"
-                @test overrides["power_flow.apslf.order"] === 25
-                @test overrides["power_flow.apslf.nr_polish"] === true
-                @test overrides["power_flow.apslf_start.enabled"] === false
-                @test overrides["power_flow.apslf_start.order"] === 40
+          @testset "WebUI form parsing for APSLF fields -> effective config" begin (function ()
+              form = Dict{String,Any}(
+                  "casefile" => "case14.m",
+                  "power_flow_solver" => "apslf",
+                  "power_flow_apslf_order" => "25",
+                  "power_flow_apslf_nr_polish" => "true",
+                  "power_flow_apslf_start_enabled" => "false",
+                  "power_flow_apslf_start_order" => "40",
+              )
+              request = SparlectraApp.powerflow_webui_request(form)
+              overrides = request["config_overrides"]
+              @test overrides["power_flow.solver"] == "apslf"
+              @test overrides["power_flow.apslf.order"] === 25
+              @test overrides["power_flow.apslf.nr_polish"] === true
+              @test overrides["power_flow.apslf_start.enabled"] === false
+              @test overrides["power_flow.apslf_start.order"] === 40
 
-                nested = Sparlectra.validate_gui_config_overrides(overrides)
-                cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, nested)
-                @test cfg.powerflow.solver === :apslf
-                @test cfg.powerflow.apslf.order == 25
-                @test cfg.powerflow.apslf.nr_polish === true
+              nested = Sparlectra.validate_gui_config_overrides(overrides)
+              cfg, _ = Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, nested)
+              @test cfg.powerflow.solver === :apslf
+              @test cfg.powerflow.apslf.order == 25
+              @test cfg.powerflow.apslf.nr_polish === true
 
-                # Unchecked checkbox explicitly submits "false" (hidden+checkbox HTML
-                # pairing), the same semantics as the Q-limit checkbox pattern: the key
-                # is present with an explicit false, not omitted.
-                disabled_form = copy(form)
-                disabled_form["power_flow_apslf_nr_polish"] = "false"
-                @test SparlectraApp.powerflow_webui_request(disabled_form)["config_overrides"]["power_flow.apslf.nr_polish"] === false
+              # Unchecked checkbox explicitly submits "false" (hidden+checkbox HTML
+              # pairing), the same semantics as the Q-limit checkbox pattern: the key
+              # is present with an explicit false, not omitted.
+              disabled_form = copy(form)
+              disabled_form["power_flow_apslf_nr_polish"] = "false"
+              @test SparlectraApp.powerflow_webui_request(disabled_form)["config_overrides"]["power_flow.apslf.nr_polish"] === false
 
-                # A field genuinely absent from the submitted form (e.g. a stale
-                # client) is skipped rather than defaulted to false.
-                missing_field_form = copy(form)
-                delete!(missing_field_form, "power_flow_apslf_start_enabled")
-                @test !haskey(SparlectraApp.powerflow_webui_request(missing_field_form)["config_overrides"], "power_flow.apslf_start.enabled")
+              # A field genuinely absent from the submitted form (e.g. a stale
+              # client) is skipped rather than defaulted to false.
+              missing_field_form = copy(form)
+              delete!(missing_field_form, "power_flow_apslf_start_enabled")
+              @test !haskey(SparlectraApp.powerflow_webui_request(missing_field_form)["config_overrides"], "power_flow.apslf_start.enabled")
 
-                # GUI-layer validation rejects the same invalid values as the core config.
-                @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.solver" => "polar"))
-                @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.apslf.order" => 0))
+              # GUI-layer validation rejects the same invalid values as the core config.
+              @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.solver" => "polar"))
+              @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.apslf.order" => 0))
 
-                # Downstream config assembly still rejects the solver+start conflict
-                # even when both values arrive through the GUI override path.
-                conflict_overrides = Dict{String,Any}("power_flow.solver" => "apslf", "power_flow.apslf_start.enabled" => true)
-                conflict_nested = Sparlectra.validate_gui_config_overrides(conflict_overrides)
-                @test_throws ArgumentError Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, conflict_nested)
-            end)() end
+              # Downstream config assembly still rejects the solver+start conflict
+              # even when both values arrive through the GUI override path.
+              conflict_overrides = Dict{String,Any}("power_flow.solver" => "apslf", "power_flow.apslf_start.enabled" => true)
+              conflict_nested = Sparlectra.validate_gui_config_overrides(conflict_overrides)
+              @test_throws ArgumentError Sparlectra._load_api_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, conflict_nested)
+          end)() end
 
-            @testset "the solver is always available" begin (function ()
-                # AnalyticLoadFlow.jl is a required dependency: `using Sparlectra` is
-                # enough, there is no session that has to load anything extra and no
-                # not-installed error path left to take
-                solver = Sparlectra.apslf_solver()
-                @test solver isa Sparlectra.ApslfSolver
-                @test solver isa Sparlectra.AbstractExternalSolver
-                @test solver.order == 24 && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
-                tuned = Sparlectra.apslf_solver(order=40, nr_polish=false, mode=:outer, convergence_radius=false)
-                @test (tuned.order, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, :outer, false)
-            end)() end
+          @testset "the solver is always available" begin (function ()
+              # AnalyticLoadFlow.jl is a required dependency: `using Sparlectra` is
+              # enough, there is no session that has to load anything extra and no
+              # not-installed error path left to take
+              solver = Sparlectra.apslf_solver()
+              @test solver isa Sparlectra.ApslfSolver
+              @test solver isa Sparlectra.AbstractExternalSolver
+              @test solver.order == 24 && !solver.nr_polish && solver.mode === :direct && solver.convergence_radius
+              tuned = Sparlectra.apslf_solver(order=40, nr_polish=false, mode=:outer, convergence_radius=false)
+              @test (tuned.order, tuned.nr_polish, tuned.mode, tuned.convergence_radius) == (40, false, :outer, false)
+          end)() end
 
-            @testset "AnalyticLoadFlow version guard" begin (function ()
-                # An environment whose Manifest predates the compat bump loads an
-                # older AnalyticLoadFlow without a message, and 0.9.14 computes
-                # wrong voltages flagged as converged. The guard runs in __init__,
-                # so this process has passed it; the explicit-version calls
-                # exercise both branches.
-                @test pkgversion(AnalyticLoadFlow) >= Sparlectra.APSLF_MIN_VERSION
-                @test Sparlectra.check_apslf_version() == pkgversion(AnalyticLoadFlow)
-                @test Sparlectra.check_apslf_version(Sparlectra.APSLF_MIN_VERSION) == Sparlectra.APSLF_MIN_VERSION
-                err = try
-                    Sparlectra.check_apslf_version(v"0.9.14")
-                    nothing
-                catch e
-                    e
-                end
-                @test err isa ErrorException
-                msg = err === nothing ? "" : sprint(showerror, err)
-                @test occursin("AnalyticLoadFlow 0.9.14 is loaded", msg)
-                @test occursin(string(Sparlectra.APSLF_MIN_VERSION), msg)
-                @test occursin("Pkg.update(\"AnalyticLoadFlow\")", msg)
-                # The size bounds of the outer-mode fallback (_apslf_solve runs
-                # it itself) are mirrored from AnalyticLoadFlow 0.10.0, which
-                # provides no binding for them: they are literal keyword
-                # defaults of solve_pf_apslf in src/solver_core.jl. The loaded
-                # package's source must still carry the same defaults, and a
-                # binding named like a fallback bound must not have appeared;
-                # either change fails here, and the constants then have to be
-                # re-checked or read from the package.
-                mirrored_from = v"0.10.0"
-                @test pkgversion(AnalyticLoadFlow) >= mirrored_from
-                @test (Sparlectra._APSLF_OUTER_FALLBACK_NBUS_MAX, Sparlectra._APSLF_OUTER_FALLBACK_PV_BUS_MAX) == (2000, 250)
-                alf_core = read(joinpath(pkgdir(AnalyticLoadFlow), "src", "solver_core.jl"), String)
-                alf_default(key) = (m = match(Regex("$(key)\\) \\? Int\\(kw_forward\\.$(key)\\) : (\\d+)"), alf_core); m === nothing ? nothing : parse(Int, m[1]))
-                @test alf_default("outer_fallback_nbus_max") == Sparlectra._APSLF_OUTER_FALLBACK_NBUS_MAX
-                @test alf_default("outer_fallback_pv_bus_max") == Sparlectra._APSLF_OUTER_FALLBACK_PV_BUS_MAX
-                @test isempty(filter(n -> occursin("fallback", lowercase(String(n))), names(AnalyticLoadFlow; all = true)))
-            end)() end
+          @testset "Adapter mapping (PFModel -> AnalyticLoadFlow spec, PF ordering)" begin (function ()
+              net = createTest3BusNet()
+              model = buildPfModel(net; flatstart=true, include_limits=false)
+              n = length(model.busIdx_net)
 
-            @testset "residual judged against the final active set (0.13.0)" begin (function ()
-                # a PV machine with a band it cannot hold: AnalyticLoadFlow clamps it
-                # at Qmax and reports the bus as PQ. The adapter used to test the
-                # voltage setpoint of that bus anyway and labelled a solved case not
-                # converged (case118: 19 clamped machines, 0.027 pu "mismatch").
-                function _clamp_net()
-                    net = Net(name="apslf_clamp", baseMVA=100.0)
-                    addBus!(net=net, busName="B1", vn_kV=110.0)
-                    addBus!(net=net, busName="B2", vn_kV=110.0)
-                    addBus!(net=net, busName="B3", vn_kV=110.0)
-                    addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION", vm_pu=1.02, va_deg=0.0, referencePri="B1")
-                    addProsumer!(net=net, busName="B2", type="SYNCHRONOUSMACHINE", p=10.0, q=0.0, vm_pu=1.05, qMin=-10.0, qMax=10.0)
-                    addProsumer!(net=net, busName="B3", type="ENERGYCONSUMER", p=80.0, q=25.0)
-                    addPIModelACLine!(net=net, fromBus="B1", toBus="B2", r_pu=0.01, x_pu=0.08, b_pu=0.0, status=1)
-                    addPIModelACLine!(net=net, fromBus="B2", toBus="B3", r_pu=0.02, x_pu=0.12, b_pu=0.0, status=1)
-                    return net
-                end
-                net = _clamp_net()
-                cfg = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, tol=1e-8), output=OutputConfig(logfile_results=:off))
-                r = run_sparlectra(net=net, config=cfg)
-                @test r.final_converged
-                @test r.final_mismatch < 1e-8
-                b2 = net.busDict["B2"]
-                @test haskey(net.qLimitEvents, b2)
-                @test net.qLimitEvents[b2] === :max
-                st = Sparlectra.rectangular_pf_status(net)
-                @test hasproperty(st, :apslf_convergence_radius) && isfinite(st.apslf_convergence_radius)
-                @test occursin("dmin", String(st.apslf_convergence_line))
-                # the header prints the radius next to the condition number
-                hdr_path = tempname()
-                open(hdr_path, "w") do io
-                    redirect_stdout(io) do
-                        printACPFlowResults(net, r.elapsed_s, r.iterations, 1e-8, false, ""; converged=r.final_converged, solver=:apslf)
-                    end
-                end
-                @test occursin("APSLF radius   :", read(hdr_path, String))
-                # #461: the clamp counts as a PV->PQ switching event of the status
-                @test r.diagnostics.pv_pq_switching_events == 1
-                @test isfinite(st.apslf_series_radius) && occursin("series radius R", String(st.apslf_convergence_line))
-                # #461 on the shipped sp_case118 with every case bus number
-                # shifted by 1000: the radius buses are case bus numbers (an
-                # internal index 1..118 cannot pass), and the PV->PQ count of
-                # the status equals the clamps in the Q-limit log
-                mpc = Sparlectra.MatpowerIO.read_case(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
-                mpc.bus[:, 1] .+= 1000
-                mpc.gen[:, 1] .+= 1000
-                mpc.branch[:, 1:2] .+= 1000
-                net118 = Sparlectra.createNetFromMatPowerCase(mpc = mpc)
-                r118 = run_sparlectra(net = net118, config = cfg_ap)
-                @test r118.final_converged
-                st118 = Sparlectra.rectangular_pf_status(net118)
-                @test st118.apslf_convergence_bus in 1001:1118
-                @test st118.apslf_series_radius_bus in 1001:1118
-                @test occursin(string("at bus ", st118.apslf_convergence_bus, ","), String(st118.apslf_convergence_line))
-                @test !isempty(net118.qLimitLog)
-                @test r118.diagnostics.pv_pq_switching_events == length(net118.qLimitLog)
-                # switched off: the solve stays, the line says so
-                net = _clamp_net()
-                cfg_off = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, tol=1e-8, apslf=Sparlectra.ApslfConfig(convergence_radius=false)), output=OutputConfig(logfile_results=:off))
-                r = run_sparlectra(net=net, config=cfg_off)
-                @test r.final_converged
-                @test occursin("not evaluated", String(Sparlectra.rectangular_pf_status(net).apslf_convergence_line))
-            end)() end
+              spec = Sparlectra._apslf_spec_from_model(model)
+              @test spec.Y === model.Ybus
+              @test spec.bustype == model.busType
+              @test spec.Pspec ≈ real.(model.Sspec)
+              @test spec.Qspec ≈ imag.(model.Sspec)
+              @test spec.Vm == model.Vset
+              @test spec.Qmin == fill(-Inf, n)
+              @test spec.Qmax == fill(Inf, n)
+              @test spec.slack == model.slack_idx
 
-            @testset "Adapter mapping (PFModel -> AnalyticLoadFlow spec, PF ordering)" begin (function ()
-                net = createTest3BusNet()
-                model = buildPfModel(net; flatstart=true, include_limits=false)
-                n = length(model.busIdx_net)
+              model_q = buildPfModel(net; flatstart=true, include_limits=true)
+              spec_q = Sparlectra._apslf_spec_from_model(model_q)
+              @test spec_q.Qmin == model_q.qmin_pu
+              @test spec_q.Qmax == model_q.qmax_pu
 
-                spec = Sparlectra._apslf_spec_from_model(model)
-                @test spec.Y === model.Ybus
-                @test spec.bustype == model.busType
-                @test spec.Pspec ≈ real.(model.Sspec)
-                @test spec.Qspec ≈ imag.(model.Sspec)
-                @test spec.Vm == model.Vset
-                @test spec.Qmin == fill(-Inf, n)
-                @test spec.Qmax == fill(Inf, n)
-                @test spec.slack == model.slack_idx
+              solver = Sparlectra.ApslfSolver(order=20)
+              sol = solvePf(solver, model)
+              @test sol isa PFSolution
+              @test length(sol.V) == n
+              @test sol.meta.solver === :apslf
+              @test sol.meta.mode isa Symbol
+          end)() end
 
-                model_q = buildPfModel(net; flatstart=true, include_limits=true)
-                spec_q = Sparlectra._apslf_spec_from_model(model_q)
-                @test spec_q.Qmin == model_q.qmin_pu
-                @test spec_q.Qmax == model_q.qmax_pu
-
-                solver = Sparlectra.ApslfSolver(order=20)
-                sol = solvePf(solver, model)
-                @test sol isa PFSolution
-                @test length(sol.V) == n
-                @test sol.meta.solver === :apslf
-                @test sol.meta.mode isa Symbol
-            end)() end
-
-            @testset "APSLF start-value generator guard and nr_polish=false in start mode" begin (function ()
-                net = Sparlectra.importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")))
-                model = buildPfModel(net; flatstart=true, include_limits=false)
-
-                # Disabled: no-op, restores the exact incoming vector.
-                Vraw = copy(model.V0)
-                V_disabled, summary_disabled = Sparlectra._run_guarded_apslf_start(model.Ybus, Vraw, model.Sspec, model.busType, model.Vset, model.slack_idx; enabled=false, order=40, baseMVA=model.baseMVA)
-                @test !summary_disabled.apslf_start_enabled
-                @test !summary_disabled.apslf_start_attempted
-                @test V_disabled == Vraw
-
-                # Use an already-converged NR solution as the incoming start: its own
-                # mismatch sits at machine precision, so the raw (nr_polish=false)
-                # APSLF candidate — which does not reach that precision without
-                # polish — must always be rejected here, independent of any
-                # solver/case-specific magnitude details (unlike comparing against
-                # the flat start's own mismatch, which is not a stable invariant to
-                # hard-code). This doubles as the nr_polish=false contract check: if
-                # the generator used nr_polish=true internally, its candidate would
-                # reach comparable machine-precision accuracy and could spuriously
-                # "improve" on an already-converged start, defeating this test.
-                net_converged = deepcopy(net)
-                runpf!(net_converged, 30, 1e-8, 0)
-                model_converged = buildPfModel(net_converged; flatstart=false, include_limits=false)
-                Vgood = copy(model_converged.V0)
-                @test Sparlectra.mismatchInf(model, Vgood) < 1e-6
-                V_good, summary_good = Sparlectra._run_guarded_apslf_start(model.Ybus, Vgood, model.Sspec, model.busType, model.Vset, model.slack_idx; enabled=true, order=40, baseMVA=model.baseMVA)
-                @test summary_good.apslf_start_enabled
-                @test summary_good.apslf_start_attempted
-                @test summary_good.apslf_start_accepted === false
-                @test summary_good.apslf_start_reason === :not_improved
-                @test V_good == Vgood
-
-                # A deliberately perturbed, worse-than-APSLF start must be accepted.
-                rng = Random.MersenneTwister(42)
-                bad = model.V0 .* cis.(0.6 .* (rand(rng, length(model.V0)) .- 0.5))
-                bad[model.slack_idx] = model.V0[model.slack_idx]
-                V_bad, summary_bad = Sparlectra._run_guarded_apslf_start(model.Ybus, bad, model.Sspec, model.busType, model.Vset, model.slack_idx; enabled=true, order=40, baseMVA=model.baseMVA)
-                @test summary_bad.apslf_start_accepted === true
-                @test summary_bad.apslf_start_reason === :improved
-                @test V_bad != bad
-                @test all(v -> isfinite(real(v)) && isfinite(imag(v)), V_bad)
-            end)() end
-        end)() end
         @testset "APSLF agrees with NR without polish (ring3, sp_case5)" begin (function ()
             # The series alone is the solution; a Newton polish would hide a
             # wrong series result (AnalyticLoadFlow 0.9.14 returns one flagged

@@ -90,10 +90,10 @@ function _control_label_test_net()
   for name in ("Slack", "NoControl", "QControl", "PControl", "BothControl")
     addBus!(net = net, busName = name, vn_kV = 110.0)
   end
-  addACLine!(net = net, fromBus = "Slack", toBus = "NoControl", length = 1.0, r = 0.01, x = 0.05)
-  addACLine!(net = net, fromBus = "NoControl", toBus = "QControl", length = 1.0, r = 0.01, x = 0.05)
-  addACLine!(net = net, fromBus = "QControl", toBus = "PControl", length = 1.0, r = 0.01, x = 0.05)
-  addACLine!(net = net, fromBus = "PControl", toBus = "BothControl", length = 1.0, r = 0.01, x = 0.05)
+  addPIModelACLine!(net = net, fromBus = "Slack", toBus = "NoControl", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "NoControl", toBus = "QControl", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "QControl", toBus = "PControl", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "PControl", toBus = "BothControl", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
   curve = make_characteristic([(0.9, 0.0), (1.1, 0.0)])
   qu = QUController(curve; qmin_pu = -1.0, qmax_pu = 1.0)
   pu = PUController(curve; pmin_pu = 0.0, pmax_pu = 1.0)
@@ -905,7 +905,9 @@ power_flow:
         # step), so it depends on how the step is applied: 0.09082632227760662
         # with the rectangular update up to 0.20.5, 0.0908293221606245 with
         # the polar update that is the default since 0.30.0.
-        @test isapprox(sp14_check.raw_result.final_mismatch, 0.0908293221606245; rtol = 1e-6)
+        # 0.50.0: old 0.0908293221606245, new 0.0908277193682482, demo case
+        # rebuilt, transformer magnetizing from nameplate since 0.32.1.
+        @test isapprox(sp14_check.raw_result.final_mismatch, 0.0908277193682482; rtol = 1e-6)
 
         # Neither a case configuration file nor a caller override may move
         # the fixed reference. Both were possible before this fix: the file

@@ -167,11 +167,7 @@ function addShuntVoltageControl!(
     end
   end
 
-  bs0 = clamp(bs_start_mvar, bs_min_mvar, bs_max_mvar)
-  if step_mvar !== nothing
-    # snap the start onto the block grid (nearest admissible step)
-    bs0 = clamp(round(bs0 / step_mvar) * step_mvar, _shunt_step_ceil(bs_min_mvar, step_mvar), _shunt_step_floor(bs_max_mvar, step_mvar))
-  end
+  bs0 = _shunt_start_value(bs_start_mvar, bs_min_mvar, bs_max_mvar, step_mvar)
   addShuntMatpower!(net = net, busName = bus, Gs = 0.0, Bs = bs0)
   ctrl = ShuntVoltageControl(
     something(name, string(step_mvar === nothing ? "SVC_" : "MSC_", bus)),
@@ -201,6 +197,16 @@ end
 # outermost admissible whole blocks inside the range (discrete mode)
 _shunt_step_floor(x::Float64, step::Float64)::Float64 = floor(x / step + 1e-9) * step
 _shunt_step_ceil(x::Float64, step::Float64)::Float64 = ceil(x / step - 1e-9) * step
+
+# The start susceptance the controller takes: clamped to the range and, in
+# discrete mode, snapped onto the block grid (nearest admissible step). The
+# SCF writer uses the same function, so a written start value reads back
+# unchanged (a solved bank value can sit one ulp off the grid product).
+function _shunt_start_value(bs_start_mvar::Float64, bs_min_mvar::Float64, bs_max_mvar::Float64, step_mvar::Union{Nothing,Float64})::Float64
+  bs0 = clamp(bs_start_mvar, bs_min_mvar, bs_max_mvar)
+  step_mvar === nothing && return bs0
+  return clamp(round(bs0 / step_mvar) * step_mvar, _shunt_step_ceil(bs_min_mvar, step_mvar), _shunt_step_floor(bs_max_mvar, step_mvar))
+end
 
 # resolve the controlled shunt defensively (same reasoning as the machine
 # controller: indices are push-only stable, but a copied controller may point

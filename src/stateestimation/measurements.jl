@@ -407,8 +407,9 @@ end
 """
     addShuntQMeasurement!(measurements; net, busName, value, sigma, active=true, id="")
 
-Append a shunt-bay reactive-power measurement in MVar for the shunt at
-`busName` (sign convention identical to the solved `q_shunt` results).
+Append a shunt-bay reactive-power measurement in MVar for the shunts at
+`busName`: the sum over every in-service shunt at that bus (sign convention
+identical to the solved `q_shunt` results).
 Errors when the bus carries no shunt. This is the direct measurement that
 releases a shunt susceptance for estimation (SE phase 2, case A; see
 `setShuntEstimation!`).
@@ -543,16 +544,48 @@ function addZeroInjectionMeasurements!(net::Net; sigma::Real = ZERO_INJECTION_SI
   return addZeroInjectionMeasurements!(_net_measurements(net); net = net, sigma = sigma, busNames = busNames, busIdxs = busIdxs, active = active, idPrefix = idPrefix)
 end
 
-# Complex shunt-bay power in MVA at busIdx: S = |V|^2 * conj(G + jB) * base,
-# the exact Ybus stamping term (same expression as updateShuntPowers!). The
-# susceptance defaults to the model value; `shuntB` (busIdx -> B in pu)
-# overrides it for shunts whose B is an estimator state (SE phase 2).
+# The switch state_estimation.zero_injection applied to a measurement list:
+# ZI rows at every passive bus (findPassiveBuses: no generation, load or
+# shunt; the slack excluded) that carries no PinjMeas/QinjMeas row yet,
+# active or not. A bus with an injection row keeps it as its statement,
+# and a list that already holds ZI rows is left as it is, so applying the
+# switch twice adds nothing. Isolated buses are skipped: they are outside
+# every energized island, and a row there would make an island "measured"
+# that no other row observes. Returns the number of rows added (two per
+# bus). Used by the measurement-table entry (applyMeasurementSet!) and the
+# SE service.
+function _add_missing_zero_injections!(measurements::Vector, net::Net)::Int
+  measured = Set{Int}(m.busIdx for m in measurements if m.typ in (PinjMeas, QinjMeas) && m.busIdx !== nothing)
+  buses = Int[b for b in findPassiveBuses(net) if !(b in measured) && getNodeType(net.nodeVec[b]) != Isolated]
+  isempty(buses) && return 0
+  return length(addZeroInjectionMeasurements!(measurements; net = net, busIdxs = buses))
+end
+
+# Summed admittance in pu of the in-service shunts at busIdx. The power flow
+# stamps every shunt of shuntVec, while shuntDict keeps only the last shunt
+# added at a bus (a CGMES bus with two compensators has two shunts), so a
+# shunt measurement at a bus covers all of them. `b`, when given, replaces
+# the susceptance of the shunt shuntDict names (the one setShuntEstimation!
+# releases, SE phase 2).
+function _bus_shunt_y_pu(net::Net, busIdx::Int, b::Union{Nothing,Float64} = nothing)::ComplexF64
+  registered = get(net.shuntDict, busIdx, 0)
+  y = zero(ComplexF64)
+  for (si, sh) in enumerate(net.shuntVec)
+    (sh.busIdx == busIdx && sh.status == 1) || continue
+    y += (si == registered && b !== nothing) ? complex(real(sh.y_pu_shunt), b) : sh.y_pu_shunt
+  end
+  return y
+end
+
+# Complex shunt-bay power in MVA at busIdx: S = |V|^2 * conj(G + jB) * base
+# over all in-service shunts at the bus, the exact Ybus stamping terms (same
+# expression as updateShuntPowers!). The susceptance defaults to the model
+# value; `shuntB` (busIdx -> B in pu) overrides it for a shunt whose B is an
+# estimator state (SE phase 2).
 @inline function _shunt_bay_S_MVA(net::Net, busIdx::Int, V::Vector{ComplexF64}, shuntB::Union{Nothing,Dict{Int,Float64}})
   haskey(net.shuntDict, busIdx) || error("Shunt measurement at bus $(busIdx): no shunt registered at this bus")
-  sh = net.shuntVec[net.shuntDict[busIdx]]
-  b = shuntB !== nothing && haskey(shuntB, busIdx) ? shuntB[busIdx] : imag(sh.y_pu_shunt)
-  y = complex(real(sh.y_pu_shunt), b)
-  return abs2(V[busIdx]) * conj(y) * net.baseMVA
+  b = shuntB !== nothing && haskey(shuntB, busIdx) ? shuntB[busIdx] : nothing
+  return abs2(V[busIdx]) * conj(_bus_shunt_y_pu(net, busIdx, b)) * net.baseMVA
 end
 
 ## complex three-phase end current in ampere at the referenced branch end
@@ -645,17 +678,74 @@ end
   end
 end
 
+# Injection a meter at a bus of a closed-link cluster reads: the solved
+# generation minus load of the bus itself. The Y-bus injection there is NOT
+# that value, because the link is not in the Y-bus: it carries the link
+# flow as well (sp_case188, Falkwik_380 with its coupler section: 103.8 MW
+# from the Y-bus against 160 MW generation). The estimator sums the
+# injections of a cluster (LINKAGG row), so Y-bus values of every member
+# would still add up, but a passive member replaced by a zero-injection row
+# breaks the sum: a noise-free set did not fit (J 3859). Per cluster the
+# device values must add up to the Y-bus total; a cluster where they do not
+# (an injection the node fields do not carry, e.g. a voltage-dependent
+# shunt) keeps the Y-bus values and is reported.
+function _link_cluster_device_injections(net::Net, Sbus_MVA::AbstractVector{ComplexF64}, is_iso::Function, iso_shift::Function)::Dict{Int,ComplexF64}
+  out = Dict{Int,ComplexF64}()
+  parent = collect(eachindex(net.nodeVec))
+  root(b) = parent[b] == b ? b : (parent[b] = root(parent[b]))
+  linked = Set{Int}()
+  for l in net.linkVec
+    l.status == 1 || continue
+    (is_iso(l.fromBus) || is_iso(l.toBus)) && continue
+    push!(linked, l.fromBus, l.toBus)
+    parent[root(l.fromBus)] = root(l.toBus)
+  end
+  isempty(linked) && return out
+  clusters = Dict{Int,Vector{Int}}()
+  for b in sort!(collect(linked))
+    push!(get!(clusters, root(b), Int[]), b)
+  end
+  # under a distributed slack a participating bus delivers its schedule plus
+  # its share of lambda_P; the solved bus field carries the share only at a
+  # reference bus (the schedule elsewhere), so take the delivered value the
+  # result tables report (sp_case188 Falkwik_380: 160 MW scheduled, 156.1 MW
+  # delivered)
+  _, ds_shares = _distributed_slack_bus_shares(net)
+  for (_, members) in sort!(collect(clusters); by = first)
+    dev = Dict{Int,ComplexF64}()
+    for b in members
+      nd = net.nodeVec[b]
+      share = get(ds_shares, b, nothing)
+      p_gen = share === nothing ? something(nd._pƩGen, 0.0) : last(_distributed_slack_bus_pgen(net, b, share[2]))
+      dev[b] = complex(p_gen - something(nd._pƩLoad, 0.0), something(nd._qƩGen, 0.0) - something(nd._qƩLoad, 0.0))
+    end
+    ybus_total = sum(Sbus_MVA[iso_shift(b)] for b in members)
+    dev_total = sum(values(dev))
+    if abs(dev_total - ybus_total) <= 1e-3 * max(1.0, abs(ybus_total))
+      merge!(out, dev)
+    else
+      names = join((net.nodeVec[b].comp.cName for b in members), ", ")
+      @warn "generateMeasurementsFromPF: the generation and load at the link cluster $(names) do not add up to its solved injection ($(dev_total) against $(ybus_total) MVA); its injection rows keep the Y-bus values, which include the link flows"
+    end
+  end
+  return out
+end
+
 """
     generateMeasurementsFromPF(net; kwargs...) -> Vector{Measurement}
 
 Generate synthetic measurements from the current solved network state.
+At a bus joined to others by a closed link the injection rows carry the
+bus's own solved generation minus load, the value a meter there reads,
+not the Y-bus injection, which includes the link flow.
 
 Keyword options:
 - `includeVm`, `includePinj`, `includeQinj`, `includePflow`, `includeQflow`
 - `includeImag`: add branch current-magnitude measurements in ampere for both
   ends (default `false`; auxiliary only, see `addImagMeasurement!`)
-- `includeShuntQ`: add shunt-bay reactive-power measurements in MVar for every
-  in-service shunt (default `false`; sign convention of the `q_shunt` results)
+- `includeShuntQ`: add shunt-bay reactive-power measurements in MVar, one per
+  bus with an in-service shunt, summed over the shunts at that bus (default
+  `false`; sign convention of the `q_shunt` results)
 - `includeVa`: add PMU voltage-angle measurements (degrees, default `false`)
 - `vaBusIdxs`: restrict Va measurements to these bus indices (default: all buses)
 - `vaRefOffsetDeg`: common angle offset added to all generated Va values,
@@ -710,6 +800,9 @@ function generateMeasurementsFromPF(
   Vc = isempty(iso_sorted) ? V : V[[i for i in eachindex(V) if !is_iso(i)]]
   Sbus_pu = calc_injections(createYBUS(net = net), Vc)
   Sbus_MVA = Sbus_pu .* net.baseMVA
+  # buses of a closed-link cluster read their own generation minus load
+  linkInj = _link_cluster_device_injections(net, Sbus_MVA, is_iso, iso_shift)
+  injMVA(i::Int) = get(linkInj, i, Sbus_MVA[iso_shift(i)])
 
   m = Measurement[]
   nbus = length(net.nodeVec)
@@ -729,13 +822,13 @@ function generateMeasurementsFromPF(
       push!(m, Measurement(typ = VaMeas, value = z, sigma = σ, busIdx = i, id = "Va_bus_$(i)"))
     end
     if includePinj
-      σ = rowσ(PinjMeas, real(Sbus_MVA[iso_shift(i)]))
-      z = real(Sbus_MVA[iso_shift(i)]) + (noise ? randn(rng) * σ : 0.0)
+      σ = rowσ(PinjMeas, real(injMVA(i)))
+      z = real(injMVA(i)) + (noise ? randn(rng) * σ : 0.0)
       push!(m, Measurement(typ = PinjMeas, value = z, sigma = σ, busIdx = i, id = "Pinj_bus_$(i)"))
     end
     if includeQinj
-      σ = rowσ(QinjMeas, imag(Sbus_MVA[iso_shift(i)]))
-      z = imag(Sbus_MVA[iso_shift(i)]) + (noise ? randn(rng) * σ : 0.0)
+      σ = rowσ(QinjMeas, imag(injMVA(i)))
+      z = imag(injMVA(i)) + (noise ? randn(rng) * σ : 0.0)
       push!(m, Measurement(typ = QinjMeas, value = z, sigma = σ, busIdx = i, id = "Qinj_bus_$(i)"))
     end
   end
@@ -782,13 +875,17 @@ function generateMeasurementsFromPF(
   end
 
   if includeShuntQ
+    # one row per bus: ShuntQMeas covers every in-service shunt at its bus
+    shunt_buses = Int[]
     for sh in net.shuntVec
       sh.status == 1 || continue
       is_iso(sh.busIdx) && continue
-      i = sh.busIdx
+      sh.busIdx in shunt_buses || push!(shunt_buses, sh.busIdx)
+    end
+    for i in shunt_buses
       # same analytic bay power as the ShuntQMeas prediction (and as
       # updateShuntPowers!), so the roundtrip is exact
-      q_MVar = imag(abs2(V[i]) * conj(sh.y_pu_shunt) * net.baseMVA)
+      q_MVar = imag(abs2(V[i]) * conj(_bus_shunt_y_pu(net, i)) * net.baseMVA)
       σ = rowσ(ShuntQMeas, q_MVar)
       push!(m, Measurement(typ = ShuntQMeas, value = q_MVar + (noise ? randn(rng) * σ : 0.0), sigma = σ, busIdx = i, id = "ShuntQ_bus_$(i)"))
     end
@@ -842,7 +939,9 @@ function deriveShuntPseudoMeasurements!(net::Net; sigmaFloor::Union{Nothing,Floa
       @warn "deriveShuntPseudoMeasurements!: shunt at bus $(i) skipped (no active Vm measurement at the bus; the voltage enters Q quadratically and nominal voltage is not an acceptable substitute)"
       continue
     end
-    b_model = imag(sh.y_pu_shunt)
+    # the bay current covers every in-service shunt at the bus: the sign
+    # comes from their summed susceptance
+    b_model = imag(_bus_shunt_y_pu(net, i))
     if b_model == 0.0
       @warn "deriveShuntPseudoMeasurements!: shunt at bus $(i) skipped (model susceptance is zero, no sign for the derived Q)"
       continue
@@ -1108,6 +1207,16 @@ function _measurement_type_from_name(s::AbstractString)
 end
 
 """
+    MEASUREMENT_CSV_V1_DEPRECATION
+
+The deprecation notice of the measurement CSV v1: `readMeasurementsCSV!`
+logs it as a warning once per session, the SE service writes it to the run
+log of every run on a v1 file and the Web UI shows it at such a file. It
+names the converter and the removal in 0.60.0.
+"""
+const MEASUREMENT_CSV_V1_DEPRECATION = "The measurement CSV v1 (# sparlectra-measurements v1) is deprecated and will be removed in 0.60.0. Convert the file to a measurement table with convertMeasurementsV1(v1_file, net; out) or `sparlectra convert-measurements <case> <v1.csv>`."
+
+"""
     readMeasurementsCSV!(net; file, replace=true) -> NamedTuple
 
 Read a measurement CSV v1 file (see `writeMeasurementsCSV`) into
@@ -1120,8 +1229,72 @@ measurements, `replace = false` appends.
 
 Returns `(counts = Dict{MeasurementType,Int}, total, skipped)`; `skipped`
 counts empty and comment lines after the version line.
+
+Deprecated: the measurement CSV v1 is read in 0.50.0 with a warning (once
+per session, `MEASUREMENT_CSV_V1_DEPRECATION`) and the reader is removed in
+0.60.0. `convertMeasurementsV1` writes the measurement table of a v1 file
+and its case; `readMeasurementTable!` reads the table.
 """
 function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = true)
+  # once per session (maxlog): a script reading many v1 files is told once;
+  # the SE service notes it in every run.log and the Web UI at the file
+  @warn MEASUREMENT_CSV_V1_DEPRECATION maxlog = 1
+  return _take_measurements_csv_v1!(net; file = file, replace = replace)
+end
+
+# The take-over of readMeasurementsCSV! without the deprecation warning:
+# for the measurement.csv artifact a Sparlectra run writes itself (still a
+# CSV v1 with its verdict columns), which is no user file to convert.
+function _take_measurements_csv_v1!(net::Net; file::AbstractString, replace::Bool = true)
+  v1 = _read_measurements_csv_v1(net, file)
+  parsed = v1.measurements
+  counts = v1.counts
+  skipped = v1.skipped
+
+  # A zero-injection row is a constraint, and older sets wrote it with sigma
+  # 1e-6, i.e. weight 1e12. On a large network that does not bind the bus, it
+  # crushes the normal equations: a 25000-bus set with 27268 such rows did not
+  # converge in 30 iterations and reported an objective of 3.8e15 per degree of
+  # freedom. The same set at ZERO_INJECTION_SIGMA converges in 7 iterations to
+  # J/dof 4.97 (and to 1.00 once the documented tap deviations are released).
+  # Reading therefore lifts a constraint row to the current floor and says so;
+  # ordinary telemetry is untouched, its tightest rows are orders of magnitude
+  # above this.
+  lifted = 0
+  for (i, m) in enumerate(parsed)
+    m.sigma < ZERO_INJECTION_SIGMA || continue
+    parsed[i] = Measurement(typ = m.typ, value = m.value, sigma = ZERO_INJECTION_SIGMA, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, active = m.active, linkIdx = m.linkIdx)
+    lifted += 1
+  end
+  lifted > 0 && @info "measurement set: $(lifted) constraint row(s) had a sigma below $(ZERO_INJECTION_SIGMA) and were read at that value (a tighter weight makes the normal equations unsolvable at scale)"
+
+  # atomic take-over only after the whole file validated
+  if replace
+    empty!(net.measurements)
+  end
+  append!(net.measurements, parsed)
+
+  # A generated set holds each physical quantity once. Two readings of the same
+  # quantity are legal in real telemetry (redundant transducers), but a set that
+  # doubles EVERY quantity is the signature of a corrupted file, and it inflates
+  # J without any single residual looking wrong - which then reads as a topology
+  # error. Name it here instead of letting the estimate mislead.
+  # checked on the RESULT, not on the parsed rows: with `replace = false` the
+  # doubling arises from the combination, which is exactly how a set gets
+  # corrupted (generated rows appended onto rows the case already carried)
+  duplicates = _duplicate_measured_quantities(net.measurements)
+  if !isempty(duplicates)
+    @warn "$(basename(file)): $(sum(values(duplicates))) measurement(s) repeat a quantity already measured; a set that repeats every quantity is usually a corrupted file and inflates J." duplicates
+  end
+  return (counts = counts, total = length(parsed), skipped = skipped, duplicates = duplicates)
+end
+
+# The parse of a measurement CSV v1 shared by readMeasurementsCSV! and
+# convertMeasurementsV1: every row as a Measurement (sigma as written, not
+# lifted), its line number in the file, the count per type and the skipped
+# comment and empty lines. Errors name file and line; nothing is changed in
+# `net`.
+function _read_measurements_csv_v1(net::Net, file::AbstractString)
   lines = readlines(file)
   isempty(lines) && error("$(file): empty file, expected the version comment '# $(_MEASUREMENT_CSV_VERSION)'")
   vline = strip(lines[1])
@@ -1129,6 +1302,7 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
   vline == expected || error("$(file):1: unknown measurement file version ('$(vline)'; expected '$(expected)')")
 
   parsed = Measurement[]
+  parsed_lines = Int[]
   counts = Dict{MeasurementType,Int}()
   skipped = 0
   headerSeen = false
@@ -1225,46 +1399,11 @@ function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = tr
       error("$(file):$(ln): $(msg)")
     end
     push!(parsed, m)
+    push!(parsed_lines, ln)
     counts[typ] = get(counts, typ, 0) + 1
   end
   headerSeen || error("$(file): missing header line '$(_MEASUREMENT_CSV_HEADER)'")
-
-  # A zero-injection row is a constraint, and older sets wrote it with sigma
-  # 1e-6, i.e. weight 1e12. On a large network that does not bind the bus, it
-  # crushes the normal equations: a 25000-bus set with 27268 such rows did not
-  # converge in 30 iterations and reported an objective of 3.8e15 per degree of
-  # freedom. The same set at ZERO_INJECTION_SIGMA converges in 7 iterations to
-  # J/dof 4.97 (and to 1.00 once the documented tap deviations are released).
-  # Reading therefore lifts a constraint row to the current floor and says so;
-  # ordinary telemetry is untouched, its tightest rows are orders of magnitude
-  # above this.
-  lifted = 0
-  for (i, m) in enumerate(parsed)
-    m.sigma < ZERO_INJECTION_SIGMA || continue
-    parsed[i] = Measurement(typ = m.typ, value = m.value, sigma = ZERO_INJECTION_SIGMA, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, active = m.active)
-    lifted += 1
-  end
-  lifted > 0 && @info "measurement set: $(lifted) constraint row(s) had a sigma below $(ZERO_INJECTION_SIGMA) and were read at that value (a tighter weight makes the normal equations unsolvable at scale)"
-
-  # atomic take-over only after the whole file validated
-  if replace
-    empty!(net.measurements)
-  end
-  append!(net.measurements, parsed)
-
-  # A generated set holds each physical quantity once. Two readings of the same
-  # quantity are legal in real telemetry (redundant transducers), but a set that
-  # doubles EVERY quantity is the signature of a corrupted file, and it inflates
-  # J without any single residual looking wrong - which then reads as a topology
-  # error. Name it here instead of letting the estimate mislead.
-  # checked on the RESULT, not on the parsed rows: with `replace = false` the
-  # doubling arises from the combination, which is exactly how a set gets
-  # corrupted (generated rows appended onto rows the case already carried)
-  duplicates = _duplicate_measured_quantities(net.measurements)
-  if !isempty(duplicates)
-    @warn "$(basename(file)): $(sum(values(duplicates))) measurement(s) repeat a quantity already measured; a set that repeats every quantity is usually a corrupted file and inflates J." duplicates
-  end
-  return (counts = counts, total = length(parsed), skipped = skipped, duplicates = duplicates)
+  return (measurements = parsed, lines = parsed_lines, counts = counts, skipped = skipped)
 end
 
 """

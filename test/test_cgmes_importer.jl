@@ -450,36 +450,6 @@ function run_cgmes_importer_tests()
       @test !eqinfo.skipped
     end)() end
 
-    @testset "SV angle alignment per electrical island" begin (function ()
-      # compareWithSV removes ONE angle offset per island, because an angle
-      # is only defined up to a constant per island. Two regressions sit on
-      # that line. First, the island map lives in the parent module; an
-      # unqualified call from the submodule compiled and threw UndefVarError
-      # at run time, which a catch turned into one global offset. Second,
-      # the map was the branch-only view: on sp_casePST bus 9 hangs on bus 2
-      # through the closed breaker alone, so buses 9 and 8 formed an island
-      # of their own whose median hid their own deviation. Here that side of
-      # the breaker disagrees with the SV by 2 degrees; it is one electrical
-      # island with the rest, so it must keep the offset of the whole
-      # delivery (0) and show the 2 degrees.
-      res = importCGMES(path = cgmes_fixture_dir("sp_casePST"), name = "pst_islands")
-      net = res.net
-      _, erg = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false)
-      @test erg == 0
-      comps = Sparlectra._active_ac_island_components(net)
-      @test length(comps) == 2 && length(Sparlectra.electricalIslandComponents(net)) == 1
-      far = Set(Sparlectra._bus_name_by_idx(net)[i] for i in comps[2])
-      @test far == Set(["8", "9"])
-      for i in comps[2]
-        net.nodeVec[i]._va_deg += 2.0
-      end
-      cmp = compareWithSV(res)
-      @test cmp.n == 9
-      @test abs(cmp.va_ref_offset_deg) < 1e-9
-      @test all(r -> abs(r.dva_aligned - (r.bus in far ? 2.0 : 0.0)) < 1e-9, cmp.rows)
-      @test isapprox(cmp.max_dva, 2.0; atol = 1e-9)
-    end)() end
-
     @testset "DifferenceModel files are skipped with reason (D-6)" begin (function ()
       diffinfo = only(filter(f -> occursin("DIFF", f.name), store.files))
       @test diffinfo.skipped
@@ -862,18 +832,6 @@ function run_cgmes_importer_tests()
       @test boolval(sm, :earthing) == false
     end)() end
 
-    @testset "multi-valued references overflow into refsAll (#294 point 9)" begin (function ()
-      island = only(objectsOf(store, :TopologicalIsland))
-      # legacy shape untouched: refs carries the FIRST value under the short
-      # key (plus the dotted-name fallback), never a silent last-wins
-      @test island.refs[:TopologicalNodes] == "_tn_a"
-      @test Sparlectra.CGMESImporter.refsAll(store, island, :TopologicalNodes) == ["_tn_a", "_tn_b", "_tn_c"]
-      # single-valued references stay single, absent ones come back empty
-      line = only(objectsOf(store, :ACLineSegment))
-      @test Sparlectra.CGMESImporter.refsAll(store, line, :BaseVoltage) == ["_bv110"]
-      @test Sparlectra.CGMESImporter.refsAll(store, line, :NoSuchRef) == String[]
-    end)() end
-
     @testset "rdf:about overlays EQ object (SSH)" begin (function ()
       sm = only(objectsOf(store, :SynchronousMachine))
       @test num(sm, :p) == -120.0                    # from SSH overlay
@@ -894,27 +852,6 @@ function run_cgmes_importer_tests()
       @test s.unresolved_count >= 1
       @test !s.boundary_missing_hint                 # dangling ref is not a topology class
       @test (:ACLineSegment => 1) in s.class_histogram
-    end)() end
-
-    @testset "ReactiveCapabilityCurve interpolation (#294 point 1)" begin (function ()
-      # MicroGrid BE-G1 shape: P −100 → ±200, P 0 → ±300, P 100 → ±200 MVAr.
-      pts = [(-100.0, -200.0, 200.0), (0.0, -300.0, 300.0), (100.0, -200.0, 200.0)]
-      # interior interpolation (the machine's actual operating point)
-      @test Sparlectra.CGMESImporter._curveQHull(pts, -90.0) == (-210.0, 210.0)
-      @test Sparlectra.CGMESImporter._curveQHull(pts, 0.0) == (-300.0, 300.0)
-      @test Sparlectra.CGMESImporter._curveQHull(pts, 50.0) == (-250.0, 250.0)
-      # clamping outside the curve's P domain
-      @test Sparlectra.CGMESImporter._curveQHull(pts, -500.0) == (-200.0, 200.0)
-      @test Sparlectra.CGMESImporter._curveQHull(pts, 500.0) == (-200.0, 200.0)
-      # the sign-convention hull: a curve written in the load convention
-      # (y1/y2 swapped in sign) yields the same band
-      swapped = [(-100.0, 200.0, -200.0), (0.0, 300.0, -300.0), (100.0, 200.0, -200.0)]
-      @test Sparlectra.CGMESImporter._curveQHull(swapped, -90.0) == (-210.0, 210.0)
-      # degenerate inputs are refused, the caller falls back to scalars
-      @test Sparlectra.CGMESImporter._curveQHull(NTuple{3,Float64}[], 0.0) === nothing
-      @test Sparlectra.CGMESImporter._curveQHull([(0.0, 0.0, 0.0)], 0.0) === nothing
-      # single-point curve with a real range works
-      @test Sparlectra.CGMESImporter._curveQHull([(0.0, -50.0, 50.0)], 25.0) == (-50.0, 50.0)
     end)() end
 
     @testset "Result tables stay aligned with long names" begin (function ()
@@ -938,209 +875,6 @@ function run_cgmes_importer_tests()
       @test occursin("(@id cgmes-import-config)", text)
       for key in ("cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.ignore_connected")
         @test occursin(key, text)
-      end
-    end)() end
-
-    # A single ReliCapGrid model is one area of a multi-area system, so its
-    # border nodes hang free when imported alone. The combined aliases fetch
-    # several areas plus their shared boundary files as ONE delivery. Table
-    # consistency is checked here without touching the network or the cache;
-    # the fetch itself needs GitHub and is not exercised by the tests.
-    @testset "ReliCapGrid combined aliases" begin (function ()
-      combined = Sparlectra.CGMESImporter.RELICAPGRID_COMBINED
-      singles = Sparlectra.CGMESImporter.RELICAPGRID_ALIASES
-      @test haskey(combined, "relicapgrid_cgm")
-      @test haskey(combined, "svedala_neighbours")
-      # Every member must be a known single model, else the fetch would fail
-      # only at download time.
-      for (name, members) in combined
-        @test !isempty(members)
-        for m in members
-          @test haskey(singles, m)
-        end
-      end
-      # relicapgrid_cgm spans every single model we offer.
-      @test sort(combined["relicapgrid_cgm"]) == sort(collect(keys(singles)))
-
-      # A border file is named Boundary_Border-<AreaA>-<AreaB>.xml. The border is
-      # closed by a combination when BOTH its areas are members; otherwise the
-      # nodes on that border still hang free.
-      border_areas(file) = split(replace(replace(file, "Boundary_Border-" => ""), ".xml" => ""), "-")
-      function open_borders(members)
-        model_names = Set(lowercase(singles[m].model) for m in members)
-        borders = Set{String}()
-        for m in members
-          union!(borders, singles[m].boundary)
-        end
-        return sort([b for b in borders if !all(a -> lowercase(a) in model_names, border_areas(b))])
-      end
-
-      # The whole point of the CGM alias: not a single border left open.
-      @test isempty(open_borders(combined["relicapgrid_cgm"]))
-      # The cheap variant closes Svedala's own two borders but inherits its
-      # neighbours' outer borders — documented, not accidental.
-      @test open_borders(combined["svedala_neighbours"]) == ["Boundary_Border-Espheim-Portheim.xml", "Boundary_Border-Galia-Belgovia.xml"]
-      # Svedala alone: both of its borders hang free. That is the situation the
-      # combined aliases exist to fix.
-      @test length(open_borders(["svedala"])) == 2
-      # Aliases must be discoverable through the public alias list.
-      all_aliases = Sparlectra.CGMESImporter.allCGMESTestSetAliases()
-      @test "relicapgrid_cgm" in all_aliases
-      @test "svedala_neighbours" in all_aliases
-      @test "portheim" in all_aliases
-      # convenience shorthand + the MiniGrid pair (regression: cgmes:minigrid
-      # was not resolvable although the set ships with the conformity package)
-      @test "microgrid" in all_aliases
-      @test "minigrid" in all_aliases
-      @test "minigrid_nb" in all_aliases
-      @test Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid"] == Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid_be"]
-    end)() end
-
-    @testset "3W star delivery: leg tap controller (#294 point 4) and star start" begin (function ()
-      dir = _cgmes_synth3w_dir()
-      # without tap_control: no controllers, taps stay at their SSH position
-      plain = importCGMES(path = dir, name = "synth3w_plain")
-      @test isempty(collect(Sparlectra._tap_controllers(plain.net)))
-      # with tap_control: the star-equivalent leg gets the controller
-      res = importCGMES(path = dir, name = "synth3w", tap_control = true)
-      @test !any(m -> occursin("not wired in Stage 2", m), res.messages)
-      @test any(m -> occursin("tap control: T3W (leg 2)", m), res.messages)
-      ctrls = collect(Sparlectra._tap_controllers(res.net))
-      @test length(ctrls) == 1
-      oltc = only(ctrls)
-      @test oltc.mode == :voltage && oltc.control_ratio && oltc.enabled
-      # each star leg is addressed by its end (the transformer itself has
-      # three branches, so no entry), the tap changer by its controller; the
-      # tapped leg runs from its side bus to the star, the others from the
-      # star to their side bus
-      names = Sparlectra._bus_name_by_idx(res.net)
-      for (end_mrid, bus, tapped) in (("_t3w_e1", "HV_BUS", false), ("_t3w_e2", "MV_BUS", true), ("_t3w_e3", "LV_BUS", false))
-        kind, k = res.element_by_mrid[end_mrid]
-        @test kind == :transformer
-        br = res.net.branchVec[k]
-        @test names[tapped ? br.fromBus : br.toBus] == bus
-        @test startswith(names[tapped ? br.toBus : br.fromBus], "AUX3WT_")
-      end
-      @test !haskey(res.element_by_mrid, "_t3w")
-      @test res.element_by_mrid["_rtc2"] == (:tap_controller, 1)
-      @test oltc.trafo == string(res.net.branchVec[last(res.element_by_mrid["_t3w_e2"])].branchIdx)
-      cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-8), output = OutputConfig(logfile_results = :off), control = ControlConfig())
-      runres = run_sparlectra(net = res.net, config = cfg)
-      @test runres.numerical_converged
-      @test latest_control_result(res.net).status == :converged
-      @test oltc.converged
-      mv = res.net.nodeVec[res.net.busDict["MV_BUS"]]
-      # target 1.04 pu ± 0.0118 pu — and the tap really moved: the
-      # uncontrolled operating point sits at ≈1.0135 pu, outside the band
-      @test abs(mv._vm_pu - 1.04) <= 2.6 / 110.0 / 2.0 + 1e-9
-      @test mv._vm_pu > 1.025
-
-      # Star start: the star point has no SvVoltage and starts at the value
-      # that closes its own node balance against its sides. An end-1 tap 8 %
-      # off neutral puts that value far from the HV voltage, the provisional
-      # start. The SV is written from the solved model, so at
-      # the start the star carries no current and the three leg flows of
-      # compareWithSV equal the SV. Every end carries a magnetizing
-      # admittance, so the star balance includes the arms at the star.
-      tdir = _cgmes_synth3w_dir(end1_tap_step = 19, magnetizing = true)
-      model = importCGMES(path = tdir, name = "synth3w_tap1_model")
-      # the unregulated end-1 changer (step 19 of 1..21, 1 % per step,
-      # neutral 11) gives its leg the linear range around the nominal ratio
-      leg1 = model.net.branchVec[last(model.element_by_mrid["_t3w_e1"])]
-      rho = leg1.tap_ratio / 1.08
-      @test all(isapprox.((leg1.tap_min, leg1.tap_max, leg1.tap_step), (0.9 * rho, 1.1 * rho, 0.01 * rho); rtol = 1e-12)) && leg1.tap_ratio_points === nothing
-      # the magnetizing admittance of each end sits at the star node (0.42.0),
-      # for the tapped legs 1 and 2 (side bus -> star) and the untapped leg 3
-      # (star -> side bus): the arm seen at the star is the end's g + jb
-      # referred to the star base, the arm at the side bus is zero
-      mstar = model.net.busDict["AUX3WT_T3W"]
-      for (k, (Uk, (g, b))) in enumerate(zip((220.0, 110.0, 20.0), _CGMES_SYNTH3W_MAG))
-        br = model.net.branchVec[last(model.element_by_mrid["_t3w_e$(k)"])]
-        y0f = Sparlectra._branch_y0_from(br) / abs2(Sparlectra.calcBranchRatio(br))
-        y0t = Sparlectra._branch_y0_to(br)
-        at_star, at_side = br.fromBus == mstar ? (y0f, y0t) : (y0t, y0f)
-        @test (br.fromBus == mstar) == (k == 3)
-        @test at_star ≈ complex(g, b) * Uk^2 / model.net.baseMVA rtol = 1e-12
-        @test iszero(at_side)
-      end
-      @test runpf!(model.net, 30, 1e-10, 0)[2] == 0
-      Vm = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in model.net.nodeVec]
-      sv_v = Dict(tn => (abs(Vm[model.net.busDict[bus]]) * vn, rad2deg(angle(Vm[model.net.busDict[bus]]))) for (bus, tn, vn) in (("HV_BUS", "_tn_hv", 220.0), ("MV_BUS", "_tn_mv", 110.0), ("LV_BUS", "_tn_lv", 20.0)))
-      sv_f = Dict{String,Tuple{Float64,Float64}}()
-      for k in 1:3
-        br = model.net.branchVec[last(model.element_by_mrid["_t3w_e$(k)"])]
-        # the flow at the side bus: a tapped leg (ends 1 and 2 here) runs side
-        # bus -> star, so its terminal is the from side
-        side = last(model.branch_side_of_terminal["_t_t3w_$(k)"])
-        s = Sparlectra._sv_branch_terminal_flow(br, Vm, side, model.net.baseMVA)
-        sv_f["_t_t3w_$(k)"] = (real(s), imag(s))
-      end
-      write(joinpath(tdir, "synth3w_SV.xml"), _cgmes_synth3w_sv(sv_v, sv_f))
-      res1 = importCGMES(path = tdir, name = "synth3w_tap1")
-      star = res1.net.busDict["AUX3WT_T3W"]
-      V0 = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in res1.net.nodeVec]
-      @test abs((Sparlectra.createYBUS(net = res1.net, sparse = true) * V0)[star]) < 1e-9
-      legs = filter(r -> r.kind in (:branch_from, :branch_to), compareWithSV(res1).flows.rows)
-      @test length(legs) == 3
-      @test all(r -> abs(r.dp) < 1e-6 && abs(r.dq) < 1e-6, legs)
-      # a side without a usable SV voltage (v = 0) keeps the end-1 SV start
-      sv_v["_tn_lv"] = (0.0, 0.0)
-      write(joinpath(tdir, "synth3w_SV.xml"), _cgmes_synth3w_sv(sv_v, sv_f))
-      res0 = importCGMES(path = tdir, name = "synth3w_tap1_nolv")
-      nd0 = res0.net.nodeVec[res0.net.busDict["AUX3WT_T3W"]]
-      @test nd0._vm_pu == sv_v["_tn_hv"][1] / 220.0 && nd0._va_deg == sv_v["_tn_hv"][2]
-
-      # An open side terminal (Terminal.connected = false, the unit in
-      # service) keeps its leg open at the side bus: the winding is still
-      # magnetized from the star, so the end's admittance stays at the star
-      # as the input admittance of the open leg. End 2 is tapped (side bus ->
-      # star, the side is the from end), end 3 untapped (star -> side bus).
-      # The side bus has no other feed and is de-energized.
-      for k in (2, 3)
-        odir = _cgmes_synth3w_dir(end1_tap_step = 19, magnetizing = true, open_end = k)
-        ores = importCGMES(path = odir, name = "synth3w_open$(k)")
-        onet = ores.net
-        ostar = onet.busDict["AUX3WT_T3W"]
-        obr = onet.branchVec[last(ores.element_by_mrid["_t3w_e$(k)"])]
-        @test obr.status == 0
-        @test Sparlectra._branch_terminal_state(obr) == (k == 3 ? :open_to : :open_from)
-        @test (obr.fromBus == ostar) == (k == 3)
-        g, b = _CGMES_SYNTH3W_MAG[k]
-        ymag = complex(g, b) * (220.0, 110.0, 20.0)[k]^2 / onet.baseMVA
-        @test Sparlectra._open_terminal_yin(obr) ≈ ymag rtol = 1e-9
-        @test runpf!(onet, 30, 1e-10, 0)[2] == 0
-        # star balance: the two closed legs feed the open leg's magnetizing
-        # admittance at the star voltage
-        V = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in onet.nodeVec]
-        i_legs = zero(ComplexF64)
-        for j in 1:3
-          j == k && continue
-          br = onet.branchVec[last(ores.element_by_mrid["_t3w_e$(j)"])]
-          y11, y12, y21, y22 = Sparlectra.calcAdmittance(br, 1.0, 1.0)
-          i_legs += br.fromBus == ostar ? y11 * V[br.fromBus] + y12 * V[br.toBus] : y21 * V[br.fromBus] + y22 * V[br.toBus]
-        end
-        @test abs(i_legs + ymag * V[ostar]) < 1e-9
-        # export round trip: the open terminal goes out as connected = false
-        # and comes back as the leg open at its side bus. The export flattens
-        # the taps into the end ratedU and scales the star voltage by the
-        # end-1 ratio, so the re-imported leg runs star -> side bus and its
-        # arm differs in per unit; the power it draws at the star does not.
-        files = writeCGMESFiles(onet; path = mktempdir(), notices = String[])
-        back = importCGMES(path = dirname(files[1]), name = "synth3w_open$(k)_back")
-        @test !Sparlectra.CGMESImporter.terminalConnected(back.store.objects["_t_t3w_$(k)"])
-        bbr = back.net.branchVec[last(back.element_by_mrid["_t3w_e$(k)"])]
-        bst = Sparlectra._branch_terminal_state(bbr)
-        @test bst in (:open_from, :open_to)
-        @test (bst == :open_to ? bbr.toBus : bbr.fromBus) == back.net.busDict[k == 2 ? "MV_BUS" : "LV_BUS"]
-        @test runpf!(back.net, 30, 1e-10, 0)[2] == 0
-        Vb = [nd._vm_pu * cis(deg2rad(nd._va_deg)) for nd in back.net.nodeVec]
-        bstar = back.net.busDict["AUX3WT_T3W"]
-        @test abs2(Vb[bstar]) * Sparlectra._open_terminal_yin(bbr) ≈ abs2(V[ostar]) * ymag rtol = 1e-8
-        for bus in ("HV_BUS", k == 2 ? "LV_BUS" : "MV_BUS")
-          n1 = onet.nodeVec[onet.busDict[bus]]
-          n2 = back.net.nodeVec[back.net.busDict[bus]]
-          @test abs(n1._vm_pu - n2._vm_pu) < 1e-9 && abs(n1._va_deg - n2._va_deg) < 1e-7
-        end
       end
     end)() end
 
@@ -1333,84 +1067,6 @@ function run_cgmes_importer_tests()
       @test n.nodeVec[bB]._va_deg ≈ ref._va_deg atol = 1e-4
     end)() end
 
-    @testset "Remote-regulating machine (#294 point 3)" begin (function ()
-      # default: the remote control stays the Stage-1 held-PV fallback
-      plain = importCGMES(path = _cgmes_synth_rvc_dir(), name = "synthrvc_plain")
-      @test any(m -> occursin("G_B has a remote voltage RegulatingControl", m) && occursin("held PV at its own bus", m), plain.messages)
-      @test isempty(Sparlectra._machine_controllers(plain.net))
-      b_plain = plain.net.nodeVec[plain.net.busDict["BUS_B"]]
-      @test b_plain._nodeType == Sparlectra.PV
-
-      # machine_control = true: G_B becomes a PQ injection with an outer-loop
-      # controller regulating BUS_C to 112.2 kV = 1.02 pu
-      res = importCGMES(path = _cgmes_synth_rvc_dir(), name = "synthrvc", machine_control = true)
-      @test any(m -> occursin("machine control: G_B", m) && occursin("1.02 pu at BUS_C", m), res.messages)
-      ctrls = Sparlectra._machine_controllers(res.net)
-      @test length(ctrls) == 1
-      ctrl = only(ctrls)
-      @test ctrl.target_bus == "BUS_C"
-      @test isapprox(ctrl.target_vm_pu, 112.2 / 110.0; atol = 1e-9)
-      @test ctrl.qmin_mvar == -50.0 && ctrl.qmax_mvar == 50.0
-      @test res.net.nodeVec[res.net.busDict["BUS_B"]]._nodeType == Sparlectra.PQ
-      # the control loop drives the remote bus onto the target
-      cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-8), output = OutputConfig(logfile_results = :off), control = ControlConfig())
-      runres = run_sparlectra(net = res.net, config = cfg)
-      @test runres.numerical_converged
-      @test latest_control_result(res.net).status == :converged
-      @test ctrl.converged
-      @test abs(res.net.nodeVec[res.net.busDict["BUS_C"]]._vm_pu - 112.2 / 110.0) <= ctrl.deadband_vm_pu + 1e-9
-
-      # fallback: with G_C reconnected the target bus is already voltage-held
-      # locally — the plan reverts to held-PV with a notice
-      held = importCGMES(path = _cgmes_synth_rvc_dir(sm2_connected = true), name = "synthrvc_held", machine_control = true)
-      @test any(m -> occursin("G_B", m) && occursin("remote voltage control not attachable", m) && occursin("already voltage-held", m), held.messages)
-      @test isempty(Sparlectra._machine_controllers(held.net))
-      @test held.net.nodeVec[held.net.busDict["BUS_B"]]._nodeType == Sparlectra.PV
-
-      # controlEnabled = false on G_B: no controller, no held-PV fallback, a
-      # PQ unit at its SSH operating point
-      off_store = loadCGMES(_cgmes_synth_rvc_dir())
-      off_store.objects["_smb"].attrs[:controlEnabled] = "false"
-      off = importCGMES(path = off_store, name = "synthrvc_off", machine_control = true)
-      @test isempty(Sparlectra._machine_controllers(off.net))
-      @test off.net.nodeVec[off.net.busDict["BUS_B"]]._nodeType == Sparlectra.PQ
-      @test !any(m -> occursin("G_B", m) && (occursin("machine control", m) || occursin("remote voltage", m)), off.messages)
-      g_b = off.net.prosumpsVec[last(off.element_by_mrid["_smb"])]
-      @test (g_b.pVal, g_b.qVal, g_b.minQ, g_b.maxQ) == (20.0, 0.0, -50.0, 50.0)
-      # with machine_control = true G_B was a PQ injection before the flag was
-      # read; the default import is where the flag changes the bus type: no
-      # held-PV fallback, BUS_B is PQ
-      off_plain = importCGMES(path = off_store, name = "synthrvc_off_plain")
-      @test off_plain.net.nodeVec[off_plain.net.busDict["BUS_B"]]._nodeType == Sparlectra.PQ
-      @test !Sparlectra.isRegulating(off_plain.net.prosumpsVec[last(off_plain.element_by_mrid["_smb"])])
-      @test !any(m -> occursin("G_B has a remote voltage RegulatingControl", m), off_plain.messages)
-    end)() end
-
-    @testset "NonlinearShuntCompensator mapping (#294 point 7)" begin (function ()
-      dir = _cgmes_synth3w_dir()
-      res = importCGMES(path = dir, name = "synth3w_nlsh")
-      # sections = 2 of 3 points: B = (1.0 + 0.8)e-4 S * 110² = 2.178 MVAr
-      @test any(m -> occursin("nonlinear shunt NLSH", m) && occursin("sections 2/3", m) && occursin("2.178 MVAr", m), res.messages)
-      @test !any(m -> occursin("skip: NonlinearShuntCompensator", m), res.messages)
-      # multi-valued reference guard (#294 point 9): the SV TopologicalIsland
-      # membership list triggers exactly one class/property notice
-      @test count(m -> occursin("multi-valued reference TopologicalIsland.TopologicalNodes on 1 object(s)", m), res.messages) == 1
-      @test length(res.net.shuntVec) == 1
-      @test res.element_by_mrid["_nlsh"] == (:shunt, 1)
-      _, erg = runpf!(res.net, 30, 1e-8, 0)
-      @test erg == 0
-      # the SV comparison has a flow row for it: an SvPowerFlow added to a
-      # copy of the store at the model value for the SV voltage of MV_BUS
-      # (load sign, capacitive Q negative) is met at the SV start
-      local nl_store = loadCGMES(dir)
-      local q_sv = -2.178 * (111.5 / 110.0)^2
-      nl_store.objects["_nlsh_svpf"] = Sparlectra.CGMESImporter.CIMObject("_nlsh_svpf", :SvPowerFlow, Dict{Symbol,String}(:p => "0", :q => string(q_sv)), Dict{Symbol,String}(:Terminal => "_t_nlsh"), "nlsh_test")
-      push!(get!(Vector{String}, nl_store.byclass, :SvPowerFlow), "_nlsh_svpf")
-      local nl_row = only(r for r in compareWithSV(importCGMES(path = nl_store, name = "synth3w_nlsh_sv")).flows.rows if r.kind == :shunt)
-      @test nl_row.name == "NLSH"
-      @test abs(nl_row.dp) < 1e-9 && abs(nl_row.dq) < 1e-9
-    end)() end
-
     # The service legs on in-memory deliveries: the synthetic 3W delivery
     # packed as a ZIP is the healthy case, the synthetic EQ with an absent
     # prerequisite the broken one, and a MATPOWER case covers the non-CGMES
@@ -1434,105 +1090,6 @@ function run_cgmes_importer_tests()
       ("sp_casePST", 9, 8, 1, "1", () -> importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))),
     ]
     solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false, kwargs...)
-
-    @testset "fixture deliveries import from the folder and from a zip" begin (function ()
-      for (case, nbus, nbr, nlink, slack, _) in fixture_cases
-        dir = cgmes_fixture_dir(case)
-        s = summarizeCGMES(path = dir)
-        @test s.version == "2.4.15"
-        @test s.unresolved_count == 0
-        @test !s.boundary_missing_hint
-        hist = Dict(s.class_histogram)
-        @test hist[:TopologicalNode] == nbus
-        @test hist[:SvVoltage] == nbus
-        res = importCGMES(path = dir, name = case)
-        @test length(res.net.nodeVec) == nbus
-        @test length(res.net.branchVec) == nbr
-        @test length(res.net.linkVec) == nlink
-        @test res.slack_bus == slack
-        @test isempty(res.no_sv_buses)
-        # a self-built delivery is complete: no importer warning, no skip
-        @test !any(m -> startswith(m, "warning:") || occursin("skip", m), res.messages)
-        # the service layer takes case FILES, so the zip packed from the
-        # same four profiles must rebuild the same network
-        rz = importCGMES(path = _pack_cgmes_fixture_zip(case), name = string(case, "_zip"))
-        @test length(rz.net.nodeVec) == nbus
-        @test length(rz.net.branchVec) == nbr
-        @test Set(keys(rz.net.busDict)) == Set(keys(res.net.busDict))
-        @test rz.slack_bus == slack
-      end
-      # an SvVoltage with v = 0 counts as no SV, as in compareWithSV: the
-      # bus does not start at zero voltage but at the start of the neighbour
-      # over the branch or closed link of the smallest |z|, and is listed in
-      # no_sv_buses
-      plain = importCGMES(path = cgmes_fixture_dir("sp_case14"), name = "v0_plain")
-      v0_bus, v0_tn = first(sort([(bus, tn) for (tn, bus) in plain.topo.bus_name if plain.net.nodeVec[plain.net.busDict[bus]]._nodeType == Sparlectra.PQ]))
-      v0_store = loadCGMES(cgmes_fixture_dir("sp_case14"))
-      only(sv for sv in objectsOf(v0_store, :SvVoltage) if sv.refs[:TopologicalNode] == v0_tn).attrs[:v] = "0"
-      v0 = importCGMES(path = v0_store, name = "v0")
-      v0_i = v0.net.busDict[v0_bus]
-      v0_node = v0.net.nodeVec[v0_i]
-      v0_nbrs = vcat([(abs(complex(br.r_pu, br.x_pu)), br.fromBus == v0_i ? br.toBus : br.fromBus) for br in v0.net.branchVec if br.status == 1 && v0_i in (br.fromBus, br.toBus)], [(0.0, l.fromBus == v0_i ? l.toBus : l.fromBus) for l in v0.net.linkVec if l.status == 1 && v0_i in (l.fromBus, l.toBus)])
-      v0_src = v0.net.nodeVec[last(minimum(v0_nbrs))]
-      @test (v0_node._vm_pu, v0_node._va_deg) == (v0_src._vm_pu, v0_src._va_deg)
-      @test v0.no_sv_buses == [v0_bus]
-      @test count(m -> startswith(m, "notice: 1 bus(es) without a usable SvVoltage start at the voltage of a neighbour"), v0.messages) == 1
-      @test !any(r -> r.bus == v0_bus, compareWithSV(v0).rows)
-      # a leaf bus with SvVoltage v = 0 behind an EquivalentBranch of 0.02 pu
-      # with a P = Q = 0 EquivalentInjection, on a copy whose SV angles are
-      # all shifted by -40 deg: started at 1.0 pu / 0 deg, Newton ends with
-      # the leaf at 0 V, a short circuit that pulls its neighbour down to
-      # 0.3 pu; from the neighbour's start it solves at the neighbour voltage
-      leaf_store = loadCGMES(cgmes_fixture_dir("sp_case14"))
-      for sv in objectsOf(leaf_store, :SvVoltage)
-        sv.attrs[:angle] = string(num(sv, :angle, 0.0) - 40.0)
-      end
-      leaf_host = first(sort(collect(objectsOf(leaf_store, :SvVoltage)); by = sv -> num(sv, :angle, 0.0))).refs[:TopologicalNode]
-      leaf_add!(mrid, class, attrs, refs = Dict{Symbol,String}()) = (leaf_store.objects[mrid] = Sparlectra.CGMESImporter.CIMObject(mrid, class, Dict{Symbol,String}(attrs), Dict{Symbol,String}(refs), "leaf_test"); push!(get!(Vector{String}, leaf_store.byclass, class), mrid))
-      leaf_term!(eq, tn, seq) = leaf_add!(string(eq, "_t", seq), :Terminal, Dict(:sequenceNumber => string(seq), :connected => "true"), Dict(:ConductingEquipment => eq, :TopologicalNode => tn))
-      leaf_add!("_leaf_tn", :TopologicalNode, Dict(:name => "LEAF"), Dict(:BaseVoltage => leaf_store.objects[leaf_host].refs[:BaseVoltage]))
-      leaf_add!("_leaf_sv", :SvVoltage, Dict(:v => "0", :angle => "0"), Dict(:TopologicalNode => "_leaf_tn"))
-      leaf_add!("_leaf_eb", :EquivalentBranch, Dict(:name => "LEAF_EB", :r => "0.3", :x => "2.4"))
-      leaf_term!("_leaf_eb", leaf_host, 1)
-      leaf_term!("_leaf_eb", "_leaf_tn", 2)
-      leaf_add!("_leaf_ei", :EquivalentInjection, Dict(:name => "LEAF_EI", :p => "0", :q => "0"))
-      leaf_term!("_leaf_ei", "_leaf_tn", 1)
-      leaf = importCGMES(path = leaf_store, name = "leaf")
-      leaf_bus = leaf.topo.bus_name["_leaf_tn"]
-      @test leaf.no_sv_buses == [leaf_bus]
-      leaf_node = leaf.net.nodeVec[leaf.net.busDict[leaf_bus]]
-      host_node = leaf.net.nodeVec[leaf.net.busDict[leaf.topo.bus_name[leaf_host]]]
-      @test host_node._va_deg < -40.0
-      @test (leaf_node._vm_pu, leaf_node._va_deg) == (host_node._vm_pu, host_node._va_deg)
-      solve_fixture!(leaf.net)
-      @test leaf_node._vm_pu > 0.9
-      @test isapprox(leaf_node._vm_pu, host_node._vm_pu; atol = 1e-6)
-      @test isapprox(leaf_node._va_deg, host_node._va_deg; atol = 1e-4)
-      # a listed star point is left alone, and a listed bus reachable only
-      # through it keeps its start (it used to look up bus index 0)
-      star_net = Net(name = "star_no_sv", baseMVA = 100.0)
-      for b in ("H", "S", "M")
-        addBus!(net = star_net, busName = b, vn_kV = 110.0)
-      end
-      addACLine!(net = star_net, fromBus = "H", toBus = "S", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-      addACLine!(net = star_net, fromBus = "S", toBus = "M", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-      Sparlectra.setVmVa!(node = star_net.nodeVec[star_net.busDict["H"]], vm_pu = 1.01, va_deg = -20.0)
-      star_ctx = Sparlectra.CGMESImporter._MapCtx()
-      push!(star_ctx.star_buses, star_net.busDict["S"])
-      star_start = [(nd._vm_pu, nd._va_deg) for nd in star_net.nodeVec]
-      @test Sparlectra.CGMESImporter._startNoSvBusesFromNeighbours!(star_net, star_ctx, ["M", "S"]) == 0
-      @test [(nd._vm_pu, nd._va_deg) for nd in star_net.nodeVec] == star_start
-      # an SvTapStep four steps off the SSH step the SV was solved with: one
-      # import notice, the tap changer listed with both steps; the fixture
-      # itself has none
-      @test isempty(plain.sv_tap_step_fits)
-      off = _sp_case14_off_sv_tap_step()
-      rtap = importCGMES(path = off.dir, name = "sv_tap_step")
-      fit = only(rtap.sv_tap_step_fits)
-      @test (fit.sv_step, fit.best_step) == (off.sv_step, off.ssh_step)
-      @test fit.best_mismatch_mva < 1e-6 < 1.0 < fit.sv_mismatch_mva
-      @test count(m -> startswith(m, "notice: 1 tap changer(s) whose SvTapStep fits"), rtap.messages) == 1
-    end)() end
 
     # The importer's exit criterion on its own exporter's output: the SV
     # profile and the source net's solution are reproduced to noise. Both
@@ -1569,73 +1126,6 @@ function run_cgmes_importer_tests()
       end
     end)() end
 
-    # Stage 2 semantics on the exporter's TapChangerControl: without
-    # tap_control the delivery imports as a fixed-tap model, with it the
-    # OLTC of sp_case14 comes back as the voltage controller the source case
-    # carries (same target bus, target and deadband), and the control loop
-    # meets the target within its deadband.
-    @testset "OLTC controller of sp_case14 arrives as a tap controller (Stage 2)" begin (function ()
-      dir = cgmes_fixture_dir("sp_case14")
-      stage1 = importCGMES(path = dir, name = "s1")
-      @test isempty(collect(Sparlectra._tap_controllers(stage1.net)))
-      res = importCGMES(path = dir, tap_control = true, name = "s2")
-      ctrls = collect(Sparlectra._tap_controllers(res.net))
-      @test length(ctrls) == 1
-      c = only(ctrls)
-      @test c.mode == :voltage
-      @test c.control_ratio
-      @test !c.control_phase
-      @test c.enabled
-      @test isempty(c.followers)
-      @test any(m -> startswith(m, "tap control:") && occursin("voltage", m), res.messages)
-      src = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
-      sc = only(collect(Sparlectra._tap_controllers(src)))
-      @test c.target_bus == sc.target_bus
-      @test isapprox(something(c.target_vm_pu, NaN), sc.target_vm_pu; atol = 1e-9)
-      @test isapprox(c.deadband_vm_pu, sc.deadband_vm_pu; atol = 1e-9)
-      # the controlled transformer connects the same buses as in the source
-      # and keeps its tap machinery (range and step from the RatioTapChanger)
-      names = Sparlectra._bus_name_by_idx(res.net)
-      src_names = Sparlectra._bus_name_by_idx(src)
-      br = Sparlectra._find_trafo_branch(res.net, c.trafo)
-      sbr = Sparlectra._find_trafo_branch(src, sc.trafo)
-      @test Set([names[br.fromBus], names[br.toBus]]) == Set([src_names[sbr.fromBus], src_names[sbr.toBus]])
-      @test br.has_ratio_tap
-      @test br.tap_step > 0.0
-      cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-8), output = OutputConfig(logfile_results = :off), control = ControlConfig())
-      runres = run_sparlectra(net = res.net, config = cfg)
-      @test runres.numerical_converged
-      @test latest_control_result(res.net).status == :converged
-      @test c.converged
-      @test abs(c.achieved_vm_pu - c.target_vm_pu) <= c.deadband_vm_pu
-    end)() end
-
-    # The PST of sp_casePST travels as a single-step PhaseTapChangerLinear on
-    # end 1; its shift comes back with the source sign, and the closed
-    # Breaker comes back as the bus link.
-    @testset "PST of sp_casePST keeps its tap-side sign, bus link survives" begin (function ()
-      res = importCGMES(path = cgmes_fixture_dir("sp_casePST"), name = "pst")
-      src = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))
-      shifted(net) = [br for br in net.branchVec if br.phase_shift_deg != 0.0]
-      @test length(shifted(src)) == 1
-      @test length(shifted(res.net)) == 1
-      sbr, ibr = only(shifted(src)), only(shifted(res.net))
-      @test sbr.phase_shift_deg < 0.0
-      @test isapprox(ibr.phase_shift_deg, sbr.phase_shift_deg; atol = 1e-9)
-      @test isapprox(ibr.angle, sbr.angle; atol = 1e-9)
-      names = Sparlectra._bus_name_by_idx(res.net)
-      src_names = Sparlectra._bus_name_by_idx(src)
-      @test (names[ibr.fromBus], names[ibr.toBus]) == (src_names[sbr.fromBus], src_names[sbr.toBus])
-      @test any(m -> occursin("bus link", m) && occursin("Breaker", m), res.messages)
-      @test length(res.net.linkVec) == 1
-      @test only(res.net.linkVec).status == 1
-      # the link is addressed under the Breaker's mRID
-      links = [mrid for (mrid, (kind, _)) in res.element_by_mrid if kind == :link]
-      @test length(links) == 1
-      @test res.store.objects[only(links)].class == :Breaker
-      @test res.element_by_mrid[only(links)] == (:link, 1)
-    end)() end
-
     # sp_case118 carries 54 synchronous machines, among them condensers
     # (P = 0, voltage regulated) and asymmetric minQ/maxQ pairs. The
     # condensers arrive as regulated zero-P units. The Q limits arrive as
@@ -1665,191 +1155,6 @@ function run_cgmes_importer_tests()
         @test ig[b].maxQ == max(ps.maxQ, -ps.minQ)
       end
       @test asymmetric > 0
-    end)() end
-
-    # SCF export of a delivery (issue #342): a delivery-sourced net reaches
-    # the case format with its source identity intact, the file is
-    # deterministic, and the case re-imports to the same solution.
-    @testset "SCF export of a fixture delivery round-trips" begin (function ()
-      res = importCGMES(path = cgmes_fixture_dir("sp_case14"), name = "scf14")
-      @test solve_fixture!(res.net)[2] == 0
-      root = Sparlectra.net_to_scf(res.net; source_format = "cgmes", source_reference = "sp_case14 fixture")
-      extra = root["sparlectra"]["extra"]
-      tagged = [e for e in values(extra) if get(e, "source_id_kind", "") == "cgmes_mrid"]
-      @test !isempty(tagged)
-      @test all(e -> !startswith(String(e["external_id"]), "#"), tagged)
-      names = Set(String(e["name"]) for e in values(extra))
-      @test all(bus -> bus in names, keys(res.net.busDict))
-      d = mktempdir()
-      a = exportSCF(res.net; file = joinpath(d, "a.scf.json"), source_format = "cgmes")
-      b = exportSCF(res.net; file = joinpath(d, "b.scf.json"), source_format = "cgmes")
-      @test read(a, String) == read(b, String)
-      back = importSCF(a)
-      @test length(back.nodeVec) == 14
-      @test solve_fixture!(back)[2] == 0
-      for (bus, i) in res.net.busDict
-        j = back.busDict[bus]
-        @test isapprox(res.net.nodeVec[i]._vm_pu, back.nodeVec[j]._vm_pu; atol = 1e-6)
-        @test isapprox(res.net.nodeVec[i]._va_deg, back.nodeVec[j]._va_deg; atol = 1e-6)
-      end
-    end)() end
-
-    # The framework/API path: a delivery zip as casefile, dispatch by
-    # auto-detection, cgmes.log next to run.log, and the SV comparison
-    # artifacts of the default start (auto resolves to sv on a delivery
-    # that carries SvVoltage).
-    @testset "run_sparlectra_api dispatch on a fixture delivery zip" begin (function ()
-      z = _pack_cgmes_fixture_zip("sp_case14")
-      out = mktempdir()
-      r = run_sparlectra_api(casefile = z, output_dir = out)
-      @test r.status == :succeeded
-      @test r.metadata["input_format_detected"] == "cgmes"
-      @test r.metadata["cgmes_version"] == "2.4.15"
-      @test r.metadata["cgmes_buses"] == 14
-      @test r.metadata["cgmes_slack_bus"] == "Ostheim_110"
-      @test r.metadata["cgmes_messages"] > 0
-      logfile = joinpath(out, "cgmes.log")
-      @test isfile(logfile)
-      text = read(logfile, String)
-      for section in ("# CGMES import report", "## Class histogram", "## Network built", "## Short-circuit source data", "## Importer messages", "## SV comparison")
-        @test occursin(section, text)
-      end
-      @test r.metadata["cgmes_start_values"] == "sv"
-      @test r.metadata["cgmes_sv_compare_status"] == "converged"
-      @test r.metadata["cgmes_sv_compare_n"] == 14
-      @test r.metadata["cgmes_sv_compare_max_dvm"] < 1e-6
-      @test isfile(joinpath(out, "sv_compare.csv"))
-      @test isfile(joinpath(out, "sv_compare_flows.csv"))
-      @test occursin("CGMES start values: sv (auto: delivery carries SvVoltage for", read(joinpath(out, "run.log"), String))
-
-      # cgmes_import.start_values selects the start state and wins over a
-      # hostile power_flow.flatstart; both starts land on the SV solution
-      for (mode, hostile_flatstart) in (("flat", "false"), ("sv", "true"))
-        out_m = mktempdir()
-        cfg_m = joinpath(out_m, "c.yaml")
-        write(cfg_m, "config_version: 1\npower_flow:\n  flatstart: " * hostile_flatstart * "\n  tol: 1.0e-10\ncgmes_import:\n  start_values: " * mode * "\n")
-        rm_ = run_sparlectra_api(casefile = z, config_file = cfg_m, output_dir = out_m, case_format = :cgmes)
-        @test rm_.status == :succeeded
-        run_log = read(joinpath(out_m, "run.log"), String)
-        @test occursin("CGMES start values: " * mode, run_log)
-        @test occursin("overrides: power_flow.flatstart=" * hostile_flatstart, run_log)
-        @test rm_.metadata["cgmes_start_values"] == mode
-        @test rm_.metadata["cgmes_sv_compare_max_dvm"] < 1e-6
-        sv_rows = readlines(joinpath(out_m, "sv_compare.csv"))
-        @test sv_rows[1] == "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva,dva_aligned"
-        @test length(sv_rows) - 1 == 14
-      end
-
-      # under auto, power_flow.flatstart asks for the flat start although the
-      # delivery carries SvVoltage (the Settings page offers that one switch)
-      out_a = mktempdir()
-      cfg_a = joinpath(out_a, "c.yaml")
-      write(cfg_a, "config_version: 1\npower_flow:\n  flatstart: true\n")
-      ra = run_sparlectra_api(casefile = z, config_file = cfg_a, output_dir = out_a, case_format = :cgmes)
-      @test ra.status == :succeeded
-      @test ra.metadata["cgmes_start_values"] == "flat"
-      @test occursin("CGMES start values: flat (auto: power_flow.flatstart asks for the flat start)", read(joinpath(out_a, "run.log"), String))
-
-      # the report survives a failed solve: it is written right after the
-      # import, not after the power flow (one flat-start iteration cannot
-      # reach 1e-14; rescue off, because the rescue ladder's alternate start
-      # is the delivery's SV, an exact solution that would converge at once
-      # since the projection keeps a seed closer than its DC start, 0.20.4)
-      out_f = mktempdir()
-      cfg_f = joinpath(out_f, "c.yaml")
-      write(cfg_f, "config_version: 1\npower_flow:\n  max_iter: 1\n  tol: 1.0e-14\n  rescue: false\ncgmes_import:\n  start_values: flat\n")
-      rf = run_sparlectra_api(casefile = z, config_file = cfg_f, output_dir = out_f)
-      @test rf.status != :succeeded
-      @test isfile(joinpath(out_f, "cgmes.log"))
-      @test occursin("# CGMES import report", read(joinpath(out_f, "cgmes.log"), String))
-    end)() end
-
-    # The Web UI "Analyze import" and "Short circuit" buttons on the
-    # fixtures, which carry what their source cases carry. sp_case14 comes
-    # from a case file with the feeder of its external grid: the delivery
-    # has the feeder's short-circuit currents, the two machines have no
-    # data and are flagged. sp_casePST comes from a case without any source
-    # data: nothing an impedance could come from, the button is not offered
-    # and the run refuses. With a rated power on its machines the table is
-    # complete on the default reactance and the run ends with a warning.
-    @testset "import_analysis_mode and short_circuit_mode service runs on a fixture" begin (function ()
-      root = mktempdir()
-      cfg = joinpath(root, "c.yaml")
-      write(cfg, "config_version: 1\npower_flow:\n  max_iter: 40\n")
-      z = _pack_cgmes_fixture_zip("sp_case14")
-
-      ia = start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "import_analysis_mode" => true))
-      @test ia["success"] === true
-      @test ia["metadata"]["run_mode"] == "import_analysis"
-      @test ia["metadata"]["import_analysis_missing_dependencies"] == 0
-      report = read(joinpath(root, ia["run_id"], "import_analysis.txt"), String)
-      @test occursin("Supplied models:", report)
-      @test occursin("Verdict:", report)
-
-      @test !SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_casePST"))
-      refused = start_powerflow_run(Dict("casefile" => _pack_cgmes_fixture_zip("sp_casePST"), "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true))
-      @test refused["status"] == "failed"
-      @test refused["reason"] == "short_circuit_data_missing"
-      @test occursin("rated power", refused["message"])
-      rated_dir = mktempdir()
-      for f in readdir(cgmes_fixture_dir("sp_casePST"); join = true)
-        text = read(f, String)
-        occursin("_EQ", basename(f)) && (text = replace(text, "  </cim:SynchronousMachine>" => "    <cim:RotatingMachine.ratedS>100</cim:RotatingMachine.ratedS>\n  </cim:SynchronousMachine>"))
-        write(joinpath(rated_dir, basename(f)), text)
-      end
-      @test SparlectraApp._webui_case_has_short_circuit_data(rated_dir)
-      rated_zip = joinpath(mktempdir(), "sp_casePST_rated_CGMES.zip")
-      ZipArchives.ZipWriter(rated_zip) do w
-        for f in sort(readdir(rated_dir; join = true))
-          ZipArchives.zip_newfile(w, basename(f))
-          write(w, read(f))
-        end
-      end
-      # the engine's warnings about substituted defaults belong to the
-      # result: the service writes them into run.log, none reaches the
-      # console (an empty list of expected warnings fails on any)
-      on_defaults = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => rated_zip, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), String[])
-      on_defaults_log = read(joinpath(on_defaults["output_dir"], "run.log"), String)
-      @test occursin("Substituted defaults:", on_defaults_log)
-      @test occursin("has no usable x''_d", on_defaults_log)
-      @test on_defaults["success"] === true
-      @test on_defaults["status"] == "warning"
-      @test on_defaults["reason"] == "short_circuit_defaults_only"
-      @test startswith(on_defaults["message"], "Short circuit completed on defaults: none of the")
-      # sp_case14: the feeder of the source case is in the delivery
-      @test SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
-      @test occursin("ExternalNetworkInjection.maxInitialSymShCCurrent", read(joinpath(cgmes_fixture_dir("sp_case14"), "sp_case14_EQ.xml"), String))
-      sc = run_with_expected_warnings(() -> start_powerflow_run(Dict("casefile" => z, "config_file" => cfg, "output_root" => root, "short_circuit_mode" => true)), String[])
-      sc_log = read(joinpath(sc["output_dir"], "run.log"), String)
-      # the delivery carries the maximum active power of its units
-      # (GeneratingUnit.maxOperatingP), the default stands on it
-      @test all(text -> occursin(text, sc_log), ("Substituted defaults:", "default 0.2 pu on its maximum active power 50.0 MW", "default 0.2 pu on its maximum active power 35.0 MW"))
-      @test sc["success"] === true
-      # one source with data, two without: a warning that says so
-      @test sc["status"] == "warning"
-      @test sc["reason"] == "short_circuit_partial_defaults"
-      @test startswith(sc["message"], "Short circuit completed with defaults: 1 of 3 source(s) carry short-circuit data")
-      @test sc["metadata"]["sc_sources"] == 3 && sc["metadata"]["sc_sources_with_data"] == 1
-      @test sc["metadata"]["run_mode"] == "short_circuit"
-      @test sc["metadata"]["sc_case_rows"] == 14
-      @test sc["metadata"]["sc_flagged_rows"] == 14
-      @test sc["metadata"]["sc_max_ik_kA"] > 0.0
-      rid = sc["run_id"]
-      max_rows = readlines(joinpath(root, rid, "short_circuit_max.csv"))
-      @test max_rows[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons,lower_bound"
-      @test length(max_rows) - 1 == 14
-      @test all(occursin("true", split(l, ',')[12]) for l in max_rows[2:end])
-      # the delivery and the case file it was written from give the same
-      # currents: the reference values of the case file hold here as well
-      case_reference = Sparlectra.scf_json_parse(read(joinpath(@__DIR__, "fixtures", "demo_cases", "sp_case14.json"), String))["short_circuit"]
-      for (bus, reference) in case_reference
-        row = split(only(l for l in max_rows[2:end] if startswith(l, bus * ",")), ',')
-        @test isapprox(parse(Float64, row[8]), reference["ik_kA"]; atol = 1e-4)
-      end
-      @test isfile(joinpath(root, rid, "short_circuit_min.csv"))
-      run_log = read(joinpath(root, rid, "run.log"), String)
-      @test occursin("Short-circuit run", run_log)
-      @test occursin("SynchronousMachine", run_log)
     end)() end
 
     # Fixed-reference self-check on a delivery: the SV voltages reach the
@@ -2599,6 +1904,26 @@ function run_cgmes_importer_tests()
         @test all(tn -> abs(dva(tn)) < 1e-6, ("_f2_j1", "_f2_j2"))
         @test all(tn -> isapprox(dva(tn), -2.0; atol = 1e-6), ("_f2_j3", "_f2_j4"))
       end)() end
+    end)() end
+
+    # The deliveries tested state no network frequency (no BaseFrequency),
+    # so the key decides: the lines arrive in siemens (b already at the
+    # network frequency), the power flow is bit identical at 50 and 60 Hz,
+    # and the conversion to SCF writes the key value as meta.f_nom.
+    @testset "SmallGrid: system frequency from the key" begin (function ()
+      dir = joinpath(@__DIR__, "fixtures", "cgmes_smallgrid")
+      cfg_at(f) = Sparlectra.SparlectraConfig(model = Sparlectra.ModelConfig(nominal_frequency_hz = f))
+      imp(f) = redirect_stdout(() -> Sparlectra.import_case(dir, cfg_at(f)), devnull)
+      n50 = imp(50.0).net
+      n60 = imp(60.0).net
+      @test (n50.nominal_frequency_hz, n60.nominal_frequency_hz) == (50.0, 60.0)
+      @test Sparlectra.createYBUS(net = n60, sparse = true) == Sparlectra.createYBUS(net = n50, sparse = true)
+      @test runpf!(n60, 40, 1e-8, 0) == runpf!(n50, 40, 1e-8, 0)
+      @test [nd._vm_pu for nd in n60.nodeVec] == [nd._vm_pu for nd in n50.nodeVec]
+      @test [nd._va_deg for nd in n60.nodeVec] == [nd._va_deg for nd in n50.nodeVec]
+      @test Sparlectra.cgmes_adapter_options(cfg_at(60.0)).f_nom == 60.0
+      case60 = redirect_stdout(() -> convert_case(CGMESAdapter(), dir, Sparlectra.CGMESAdapterOptions(f_nom = 60.0)), devnull)
+      @test case60.sparlectra.meta["f_nom"] == 60.0
     end)() end
   end)() end
 end

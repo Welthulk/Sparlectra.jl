@@ -24,10 +24,10 @@
     ],
     "generic_branch": [
       {
-        "b1": 0.0,
+        "b1": -7.806247497997999e-5,
         "from_node": 7,
         "from_status": 1,
-        "g1": 0.0,
+        "g1": 6.25e-5,
         "id": 30,
         "k": 1.0,
         "r1": 0.05,
@@ -38,10 +38,10 @@
         "x1": 1.0988630487917954
       },
       {
-        "b1": 0.0,
+        "b1": -4.337337893224368e-5,
         "from_node": 13,
         "from_status": 1,
-        "g1": 0.0,
+        "g1": 4.5e-5,
         "id": 31,
         "k": 1.0,
         "r1": 0.08,
@@ -398,385 +398,385 @@
         "id": 62,
         "measured_object": 10,
         "measured_terminal_type": "node",
-        "p_measured": 1.921437666288495e7,
+        "p_measured": 1.925721296182719e7,
         "power_sigma": 1.0e6,
-        "q_measured": 1.481627234845958e7
+        "q_measured": 1.4827857846165689e7
       },
       {
         "id": 63,
         "measured_object": 9,
         "measured_terminal_type": "node",
-        "p_measured": -748973.2516907551,
+        "p_measured": -748973.2516906288,
         "power_sigma": 1.0e6,
-        "q_measured": 402129.607270588
+        "q_measured": 402129.6072709229
       },
       {
         "id": 64,
         "measured_object": 7,
         "measured_terminal_type": "node",
-        "p_measured": 1.5174011192126425e6,
+        "p_measured": 1.5174011192125739e6,
         "power_sigma": 1.0e6,
-        "q_measured": 2.664019958274397e6
+        "q_measured": 2.6640199582742555e6
       },
       {
         "id": 65,
         "measured_object": 2,
         "measured_terminal_type": "node",
-        "p_measured": 2.998821987815416e7,
+        "p_measured": 2.998821987815411e7,
         "power_sigma": 1.0e6,
-        "q_measured": 6.712442288752145e6
+        "q_measured": 6.735659804326255e6
       },
       {
         "id": 66,
         "measured_object": 11,
         "measured_terminal_type": "node",
-        "p_measured": -1.8519695665419534e7,
+        "p_measured": -1.8519695665419556e7,
         "power_sigma": 1.0e6,
-        "q_measured": -6.050508553620737e6
+        "q_measured": -6.050508553620636e6
       },
       {
         "id": 67,
         "measured_object": 3,
         "measured_terminal_type": "node",
-        "p_measured": 2.0311579072735067e7,
+        "p_measured": 2.0311579072735045e7,
         "power_sigma": 1.0e6,
-        "q_measured": 1.480282026496099e6
+        "q_measured": 1.4993966711789817e6
       },
       {
         "id": 68,
         "measured_object": 13,
         "measured_terminal_type": "node",
-        "p_measured": 1.127471429951442e6,
+        "p_measured": 1.1274714299515907e6,
         "power_sigma": 1.0e6,
-        "q_measured": 393470.23333773157
+        "q_measured": 393470.23333770025
       },
       {
         "id": 69,
         "measured_object": 1,
         "measured_terminal_type": "node",
-        "p_measured": -1.417242370588716e7,
+        "p_measured": -1.4172423705887204e7,
         "power_sigma": 1.0e6,
-        "q_measured": -4.0026401616097386e6
+        "q_measured": -4.0026401616099207e6
       },
       {
         "id": 70,
         "measured_object": 5,
         "measured_terminal_type": "node",
-        "p_measured": -1.2095786824660627e7,
+        "p_measured": -1.2095786824660618e7,
         "power_sigma": 1.0e6,
-        "q_measured": -3.765246637489321e6
+        "q_measured": -3.765246637489465e6
       },
       {
         "id": 71,
         "measured_object": 8,
         "measured_terminal_type": "node",
-        "p_measured": -7.738606521652628e6,
+        "p_measured": -7.738606521652648e6,
         "power_sigma": 1.0e6,
-        "q_measured": -2.9346159629162056e6
+        "q_measured": -2.934615962916129e6
       },
       {
         "id": 72,
         "measured_object": 4,
         "measured_terminal_type": "node",
-        "p_measured": -3.7592271937346966e6,
+        "p_measured": -3.759227193734621e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.7656493738719863e6
+        "q_measured": -1.765649373871976e6
       },
       {
         "id": 73,
         "measured_object": 6,
         "measured_terminal_type": "node",
-        "p_measured": -3.5518518747257213e6,
+        "p_measured": -3.5518518747256673e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.5775636208244604e6
+        "q_measured": -1.5775636208244765e6
       },
       {
         "id": 74,
         "measured_object": 12,
         "measured_terminal_type": "node",
-        "p_measured": -1.1397392236508525e6,
+        "p_measured": -1.1397392236509814e6,
         "power_sigma": 1.0e6,
-        "q_measured": -848925.4909699861
+        "q_measured": -848925.4909700725
       },
       {
         "id": 75,
         "measured_object": 14,
         "measured_terminal_type": "node",
-        "p_measured": -8.152026304147108e6,
+        "p_measured": -8.152026304147118e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.8539284453823161e6
+        "q_measured": -1.8539284453823343e6
       },
       {
         "id": 76,
         "measured_object": 26,
         "measured_terminal_type": "branch_from",
-        "p_measured": 6.543879399471449e6,
+        "p_measured": 6.557181392345363e6,
         "power_sigma": 1.0e6,
-        "q_measured": 4.155991237813998e6
+        "q_measured": 4.159109895089179e6
       },
       {
         "id": 77,
         "measured_object": 26,
         "measured_terminal_type": "branch_to",
-        "p_measured": -4.1877481992502823e6,
+        "p_measured": -4.200916928008389e6,
         "power_sigma": 1.0e6,
-        "q_measured": -2.5869683906502444e6
+        "q_measured": -2.5896206235200595e6
       },
       {
         "id": 78,
         "measured_object": 27,
         "measured_terminal_type": "branch_from",
-        "p_measured": 4.862406767301012e6,
+        "p_measured": 4.875708760174927e6,
         "power_sigma": 1.0e6,
-        "q_measured": 4.304714617466051e6
+        "q_measured": 4.307833274741232e6
       },
       {
         "id": 79,
         "measured_object": 27,
         "measured_terminal_type": "branch_to",
-        "p_measured": -4.207001108627167e6,
+        "p_measured": -4.220169837385274e6,
         "power_sigma": 1.0e6,
-        "q_measured": -3.565049108566956e6
+        "q_measured": -3.567701341436771e6
       },
       {
         "id": 80,
         "measured_object": 25,
         "measured_terminal_type": "branch_from",
-        "p_measured": 4.1109700912425737e6,
+        "p_measured": 4.131171655478429e6,
         "power_sigma": 1.0e6,
-        "q_measured": 4.081946628937388e6
+        "q_measured": 4.0917173453144324e6
       },
       {
         "id": 81,
         "measured_object": 25,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.4226361678837044e6,
+        "p_measured": -3.4426600728240516e6,
         "power_sigma": 1.0e6,
-        "q_measured": -2.75661513323274e6
+        "q_measured": -2.765764042075478e6
       },
       {
         "id": 82,
         "measured_object": 21,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.5721595108891439e7,
+        "p_measured": -1.572482370441195e7,
         "power_sigma": 1.0e6,
-        "q_measured": 33616.646893382174
+        "q_measured": 12976.985673259
       },
       {
         "id": 83,
         "measured_object": 21,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.7012996794973556e7,
+        "p_measured": 1.7016389781060327e7,
         "power_sigma": 1.0e6,
-        "q_measured": 2.2032697033663676e6
+        "q_measured": 2.2244847315684604e6
       },
       {
         "id": 84,
         "measured_object": 16,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.4887420044602951e7,
+        "p_measured": 1.4884027058516193e7,
         "power_sigma": 1.0e6,
-        "q_measured": 2.263512675752212e6
+        "q_measured": 2.2655151631243997e6
       },
       {
         "id": 85,
         "measured_object": 16,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.376993765853337e7,
+        "p_measured": -1.3766622157749953e7,
         "power_sigma": 1.0e6,
-        "q_measured": -4.0950148336260365e6
+        "q_measured": -4.0972885195599655e6
       },
       {
         "id": 86,
         "measured_object": 28,
         "measured_terminal_type": "branch_from",
-        "p_measured": -8.489561571013646e6,
+        "p_measured": -8.48670797251404e6,
         "power_sigma": 1.0e6,
-        "q_measured": -3.3606995813486213e6
+        "q_measured": -3.3627759250426674e6
       },
       {
         "id": 87,
         "measured_object": 28,
         "measured_terminal_type": "branch_to",
-        "p_measured": 7.787186624383874e6,
+        "p_measured": 7.784290075759154e6,
         "power_sigma": 1.0e6,
-        "q_measured": 2.1910698520437265e6
+        "q_measured": 2.192995870299897e6
       },
       {
         "id": 88,
         "measured_object": 17,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0527611908140449e7,
+        "p_measured": 1.0530508456765125e7,
         "power_sigma": 1.0e6,
-        "q_measured": 929798.6400595608
+        "q_measured": 946987.2664863281
       },
       {
         "id": 89,
         "measured_object": 17,
         "measured_terminal_type": "branch_to",
-        "p_measured": -9.946085035729904e6,
+        "p_measured": -9.94889118224436e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.451527645708039e6
+        "q_measured": -1.468399864749092e6
       },
       {
         "id": 90,
         "measured_object": 29,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.0402265003098953e6,
+        "p_measured": 3.0243088316342263e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.7453609070575451e6
+        "q_measured": -1.7496078343978352e6
       },
       {
         "id": 91,
         "measured_object": 29,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.9692817940187675e6,
+        "p_measured": -1.953453976024749e6,
         "power_sigma": 1.0e6,
-        "q_measured": 503168.39988428133
+        "q_measured": 507100.8498387504
       },
       {
         "id": 92,
         "measured_object": 15,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.0189801291581448e7,
+        "p_measured": -1.0205629109575512e7,
         "power_sigma": 1.0e6,
-        "q_measured": -5.655700003923526e6
+        "q_measured": -5.659632453878173e6
       },
       {
         "id": 93,
         "measured_object": 15,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.0232474784744069e7,
+        "p_measured": 1.0248707097938465e7,
         "power_sigma": 1.0e6,
-        "q_measured": 5.739309676619661e6
+        "q_measured": 5.744657859775468e6
       },
       {
         "id": 94,
         "measured_object": 24,
         "measured_terminal_type": "branch_from",
-        "p_measured": 6.419085792476339e6,
+        "p_measured": 6.425221685756874e6,
         "power_sigma": 1.0e6,
-        "q_measured": 4.404860520126891e6
+        "q_measured": 4.400394269490233e6
       },
       {
         "id": 95,
         "measured_object": 24,
         "measured_terminal_type": "branch_to",
-        "p_measured": -5.655912741648016e6,
+        "p_measured": -5.662015926959494e6,
         "power_sigma": 1.0e6,
-        "q_measured": -3.2908331049965895e6
+        "q_measured": -3.2862523764681867e6
       },
       {
         "id": 96,
         "measured_object": 19,
         "measured_terminal_type": "branch_from",
-        "p_measured": -4.306444273875788e6,
+        "p_measured": -4.300341088564331e6,
         "power_sigma": 1.0e6,
-        "q_measured": 418812.5193698452
+        "q_measured": 414231.79084135365
       },
       {
         "id": 97,
         "measured_object": 19,
         "measured_terminal_type": "branch_to",
-        "p_measured": 4.168824905774495e6,
+        "p_measured": 4.162655806491424e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.497959375090832e6
+        "q_measured": -1.4936093454630345e6
       },
       {
         "id": 98,
         "measured_object": 23,
         "measured_terminal_type": "branch_from",
-        "p_measured": 605997.5508551871,
+        "p_measured": 604619.1843707258,
         "power_sigma": 1.0e6,
-        "q_measured": 293878.50286576187
+        "q_measured": 290228.9910714383
       },
       {
         "id": 99,
         "measured_object": 23,
         "measured_terminal_type": "branch_to",
-        "p_measured": -598061.1405825462,
+        "p_measured": -596690.772227921,
         "power_sigma": 1.0e6,
-        "q_measured": -60011.85476211901
+        "q_measured": -56390.336422283195
       },
       {
         "id": 100,
         "measured_object": 22,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.2379194321393581e7,
+        "p_measured": 1.2379381981398983e7,
         "power_sigma": 1.0e6,
-        "q_measured": 4.395248803253443e6
+        "q_measured": 4.395331373655958e6
       },
       {
         "id": 101,
         "measured_object": 22,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0833713300794424e7,
+        "p_measured": -1.0833769279844576e7,
         "power_sigma": 1.0e6,
-        "q_measured": -4.479155102111892e6
+        "q_measured": -4.4791797328940835e6
       },
       {
         "id": 102,
         "measured_object": 18,
         "measured_terminal_type": "branch_from",
-        "p_measured": 6.398884647568007e6,
+        "p_measured": 6.398940626618202e6,
         "power_sigma": 1.0e6,
-        "q_measured": 5.237833042911859e6
+        "q_measured": 5.23785767369405e6
       },
       {
         "id": 103,
         "measured_object": 18,
         "measured_terminal_type": "branch_to",
-        "p_measured": -6.591397704857293e6,
+        "p_measured": -6.591406646151575e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.6368083798871047e6
+        "q_measured": -1.6368123140566947e6
       },
       {
         "id": 104,
         "measured_object": 20,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.96055517643915e6,
+        "p_measured": 1.9605641177335216e6,
         "power_sigma": 1.0e6,
-        "q_measured": 1.9872047431224906e6
+        "q_measured": 1.9872086772920364e6
       },
       {
         "id": 105,
         "measured_object": 20,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.972117427929713e6,
+        "p_measured": -3.972117427929802e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.4235849997399414e6
+        "q_measured": -1.423584999740008e6
       },
       {
         "id": 106,
         "measured_object": 30,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.915172914524546e7,
+        "p_measured": 1.9176360012190726e7,
         "power_sigma": 1.0e6,
-        "q_measured": 2.681209864467796e6
+        "q_measured": 2.714647946324936e6
       },
       {
         "id": 107,
         "measured_object": 30,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.9113050257334717e7,
+        "p_measured": -1.9113237917340197e7,
         "power_sigma": 1.0e6,
-        "q_measured": 532501.6445313737
+        "q_measured": 531163.3749800195
       },
       {
         "id": 108,
         "measured_object": 31,
         "measured_terminal_type": "branch_from",
-        "p_measured": 6.70504195273719e6,
+        "p_measured": 6.722395399572745e6,
         "power_sigma": 1.0e6,
-        "q_measured": 2.4930873973953626e6
+        "q_measured": 2.5105850254368256e6
       },
       {
         "id": 109,
         "measured_object": 31,
         "measured_terminal_type": "branch_to",
-        "p_measured": -7.838962665885763e6,
+        "p_measured": -7.838962665885765e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.6974211751636234e6
+        "q_measured": -1.697421175163579e6
       }
     ],
     "sym_voltage_sensor": [
@@ -789,13 +789,13 @@
       {
         "id": 49,
         "measured_object": 9,
-        "u_measured": 111443.39646274596,
+        "u_measured": 111440.8383902535,
         "u_sigma": 550.0
       },
       {
         "id": 50,
         "measured_object": 7,
-        "u_measured": 108762.04362741181,
+        "u_measured": 108753.54408510143,
         "u_sigma": 550.0
       },
       {
@@ -807,7 +807,7 @@
       {
         "id": 52,
         "measured_object": 11,
-        "u_measured": 108365.03360897853,
+        "u_measured": 108364.57200893348,
         "u_sigma": 550.0
       },
       {
@@ -819,49 +819,49 @@
       {
         "id": 54,
         "measured_object": 13,
-        "u_measured": 107473.60944091083,
+        "u_measured": 107466.6483561205,
         "u_sigma": 550.0
       },
       {
         "id": 55,
         "measured_object": 1,
-        "u_measured": 109699.91254400555,
+        "u_measured": 109696.32332055678,
         "u_sigma": 550.0
       },
       {
         "id": 56,
         "measured_object": 5,
-        "u_measured": 108050.21518782282,
+        "u_measured": 108048.69107533954,
         "u_sigma": 550.0
       },
       {
         "id": 57,
         "measured_object": 8,
-        "u_measured": 19761.956419800677,
+        "u_measured": 19759.40377500833,
         "u_sigma": 100.0
       },
       {
         "id": 58,
         "measured_object": 4,
-        "u_measured": 18860.99920190399,
+        "u_measured": 18858.340340763443,
         "u_sigma": 100.0
       },
       {
         "id": 59,
         "measured_object": 6,
-        "u_measured": 18507.14438479171,
+        "u_measured": 18504.421332498463,
         "u_sigma": 100.0
       },
       {
         "id": 60,
         "measured_object": 12,
-        "u_measured": 18396.68486410032,
+        "u_measured": 18393.93362549702,
         "u_sigma": 100.0
       },
       {
         "id": 61,
         "measured_object": 14,
-        "u_measured": 19507.29361568174,
+        "u_measured": 19505.26803797144,
         "u_sigma": 100.0
       }
     ],
@@ -1363,7 +1363,7 @@
           "sensor": 57,
           "sigmas": [0.005],
           "sparlectra_ids": ["Vm_bus_10"],
-          "values": [0.988097820990034]
+          "values": [0.9879701887504164]
         },
         {
           "positions": [31],
@@ -1375,22 +1375,20 @@
           "positions": [34],
           "sensor": 59,
           "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_12"],
-          "values": [0.9253572192395855]
+          "sparlectra_ids": ["Vm_bus_12"]
         },
         {
           "positions": [37],
           "sensor": 60,
           "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_13"],
-          "values": [0.9198342432050161]
+          "sparlectra_ids": ["Vm_bus_13"]
         },
         {
           "positions": [40],
           "sensor": 61,
           "sigmas": [0.005],
           "sparlectra_ids": ["Vm_bus_14"],
-          "values": [0.975364680784087]
+          "values": [0.9752634018985721]
         },
         {
           "positions": [2, 3],
@@ -1420,8 +1418,7 @@
           "positions": [14, 15],
           "sensor": 66,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_5", "Qinj_bus_5"],
-          "values": [-18.519695665419533, -6.050508553620737]
+          "sparlectra_ids": ["Pinj_bus_5", "Qinj_bus_5"]
         },
         {
           "positions": [17, 18],
@@ -1439,7 +1436,8 @@
           "positions": [23, 24],
           "sensor": 69,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_8", "Qinj_bus_8"]
+          "sparlectra_ids": ["Pinj_bus_8", "Qinj_bus_8"],
+          "values": [-14.172423705887203, -4.0026401616099205]
         },
         {
           "positions": [26, 27],
@@ -1452,14 +1450,13 @@
           "sensor": 71,
           "sigmas": [1.0, 1.0],
           "sparlectra_ids": ["Pinj_bus_10", "Qinj_bus_10"],
-          "values": [-7.738606521652628, -2.9346159629162054]
+          "values": [-7.738606521652648, -2.934615962916129]
         },
         {
           "positions": [32, 33],
           "sensor": 72,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_11", "Qinj_bus_11"],
-          "values": [-3.759227193734697, -1.7656493738719863]
+          "sparlectra_ids": ["Pinj_bus_11", "Qinj_bus_11"]
         },
         {
           "positions": [35, 36],
@@ -1519,7 +1516,8 @@
           "positions": [55, 57],
           "sensor": 82,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_4_from", "Qflow_branch_4_from"]
+          "sparlectra_ids": ["Pflow_branch_4_from", "Qflow_branch_4_from"],
+          "values": [-15.72482370441195, 0.012976985673259]
         },
         {
           "positions": [56, 58],
@@ -1663,7 +1661,8 @@
           "positions": [103, 105],
           "sensor": 106,
           "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_16_from", "Qflow_branch_16_from"]
+          "sparlectra_ids": ["Pflow_branch_16_from", "Qflow_branch_16_from"],
+          "values": [19.176360012190724, 2.714647946324936]
         },
         {
           "positions": [104, 106],
@@ -1687,7 +1686,7 @@
     },
     "meta": {
       "case_name": "sp_case14",
-      "created_by": "Sparlectra 0.11.0",
+      "created_by": "Sparlectra 0.50.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
@@ -1794,60 +1793,60 @@
     "start_state": {
       "nodes": {
         "1": {
-          "va_deg": -1.8369592700934765,
-          "vm_pu": 0.9890405812603911
+          "va_deg": -1.8399444355433763,
+          "vm_pu": 0.9890079519563113
         },
         "10": {
           "va_deg": 0.0,
           "vm_pu": 1.02
         },
         "11": {
-          "va_deg": -0.552443611221411,
-          "vm_pu": 0.9839634050227137
+          "va_deg": -0.5579493571248788,
+          "vm_pu": 0.9839592086586679
         },
         "12": {
-          "va_deg": -4.556468507496318,
-          "vm_pu": 0.9163370083616786
+          "va_deg": -4.5650873045187605,
+          "vm_pu": 0.9161994464315135
         },
         "13": {
-          "va_deg": -1.0937737884909715,
-          "vm_pu": 0.9869986431519134
+          "va_deg": -1.0997079919118482,
+          "vm_pu": 0.9869353605629103
         },
         "14": {
-          "va_deg": -2.968008629551263,
-          "vm_pu": 0.9745809048448062
+          "va_deg": -2.976194882484937,
+          "vm_pu": 0.9744796259592913
         },
         "2": {
-          "va_deg": 2.0345071671042256,
+          "va_deg": 2.0282115365193554,
           "vm_pu": 1.01
         },
         "3": {
-          "va_deg": 1.1270353925624124,
+          "va_deg": 1.1208340284232938,
           "vm_pu": 1.0
         },
         "4": {
-          "va_deg": -4.35869947584881,
-          "vm_pu": 0.9473398918949691
+          "va_deg": -4.367260890543242,
+          "vm_pu": 0.9472069488379419
         },
         "5": {
-          "va_deg": -1.5412568876265254,
-          "vm_pu": 0.9831311344304211
+          "va_deg": -1.545244027810227,
+          "vm_pu": 0.9831172788623913
         },
         "6": {
-          "va_deg": -4.502433329780152,
-          "vm_pu": 0.9257226133937286
+          "va_deg": -4.5110360640346565,
+          "vm_pu": 0.9255864607790664
         },
         "7": {
-          "va_deg": -1.1130428771146468,
-          "vm_pu": 0.9908231253374908
+          "va_deg": -1.119048656437855,
+          "vm_pu": 0.9907458567710329
         },
         "8": {
-          "va_deg": -4.115892129063541,
-          "vm_pu": 0.9839054790841837
+          "va_deg": -4.124387959215671,
+          "vm_pu": 0.9837778468445662
         },
         "9": {
-          "va_deg": -0.6522433569153596,
-          "vm_pu": 1.003417922867611
+          "va_deg": -0.6546904090487159,
+          "vm_pu": 1.0033946676631338
         }
       },
       "source": "solved_power_flow"

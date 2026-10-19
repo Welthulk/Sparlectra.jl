@@ -82,7 +82,7 @@ typed section.
 | `cgmes_import` | `CGMESImportConfig` | [CGMES Import](cgmes_import.md). |
 | `powsybl_import` | `PowsyblImportConfig` | [PowSyBl Import](powsybl_import.md). |
 | `short_circuit` | `ShortCircuitConfig` | IEC 60909 short circuit: `short_circuit.c_factor`, `short_circuit.sweep_method` (`auto`, `solves`, `takahashi`), `short_circuit.takahashi_min_buses`; [Short-Circuit Analysis](short_circuit.md). |
-| `model` | `ModelConfig` | Model construction for every importer: bus shunt model, tap-changer model (below), auto profile, net cache, preallocation. |
+| `model` | `ModelConfig` | Model construction for every importer: bus shunt model, tap-changer model (below), auto profile, net cache, preallocation, system frequency (below). |
 | `state_estimation` | `StateEstimationConfig` | [State-Estimation Configuration](state_estimation_configuration.md). |
 | `output` | `OutputConfig` | Console and logfile output, result tables (keys below and in [Output configuration](@ref perf-output)); `output.startup_latency_hint: false` silences the one-per-process JIT warm-up note of runs without a sysimage or executable. |
 | `performance` | `PerformanceConfig` | Profiling and diagnostic volume: [Performance and Profiling](performance_profiling.md). |
@@ -127,6 +127,58 @@ The MATPOWER and DTF importers read the key. [`writeMatpowerCasefile`](@ref)
 writes the corrected `Branch.r_pu`/`Branch.x_pu` with a roundtrip marker,
 so a reimport does not correct twice; see
 [Tap-impedance correction and reimport](matpower.md#tap-impedance-correction-and-reimport).
+
+### [System frequency](@id system_frequency)
+
+The system frequency is a property of the network: every `Net` carries it
+as `net.nominal_frequency_hz`. `model.nominal_frequency_hz` (default 50.0,
+60 for a North American network, any positive value) sets it when the case
+states none:
+
+```yaml
+model:
+  nominal_frequency_hz: 50.0
+```
+
+Rank order, highest first:
+
+1. The case file: an SCF file states it as `meta.f_nom`. When the key was
+   set explicitly (configuration file, case configuration, API or Web UI)
+   and differs, the file wins and one warning names both values. A YAML
+   value equal to the default does not count as set, so a file with a
+   different `f_nom` then gives no warning.
+2. `model.nominal_frequency_hz`.
+3. 50 Hz.
+
+`effective_config.yaml` records the key; the metadata in `result.json`
+names the frequency the network used (`network_nominal_frequency_hz`).
+
+MATPOWER, DTF, PowSyBl IIDM and a plain power-grid-model file carry no
+frequency, so the key applies without a message. CGMES deliveries carry no
+network frequency in the sets tested; `model.nominal_frequency_hz` applies.
+
+Where the frequency enters and where not:
+
+| Place | Frequency used |
+|---|---|
+| [`addACLinePerKm!`](@ref) | yes: $b = 2\pi f C$ from `c_nf_per_km` |
+| SCF and PGM line `c1` (farad) | yes: read as $b = 2\pi f\,c_1$, written as $c_1 = b/(2\pi f)$ |
+| [`addACLine!`](@ref), [`addPIModelACLine!`](@ref) | no: ohm, siemens or per unit are given at the network frequency |
+| MATPOWER, DTF, CGMES, PowSyBl IIDM import | no: impedances and admittances in ohm, siemens or per unit |
+| Power flow and state estimation | no: they work on the admittances |
+| Short circuit (IEC 60909) | no: $I_k''$ uses R and X as given, $\kappa$ by method b ($1.02 + 0.98\,e^{-3R/X}$) has no frequency term |
+
+A case in ohm, siemens or per unit therefore gives the same power flow at
+50 and 60 Hz. The conversion of a MATPOWER case to SCF writes the key value
+as `meta.f_nom`, because the `c1` of its lines needs one; the MATPOWER
+export writes no frequency. A strict power-grid-model export
+(`exportSCF(...; strict_pgm = true)`) has no `meta` and names the dropped
+`f_nom` in its warning; reading that file back takes the key, so the reader
+has to use the same frequency as the writer.
+
+The Web UI offers 50 and 60 Hz on the Case page (section "Network model").
+For an SCF file the field starts at the file's `f_nom`, so the warning
+appears only when the value is changed against the file.
 
 ## Loader and validation behavior
 
@@ -374,7 +426,7 @@ programmatically built net.
 | `output.result_table_max_rows` | `200` | Row cap of the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables: `summary`, `classic`, `full`. |
-| `output.csv_format` | `auto` | Delimiter and decimal separator of every CSV file a run writes; only the measurement CSV Sparlectra reads back keeps its fixed layout. `auto` follows the regional settings of the machine (decimal comma gives `excel_de`, decimal point `excel_us`, the C/POSIX locale `technical`); `technical` is comma delimiter, dot decimal; `excel_de` semicolon delimiter, comma decimal, dot thousands separator; `excel_us` comma delimiter, dot decimal, comma thousands separator. The API keywords `detailed_result_csv_format`/`detailed_result_csv_semicolon` are a deprecated per-request override. |
+| `output.csv_format` | `auto` | Delimiter and decimal separator of every CSV file a run writes; only the measurement table keeps its fixed layout (comma, decimal point). `auto` follows the regional settings of the machine (decimal comma gives `excel_de`, decimal point `excel_us`, the C/POSIX locale `technical`); `technical` is comma delimiter, dot decimal; `excel_de` semicolon delimiter, comma decimal, dot thousands separator; `excel_us` comma delimiter, dot decimal, comma thousands separator. The API keywords `detailed_result_csv_format`/`detailed_result_csv_semicolon` are a deprecated per-request override. |
 | `webui.operation_log_retention_days` | `10` | Int `>= 0`: days the operation log reaches back. Every Web UI start drops older entries; `0` keeps only the current session. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` wins (headless runs without a configuration file). |
 | `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | Base URL of the published documentation that the help pages (the **?** next to a control) and the header link open; point it at a local build or a pinned version. A link only, nothing is fetched. |
 | `webui.window_width` | `1500` | Width in pixels of the app window the Web UI opens (Edge, Chrome, Chromium, Brave). |

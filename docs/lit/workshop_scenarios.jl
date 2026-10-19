@@ -240,13 +240,14 @@ emergent = [p for (p, r) in zip(pairs, pair_results) if harmful(r) && !any(e -> 
 circuits = Set(Set(c.elements) for c in generateDoubleCircuits(c60.net; names=c60.names))
 println(length(pairs), " pairs, ", count(harmful, pair_results), " harmful, ", length(emergent), " harmful with two harmless singles, ", count(p -> Set(p.elements) in circuits, emergent), " of them double circuits")
 @assert length(pairs) == 2701
-@assert count(harmful, pair_results) == 1106
-@assert length(emergent) == 124
+## 0.50.0: harmful old 1106, new 1115; emergent old 124, new 133; demo case rebuilt, transformer magnetizing from nameplate since 0.32.1 #src
+@assert count(harmful, pair_results) == 1115
+@assert length(emergent) == 133
 @assert count(p -> Set(p.elements) in circuits, emergent) == 0
 
 # None of the six double circuits is among them: the ring carries each
 # corridor twice, and losing both legs moves the flow to the other half of
-# the ring. The 124 are mostly voltage events: two lines whose outages
+# the ring. The 133 are mostly voltage events: two lines whose outages
 # each lower the same buses a little, together below 0.9 pu. That is why a
 # rule that keeps only pairs with a single near a limit misses some of
 # them; the full list is the safe choice on a network of this size.

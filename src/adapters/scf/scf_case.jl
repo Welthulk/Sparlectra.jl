@@ -219,6 +219,11 @@ Base.@kwdef mutable struct SCFTapControllerRow
   pos::_ScfOptGridPos = nothing
   pos_min::_ScfOptGridPos = nothing
   pos_max::_ScfOptGridPos = nothing
+  # ratio changer only: "linear" when the positions count whole steps of
+  # the ratio from ratio_base (a CGMES changer); absent means the cascade
+  # fraction grid of nameplate data, so files written before the key stay
+  # readable as they were
+  grid::Union{Nothing,String} = nothing
 end
 
 Base.@kwdef mutable struct SCFTapChangerRow
@@ -542,6 +547,7 @@ function _scfcase_tap_controller(row)::SCFTapControllerRow
     pos = _scf_opt_gridpos(row, "pos", "controller.pos"),
     pos_min = _scf_opt_gridpos(row, "pos_min", "controller.pos_min"),
     pos_max = _scf_opt_gridpos(row, "pos_max", "controller.pos_max"),
+    grid = _scfcase_opt_str(row, "grid"),
   )
 end
 

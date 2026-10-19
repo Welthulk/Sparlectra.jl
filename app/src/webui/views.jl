@@ -1584,6 +1584,32 @@ function _webui_adapter_options_html(key::Symbol, profile_values)::String
   return ""
 end
 
+# The system frequency select of the Case page: its own section, shown for
+# every case format (the model.* keys of the MATPOWER section are hidden for
+# CGMES and PowSyBl). The value comes from the form state, which takes an SCF
+# file's meta.f_nom over the configuration (webui_form_state), so an
+# unchanged form never posts a value against the file.
+function _webui_system_frequency_html(profile_values)::String
+  field = "model_nominal_frequency_hz"
+  spec = _webui_option_spec(field)
+  selected = _webui_selected(profile_values, field, spec.default)
+  values = collect(Any, spec.allowed_values)
+  # a case file may state another frequency (meta.f_nom = 59.5, say); it is
+  # listed, or the browser would preselect 50 and post it against the file
+  sel = tryparse(Float64, _webui_form_string(selected))
+  sel === nothing || any(v -> v == sel, values) || push!(values, sel)
+  label(v) = isinteger(v) ? string(round(Int, v), " Hz") : string(v, " Hz")
+  opts = join((_webui_option(v, label(v), selected) for v in values), "")
+  return string(
+    "<fieldset class=\"model-section\" data-model-section>",
+    "<legend>Network model</legend>",
+    "<label>", _webui_field_label(field, "System frequency"), "<select id=\"", field, "\" name=\"", field, "\">", opts, "</select></label>",
+    "<p class=\"field-hint span-2\">Acts only where capacitance is used: lines from per-km capacitance and the <code>c1</code> of PGM/SCF lines. ",
+    "The short circuit does not depend on it. Cases given in ohm, siemens or per unit are unchanged in the power flow. ",
+    "An SCF file states its own frequency, which preselects this field.</p>",
+    "</fieldset>")
+end
+
 """
     render_case_page(; kwargs...) -> String
 
@@ -1666,6 +1692,7 @@ $(_webui_adapter_options_html(:powsybl, profile_values))
 <p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
 </fieldset>
 </details>
+$(_webui_system_frequency_html(profile_values))
 <fieldset class=\"import-section\" data-import-conventions-section>
 <legend>MATPOWER import conventions</legend>
 <p class=\"field-hint span-2\" data-import-conventions-hint hidden>Not applicable to the selected CGMES or PowSyBl case: these options steer MATPOWER (and DTF) parsing only. The CGMES and PowSyBl importers read the delivery's own conventions; Export Solution stays available.</p>
@@ -3035,6 +3062,7 @@ function render_powerflow_result(result::AbstractDict)::String
   refresh_url = active && !isempty(String(run_id)) ? "/powerflow/result/$(_webui_urlencode(run_id))?autorefresh=1" : nothing
   save_section = active ? "" : _webui_case_settings_save_section(result)
   se_tap_section = active ? "" : _webui_se_tap_section(result)
+  se_sigma_section = active ? "" : _webui_se_sigma_level_section(result)
   se_topology_section = active ? "" : _webui_se_topology_section(result)
   se_chain_section = active ? "" : _webui_se_chain_section(result)
   n1_table_section = active ? "" : _webui_contingency_table_section(result)
@@ -3045,7 +3073,7 @@ function render_powerflow_result(result::AbstractDict)::String
   # reads like a crashed power flow, and the residual it measured (which IS
   # the answer) looks like the symptom of one.
   diagnose_probe && (runtime_notice *= "<div class=\"alert info\"><strong>This is a diagnosis, not a solve.</strong> The self-check takes exactly one step from the case's own stored voltages (<code>max_iter = 1</code>, no rescue, Q-limit handling off), so a remaining residual is the RESULT and not a failure. The numbers below therefore show one iteration and a non-zero mismatch by design; <code>diagnose.log</code> names the worst bus and what to do about it.</div>")
-  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(se_tap_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
+  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
 end
 
 # N-1 / scenario result table on the run result page: the browser must show WHICH case was
@@ -3185,22 +3213,291 @@ const _WEBUI_CSV_STRICT_NUMBER = Dict(
   ',' => r"^[-+]?(\d{1,3}(,\d{3})+|\d+)(\.\d+)?([eE][-+]?\d+)?$",
 )
 
+# The spreadsheet functions of the CSV table that need no server round trip:
+# column width (drag the right edge of a header cell, double click for the
+# natural width), hiding columns (button in the header or the Columns list),
+# hiding rows (row checkboxes, Hide selected rows) and the row filter (rows
+# that contain a text, ignoring case, in any cell). Sorting and the number
+# display stay on the server, so a reload has to keep the choice:
+#   - hidden columns travel as `hide=` in the query; the script writes it into
+#     the address, the sort links, the Raw text link and the Apply form;
+#   - hidden rows and the filter text are kept per page in sessionStorage
+#     (this tab only), keyed by the row number of the file;
+#   - column widths are kept in localStorage per artifact name and column
+#     count, so the same file of another run opens with the same widths.
+# Storage is a convenience: where the browser refuses it (storage disabled,
+# quota, a corrupt entry) the table opens in its default layout.
+const _WEBUI_CSV_GRID_SCRIPT = raw"""<script>
+(function () {
+  var table = document.querySelector('table.csv-grid');
+  if (table === null) return;
+  var styleEl = document.querySelector('style[data-csv-grid-style]');
+  var toolbar = document.querySelector('.csv-toolbar');
+  var heads = Array.prototype.slice.call(table.tHead.rows[0].cells);
+  var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+  var ncols = heads.length - 1;
+  var MIN_WIDTH = 32;
+  // pixels the pointer moves on a grip before it counts as a drag
+  var DRAG_PX = 4;
+  var widthKey = 'sparlectra-csv-widths:' + (table.getAttribute('data-csv-name') || '') + ':' + ncols;
+  var rowKey = 'sparlectra-csv-rows:' + location.pathname;
+  var hidden = {};
+  var widths = {};
+  var hiddenRows = {};
+  (new URLSearchParams(location.search).get('hide') || '').split(',').forEach(function (s) {
+    var j = parseInt(s, 10);
+    if (j >= 1 && j <= ncols) hidden[j] = true;
+  });
+  // the storage object and getItem throw where storage is disabled,
+  // JSON.parse on a corrupt entry
+  var load = function (store, key) {
+    try { return JSON.parse(window[store].getItem(key) || 'null'); } catch (e) { return null; }
+  };
+  // setItem throws where storage is disabled or full
+  var save = function (store, key, value) {
+    try { window[store].setItem(key, JSON.stringify(value)); } catch (e) { }
+  };
+  widths = load('localStorage', widthKey) || {};
+  var hideList = function () {
+    return Object.keys(hidden).map(Number).sort(function (a, b) { return a - b; }).join(',');
+  };
+  // the same rule the server writes for the hidden columns of the query
+  var hiddenCss = function () {
+    return Object.keys(hidden).map(function (j) {
+      var n = Number(j) + 1;
+      return '.csv-grid th:nth-child(' + n + '),.csv-grid td:nth-child(' + n + '){display:none}';
+    }).join('');
+  };
+  // Column widths: without a set width the table keeps its automatic layout.
+  // With one, every shown column gets a fixed width (the set one, else its
+  // natural width measured in the automatic layout), so a column can also
+  // get narrower than its content.
+  // offsetWidth rounds down; a column that just fits its widest cell then
+  // cuts that cell by a fraction of a pixel, so the exact width rounded up
+  var naturalWidth = function (th) {
+    return Math.ceil(th.getBoundingClientRect().width);
+  };
+  var layout = function () {
+    styleEl.textContent = hiddenCss();
+    heads.forEach(function (th) { th.style.width = ''; });
+    table.classList.remove('csv-fixed');
+    table.style.width = '';
+    if (Object.keys(widths).length === 0) return;
+    var natural = {};
+    heads.forEach(function (th, j) {
+      if (!(j in widths) && !hidden[j]) natural[j] = naturalWidth(th);
+    });
+    var total = 0;
+    heads.forEach(function (th, j) {
+      if (hidden[j]) return;
+      var w = (j in widths) ? widths[j] : natural[j];
+      th.style.width = w + 'px';
+      total += w;
+    });
+    table.style.width = total + 'px';
+    table.classList.add('csv-fixed');
+  };
+  var setParam = function (url, list) {
+    if (list) url.searchParams.set('hide', list); else url.searchParams.delete('hide');
+    return url;
+  };
+  var syncColumns = function () {
+    var list = hideList();
+    toolbar.querySelectorAll('input[data-csv-col]').forEach(function (box) {
+      box.checked = !hidden[box.getAttribute('data-csv-col')];
+    });
+    var n = Object.keys(hidden).length;
+    toolbar.querySelector('[data-csv-hidden-count]').textContent = n ? ' (' + n + ' hidden)' : '';
+    document.querySelectorAll('a[data-csv-keep]').forEach(function (a) {
+      a.href = setParam(new URL(a.href), list).href;
+    });
+    var input = document.querySelector('input[data-csv-hide-input]');
+    if (input !== null) {
+      input.value = list;
+      input.disabled = !list;
+    }
+    // replaceState throws on a page opened from a file (opaque origin);
+    // the links above still carry the choice
+    try { history.replaceState(null, '', setParam(new URL(location.href), list).href); } catch (e) { }
+    layout();
+  };
+  heads.forEach(function (th, j) {
+    if (j === 0) {
+      var all = document.createElement('input');
+      all.type = 'checkbox';
+      all.title = 'Select all shown rows';
+      all.setAttribute('data-csv-select-all', '');
+      all.addEventListener('change', function () {
+        rows.forEach(function (tr) {
+          if (!tr.classList.contains('csv-row-hidden')) tr.cells[0].firstChild.checked = all.checked;
+        });
+      });
+      th.appendChild(all);
+    } else {
+      var hide = document.createElement('button');
+      hide.type = 'button';
+      hide.className = 'csv-hide-col';
+      hide.title = 'Hide column';
+      hide.textContent = '×';
+      hide.addEventListener('click', function () {
+        hidden[j] = true;
+        syncColumns();
+      });
+      th.appendChild(hide);
+    }
+    var grip = document.createElement('span');
+    grip.className = 'csv-resize';
+    grip.title = 'Drag to resize; double click for the natural width';
+    grip.addEventListener('pointerdown', function (event) {
+      event.preventDefault();
+      event.stopPropagation();
+      var startX = event.clientX;
+      var startWidth = 0;
+      var startTotal = 0;
+      // A click without a move changes nothing and stores nothing: the fixed
+      // layout and the stored width start with the first move of DRAG_PX.
+      // A plain click used to fix the layout and store the width, and later
+      // views of the same file cut numbers.
+      var dragging = false;
+      // the move and the release are followed on the whole document, so the
+      // drag goes on when the pointer leaves the narrow handle; no text
+      // selection while dragging
+      document.body.style.userSelect = 'none';
+      var move = function (e) {
+        if (!dragging) {
+          if (Math.abs(e.clientX - startX) < DRAG_PX) return;
+          dragging = true;
+          if (!table.classList.contains('csv-fixed')) {
+            widths[j] = naturalWidth(th);
+            layout();
+          }
+          startWidth = parseFloat(th.style.width);
+          startTotal = parseFloat(table.style.width);
+        }
+        var w = Math.max(MIN_WIDTH, Math.round(startWidth + e.clientX - startX));
+        widths[j] = w;
+        th.style.width = w + 'px';
+        table.style.width = (startTotal - startWidth + w) + 'px';
+      };
+      var up = function () {
+        document.body.style.userSelect = '';
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+        if (dragging) save('localStorage', widthKey, widths);
+      };
+      document.addEventListener('pointermove', move);
+      document.addEventListener('pointerup', up);
+      document.addEventListener('pointercancel', up);
+    });
+    grip.addEventListener('dblclick', function (event) {
+      event.preventDefault();
+      delete widths[j];
+      save('localStorage', widthKey, widths);
+      layout();
+    });
+    th.appendChild(grip);
+  });
+  // rows: a checkbox in front of the row number, the filter over all cells
+  var rowNumbers = rows.map(function (tr) {
+    var cell = tr.cells[0];
+    var no = cell.textContent.trim();
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.title = 'Select row';
+    // the number in its own box, so the numbers line up behind the checkboxes
+    var number = document.createElement('span');
+    number.className = 'csv-rn-no';
+    number.textContent = no;
+    cell.textContent = '';
+    cell.appendChild(box);
+    cell.appendChild(number);
+    return no;
+  });
+  var rowTexts = [];
+  var rowText = function (i) {
+    if (rowTexts[i] === undefined) {
+      var cells = rows[i].cells;
+      var parts = [];
+      for (var k = 1; k < cells.length; k++) parts.push(cells[k].textContent.toLowerCase());
+      rowTexts[i] = parts.join('\u0001');
+    }
+    return rowTexts[i];
+  };
+  var filterInput = toolbar.querySelector('[data-csv-filter]');
+  var countEl = toolbar.querySelector('[data-csv-count]');
+  var syncRows = function () {
+    var q = filterInput.value.trim().toLowerCase();
+    var shown = 0;
+    rows.forEach(function (tr, i) {
+      var off = hiddenRows[rowNumbers[i]] === true || (q !== '' && rowText(i).indexOf(q) < 0);
+      tr.classList.toggle('csv-row-hidden', off);
+      if (off) {
+        tr.cells[0].firstChild.checked = false;
+      } else {
+        shown++;
+      }
+    });
+    countEl.textContent = shown + ' of ' + rows.length + ' rows shown' + (shown < rows.length ? ', ' + (rows.length - shown) + ' hidden' : '');
+    save('sessionStorage', rowKey, { rows: Object.keys(hiddenRows), filter: filterInput.value });
+  };
+  var stored = load('sessionStorage', rowKey);
+  if (stored !== null) {
+    (stored.rows || []).forEach(function (no) { hiddenRows[no] = true; });
+    filterInput.value = stored.filter || '';
+  }
+  filterInput.addEventListener('input', syncRows);
+  toolbar.addEventListener('change', function (event) {
+    var col = event.target.getAttribute('data-csv-col');
+    if (col === null) return;
+    if (event.target.checked) delete hidden[col]; else hidden[col] = true;
+    syncColumns();
+  });
+  toolbar.addEventListener('click', function (event) {
+    var action = event.target.getAttribute('data-csv-action');
+    if (action === 'show-columns') {
+      hidden = {};
+      syncColumns();
+    } else if (action === 'reset-widths') {
+      widths = {};
+      save('localStorage', widthKey, widths);
+      layout();
+    } else if (action === 'hide-rows') {
+      rows.forEach(function (tr, i) {
+        if (tr.cells[0].firstChild.checked) hiddenRows[rowNumbers[i]] = true;
+      });
+      syncRows();
+    } else if (action === 'show-rows') {
+      hiddenRows = {};
+      filterInput.value = '';
+      syncRows();
+    }
+  });
+  syncColumns();
+  syncRows();
+})();
+</script>"""
+
 """
-    _WebUICsvDisplay(digits, power, sort = "", order = "desc")
+    _WebUICsvDisplay(digits, power, sort = "", order = "desc", hide = "")
 
 The display choice of the CSV artifact table: `digits` significant digits
 (1 to 15), `power` the resolution of power columns (`""` for none, `"W"`,
-`"kW"`, `"MW"`), and `sort` the header name of the column the rows are
-sorted by (`""` for the file order) with `order` `"desc"` (largest first)
-or `"asc"`. Built from the query by `_webui_csv_display`.
+`"kW"`, `"MW"`), `sort` the header name of the column the rows are sorted
+by (`""` for the file order) with `order` `"desc"` (largest first, Z to A)
+or `"asc"`, and `hide` the hidden columns as sorted, comma-separated column
+numbers (1 is the first column of the file, `""` for none). Built from the
+query by `_webui_csv_display`.
 """
 struct _WebUICsvDisplay
   digits::Int
   power::String
   sort::String
   order::String
+  hide::String
 end
 
+_WebUICsvDisplay(digits::Int, power::AbstractString, sort::AbstractString, order::AbstractString) = _WebUICsvDisplay(digits, String(power), String(sort), String(order), "")
 _WebUICsvDisplay(digits::Int, power::AbstractString) = _WebUICsvDisplay(digits, String(power), "", "desc")
 _WebUICsvDisplay() = _WebUICsvDisplay(_WEBUI_CSV_DEFAULT_DIGITS, "")
 
@@ -3208,11 +3505,13 @@ _WebUICsvDisplay() = _WebUICsvDisplay(_WEBUI_CSV_DEFAULT_DIGITS, "")
     _webui_csv_display(query) -> _WebUICsvDisplay
 
 The display choice from the query of the artifact view: `digits` (an
-integer from 1 to 15), `power` (`W`, `kW` or `MW`), `sort` (a column name)
-and `order` (`asc`, else largest first). A missing or bad value falls back
-to the default silently (5 digits, no resolution, file order), as the other
-Web UI form parsing does; a `sort` name that is no numeric column of the
-file is ignored when the table is built.
+integer from 1 to 15), `power` (`W`, `kW` or `MW`), `sort` (a column name),
+`order` (`asc`, else largest first) and `hide` (column numbers separated by
+commas). A missing or bad value falls back to the default silently (5
+digits, no resolution, file order, no hidden column), as the other Web UI
+form parsing does; a bad entry of `hide` is dropped, a `sort` name that is no
+column of the file and a `hide` number beyond the last column are ignored
+when the table is built.
 """
 function _webui_csv_display(query::AbstractDict)::_WebUICsvDisplay
   digits = tryparse(Int, strip(String(get(query, "digits", ""))))
@@ -3221,19 +3520,32 @@ function _webui_csv_display(query::AbstractDict)::_WebUICsvDisplay
   haskey(_WEBUI_CSV_POWER_FACTORS, power) || (power = "")
   sort_column = strip(String(get(query, "sort", "")))
   order = strip(String(get(query, "order", ""))) == "asc" ? "asc" : "desc"
-  return _WebUICsvDisplay(digits, String(power), String(sort_column), order)
+  hidden = Int[]
+  for entry in split(String(get(query, "hide", "")), ',')
+    number = tryparse(Int, strip(entry))
+    number !== nothing && number >= 1 && push!(hidden, number)
+  end
+  return _WebUICsvDisplay(digits, String(power), String(sort_column), order, join(sort!(unique!(hidden)), ","))
 end
 
+# The hidden column numbers of a display choice.
+_webui_csv_hidden_columns(csv_display::_WebUICsvDisplay)::Vector{Int} =
+  isempty(csv_display.hide) ? Int[] : parse.(Int, split(csv_display.hide, ','))
+
 # the query string of a display choice, empty for the default, so the links
-# of an unchanged view stay plain; `sort = false` leaves the sort column out
-# (the links to the other CSV files of a run, which have other columns)
-function _webui_csv_display_query(csv_display::_WebUICsvDisplay; sort::Bool = true)::String
+# of an unchanged view stay plain; `same_file = false` leaves out what only
+# fits the columns of this file, the sort column and the hidden columns (the
+# links to the other CSV files of a run, which have other columns)
+function _webui_csv_display_query(csv_display::_WebUICsvDisplay; same_file::Bool = true)::String
   parts = String[]
   csv_display.digits == _WEBUI_CSV_DEFAULT_DIGITS || push!(parts, "digits=$(csv_display.digits)")
   isempty(csv_display.power) || push!(parts, "power=$(csv_display.power)")
-  if sort && !isempty(csv_display.sort)
-    push!(parts, "sort=$(_webui_urlencode(csv_display.sort))")
-    csv_display.order == "asc" && push!(parts, "order=asc")
+  if same_file
+    if !isempty(csv_display.sort)
+      push!(parts, "sort=$(_webui_urlencode(csv_display.sort))")
+      csv_display.order == "asc" && push!(parts, "order=asc")
+    end
+    isempty(csv_display.hide) || push!(parts, "hide=$(_webui_urlencode(csv_display.hide))")
   end
   return join(parts, "&")
 end
@@ -3247,26 +3559,37 @@ function _webui_csv_cell_value(cell::AbstractString, delimiter::Char)
   return Sparlectra._parse_result_csv_number(text, delimiter)
 end
 
-# The data rows in display order. Sorted by the column `csv_display.sort`
-# when it is a header name and at least one of its cells is a number:
-# numbers by value (largest first for "desc"), cells without a number after
-# them in file order, equal values in file order (stable merge sort). Every
-# row of the preview is sorted before the table is cut to its row limit, so
-# the largest value of the file is on top. Returns the rows and the sorted
-# column index (0 for the file order).
+# The data rows in display order, as indices into `rows`, and the sorted
+# column index (0 for the file order). Sorted by the column
+# `csv_display.sort` when it is a header name. A column with at least one
+# number sorts numerically: numbers by value (largest first for "desc"),
+# cells without a number after them in file order. A column without any
+# number sorts as text, ignoring case ("asc" A to Z), empty cells after
+# them. Equal values keep the file order (stable merge sort). Every row of
+# the preview is sorted before the table is cut to its row limit, so the
+# largest value of the file is on top.
 function _webui_csv_sorted_rows(rows::Vector{String}, header::AbstractVector{<:AbstractString}, delimiter::Char, csv_display::_WebUICsvDisplay)
-  isempty(csv_display.sort) && return rows, 0
+  file_order = collect(eachindex(rows))
+  isempty(csv_display.sort) && return file_order, 0
   j = findfirst(==(csv_display.sort), header)
-  j === nothing && return rows, 0
-  values = map(rows) do row
-    cells = _webui_compare_split_csv(row, delimiter)
-    j <= length(cells) ? _webui_csv_cell_value(cells[j], delimiter) : nothing
+  j === nothing && return file_order, 0
+  cells = map(rows) do row
+    split_row = _webui_compare_split_csv(row, delimiter)
+    j <= length(split_row) ? strip(split_row[j]) : ""
   end
-  numbered = [i for i in eachindex(rows) if values[i] !== nothing]
-  isempty(numbered) && return rows, 0
-  ordered = sort(numbered; by = i -> values[i], rev = csv_display.order != "asc", alg = MergeSort)
-  rest = [i for i in eachindex(rows) if values[i] === nothing]
-  return rows[vcat(ordered, rest)], j
+  values = [_webui_csv_cell_value(cell, delimiter) for cell in cells]
+  descending = csv_display.order != "asc"
+  if any(!isnothing, values)
+    keyed = [i for i in file_order if values[i] !== nothing]
+    ordered = sort(keyed; by = i -> values[i], rev = descending, alg = MergeSort)
+  else
+    keyed = [i for i in file_order if !isempty(cells[i])]
+    isempty(keyed) && return file_order, 0
+    ordered = sort(keyed; by = i -> lowercase(cells[i]), rev = descending, alg = MergeSort)
+  end
+  keyed_set = Set(keyed)
+  rest = [i for i in file_order if !(i in keyed_set)]
+  return vcat(ordered, rest), j
 end
 
 # The unit token of a power column, or `nothing`. Rule: the header name is
@@ -3345,7 +3668,7 @@ function _webui_csv_display_cell(cell::AbstractString, delimiter::Char, csv_disp
 end
 
 """
-    _webui_artifact_csv_html(text; truncated = false) -> String
+    _webui_artifact_csv_html(text; truncated = false, csv_display = _WebUICsvDisplay(), artifact_name = "") -> String
 
 A CSV artifact as an HTML table. The delimiter comes from the header line the
 same way the compare pages sniff it (`_webui_compare_csv_table`), quoted fields
@@ -3358,11 +3681,18 @@ is cut mid-row. Rows beyond `_WEBUI_ARTIFACT_TABLE_ROWS` are counted, not shown.
 `_webui_csv_power_token`) with a resolution `csv_display.power` the value in
 whole W, kW or MW, the unit then named in the header. The decimal separator
 follows the file (comma in a semicolon file). The text is never changed.
-A column with a number in it gets a header link that sorts the rows by it
-(`csv_display.sort`, `_webui_csv_sorted_rows`): largest first, a second
-click smallest first.
+A number cell is right-aligned, and so is the header of a column whose
+non-empty cells are mostly numbers, so the name sits over its numbers.
+
+Every column with a value gets a header link that sorts the rows by it
+(`csv_display.sort`, `_webui_csv_sorted_rows`): a column with numbers
+largest first, a text column A to Z; a second click turns the order.
+The columns in `csv_display.hide` are hidden by a style rule and stay in
+the page, so the script below the table (`_WEBUI_CSV_GRID_SCRIPT`, column
+width, hiding columns and rows, row filter) can show them again;
+`artifact_name` keys the column widths the browser keeps.
 """
-function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay())::String
+function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay(), artifact_name::AbstractString = "")::String
   comments = String[]
   data = String[]
   for line in split(text, '\n')
@@ -3376,21 +3706,38 @@ function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false,
   delimiter = count(==(';'), header_line) > count(==(','), header_line) ? ';' : ','
   header = _webui_compare_split_csv(header_line, delimiter)
   power_tokens = [_webui_csv_power_token(name) for name in header]
-  rows, sorted_column = _webui_csv_sorted_rows(data[2:end], header, delimiter, csv_display)
-  # a column is sortable when one of its cells is a number
-  sortable = falses(length(header))
+  rows = data[2:end]
+  order, sorted_column = _webui_csv_sorted_rows(rows, header, delimiter, csv_display)
+  # per column: cells the table right-aligns (the td.num rule below), other
+  # non-empty cells, and whether a cell holds a number of the file's format
+  # (then the column sorts numerically, largest first)
+  number_cells = zeros(Int, length(header))
+  text_cells = zeros(Int, length(header))
+  has_value = falses(length(header))
   for row in rows
     cells = _webui_compare_split_csv(row, delimiter)
     for j in eachindex(header)
-      sortable[j] || (j <= length(cells) && _webui_csv_cell_value(cells[j], delimiter) !== nothing && (sortable[j] = true))
+      j <= length(cells) || break
+      cell = cells[j]
+      if occursin(_WEBUI_CSV_NUMBER_PATTERN, cell)
+        number_cells[j] += 1
+      elseif !isempty(strip(cell))
+        text_cells[j] += 1
+      end
+      has_value[j] || (has_value[j] = _webui_csv_cell_value(cell, delimiter) !== nothing)
     end
-    all(sortable) && break
   end
+  numeric_header = number_cells .> text_cells
+  sortable = (number_cells .+ text_cells) .> 0
+  hidden = [j for j in _webui_csv_hidden_columns(csv_display) if j <= length(header)]
   shown = min(length(rows), _WEBUI_ARTIFACT_TABLE_ROWS)
   body = IOBuffer()
   for k in 1:shown
-    cells = _webui_compare_split_csv(rows[k], delimiter)
-    print(body, "<tr>")
+    cells = _webui_compare_split_csv(rows[order[k]], delimiter)
+    # the first cell is the row number of the file (1 is the first data
+    # row): it stays with its row through every sort, and the script keys
+    # the hidden rows by it
+    print(body, "<tr><td class=\"csv-rn\">", order[k], "</td>")
     for (j, cell) in enumerate(cells)
       numeric = occursin(_WEBUI_CSV_NUMBER_PATTERN, cell)
       power_column = j <= length(power_tokens) && power_tokens[j] !== nothing
@@ -3404,30 +3751,64 @@ function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false,
     print(body, "</tr>")
   end
   # a sortable header is a link back onto this view: the first click sorts
-  # largest first, a click on the sorted column turns the order; digits and
-  # resolution stay in the query
-  keep = _webui_csv_display_query(csv_display; sort = false)
+  # numbers largest first and text A to Z, a click on the sorted column turns
+  # the order; digits, resolution and hidden columns stay in the query
   head = join((begin
     token = power_tokens[j]
     unit = (token === nothing || isempty(csv_display.power)) ? "" : " [$(_WEBUI_CSV_POWER_UNITS[token][csv_display.power])]"
     label = _webui_escape(name * unit)
+    class = numeric_header[j] ? " class=\"num\"" : ""
     if sortable[j]
-      next_order = (j == sorted_column && csv_display.order == "desc") ? "asc" : "desc"
-      query = join(filter(!isempty, [keep, "sort=$(_webui_urlencode(name))", next_order == "asc" ? "order=asc" : ""]), "&")
+      first_order = has_value[j] ? "desc" : "asc"
+      next_order = j == sorted_column ? (csv_display.order == "desc" ? "asc" : "desc") : first_order
+      target = _WebUICsvDisplay(csv_display.digits, csv_display.power, name, next_order, csv_display.hide)
       marker = j == sorted_column ? (csv_display.order == "desc" ? " &#9660;" : " &#9650;") : ""
-      title = next_order == "desc" ? "Sort largest first" : "Sort smallest first"
-      "<th><a href=\"?$(_webui_escape(query))\" title=\"$(title)\">$(label)$(marker)</a></th>"
+      title = has_value[j] ? (next_order == "desc" ? "Sort largest first" : "Sort smallest first") : (next_order == "asc" ? "Sort A to Z" : "Sort Z to A")
+      "<th$(class) data-col=\"$(j)\"><a href=\"?$(_webui_escape(_webui_csv_display_query(target)))\" title=\"$(title)\" data-csv-keep>$(label)$(marker)</a></th>"
     else
-      "<th>$(label)</th>"
+      "<th$(class) data-col=\"$(j)\">$(label)</th>"
     end
   end for (j, name) in enumerate(header)), "")
   parts = String[]
   isempty(comments) || push!(parts, "<pre class=\"artifact-csv-comments\">$(_webui_escape(join(comments, '\n')))</pre>")
-  sorted_column > 0 && push!(parts, "<p class=\"field-help artifact-csv-sorted\">Sorted by $(_webui_escape(header[sorted_column])), $(csv_display.order == "desc" ? "largest" : "smallest") first; cells without a number at the end.</p>")
-  hidden = length(rows) - shown
-  hidden > 0 && push!(parts, "<p class=\"field-help\">Table shows the first $(shown) of $(length(rows)) rows. Use Download or Raw text for the complete file.</p>")
-  push!(parts, "<div class=\"artifact-csv\"><table><thead><tr>$(head)</tr></thead><tbody>$(String(take!(body)))</tbody></table></div>")
+  if sorted_column > 0
+    direction = has_value[sorted_column] ? (csv_display.order == "desc" ? "largest first; cells without a number at the end" : "smallest first; cells without a number at the end") :
+      (csv_display.order == "desc" ? "Z to A; empty cells at the end" : "A to Z; empty cells at the end")
+    push!(parts, "<p class=\"field-help artifact-csv-sorted\">Sorted by $(_webui_escape(header[sorted_column])), $(direction).</p>")
+  end
+  cut = length(rows) - shown
+  cut > 0 && push!(parts, "<p class=\"field-help\">Table shows the first $(shown) of $(length(rows)) rows. Use Download or Raw text for the complete file.</p>")
+  push!(parts, _webui_csv_toolbar_html(header, hidden, shown))
+  # the hidden columns as a style rule (column j is cell j + 1 after the row
+  # number); the script rewrites this element, so it also holds the widths
+  push!(parts, "<style data-csv-grid-style>$(_webui_csv_hidden_style(hidden))</style>")
+  push!(parts, "<div class=\"artifact-csv\"><table class=\"csv-grid\" data-csv-name=\"$(_webui_escape(artifact_name))\"><thead><tr><th class=\"csv-rn\" data-col=\"0\"></th>$(head)</tr></thead><tbody>$(String(take!(body)))</tbody></table></div>")
+  push!(parts, _WEBUI_CSV_GRID_SCRIPT)
   return join(parts, "")
+end
+
+# the style rule that hides the given CSV columns; the script writes the
+# same rule (keep both in step)
+function _webui_csv_hidden_style(hidden::Vector{Int})::String
+  isempty(hidden) && return ""
+  return join((".csv-grid th:nth-child($(j + 1)),.csv-grid td:nth-child($(j + 1)){display:none}" for j in hidden), "")
+end
+
+# The controls of the table above it: the column list with a checkbox per
+# column (checked = shown), and the row controls. The buttons work through
+# `_WEBUI_CSV_GRID_SCRIPT`; the column choice reaches the server only as the
+# `hide` query the script writes into the address and the links.
+function _webui_csv_toolbar_html(header::AbstractVector{<:AbstractString}, hidden::Vector{Int}, shown_rows::Int)::String
+  columns = join(("<label><input type=\"checkbox\" data-csv-col=\"$(j)\"$(j in hidden ? "" : " checked")> $(_webui_escape(name))</label>" for (j, name) in enumerate(header)), "")
+  hidden_note = isempty(hidden) ? "" : " ($(length(hidden)) hidden)"
+  return "<div class=\"csv-toolbar\">" *
+    "<details class=\"csv-columns\"><summary>Columns<span data-csv-hidden-count>$(hidden_note)</span></summary>" *
+    "<div class=\"csv-columns-list\">$(columns)</div>" *
+    "<p><button type=\"button\" data-csv-action=\"show-columns\">Show all columns</button> <button type=\"button\" data-csv-action=\"reset-widths\">Reset widths</button></p></details>" *
+    "<button type=\"button\" data-csv-action=\"hide-rows\">Hide selected rows</button>" *
+    "<button type=\"button\" data-csv-action=\"show-rows\">Show all rows</button>" *
+    "<label>Filter rows <input type=\"search\" data-csv-filter placeholder=\"contains\"></label>" *
+    "<span class=\"csv-row-count\" data-csv-count>$(shown_rows) rows</span></div>"
 end
 
 """
@@ -3478,7 +3859,10 @@ function _webui_csv_display_form(name_href::AbstractString, csv_display::_WebUIC
   # the sort column travels along, so Apply keeps the order of the rows
   sort_input = isempty(csv_display.sort) ? "" :
     "<input type=\"hidden\" name=\"sort\" value=\"$(_webui_escape(csv_display.sort))\">" * (csv_display.order == "asc" ? "<input type=\"hidden\" name=\"order\" value=\"asc\">" : "")
-  return "<form method=\"get\" action=\"$(name_href)\" class=\"artifact-csv-display\">$(digits_input)$(power_input)$(sort_input) <button type=\"submit\">Apply</button><span class=\"field-help\">Display only; Download and Raw text keep the file as written.</span></form>"
+  # the hidden columns as well; the script keeps this field current and
+  # disables it while no column is hidden, so the address stays plain
+  hide_input = "<input type=\"hidden\" name=\"hide\" value=\"$(_webui_escape(csv_display.hide))\" data-csv-hide-input$(isempty(csv_display.hide) ? " disabled" : "")>"
+  return "<form method=\"get\" action=\"$(name_href)\" class=\"artifact-csv-display\">$(digits_input)$(power_input)$(sort_input)$(hide_input) <button type=\"submit\">Apply</button><span class=\"field-help\">Display only; Download and Raw text keep the file as written.</span></form>"
 end
 
 """
@@ -3508,14 +3892,14 @@ function render_powerflow_artifact_page(artifact, preview; raw::Bool = false, cs
   with_query(href) = isempty(display_query) ? href : "$(href)?$(display_query)"
   controls = ""
   if renderable && !raw
-    body = is_csv ? _webui_artifact_csv_html(preview.content; truncated = preview.truncated, csv_display) : _webui_artifact_markdown_html(preview.content)
-    toggle = "<a class=\"button secondary\" href=\"$(_webui_escape(name_href * "?raw=1" * (isempty(display_query) ? "" : "&" * display_query)))\">Raw text</a>"
+    body = is_csv ? _webui_artifact_csv_html(preview.content; truncated = preview.truncated, csv_display, artifact_name = artifact.name) : _webui_artifact_markdown_html(preview.content)
+    toggle = "<a class=\"button secondary\" href=\"$(_webui_escape(name_href * "?raw=1" * (isempty(display_query) ? "" : "&" * display_query)))\"$(is_csv ? " data-csv-keep" : "")>Raw text</a>"
     if is_csv
       controls = _webui_csv_display_form(name_href, csv_display, _webui_csv_has_power_column(preview.content))
       others = [n for n in csv_siblings if n != artifact.name]
       # the other files have other columns: their links keep digits and
-      # resolution, not the sort column
-      sibling_query = _webui_csv_display_query(csv_display; sort = false)
+      # resolution, not the sort column and the hidden columns
+      sibling_query = _webui_csv_display_query(csv_display; same_file = false)
       sibling_href = n -> isempty(sibling_query) ? _webui_urlencode(n) : "$(_webui_urlencode(n))?$(sibling_query)"
       isempty(others) || (controls *= "<p class=\"artifact-csv-siblings\">Other CSV files of this run: " *
         join(("<a href=\"$(_webui_escape(sibling_href(n)))\">$(_webui_escape(n))</a>" for n in others), " · ") * "</p>")
@@ -4291,13 +4675,14 @@ end
     render_se_form(; cases, measurements, selected_case, selected_measurement, config_file, message, active_run) -> String
 
 State-estimation page (SE phase 5): case selector (same case sources as the
-PowerFlow page), measurement-set selector (content-sniffed CSV v1 files),
+PowerFlow page), measurement-set selector (content-sniffed CSV v1 files and
+measurement tables; only the sets of the selected case, each labeled with its case),
 the estimator option subset, a demo action generating synthetic measurements
 from a solved PF, and the run action posting to `/powerflow/run` with
 `se_mode`. Composed from small string pieces like the contingency-weights
 editor; no onsubmit button-disabling.
 """
-function render_se_form(; cases::Vector{String} = String[], measurements::Vector{String} = String[], case_measurement_rows::Integer = 0, case_measurement_noise::Union{Nothing,Bool} = nothing, selected_case::AbstractString = "", selected_measurement::AbstractString = "", config_file::AbstractString = "", message::AbstractString = "", set_info::Vector{String} = String[], set_provenance::Vector{String} = String[], set_counts::Vector{Tuple{String,Int}} = Tuple{String,Int}[], meas_case::AbstractDict = Dict{String,String}(), starred::AbstractSet = Set{String}(), set_case::AbstractString = "", set_text::AbstractString = "", set_rows::Vector{NamedTuple} = NamedTuple[], gen_values::AbstractDict = Dict{String,String}(), truth_runs::Vector{NamedTuple} = NamedTuple[], active_run = nothing)
+function render_se_form(; cases::Vector{String} = String[], measurements::Vector{String} = String[], case_measurement_rows::Integer = 0, case_measurement_noise::Union{Nothing,Bool} = nothing, selected_case::AbstractString = "", selected_measurement::AbstractString = "", config_file::AbstractString = "", message::AbstractString = "", set_info::Vector{String} = String[], set_provenance::Vector{String} = String[], set_counts::Vector{Tuple{String,Int}} = Tuple{String,Int}[], set_v1::Bool = false, meas_case::AbstractDict = Dict{String,String}(), meas_name_matched::AbstractSet = Set{String}(), starred::AbstractSet = Set{String}(), set_case::AbstractString = "", set_text::AbstractString = "", set_rows::Vector{NamedTuple} = NamedTuple[], gen_values::AbstractDict = Dict{String,String}(), truth_runs::Vector{NamedTuple} = NamedTuple[], active_run = nothing, sigma_levels = (rows = NamedTuple[], error = "", editable = true, stored = false))
   esc = _webui_escape
   # sticky generator inputs: after a generate the redirect carries the
   # submitted values back; the form re-renders with them, not the defaults
@@ -4305,14 +4690,14 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   gchk(key) = get(gen_values, key, "") == "true" ? " checked" : ""
   # default-aware variant for fields whose DEFAULT is checked
   gchk2(key, default) = _webui_parse_bool(get(gen_values, key, default)) ? " checked" : ""
-  # label sets by their in-file case binding; a set bound to a DIFFERENT
-  # case fails the SE run with per-row resolution errors (and the service
-  # refuses it up front), so the mismatch must be visible here already
+  # `measurements` holds only the sets of the selected case; every entry
+  # names its case so the binding is visible: the case from the `# case:`
+  # line, or a note for a set without one that matched by its file name
   meas_label = function (name)
+    name in meas_name_matched && return string(name, " (no case line, name matches ", selected_case, ")")
     bound = String(get(meas_case, name, ""))
-    isempty(bound) && return string(name, " (no case binding)")
-    bound == selected_case && return name
-    return string(name, " (for ", bound, ")")
+    isempty(bound) && return name
+    return string(name, " (case ", bound, ")")
   end
   meas_options = join(("<option value=\"$(esc(name))\"$(name == selected_measurement ? " selected" : "")>$(esc(meas_label(name)))</option>" for name in measurements), "")
   # The case file's own set is the FIRST choice when it has one; an empty
@@ -4332,6 +4717,9 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   # table (sparlectra-taps v1) renders as a real table, anything else as a
   # plain list; the per-type row counts say WHAT the set contains
   counts_html = isempty(set_counts) ? "" : string("<p><strong>Measured values in this set:</strong> ", join(("$(esc(replace(t, "Meas" => ""))) × $(n)" for (t, n) in set_counts), ", "), " ($(sum(last.(set_counts))) rows; the tap table below is metadata, the measurement rows follow it in the file)</p>")
+  # the deprecation notice at a measurement CSV v1 (the run log says it too)
+  v1_html = set_v1 ? "<p class=\"alert warning measurement-v1-notice\">$(esc(MEASUREMENT_CSV_V1_DEPRECATION))</p>" : ""
+  counts_html = v1_html * counts_html
   info_html = ""
   # binding line + inline editor shared by both info-panel variants
   bind_html = isempty(selected_measurement) ? "" : isempty(set_case) ? "<p><strong>Case binding:</strong> none (older set; the file carries no <code># case:</code> comment). Regenerate or add the line in the editor below.</p>" : "<p><strong>Case binding:</strong> this set belongs to <code>$(esc(set_case))</code> (recorded in the file).</p>"
@@ -4342,7 +4730,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   if !isempty(set_rows)
     trs = String[]
     for r in set_rows
-      loc = isempty(r.bus) ? string(r.from_bus, "-", r.to_bus, " #", r.branch_nr, " ", r.direction) : string("bus ", r.bus)
+      loc = r.location
       push!(trs, string(
         "<tr><td><code>", esc(r.id), "</code></td><td>", esc(replace(r.typ, "Meas" => "")), "</td><td>", esc(loc), "</td>",
         "<td><input name=\"v_", r.line, "\" value=\"", esc(r.value), "\" size=\"14\"></td>",
@@ -4370,7 +4758,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
       "<input type=\"hidden\" name=\"file\" value=\"$(esc(selected_measurement))\">",
       "<input type=\"hidden\" name=\"case\" value=\"$(esc(selected_case))\">",
       "<textarea name=\"content\" rows=\"18\" spellcheck=\"false\" style=\"width:100%;font-family:monospace;white-space:pre\">$(esc(set_text))</textarea>",
-      "<p><button type=\"submit\">Save measurement file</button> <span class=\"field-help\">Saved atomically; the first line must stay <code># sparlectra-measurements v1</code>. For larger files use download and re-upload.</span></p>",
+      "<p><button type=\"submit\">Save measurement file</button> <span class=\"field-help\">Saved atomically; the file keeps its format (a measurement table must keep its version line and header, a CSV v1 its first line <code># sparlectra-measurements v1</code>). For larger files use download and re-upload.</span></p>",
       "</form></details>",
     )
   end
@@ -4403,7 +4791,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<form method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\">",
     "<input type=\"hidden\" name=\"return_to\" value=\"stateestimation\">",
     "<input type=\"hidden\" name=\"return_case\" value=\"$(esc(selected_case))\">",
-    "<label title=\"Upload a measurement CSV v1 (content-sniffed; lands in the case cache and appears in the set selector)\">Upload measurement file $(_webui_file_input("casefiles"; accept = ".csv", id = "measurements"))</label> ",
+    "<label title=\"Measurement table or CSV v1. Offered for a case when its # case: line names it, or its file name starts with the case name and a dot; otherwise for no case.\">Upload measurement file $(_webui_file_input("casefiles"; accept = ".csv", id = "measurements"))</label> ",
     "<button type=\"submit\">Upload</button>",
     "</form>",
   )
@@ -4431,7 +4819,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"Reactive-power accuracy in percent of the measured value (injections and branch flows)\">&sigma; Q (%) <input type=\"text\" name=\"sigma_q_pct\" value=\"$(gv("sigma_q_pct", "1.0"))\" size=\"6\"></label>",
     "</fieldset>",
     "<button type=\"submit\">Generate synthetic measurements from a solved PF</button>",
-    "<p class=\"field-help\">Truth state 'fresh solve' solves the case once (MATPOWER or CGMES); 'from run' adopts a run state unchanged. The CSV v1 lands next to the case and documents truth source, flow-end choices and passive handling in its comments.</p><p class=\"se-recommend\">Recommended: noise on, sigma U 0.5%, P/Q 1%, currents on with sigma I 1%; bad data 10 to exercise the elimination; tap deviation 1 to 2 steps to create a model discrepancy.</p>",
+    "<p class=\"field-help\">Truth state 'fresh solve' solves the case once (MATPOWER or CGMES); 'from run' adopts a run state unchanged. The measurement table lands next to the case and documents truth source, flow-end choices and passive handling in its comments.</p><p class=\"se-recommend\">Recommended: noise on, sigma U 0.5%, P/Q 1%, currents on with sigma I 1%; bad data 10 to exercise the elimination; tap deviation 1 to 2 steps to create a model discrepancy.</p>",
     "<script>(function(){var ts=document.getElementById('gen-truth-source'),tap=document.getElementById('gen-tap-steps'),tapc=document.getElementById('gen-tap-count'),run=document.getElementById('gen-truth-run');function upd(){var fr=ts&&ts.value==='from_run';if(tap){tap.disabled=fr;if(fr){tap.value='0';}}if(tapc){tapc.disabled=fr;}if(run){run.disabled=!fr;}}ts&&ts.addEventListener('change',upd);upd();})();</script>",
     "</form>",
     # per-case settings reset: deletes the saved sidecar profile so both
@@ -4462,14 +4850,27 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "</form>",
     "<p class=\"field-help\">Turns an ideal set into a realistic one without recomputing anything: the values are perturbed, the sigmas stay. The result lands next to the case as <code>&lt;case&gt;.noisy.measurements.csv</code> and is preselected afterwards.</p>",
   ) : ""
-  run_form = isempty(selected_case) ? "<p>Select a case to run a state estimation.</p>" : (isempty(measurements) && case_measurement_rows == 0) ? "<p>No measurement set found for this case cache. Upload a measurement CSV v1 (Import on the PowerFlow page) or use the demo generator above.</p>" : string(
+  run_form = isempty(selected_case) ? "<p>Select a case to run a state estimation.</p>" : (isempty(measurements) && case_measurement_rows == 0) ? string(
+    "<p>No measurement set in the case directory belongs to $(esc(selected_case)). Generate one with the measurement generator above, or upload a set whose <code># case:</code> line names this case (Import on the PowerFlow page).</p>",
+    # the sigma table already matters before the first set: the generator
+    # writes its sigmas, so it can be set and saved here on its own; the
+    # save posts only the table (and the case), no estimator option
+    "<form method=\"post\" action=\"/powerflow/settings/save\">",
+    "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
+    "<input type=\"hidden\" name=\"config_file\" value=\"$(esc(config_file))\">",
+    "<input type=\"hidden\" name=\"settings_target\" value=\"this_case\">",
+    "<input type=\"hidden\" name=\"return_to\" value=\"runs\">",
+    _webui_sigma_level_fieldset(sigma_levels),
+    "<button type=\"submit\" class=\"secondary-button\" title=\"Save the sigma table into this case's configuration file; the generator and the next run use it.\">Save settings for this case</button>",
+    "</form>",
+  ) : string(
     carries_note,
     noise_form,
     "<form method=\"post\" action=\"/powerflow/run\" data-busy=\"Starting the state estimation…\">",
     "<input type=\"hidden\" name=\"se_mode\" value=\"true\">",
     "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
     "<input type=\"hidden\" name=\"config_file\" value=\"$(esc(config_file))\">",
-    "<p class=\"se-recommend\">Pick the measurement set that belongs to the selected case; the matching set (<case>.measurements.csv) is preselected, sets from other cases are labeled. No set yet? Generate one below.</p><label title=\"Measurement CSV v1 file (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
+    "<p class=\"se-recommend\">The list shows only the measurement sets of the selected case (their <code># case:</code> line names it); the matching set (&lt;case&gt;.measurements.csv) is preselected.$(isempty(measurements) ? " No set in the case directory belongs to this case; generate one with the measurement generator above." : "")</p><label title=\"Measurement CSV v1 or measurement table (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
     "<fieldset class=\"se-options\"><legend>Estimator options</legend>",
     "<label title=\"Start from a flat voltage profile\">$(_webui_field_label("se_flatstart", "flatstart"))<input type=\"checkbox\" name=\"se_flatstart\" value=\"true\"$(gchk2("se_flatstart", true))></label> ",
     "<label title=\"WLS convergence tolerance on the state step. The default 1e-6 is the noise floor of the finite-difference Jacobian; a tighter value is raised with a log line.\">$(_webui_field_label("se_tol", "tol"))<input type=\"text\" name=\"se_tol\" value=\"$(gv("se_tol", "1e-6"))\" size=\"8\"></label> ",
@@ -4504,6 +4905,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"Release every in-service ratio tap changer as an extra state, fix it to the nearest mechanical step and rerun. Machine and unobservable taps are skipped.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
     "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label>",
     "</fieldset>",
+    _webui_sigma_level_fieldset(sigma_levels),
     "<button type=\"submit\">Run state estimation</button> ",
     # issue #377: flatstart/robust_mode/k_eliminate/k_suppress/max_eliminations/
     # report_correlation carry a real config_key (options.jl), so submitting
@@ -4527,6 +4929,72 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   # form here would fork two copies of the same logic. This page links to
   # it instead, preselecting the case this SE section is already showing.
   return "<section class=\"panel se-section\" id=\"state-estimation\"><h2>State estimation</h2>$(banner)$(msg_html)$(run_form)$(generator_tab)$(info_tab)$(upload_tab)</section>"
+end
+
+# The sigma table of the SE run form (state_estimation.sigma_by_voltage_level):
+# one row per nominal voltage of the case, plus configured levels the case
+# does not have (kept, so a save does not drop them). Inside the run form,
+# so a run and "Save settings for this case" post it alike; an empty cell
+# means the default.
+function _webui_sigma_level_fieldset(sigma_levels)::String
+  esc = _webui_escape
+  rows = sigma_levels.rows
+  err = String(sigma_levels.error)
+  # an unreadable configured table: the cells are shown disabled and the
+  # form posts no table (no se_sigma_lvl_n), so a run stops with the named
+  # error and a save keeps the stored value
+  editable = sigma_levels.editable
+  dis = editable ? "" : " disabled"
+  cols = [("p_mw", "σ P (MW)"), ("q_mvar", "σ Q (MVAr)"), ("i_a", "σ I (A)"), ("u_kv", "σ U (kV)"), ("rel_pct", "rel. (%)")]
+  trs = String[]
+  for (i, r) in enumerate(rows)
+    cells = join((string("<td><input type=\"text\" name=\"se_sigma_lvl_", i, "_", c, "\" value=\"", esc(get(r.values, c, "")), "\" size=\"7\" placeholder=\"default\"", dis, "></td>") for (c, _) in cols), "")
+    # the level as the row key of the table ("380", "10.5"), the form
+    # that _webui_sigma_levels_from_form reads back to the same kV
+    key = _sigma_level_key(r.vn_kv)
+    push!(trs, string("<tr><td>", esc(key), "<input type=\"hidden\" name=\"se_sigma_lvl_", i, "_vn_kv\" value=\"", esc(key), "\"></td>", cells, "<td>", r.in_case ? "" : "not in this case", "</td></tr>"))
+  end
+  head = string("<tr><th>Vn (kV)</th>", join(("<th>$(esc(l))</th>" for (_, l) in cols), ""), "<th></th></tr>")
+  table = isempty(rows) ? "<p class=\"field-help\">No voltage levels: the case could not be read.</p>" : string("<div style=\"overflow-x:auto\"><table class=\"details\"><thead>", head, "</thead><tbody>", join(trs, ""), "</tbody></table></div>")
+  return string(
+    "<fieldset class=\"se-options se-sigma-levels\"><legend>Measurement sigma by voltage level $(_webui_help_link("state_estimation.sigma_by_voltage_level", "Measurement sigma by voltage level"))</legend>",
+    editable ? string("<input type=\"hidden\" name=\"se_sigma_lvl_n\" value=\"", length(rows), "\">") : "",
+    # the page showed stored rows: clearing every cell then clears them
+    (editable && sigma_levels.stored) ? "<input type=\"hidden\" name=\"se_sigma_lvl_stored\" value=\"1\">" : "",
+    # pre-line keeps the line breaks of the block-form example in the error
+    isempty(err) ? "" : string("<p class=\"alert warning\" style=\"white-space:pre-line\">", esc(err), "</p>"),
+    table,
+    "<p class=\"field-help\">For measurements without their own sigma (an empty sigma cell of a measurement table), for the table generators and for the measurement generator of this section. An empty cell keeps the default; the cells show the case configuration only. The sigma is max(absolute, rel. % of the value). <em>Save settings for this case</em> writes the table into the case configuration.</p>",
+    "</fieldset>",
+  )
+end
+
+# The per-level sigma table of an SE run (metadata se_sigma_by_voltage_level):
+# the number of measurements per nominal voltage and where their sigma came
+# from, with the configured sigmas in pu.
+function _webui_se_sigma_level_section(result::AbstractDict)::String
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return ""
+  get(metadata, "run_mode", "") == "se" || return ""
+  rows = get(metadata, "se_sigma_by_voltage_level", nothing)
+  (rows isa AbstractVector && !isempty(rows)) || return ""
+  esc = _webui_escape
+  pu(x) = x === nothing ? "default" : string(round(Float64(x); sigdigits = 4))
+  body = String[]
+  for r in rows
+    configured = get(r, "configured", false) == true
+    push!(body, string("<tr><td>", esc(string(get(r, "vn_kv", "?"))), "</td><td>", get(r, "measurements", 0), "</td><td>", get(r, "sigma_row", 0), "</td><td>", get(r, "sigma_level", 0), "</td><td>", get(r, "sigma_default", 0), "</td>",
+      configured ? string("<td>", pu(get(r, "p_pu", nothing)), "</td><td>", pu(get(r, "q_pu", nothing)), "</td><td>", pu(get(r, "i_pu", nothing)), "</td><td>", pu(get(r, "u_pu", nothing)), "</td>") : "<td colspan=\"4\">no row configured</td>",
+      "</tr>"))
+  end
+  unused = get(metadata, "se_sigma_levels_not_in_case", Any[])
+  note = (unused isa AbstractVector && !isempty(unused)) ? string("<p class=\"field-help\">Configured but not in this case: ", esc(join(string.(unused), ", ")), " kV.</p>") : ""
+  return string(
+    "<section class=\"panel\"><h2>Measurement sigma by voltage level</h2>",
+    "<div style=\"overflow-x:auto\"><table class=\"details\"><thead><tr><th>Vn (kV)</th><th>Measurements</th><th>Own sigma</th><th>Level sigma</th><th>Default</th><th>σ P (pu)</th><th>σ Q (pu)</th><th>σ I (pu)</th><th>σ U (pu)</th></tr></thead><tbody>",
+    join(body, ""), "</tbody></table></div>", note,
+    "<p class=\"field-help\">The same table is in run.log and se_diagnostics.md. Zero-injection rows are constraints and not counted.</p></section>",
+  )
 end
 
 # --- sysimage page -----------------------------------------------------------

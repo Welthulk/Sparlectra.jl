@@ -268,9 +268,19 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
       elseif ext == ".json"
         "sparlectra_case"
       elseif ext == ".csv"
-        # measurement sets (SE phase 5) are detected by the version comment,
-        # not the extension; a .csv without it is retained but never offered
-        _webui_is_measurement_csv(destination) ? "measurement_set" : "unknown"
+        # measurement sets (SE phase 5) and measurement tables are detected
+        # by their version line, not the extension; a .csv without either is
+        # retained but never offered. A table header without its version
+        # line is named, so the user knows what is missing.
+        if _webui_is_measurement_csv(destination)
+          "measurement_set"
+        elseif isMeasurementTable(destination)
+          "measurement_table"
+        elseif _measurement_table_without_version(destination)
+          "measurement_table_without_version_line"
+        else
+          "unknown"
+        end
       elseif ext == ".yaml"
         "case_config"
       else
@@ -456,13 +466,14 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     # the Web UI runs (MATPOWER, SCF, DTF, CGMES, PowSyBl), not only the
     # file-based ones (a CGMES .zip failed here with "extension .zip is not
     # supported")
-    net = import_case(case_path, config; run_kind = :powerflow).net
+    imported = import_case(case_path, config; run_kind = :powerflow)
+    net = imported.net
     sidecar = string(first(splitext(case_path)), ".measurements.csv")
     # the set's own provenance comments travel into the case file: whether the
     # values carry noise decides how a J from them may be read at all
     provenance = Dict{String,Any}()
     if isfile(sidecar)
-      readMeasurementsCSV!(net; file = sidecar)
+      _read_measurement_file!(net, sidecar; index = isMeasurementTable(sidecar) ? _measurement_key_index(imported) : nothing)
       merge!(provenance, _webui_measurement_set_provenance(sidecar))
     end
     intended = String["power_flow"]
@@ -485,7 +496,7 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     return back("SCF export failed for '$(requested)': $(sprint(showerror, err))")
   end
   record_webui_operation!(operation_log, "scf_export_completed"; route = "/powerflow/export-scf", method = "POST", user_action = true, casefile = requested, scf_file = out_name)
-  return done("Exported $(out_name) ($(round(filesize(out_path) / 1024; digits = 1)) kB) into the case directory." * (strict ? " Strict PGM: names, roles, tap nameplates, measurements and configuration are NOT in this file." : ""), out_name)
+  return done("Exported $(out_name) ($(round(filesize(out_path) / 1024; digits = 1)) kB) into the case directory." * (strict ? " Strict PGM: names, roles, tap nameplates, measurements, configuration and the system frequency (f_nom) are NOT in this file." : ""), out_name)
 end
 
 """
@@ -559,7 +570,7 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
     sidecar = string(first(splitext(case_path)), ".measurements.csv")
     provenance = Dict{String,Any}()
     if isfile(sidecar)
-      readMeasurementsCSV!(net; file = sidecar)
+      _read_measurement_file!(net, sidecar; index = isMeasurementTable(sidecar) ? _measurement_key_index(imported) : nothing)
       merge!(provenance, _webui_measurement_set_provenance(sidecar))
     end
     # run_sparlectra prints the full console result table by default; a
@@ -1336,6 +1347,10 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
       config_updates[String(config_key)] = _webui_parse_form_value(raw, type, field)
     end
     _webui_apply_qlimits_off!(config_updates)
+    # the sigma table of the SE section (no option spec: a table); an
+    # empty table is saved as an empty mapping, so it replaces a stored one
+    sigma_levels = _webui_sigma_levels_from_form(form)
+    sigma_levels === nothing || (config_updates[_WEBUI_SIGMA_LEVEL_KEY] = sigma_levels)
   catch err
     record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = sprint(showerror, err))
     return back("Could not save settings: $(sprint(showerror, err))")
@@ -2150,13 +2165,18 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # run with per-row resolution errors, so it must never be a silent
   # default. WITHOUT a selected case nothing is preselected and no set
   # panel renders (a fresh page must not show set info out of thin air).
-  bound_sets = [name for name in measurements if get(meas_case, name, "") == selected]
   # What the case file says about its OWN measurement set: how many rows it
-  # carries, and whether those are ideal (noise-free) or measured. Parsed
-  # once, because both answers come from the same block.
-  case_measurement_rows, case_measurement_noise = try
+  # carries, and whether those are ideal (noise-free) or measured, plus the
+  # source case an SCF export records (a set bound to that source fits the
+  # case, the SE service accepts it). Parsed once, all three come from the
+  # same block.
+  case_measurement_rows, case_measurement_noise, case_source = try
     if !isempty(selected) && lowercase(splitext(selected)[2]) == ".json"
-      block = get(get(scf_json_parse(read(joinpath(directory, selected), String)), "sparlectra", Dict{String,Any}()), "measurements", nothing)
+      sp = get(scf_json_parse(read(joinpath(directory, selected), String)), "sparlectra", Dict{String,Any}())
+      meta = sp isa AbstractDict ? get(sp, "meta", nothing) : nothing
+      src = meta isa AbstractDict ? get(meta, "source_reference", "") : ""
+      src = src isa AbstractString ? String(src) : ""
+      block = sp isa AbstractDict ? get(sp, "measurements", nothing) : nothing
       if block isa AbstractDict
         # one entry of `rows` is one PGM SENSOR, and a sensor carries one or
         # two measurement rows (a P/Q pair). The page must show measurements,
@@ -2164,16 +2184,25 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
         n = sum(length(get(r, "sparlectra_ids", [])) for r in get(block, "rows", []); init = 0)
         prov = get(block, "provenance", nothing)
         noise = prov isa AbstractDict ? get(prov, "noise", nothing) : nothing
-        (n, noise isa Bool ? noise : nothing)
+        (n, noise isa Bool ? noise : nothing, src)
       else
-        (0, nothing)
+        (0, nothing, src)
       end
     else
-      (0, nothing)
+      (0, nothing, "")
     end
   catch
-    (0, nothing)
+    (0, nothing, "")
   end
+  # the picker offers only the sets that belong to the selected case: a set
+  # of another case can only fail the binding check of the SE service. The
+  # full directory list stays for the stars of the case selector.
+  case_sets = isempty(selected) ? NamedTuple{(:name, :case),Tuple{String,String}}[] : _webui_measurement_sets_for_case(directory, selected; also_bound_to = [case_source])
+  measurements = [s.name for s in case_sets]
+  # sets without a `# case:` line that are offered because of their name;
+  # the picker labels them as such
+  meas_name_matched = Set{String}(s.name for s in case_sets if isempty(s.case))
+  bound_sets = measurements
   # Precedence: a set BOUND to this case wins, because generating one is a
   # deliberate act and the newer data. Among several bound sets the
   # CONVENTION file <case>.measurements.csv wins, exactly as the page
@@ -2182,7 +2211,11 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # measurements carried inside a case file are the default only while no
   # bound set exists; without either, the page asks instead of arming a
   # foreign set.
-  convention_set = isempty(selected) ? "" : string(first(splitext(selected)), ".measurements.csv")
+  # for `sp_case14.scf.json` both `sp_case14.scf.measurements.csv` and the
+  # shipped `sp_case14.measurements.csv` count as the convention file
+  convention_candidates = isempty(selected) ? String[] : [string(st, ".measurements.csv") for st in _webui_case_stems(selected)]
+  convention_hit = findfirst(in(bound_sets), convention_candidates)
+  convention_set = convention_hit === nothing ? "" : convention_candidates[convention_hit]
   # among several bound sets without the convention file the NEWEST wins
   # (generated sets carry a time stamp since 0.20.0, so the last one
   # generated is the one the user means), not the alphabetically first
@@ -2205,9 +2238,10 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
     loaded_early isa AbstractDict && (saved_meas = basename(String(get(loaded_early, "measurement_file", ""))))
   end
   if !isempty(saved_meas) && !(saved_meas in measurements)
-    # the saved choice points at a set that is gone (deleted, renamed):
-    # fall back to the next rule and say so, never arm a missing file
-    message = string(message, isempty(message) ? "" : " ", "The saved measurement set ", saved_meas, " is no longer in the case directory; ", isempty(selected_meas) ? "no set is armed" : string(selected_meas, " is armed instead"), ".")
+    # the saved choice points at a set that is gone (deleted, renamed) or
+    # no longer belongs to the case: fall back to the next rule and say so,
+    # never arm a missing or foreign file
+    message = string(message, isempty(message) ? "" : " ", "The saved measurement set ", saved_meas, " is no longer in the case directory or not bound to this case; ", isempty(selected_meas) ? "no set is armed" : string(selected_meas, " is armed instead"), ".")
   end
   (!isempty(saved_meas) && saved_meas in measurements) && (selected_meas = saved_meas)
   (!isempty(requested_meas) && requested_meas in measurements) && (selected_meas = requested_meas)
@@ -2226,12 +2260,16 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   n_flow_choices > 0 && push!(set_provenance, "flow-end choices documented for $(n_flow_choices) branch(es)")
   set_info = [l for l in set_info if !(startswith(l, "generator:") || startswith(l, "seed:") || startswith(l, "noise:") || startswith(l, "source:") || startswith(l, "truth:") || startswith(l, "flow_ends:") || startswith(l, "flow_end,") || startswith(l, "passive:") || startswith(l, "truth_value,"))]
   set_counts = isempty(selected_meas) ? Tuple{String,Int}[] : _webui_measurement_set_counts(joinpath(directory, selected_meas))
+  # a measurement CSV v1 gets the deprecation notice at the file
+  set_v1 = !isempty(selected_meas) && _webui_is_measurement_csv(joinpath(directory, selected_meas))
   # inline editor for small sets: the file exactly as stored, editable and
-  # saved back verbatim (atomic); large files stay download-only
+  # saved back verbatim (atomic); large files stay download-only. A
+  # measurement table and a measurement CSV v1 both open here; the save
+  # keeps the format of the file
   set_text = ""
   if !isempty(selected_meas)
     p = joinpath(directory, selected_meas)
-    isfile(p) && filesize(p) <= 262_144 && (set_text = read(p, String))
+    isfile(p) && filesize(p) <= 262_144 && _webui_is_measurement_file(p) && (set_text = read(p, String))
   end
   # structured value editor rows (voltages, flows, balances, everything)
   set_rows = isempty(selected_meas) ? NamedTuple[] : _webui_measurement_set_rows(joinpath(directory, selected_meas))
@@ -2284,9 +2322,15 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
     end
     sort!(truth_runs; by = r -> r.timestamp, rev = true)
   end
+  # the sigma table of the SE section: the nominal voltages of the case and
+  # the values of its case configuration. Read for every selected case,
+  # also before a measurement set exists (the table then sits in a save
+  # form of its own and steers the generator); the levels need the
+  # imported case, which _webui_case_voltage_levels caches.
+  sigma_levels = isempty(selected) ? (rows = NamedTuple[], error = "", editable = true, stored = false) : _webui_sigma_level_table(selected, directory, config_file)
   # a case file brings its measurements along; the section then offers the
   # run without any CSV in the cache
-  return (cases = cases, measurements = measurements, case_measurement_rows = case_measurement_rows, case_measurement_noise = case_measurement_noise, selected_case = selected, selected_measurement = selected_meas, config_file = config_file, message = message, set_info = set_info, set_provenance = set_provenance, set_counts = set_counts, meas_case = meas_case, starred = starred, set_case = set_case, set_text = set_text, set_rows = set_rows, gen_values = gen_values, truth_runs = truth_runs)
+  return (sigma_levels = sigma_levels, cases = cases, measurements = measurements, case_measurement_rows = case_measurement_rows, case_measurement_noise = case_measurement_noise, selected_case = selected, selected_measurement = selected_meas, config_file = config_file, message = message, set_info = set_info, set_provenance = set_provenance, set_counts = set_counts, set_v1 = set_v1, meas_case = meas_case, meas_name_matched = meas_name_matched, starred = starred, set_case = set_case, set_text = set_text, set_rows = set_rows, gen_values = gen_values, truth_runs = truth_runs)
 end
 
 """
@@ -2296,9 +2340,11 @@ POST /stateestimation/measurements/save: the inline editor of the SE page.
 Overwrites an EXISTING measurement CSV in the case cache with the posted
 content, atomically (temp file + rename). Containment mirrors the download:
 basename only, `.csv`, target must already exist in the case directory and
-be a measurement CSV; the posted content must itself start with the
-`# sparlectra-measurements v1` marker and stays below 2 MB. Line endings
-are normalized to `\\n` (browsers post textarea content with CRLF).
+be a measurement file; the posted content keeps the format of the file
+(a measurement table must still read as one, a measurement CSV v1 must
+start with the `# sparlectra-measurements v1` marker) and stays below 2 MB.
+Line endings are normalized to `\\n` (browsers post textarea content with
+CRLF).
 """
 function handle_se_measurement_save(form::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root)
   directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
@@ -2308,13 +2354,30 @@ function handle_se_measurement_save(form::AbstractDict; output_root::AbstractStr
   name = basename(requested)
   (name == requested && !isempty(name) && lowercase(splitext(name)[2]) == ".csv") || return redirectq("invalid measurement file name")
   path = joinpath(directory, name)
-  (isfile(path) && _webui_is_measurement_csv(path)) || return redirectq("measurement file not found: $(name)")
+  (isfile(path) && _webui_is_measurement_file(path)) || return redirectq("measurement file not found: $(name)")
   content = replace(String(_webui_form_value(form, "content", "")), "\r\n" => "\n")
   sizeof(content) <= 2_097_152 || return redirectq("content too large for the inline editor; upload the file instead")
-  startswith(strip(content), "# sparlectra-measurements v1") || return redirectq("content rejected: the first line must be '# sparlectra-measurements v1'")
   endswith(content, "\n") || (content *= "\n")
   tmp = path * ".tmp"
-  write(tmp, content)
+  if isMeasurementTable(path)
+    # a table stays a table: the posted text must pass the reader (version
+    # line and header); its ArgumentError is the refusal of the whole file
+    write(tmp, content)
+    verdict = try
+      readMeasurementTable(tmp)
+      ""
+    catch err
+      err isa ArgumentError || rethrow()
+      err.msg
+    end
+    if !isempty(verdict) || !isMeasurementTable(tmp)
+      rm(tmp; force = true)
+      return redirectq("content rejected: not a measurement table ($(isempty(verdict) ? "version line and header expected" : replace(verdict, tmp => name)))")
+    end
+  else
+    startswith(strip(content), "# sparlectra-measurements v1") || return redirectq("content rejected: the first line must be '# sparlectra-measurements v1'")
+    write(tmp, content)
+  end
   mv(tmp, path; force = true)
   record_webui_operation!(operation_log, "se_measurements_saved"; route = "/stateestimation/measurements/save", method = "POST", user_action = true, measurement_file = name)
   return redirectq("saved $(name)")
@@ -2335,7 +2398,7 @@ function handle_se_measurement_download(query::AbstractDict; output_root::Abstra
   name = basename(requested)
   (name == requested && lowercase(splitext(name)[2]) == ".csv") || return _webui_html(render_webui_error(400, "Invalid measurement file name."); status = 400)
   path = joinpath(directory, name)
-  (isfile(path) && _webui_is_measurement_csv(path)) || return _webui_html(render_webui_error(404, "Measurement file not found."); status = 404)
+  (isfile(path) && _webui_is_measurement_file(path)) || return _webui_html(render_webui_error(404, "Measurement file not found."); status = 404)
   headers = ["Content-Type" => "text/csv; charset=utf-8", "Content-Disposition" => "attachment; filename=\"$(name)\""]
   return SparlectraWebUIResponse(200, headers, read(path))
 end
@@ -2345,10 +2408,10 @@ end
 
 POST /stateestimation/measurements/update-values: the structured table
 editor of the SE page. Rewrites ONLY the value/sigma/active columns of the
-addressed data rows (keyed by their file line number), leaving comments,
-header, ordering, and all other columns untouched; the write is atomic.
-Containment mirrors the text editor: basename, `.csv`, existing measurement
-CSV in the case directory. Rejected rows (unparsable value, non-positive
+addressed data rows (keyed by their file line number; in a measurement
+table value, sigma and valid), leaving comments, header, ordering, and all
+other columns untouched; the write is atomic. Containment mirrors the text
+editor: basename, `.csv`, existing measurement file in the case directory. Rejected rows (unparsable value, non-positive
 sigma) reject the whole save so a typo never half-applies.
 """
 function handle_se_measurement_update_values(form::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, operation_log::AbstractString = output_root)
@@ -2359,8 +2422,9 @@ function handle_se_measurement_update_values(form::AbstractDict; output_root::Ab
   name = basename(requested)
   (name == requested && !isempty(name) && lowercase(splitext(name)[2]) == ".csv") || return redirectq("invalid measurement file name")
   path = joinpath(directory, name)
-  (isfile(path) && _webui_is_measurement_csv(path)) || return redirectq("measurement file not found: $(name)")
+  (isfile(path) && _webui_is_measurement_file(path)) || return redirectq("measurement file not found: $(name)")
   lines = readlines(path)
+  table = isMeasurementTable(path)
   # the file's own delimiter (from its header line) decides how a row is
   # split and how an edited number is written back: decimal comma in an
   # excel_de file, decimal point otherwise; the user may type either
@@ -2372,15 +2436,32 @@ function handle_se_measurement_update_values(form::AbstractDict; output_root::Ab
     v === nothing && continue
     s = String(_webui_form_value(form, "s_$(ln)", ""))
     a = String(_webui_form_value(form, "a_$(ln)", "true"))
-    parts = split(String(line), delimiter; limit = 11)
-    length(parts) >= 11 || return redirectq("row at line $(ln) is not editable")
     vf = something(tryparse(Float64, String(v)), Sparlectra._parse_result_csv_number(String(v), delimiter), nothing)
     sf = something(tryparse(Float64, s), Sparlectra._parse_result_csv_number(s, delimiter), nothing)
     vf === nothing && return redirectq("line $(ln): value '$(v)' is not a number; nothing was saved")
     (sf === nothing || sf <= 0.0) && return redirectq("line $(ln): sigma '$(s)' must be a positive number; nothing was saved")
     a in ("true", "false") || return redirectq("line $(ln): active must be true or false; nothing was saved")
+    if table
+      # a table row: value, sigma and valid are fields 6, 7 and 9; the text
+      # cells are written back as the table writer writes them (quoted only
+      # when they carry a comma or a quote)
+      f = Sparlectra._measurement_table_fields(String(line))
+      length(f) == 9 || return redirectq("row at line $(ln) is not editable")
+      vtext = repr(vf)
+      stext = repr(sf)
+      if strip(f[6]) != vtext || strip(f[7]) != stext || strip(f[9]) != a
+        f[6] = vtext
+        f[7] = stext
+        f[9] = a
+        lines[ln] = join((Sparlectra._measurement_table_cell(x) for x in f), ",")
+        changed += 1
+      end
+      continue
+    end
     vtext = number(vf)
     stext = number(sf)
+    parts = split(String(line), delimiter; limit = 11)
+    length(parts) >= 11 || return redirectq("row at line $(ln) is not editable")
     if String(parts[8]) != vtext || String(parts[9]) != stext || String(parts[10]) != a
       parts[8] = vtext
       parts[9] = stext
@@ -2428,7 +2509,8 @@ function handle_se_topology_hypotheses(form::AbstractDict; output_root::Abstract
     # detector refuses to guess, so the DTF network case would fail here
     se_case = String(get(result, "casefile", ""))
     net = _se_import_case_net(se_case, config; requested_format = _webui_case_format_hint(se_case))
-    readMeasurementsCSV!(net; file = mf, replace = true)
+    # the run's own artifact (a CSV v1 with verdict columns), no user file
+    _take_measurements_csv_v1!(net; file = mf, replace = true)
     with_state_estimation_config(max_iter = 100, tol = 1e-8) do
       test_topology_hypotheses(net; max_candidates = 5)
     end
@@ -2567,9 +2649,11 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   flow_ends = Symbol(flow_ends_raw)
   passive_sigma = something(tryparse(Float64, String(_webui_form_value(form, "gen_passive_sigma", "0.05"))), NaN)
   (isfinite(passive_sigma) && passive_sigma > 0.0) || return redirectq("passive-node balance sigma must be positive (MW/MVar)")
-  # default ON: a passive node is a hard balance, and
-  # the protected constraint is the only constraint the set has
-  passive_as_zi = _webui_parse_bool(String(_webui_form_value(form, "gen_passive_as_zi", "true")))
+  # the zero-injection switch of the case (state_estimation.zero_injection,
+  # default on): the form shows the configured value; a request without
+  # the field leaves the decision to the configuration
+  passive_raw = _webui_form_value(form, "gen_passive_as_zi", nothing)
+  passive_as_zi = passive_raw === nothing ? nothing : _webui_parse_bool(String(passive_raw))
   # reproducibility seed: the same seed regenerates the identical set, a
   # different one draws a fresh noise realization
   gen_seed = something(tryparse(Int, String(_webui_form_value(form, "gen_seed", "42"))), -1)
@@ -2606,7 +2690,10 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   # persist the generator options in the case sidecar so a case reload
   # restores them (the run-based save path never sees this form)
   try
-    _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_passive_as_zi" => passive_as_zi, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); case_directory = directory)
+    _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); case_directory = directory)
+    # the checkbox goes into the case configuration as
+    # state_estimation.zero_injection, read by every SE run of the case
+    passive_as_zi === nothing || _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("gen_passive_as_zi" => passive_as_zi ? "on" : "off"); case_directory = directory)
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, message = sprint(showerror, err))
   end
@@ -2641,22 +2728,33 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
   out_name = _webui_stamped_measurement_name(directory, string(first(splitext(basename(casefile))), ".noisy"))
   out_path = joinpath(directory, out_name)
   rows = try
-    # the session's configuration file plus the case's own settings, so the
-    # perturbed set is written in the CSV format the user chose
+    # the session's configuration file plus the case's own settings decide
+    # how the case is imported
     config = resolve_config(config_file, case_path).config
-    net = _se_import_case_net(case_path, config; requested_format = _webui_case_format_hint(case_path))
+    imported = _se_import_case(case_path, config; requested_format = _webui_case_format_hint(case_path))
+    net = imported.net
+    # the key index the SE service reads a table of this case with; the
+    # perturbed set is written with it
+    index = _se_measurement_index(imported, _se_case_format(case_path; requested = _webui_case_format_hint(case_path)))
+    index === nothing && return back("$(casefile): the CGMES import kept no CGMES model to key the measurement table by mRID.")
     if !isempty(source)
+      src = joinpath(directory, source)
       empty!(net.measurements)
-      readMeasurementsCSV!(net; file = joinpath(directory, source), replace = true)
+      _read_measurement_file!(net, src; index = isMeasurementTable(src) ? index : nothing)
     end
     isempty(net.measurements) && return back("Neither the case file nor a selected set carries measurements to perturb.")
     addMeasurementNoise!(net; rng = Random.MersenneTwister(seed))
-    writeMeasurementsCSV(net; file = out_path,
-      headerComments = String["case: $(casefile)", "generator: noise-only (existing values perturbed, no power flow)",
-                              "seed: $(seed)", "noise: gaussian (each row's own sigma)",
-                              "source: $(isempty(source) ? "measurements carried by the case file" : source)"],
-      busReference = _detect_case_format(case_path) === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
-    length(net.measurements)
+    # written as a measurement table like every set Sparlectra writes; a
+    # row the table cannot carry is named in the file
+    conv = _measurement_table_from_measurements(net, net.measurements, index)
+    comments = String["case: $(casefile)", "generator: noise-only (existing values perturbed, no power flow)",
+                      "seed: $(seed)", "noise: gaussian (each row's own sigma)",
+                      "source: $(isempty(source) ? "measurements carried by the case file" : source)"]
+    for p in conv.problems
+      push!(comments, string("not written: ", p.id, ": ", p.problem, ": ", p.detail))
+    end
+    writeMeasurementTable(out_path, conv.rows; comments = comments)
+    length(conv.rows)
   catch err
     record_webui_operation!(operation_log, "se_measurements_noised_failed"; route = "/stateestimation/add-noise", method = "POST", user_action = true, casefile = casefile, message = sprint(showerror, err))
     return back("Could not add noise: $(first(split(sprint(showerror, err), '\n')))")
@@ -2685,7 +2783,7 @@ function handle_se_measurement_delete(form::AbstractDict; output_root::AbstractS
   path = normpath(joinpath(directory, name))
   dirname(path) == normpath(directory) || return back("Invalid measurement file name.")
   isfile(path) || return back("Measurement file not found: $(name)")
-  _webui_is_measurement_csv(path) || return back("$(name) is not a measurement set; only measurement sets can be deleted here.")
+  _webui_is_measurement_file(path) || return back("$(name) is not a measurement set; only measurement sets can be deleted here.")
   try
     rm(path)
   catch err

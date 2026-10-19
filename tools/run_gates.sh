@@ -27,11 +27,94 @@
 #          --threads=N starts the test process with N threads (default: one;
 #          the threads profile always runs with four), so a profile also runs
 #          every parallel-vs-serial comparison threaded. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]
+#          sh tools/run_gates.sh map [--since <ref>] [<path>...]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
+#          `map` runs nothing: it prints the profiles a change to the given
+#          paths (or the files changed since <ref> and in the working tree)
+#          has to run, in run order. `legacy` is run before a release and on
+#          a change to a protected file; CI does not run it.
 
 gate=$1
 [ $# -gt 0 ] && shift
+
+# --- path to profile map -----------------------------------------------------
+# Which profiles a change has to run, by the changed paths. `fast` goes with
+# every code change; docs-only changes need the docs build alone. The map is
+# written out in docs/src/tests.md; change both together.
+map_path() {
+  case "$1" in
+    src/powerflow_rectangular/rectangular_network_solver.jl | src/acpflow/entrypoint.jl | app/src/api/run_api.jl | src/controller/control_framework.jl | src/config/configuration.jl | src/Sparlectra.jl)
+      echo "fast pf legacy" ;;
+    src/stateestimation/* | src/numerics/*) echo "fast se" ;;
+    src/adapters/cgmes/*) echo "fast cgmes se" ;;
+    src/adapters/scf/* | src/adapters/pgm/* | src/adapters/matpower/*) echo "fast formats extd" ;;
+    src/adapters/dtf/* | src/adapters/powsybl/* | src/adapters/adapters.jl | src/import/*) echo "fast formats" ;;
+    src/config/*) echo "fast config" ;;
+    app/src/api/*) echo "fast extd" ;;
+    app/src/webui/*) echo "fast webui" ;;
+    app/*) echo "fast extd webui" ;;
+    src/*) echo "fast pf" ;;
+    ext/*) echo "fast pf" ;;
+    test/fast/* | test/test_docstrings.jl) echo "fast" ;;
+    test/runtests.jl | test/test_runner_helpers.jl) echo "fast config" ;;
+    test/test_legacy_* | test/extended/test_legacy_*) echo "legacy" ;;
+    test/test_state_estimation.jl | test/test_observability.jl | test/test_topology_validation.jl | test/test_measurement_table.jl) echo "se" ;;
+    test/test_configuration_* | test/test_repository_hygiene.jl) echo "config" ;;
+    test/test_cgmes_*) echo "cgmes" ;;
+    test/test_powsybl_importer.jl | test/test_scf* | test/test_matpower_* | test/test_net_cache.jl | test/test_synthetic_grids.jl | test/extended/*) echo "formats" ;;
+    test/test_api*.jl | test/test_demo_cases.jl) echo "extd" ;;
+    test/test_webui*.jl) echo "webui" ;;
+    test/test_install.jl | test/test_example_suites.jl) echo "install" ;;
+    test/test_workshops.jl) echo "workshops" ;;
+    test/fixtures/*) echo "cgmes formats pf" ;;
+    test/*) echo "pf" ;;
+    docs/lit/*) echo "workshops docs" ;;
+    tools/* | Project.toml | app/Project.toml | .github/*) echo "install" ;;
+    docs/* | README.md | *.md) echo "docs" ;;
+    data/*) echo "pf extd formats cgmes" ;;
+    *) echo "" ;;
+  esac
+}
+if [ "$gate" = "map" ]
+then
+  paths=
+  if [ "$1" = "--since" ]
+  then
+    root=$(git rev-parse --show-toplevel) || exit 2
+    paths=$( (git -C "$root" diff --name-only "$2" -- ; git -C "$root" status --porcelain | sed 's/^...//') | sort -u)
+  else
+    for a in "$@"
+    do
+      paths="$paths
+$a"
+    done
+  fi
+  wanted=
+  for pth in $paths
+  do
+    wanted="$wanted $(map_path "$pth")"
+    # a legacy group includes the file it was cut from, so a change to that
+    # file reaches the legacy profile as well
+    case "$pth" in
+      test/test_legacy_* | test/extended/test_legacy_*) ;;
+      test/*.jl | test/extended/*.jl)
+        stem=${pth##*/}
+        stem=${stem#test_}
+        [ -f "${pth%/*}/test_legacy_$stem" ] && wanted="$wanted legacy"
+        ;;
+    esac
+  done
+  out=
+  for p in fast pf se config cgmes formats extd webui install workshops legacy docs
+  do
+    case " $wanted " in
+      *" $p "*) out="$out $p" ;;
+    esac
+  done
+  echo "${out# }"
+  exit 0
+fi
 allow_dirty=
 julia_threads=
 for arg in "$@"
@@ -55,9 +138,9 @@ then
 fi
 
 case "$gate" in
-  fast | pf | se | config | webui | extd | adapters | install | workshops | extended | all | threads | docs) ;;
+  fast | pf | se | config | webui | extd | cgmes | formats | legacy | install | workshops | extended | all | threads | docs) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|adapters|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]" >&2
     exit 2
     ;;
 esac

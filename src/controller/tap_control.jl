@@ -218,6 +218,14 @@ function _derived_tap_model(br::Branch, which::Symbol)
   return which === :ratio ? br.tap_winding.taps : br.tap_winding.phase_taps
 end
 
+# Value of a model step of a derived branch: the resolved ratio (:ratio)
+# or shift (:phase). The tap estimation fixes a typed model on these values.
+function _model_step_value(br::Branch, which::Symbol, step::Int)::Float64
+  w = br.tap_winding
+  res = which === :ratio ? resolve_winding_taps(w; tap_changer_model = br.tap_correction, ratio_step = step) : resolve_winding_taps(w; tap_changer_model = br.tap_correction, phase_step = step)
+  return which === :ratio ? res.ratio : res.shift_deg
+end
+
 # Controllers move STEPS on a modelled transformer (0.20.0): the model step
 # of a derived branch that brings the resolved ratio (:ratio) or shift
 # (:phase) closest to `target`, among the current step and its two
@@ -250,17 +258,31 @@ end
 # Ratio `nsteps` table points away from `ratio` on a branch with
 # `tap_ratio_points` (positive: higher ratio), stopping at the first or last
 # point. A ratio between two points (fractional start step) counts the next
-# point in the direction as the first step.
-function _ratio_points_shift(br::Branch, ratio::Float64, nsteps::Int)::Float64
+# point in the direction as the first step. Only points inside `window`
+# count, so a move stops at the last point inside it; the default window
+# takes every point.
+function _ratio_points_shift(br::Branch, ratio::Float64, nsteps::Int; window::Tuple{Float64,Float64} = (-Inf, Inf))::Float64
   pts = br.tap_ratio_points
   tol = 1e-12
+  inside = p -> window[1] - tol <= p <= window[2] + tol
   r = ratio
   for _ in 1:abs(nsteps)
-    k = nsteps > 0 ? findfirst(p -> p > r + tol, pts) : findlast(p -> p < r - tol, pts)
+    k = nsteps > 0 ? findfirst(p -> p > r + tol && inside(p), pts) : findlast(p -> p < r - tol && inside(p), pts)
     k === nothing && break
     r = pts[k]
   end
   return r
+end
+
+# Ratio `nsteps` steps away from `ratio` on the grid a controller moves on:
+# table points on a tabular changer, whole `tap_step`s on the uniform grid,
+# kept inside `window`. Without a window a table ends at its last point and
+# the uniform grid at tap_min/tap_max. The tap estimation fixes a CGMES
+# changer on the same positions.
+function _ratio_grid_shift(br::Branch, ratio::Float64, nsteps::Real; window::Union{Nothing,Tuple{Float64,Float64}} = nothing)::Float64
+  br.tap_ratio_points !== nothing && return _ratio_points_shift(br, ratio, Int(nsteps); window = something(window, (-Inf, Inf)))
+  lo, hi = something(window, (br.tap_min, br.tap_max))
+  return clamp(ratio + nsteps * br.tap_step, lo, hi)
 end
 
 # Signed number of steps a ratio move from `old` to `new` makes on the grid
@@ -316,10 +338,10 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
         # a tabular master or follower: count steps on the master's grid and
         # make as many on the follower's own grid
         nsteps = _ratio_steps_moved(br, update.old_ratio, update.new_ratio)
-        fnew = fbr.tap_ratio_points !== nothing ? _ratio_points_shift(fbr, fbr.tap_ratio, nsteps) : clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
+        fnew = _ratio_grid_shift(fbr, fbr.tap_ratio, nsteps)
       elseif br.tap_step > 0.0 && fbr.tap_step > 0.0
         nsteps = round((update.new_ratio - update.old_ratio) / br.tap_step)
-        fnew = clamp(fbr.tap_ratio + nsteps * fbr.tap_step, fbr.tap_min, fbr.tap_max)
+        fnew = _ratio_grid_shift(fbr, fbr.tap_ratio, nsteps)
       else
         fnew = clamp(fbr.tap_ratio + (update.new_ratio - update.old_ratio), fbr.tap_min, fbr.tap_max)
       end

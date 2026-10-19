@@ -434,6 +434,10 @@ function _setRatioTapRange!(br, rng)
   br.tap_min = rng.tap_min
   br.tap_max = rng.tap_max
   br.tap_step = rng.tap_step
+  # the step ratios of a CGMES changer are linear in the step (or table
+  # points), not the cascade grid of nameplate data; the tap estimation
+  # fixes its estimate on this grid
+  br.tap_ratio_grid = :linear
   # a linear changer steps on the uniform grid, also where another changer
   # of the branch gave it table points before
   br.tap_ratio_points = rng.points

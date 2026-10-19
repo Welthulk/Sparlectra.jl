@@ -130,6 +130,24 @@ function run_short_circuit_tests()
       @test isapprox(rb.rows[1].ik_kA, ik_expected; rtol = 1e-12)
       @test_throws ArgumentError runShortCircuit!(net, sc; buses = ["NOPE"], case = :max)
       @test_throws ArgumentError runShortCircuit!(net, sc; case = :typical)
+
+      # System frequency: Ik'' uses R and X as given (X already at the network
+      # frequency), drops the line capacitance, and kappa by method b,
+      # 1.02 + 0.98·e^(-3R/X), contains no f. A line from per-km capacitance
+      # gets 6/5 times b at 60 Hz; Ik'' and kappa stay bit identical.
+      sc_at(f) = begin
+        n = Net(name = "sc_freq", baseMVA = 100.0, nominal_frequency_hz = f)
+        addBus!(net = n, busName = "B1", vn_kV = 110.0)
+        addBus!(net = n, busName = "B2", vn_kV = 110.0)
+        addACLinePerKm!(net = n, fromBus = "B1", toBus = "B2", length_km = 30.0, r_ohm_per_km = 0.12, x_ohm_per_km = 0.39, c_nf_per_km = 9.5)
+        (n, runShortCircuit!(n, sc; case = :max))
+      end
+      n50, r50 = sc_at(50.0)
+      n60, r60 = sc_at(60.0)
+      @test isapprox(n60.branchVec[1].b_pu / n50.branchVec[1].b_pu, 6 / 5; rtol = 1e-14)
+      @test [row.ik_kA for row in r60.rows] == [row.ik_kA for row in r50.rows]
+      @test [row.kappa for row in r60.rows] == [row.kappa for row in r50.rows]
+      @test [row.ip_kA for row in r60.rows] == [row.ip_kA for row in r50.rows]
     end)() end
 
     @testset "synchronous machine per hand-derived x''d conversion" begin (function ()

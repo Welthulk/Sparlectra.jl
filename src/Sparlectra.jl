@@ -312,7 +312,8 @@ export
   # Network
   addBus!,                                # Add a bus to the network.
   addShunt!,                              # Add a shunt element.
-  addACLine!,                             # Add an AC line.
+  addACLine!,                             # Add an AC line from its totals in ohm and siemens.
+  addACLinePerKm!,                        # Add an AC line from values per km and its length.
   addPIModelACLine!,                      # Add an AC line as a PI model.
   add2WTrafo!,                            # Add a two-winding transformer.
   addPIModelTrafo!,                       # Add a transformer PI model.
@@ -639,6 +640,27 @@ export
   deriveShuntPseudoMeasurements!,         # Derive ShuntQ pseudo-measurements from bay current plus Vm (SE phase 2 case B).
   readMeasurementsCSV!,                   # Read a measurement CSV v1 file (atomic import; SE phase 5).
   writeMeasurementsCSV,                   # Write net.measurements as a measurement CSV v1 file (lossless roundtrip).
+  # measurement table (several snapshots per file, keys resolved through a
+  # MeasurementKeyIndex: cgmesMeasurementKeys for mRIDs, nameMeasurementKeys
+  # for element names)
+  MeasurementRow,                         # One row of a measurement table, with its format problem if any.
+  MeasurementKeyIndex,                    # Resolution of terminal, node and Analog keys (mRIDs or names) to network locations.
+  MeasurementTarget,                      # Where a terminal mRID points (branch end, injection, shunt, not modelled).
+  MeasurementSet,                         # The SE measurements of one timestamp, with counts and problem rows.
+  MeasurementTableImport,                 # All sets of a table plus the rows no set could take.
+  readMeasurementTable,                   # Read a measurement table (rows with format problems are kept, not dropped).
+  readMeasurementTable!,                  # Read a measurement table into net.measurements (import plus apply of one set).
+  writeMeasurementTable,                  # Write rows as a measurement table.
+  isMeasurementTable,                     # True when a file carries the measurement-table version line and header (decided by content).
+  importMeasurementTable,                 # Resolve table rows into one MeasurementSet per timestamp.
+  applyMeasurementSet!,                   # Put a MeasurementSet into net.measurements.
+  measurementImportReport,                # Plain-text import report (counts per set and every problem row).
+  cgmesMeasurementKeys,                   # Key index of a CGMES import for importMeasurementTable.
+  nameMeasurementKeys,                    # Key index of element names (bus, <branch>:from/:to, prosumer, shunt) for a case without CGMES.
+  generateMeasurementTableFromSV,         # Synthetic measurement table from the SV profile of a CGMES delivery.
+  generateMeasurementTableFromPF,         # Synthetic measurement table (name keys) from a solved power flow of any net.
+  generatePseudoMeasurementTable,         # Pseudo rows (source pseudo;ssh) for loads and generators a measurement table does not observe.
+  convertMeasurementsV1,                  # Write the measurement table of a measurement CSV v1 file and its case (same measurements, comments carried over).
   runpf_from_se!,                         # Power flow starting from the last SE result (:se_state or :se_snapshot).
   takahashi_diag,                         # Diagonal of inv(A) from a UMFPACK factorization (shared Takahashi recursion).
   takahashi_selected_inverse,             # Selected inverse on the factor pattern (SE diagnostics Omega_ii).
@@ -788,6 +810,8 @@ include("acpflow/solver_interface.jl")
 # a weak dependency, a normal part of the module since it became a required one
 include("acpflow/apslf_solver.jl")
 include("stateestimation/measurements.jl")
+include("stateestimation/measurement_table.jl")
+include("stateestimation/measurement_convert.jl")
 include("numerics/takahashi.jl")
 include("stateestimation/tap_estimation.jl")
 include("stateestimation/state_estimation.jl")
@@ -814,7 +838,7 @@ include("adapters/matpower/MatpowerIO.jl")
 include("adapters/matpower/createnet_powermat.jl")
 include("adapters/dtf/DTFImporter.jl")
 include("adapters/cgmes/CGMESImporter.jl")
-import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, cgmesMeasurementKeys, generateMeasurementTableFromSV, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
 include("adapters/cgmes/glue.jl")
 include("adapters/matpower/exportMatPower.jl")
 include("adapters/adapters.jl")

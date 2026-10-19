@@ -106,8 +106,12 @@ reported result is that of the fixed run.
 
 - The regulator states start from the current branch position; a position
   contradicting the declared mode is an error. Fixation rounds regulator 1
-  on the fraction grid `tap_step` and regulator 2 on the shift grid
-  `phase_step_deg`; out-of-range positions are flagged and clamped.
+  on the ratio grid of the transformer and regulator 2 on the shift grid
+  `phase_step_deg`; out-of-range positions are flagged and clamped. The
+  ratio grid is the fraction grid `t = ratio / (1 + n * tap_step)` for
+  nameplate data (MATPOWER `mpc.sparlectra.tap_changers`, SCF), the step
+  ratios `ratio + n * tap_step` or the table points of a CGMES
+  `RatioTapChanger`, and the model steps of a typed ratio model.
   `SEResult.voltages`/`objectiveJ`/`dof` are those of the fixed run.
 - Freeze reasons: `radial_no_voltage_pin` for a bridge transformer (its
   removal cuts the net) whose cut-off side carries no active voltage

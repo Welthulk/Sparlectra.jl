@@ -309,7 +309,7 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.sparlectra` | Versioned extension namespace (`mpc.sparlectra.format_version = 1`) for metadata that standard MATPOWER does not model | Recognized automatically when present; sub-blocks below. |
 | `mpc.sparlectra.transformer_losses` | Transformer no-load conductance from FOR/DTF sources | One entry per transformer branch: MATPOWER branch row, original FOR/DTF identifier, terminal bus names, raw `R/X/G/B` values where available, converted per-unit values, tap/phase-shift data, source marker and allocation convention. |
 | `mpc.sparlectra.links` | Busbar couplers, one `fbus tbus status` row per impedance-less coupler (`1` = closed) | Each row becomes a `BusLink`: a closed link merges its two buses into one electrical node (the same contraction CGMES switch imports use), an open link keeps them separate. Exports write the block from `net.linkVec`. Unknown bus numbers or a wrong column count are rejected. |
-| `mpc.sparlectra.tap_changers` | Tap-changer nameplates, one row per transformer branch | Columns `branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step` plus optional `psi_deg` and `phase_du_step`; see below. |
+| `mpc.sparlectra.tap_changers` | Tap-changer nameplates, one row per transformer branch | Columns `branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step` plus optional `psi_deg`, `phase_du_step` and `ratio_grid`; see below. |
 | `mpc.sparlectra.tap_changer_model` | Roundtrip marker `'impedance_correction'` | See [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport). |
 | `mpc.sparlectra.solution_written` | Marker `1` that columns 8/9 and 14-17 are a solution | Written by `writeMatpowerCasefile` with `write_solution = true`. |
 
@@ -339,7 +339,10 @@ Standard MATPOWER knows only the continuous `TAP`/`SHIFT` columns. With
 position and the current steps move the live position off it (ratio grid
 `tap = neutral / (1 + n * tap_step)`, the grid the tap estimation fixes to).
 `psi_deg` is the PST regulating-vector direction (`0` = unspecified, default
-the symmetric 90 degrees).
+the symmetric 90 degrees). `ratio_grid` (column 12) is `1` for a CGMES ratio
+changer, whose positions count on its linear grid `tap = TAP + n * tap_step`;
+`0` or a missing column means the fraction grid. Exports write the column
+only when a row needs it.
 
 Two phase-changer flavors exist, and declaring both grids at once is
 rejected: `phase_step_deg` steps the shift angle in degrees; `phase_du_step`

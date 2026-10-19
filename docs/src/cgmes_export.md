@@ -48,7 +48,7 @@ using Sparlectra
 net = Net(name = "demo", baseMVA = 100.0)
 addBus!(net = net, busName = "B1", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
 addBus!(net = net, busName = "B2", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 25.0, r = 0.2, x = 0.39)
+addACLinePerKm!(net = net, fromBus = "B1", toBus = "B2", length_km = 25.0, r_ohm_per_km = 0.2, x_ohm_per_km = 0.39, c_nf_per_km = 9.5)
 
 files = writeCGMESFiles(net; path = "out")
 # -> ["out/demo_EQ.xml", "out/demo_TP.xml", "out/demo_SSH.xml", "out/demo_SV.xml"]

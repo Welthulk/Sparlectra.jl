@@ -32,7 +32,9 @@ struct CGMESAdapter <: FormatAdapter end
 
 The adapter-scope options of the CGMES conversion:
 the `cgmes_import` configuration surface plus the run kind the start-value
-decision may depend on.
+decision may depend on, and the system frequency `f_nom` in Hz the
+conversion writes into the case (`model.nominal_frequency_hz`; the CGMES
+deliveries tested state none).
 """
 Base.@kwdef struct CGMESAdapterOptions
   start_values::Symbol = :auto
@@ -43,6 +45,7 @@ Base.@kwdef struct CGMESAdapterOptions
   map_energy_source::Bool = false
   run_kind::Symbol = :powerflow
   name::String = ""
+  f_nom::Float64 = model_config().nominal_frequency_hz
 end
 
 detect(::Type{CGMESAdapter}, path::AbstractString)::Bool = begin
@@ -85,6 +88,7 @@ function cgmes_adapter_options(cfg::SparlectraConfig; run_kind::Symbol = :powerf
     map_energy_source = cg.map_energy_source,
     run_kind = run_kind,
     name = String(name),
+    f_nom = cfg.model.nominal_frequency_hz,
   )
 end
 
@@ -117,9 +121,12 @@ function convert_case(::CGMESAdapter, source::AbstractString, opts::CGMESAdapter
       "hvdc_mode" => String(opts.hvdc_mode),
       "map_energy_source" => opts.map_energy_source,
     ),
+    # the conversion builds under its own configuration: without the
+    # frequency here the net (and meta.f_nom, c1) would take the default
+    "model" => Dict{String,Any}("nominal_frequency_hz" => opts.f_nom),
   )
   cfg = load_sparlectra_config(DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true, overrides = overrides)
   cg = _import_cgmes(String(source), cfg; name = isempty(opts.name) ? basename(String(source)) : opts.name, run_kind = opts.run_kind)
-  case = net_to_scfcase(cg.result.net; source_format = "cgmes", source_reference = basename(String(source)), include_start_state = true)
+  case = net_to_scfcase(cg.result.net; f_nom = opts.f_nom, source_format = "cgmes", source_reference = basename(String(source)), include_start_state = true)
   return cgmes_enrich_case!(case, cg.result.net)
 end

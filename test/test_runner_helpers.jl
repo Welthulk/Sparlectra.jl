@@ -306,6 +306,18 @@ let counter = Ref(0)
   end
 end
 
+# The test grids with a line capacitance were written for the per-unit
+# addACLine! before 0.50.0: r and x are line totals in per unit, the
+# capacitance is given per km. This builder keeps r and x (converted to ohm
+# on the bus voltage) and lets addACLinePerKm! derive b from the
+# capacitance. Before 0.50.0 that siemens value was read as per unit, so the
+# charging of these lines is Z_base times what it was (121 at 110 kV and
+# 100 MVA).
+function add_test_line_pu_c!(; net::Net, fromBus::String, toBus::String, length_km::Float64, r_pu::Float64, x_pu::Float64, c_nf_per_km::Float64, kwargs...)
+  zb = get_bus_vn_kV(net = net, busName = fromBus)^2 / net.baseMVA
+  return addACLinePerKm!(; net = net, fromBus = fromBus, toBus = toBus, length_km = length_km, r_ohm_per_km = r_pu * zb / length_km, x_ohm_per_km = x_pu * zb / length_km, c_nf_per_km = c_nf_per_km, kwargs...)
+end
+
 # Shared by test_state_estimation.jl, test_observability.jl and
 # test_topology_validation.jl (each file runs alone with this helper file
 # and testgrid.jl): the 4-bus link net of the SE link-contraction tests.
@@ -316,8 +328,8 @@ function create_se_link_net(; link_status::Int = 1, shunt_buses::Vector{String} 
   for b in ("S", "B1", "B1a", "B2")
     addBus!(net = net, busName = b, vn_kV = 110.0)
   end
-  addACLine!(net = net, fromBus = "S", toBus = "B1", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "B1a", toBus = "B2", length = 8.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addPIModelACLine!(net = net, fromBus = "S", toBus = "B1", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B1a", toBus = "B2", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "S")
   addProsumer!(net = net, busName = "B1", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
   addProsumer!(net = net, busName = "B1a", type = "ENERGYCONSUMER", p = 5.0, q = 2.0)
@@ -364,6 +376,8 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   r = 0.0
   x = 0.4
   s = 25.0
+  c_nf_per_km = 9.55
+  tanδ = 0.0
 
   vm_pu_STATION1 = 1.027273
   vm_pu_VERBUND = 1.018182
@@ -376,9 +390,9 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addBus!(net = Bus3Net, busName = "STATION1", vn_kV = 110.0)
   addBus!(net = Bus3Net, busName = "VERBUND", vn_kV = 110.0)
 
-  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "STATION1", length = s, r = r, x = x, b = 7.500552460445633e-05)
-  addACLine!(net = Bus3Net, fromBus = "ASTADT", toBus = "VERBUND", length = s, r = r, x = x, b = 7.500552460445633e-05)
-  addACLine!(net = Bus3Net, fromBus = "VERBUND", toBus = "STATION1", length = s, r = r, x = x, b = 7.500552460445633e-05)
+  add_test_line_pu_c!(net = Bus3Net, fromBus = "ASTADT", toBus = "STATION1", length_km = s, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus3Net, fromBus = "ASTADT", toBus = "VERBUND", length_km = s, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus3Net, fromBus = "VERBUND", toBus = "STATION1", length_km = s, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
 
   addProsumer!(net = Bus3Net, busName = "VERBUND", type = "EXTERNALNETWORKINJECTION", vm_pu = vm_pu_VERBUND, va_deg = 0.0, referencePri = "VERBUND")
   addProsumer!(net = Bus3Net, busName = "STATION1", type = "SYNCHRONOUSMACHINE", p = 70.0, q = 33.2, vm_pu = vm_pu_STATION1, qMax = qlim_max, qMin = qlim_min)
@@ -401,10 +415,10 @@ function three_winding_star_net()::Net
   addBus!(net = net, busName = "B4", vn_kV = 20.0)
   addBus!(net = net, busName = "B5", vn_kV = 110.0)
   addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 1.0, r = 0.003, x = 0.03)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.003, x_pu = 0.03, b_pu = 0.0, status = 1)
   add3WTPiModelTrafo!(net = net, HBBus = "B2", MBBus = "B3", LVBus = "B4", r = (0.2, 0.3, 0.4), x = (4.0, 6.0, 10.0), b = (0.0, 0.0, 0.0), ratedU_kV = (380.0, 110.0, 20.0), ratedS_MVA = (300.0, 200.0, 50.0), status = 1)
   add2WTrafo!(net = net, fromBus = "B2", toBus = "B3", sn_mva = 300.0, vk_percent = 12.0, vkr_percent = 0.3, pfe_kw = 0.0, i0_percent = 0.0)
-  addACLine!(net = net, fromBus = "B3", toBus = "B5", length = 1.0, r = 0.01, x = 0.04)
+  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B5", r_pu = 0.01, x_pu = 0.04, b_pu = 0.0, status = 1)
   addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
   addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 2.0, q = 0.5)
   return net
@@ -421,12 +435,12 @@ function isolated_first_net()::Net
   for b in vcat(["C", "A", "B", "D"], feeders)
     addBus!(net = net, busName = b, vn_kV = 110.0)
   end
-  line(f, t, len) = addACLine!(net = net, fromBus = f, toBus = t, length = len, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  line("C", "D", 100.0)
-  line("A", "B", 100.0)
-  line("A", "D", 100.0)
+  line(f, t) = addPIModelACLine!(net = net, fromBus = f, toBus = t, r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  line("C", "D")
+  line("A", "B")
+  line("A", "D")
   for l in feeders
-    line("B", l, 25.0)
+    line("B", l)
   end
   addLink!(net = net, fromBus = "B", toBus = "C", status = 1)
   addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A")
@@ -482,9 +496,9 @@ function link_group_net(; ring::Bool)::Net
   for b in ("A", "B", "C", "D")
     addBus!(net = net, busName = b, vn_kV = 110.0)
   end
-  addACLine!(net = net, fromBus = "A", toBus = "B", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  addACLine!(net = net, fromBus = "A", toBus = "D", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
-  ring && addACLine!(net = net, fromBus = "B", toBus = "D", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 0.0, tanδ = 0.0)
+  addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "A", toBus = "D", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+  ring && addPIModelACLine!(net = net, fromBus = "B", toBus = "D", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
   # before the prosumers: addLink! wants both buses of one type
   addLink!(net = net, fromBus = "B", toBus = "C", status = 1)
   addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "A")

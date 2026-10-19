@@ -8,47 +8,47 @@
   "power_flow": {
     "bus_state": {
       "1": {
-        "va_deg": -2.353257,
-        "vm_pu": 0.98726
+        "va_deg": -2.354614,
+        "vm_pu": 0.98721
       },
       "2": {
-        "va_deg": -4.863368,
-        "vm_pu": 0.956298
+        "va_deg": -4.866432,
+        "vm_pu": 0.9562
       },
       "3": {
-        "va_deg": -6.734399,
-        "vm_pu": 0.943615
+        "va_deg": -6.73923,
+        "vm_pu": 0.943471
       },
       "4": {
         "va_deg": 0.0,
         "vm_pu": 1.02
       },
       "5": {
-        "va_deg": -1.249243,
+        "va_deg": -1.251376,
         "vm_pu": 1.0
       }
     },
     "iterations": 1,
-    "losses_mw": 0.938628
+    "losses_mw": 0.958403
   },
   "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
   "scenarios": {
     "explicit": {
       "evening_peak": {
         "converged": true,
-        "max_branch_loading_pct": 79.579453
+        "max_branch_loading_pct": 79.644126
       },
       "line_Borntal_Lindhof_out": {
         "converged": true,
-        "max_branch_loading_pct": 122.213622
+        "max_branch_loading_pct": 122.325043
       }
     },
     "mode": "explicit"
   },
   "short_circuit": {
     "Lindhof_110": {
-      "ik_kA": 1.533970,
-      "sk_MVA": 292.260630
+      "ik_kA": 1.53397,
+      "sk_MVA": 292.26063
     },
     "Sandau_110": {
       "ik_kA": 10.951551,
@@ -57,7 +57,7 @@
   },
   "state_estimation": {
     "dof": 26,
-    "objective": 37.145952,
+    "objective": 37.145748,
     "seed": 20260903
   }
 }

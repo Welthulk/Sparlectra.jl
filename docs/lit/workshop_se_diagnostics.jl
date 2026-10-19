@@ -445,8 +445,8 @@ println("after updateShunts = true:       ", round(imag(sh.y_pu_shunt); digits =
 # ## Where to go next
 #
 # - The full measurement workflow around these tools: measurement sets
-#   travel as CSV files (`writeMeasurementsCSV` /
-#   `readMeasurementsCSV!`), the local Web UI has a state-estimation page
+#   travel as measurement tables (`writeMeasurementTable` /
+#   `readMeasurementTable!`), the local Web UI has a state-estimation page
 #   with synthetic-set generation, and a converged estimate can seed a
 #   power flow and an N-1 analysis (`runpf_from_se!`). See
 #   [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).

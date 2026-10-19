@@ -112,6 +112,255 @@ function _webui_pack_cgmes_demo!(folder::AbstractString, dest::AbstractString)::
   return dest
 end
 
+# the bundled source file behind a bare case name, searched in the order the
+# run stages it (data/mpower, data/scf, data/PGM, data/powsybl), or nothing;
+# the CGMES demo ZIPs are packed on staging and have no single source file
+function _webui_bundled_case_source(application_root::AbstractString, name::AbstractString)::Union{Nothing,String}
+  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"), joinpath(application_root, "data", "powsybl"))
+    bundled = joinpath(source_dir, String(name))
+    isfile(bundled) && return bundled
+  end
+  return nothing
+end
+
+# The hash list of the shipped files: for every file the Web UI copies into a
+# user's case directory (a case, its companions, a packed CGMES demo ZIP, a
+# warmup workload), the SHA-256 of every committed version of that file. It
+# is generated from the version history when the demo cases are built and
+# checked in; here it is read as a plain file, nothing comes from git at run
+# time.
+const _WEBUI_SHIPPED_HASHES_FILE = joinpath("data", "shipped_hashes.toml")
+
+# the directories a shipped file is copied from, in the order staging
+# searches them; data/webui holds the warmup workloads of the provisioning
+const _WEBUI_SHIPPED_SOURCE_DIRS = ["mpower", "scf", "PGM", "powsybl", "webui"]
+
+# A git checkout with core.autocrlf on Windows writes CRLF into the text
+# files that .gitattributes does not pin (.yaml, .m, .jl, .xiidm), and a copy
+# staged from such a checkout carries CRLF too. The list holds LF hashes, so
+# a text file is hashed with every CRLF read as LF, on both sides (list and
+# copy). A ZIP is binary and hashed as it is.
+function _webui_lf_bytes(bytes::Vector{UInt8})::Vector{UInt8}
+  out = Vector{UInt8}(undef, 0)
+  sizehint!(out, length(bytes))
+  n = length(bytes)
+  for i in 1:n
+    (bytes[i] == 0x0d && i < n && bytes[i + 1] == 0x0a) && continue
+    push!(out, bytes[i])
+  end
+  return out
+end
+
+"""
+    _webui_shipped_sha256(path) -> String
+
+SHA-256 (hex) of a shipped file or its copy as the hash list counts it: a
+`.zip` byte for byte, every other file with CRLF line ends read as LF, so a
+copy from a Windows checkout with `core.autocrlf` matches the list.
+"""
+function _webui_shipped_sha256(path::AbstractString)::String
+  bytes = read(path)
+  endswith(lowercase(String(path)), ".zip") || (bytes = _webui_lf_bytes(bytes))
+  return bytes2hex(sha256(bytes))
+end
+
+# A hash list that cannot be used: unparsable TOML, or a value that is not a
+# list of SHA-256 hex strings. Raised by _webui_shipped_hashes and handled
+# at start like an unreadable case directory (warning, log entry, no
+# refresh).
+struct _WebUIShippedHashesDamaged <: Exception
+  message::String
+end
+Base.showerror(io::IO, err::_WebUIShippedHashesDamaged) = print(io, err.message)
+
+"""
+    _webui_shipped_hashes(application_root) -> Dict{String,Set{String}}
+
+The hash list `data/shipped_hashes.toml` of the package at
+`application_root`: file name in the case directory => SHA-256 (hex, see
+[`_webui_shipped_sha256`](@ref)) of every committed version of that file,
+the current one included. An absent list gives an empty table, so nothing
+is refreshed. A list that does not parse or holds a value of the wrong type
+raises `_WebUIShippedHashesDamaged`.
+"""
+function _webui_shipped_hashes(application_root::AbstractString)::Dict{String,Set{String}}
+  path = joinpath(application_root, _WEBUI_SHIPPED_HASHES_FILE)
+  isfile(path) || return Dict{String,Set{String}}()
+  parsed = try
+    TOML.parsefile(path)
+  catch err
+    err isa TOML.ParserError || rethrow()
+    throw(_WebUIShippedHashesDamaged("$(path) does not parse: $(sprint(showerror, err))"))
+  end
+  table = get(parsed, "files", Dict{String,Any}())
+  table isa AbstractDict || throw(_WebUIShippedHashesDamaged("$(path): [files] is not a table"))
+  out = Dict{String,Set{String}}()
+  for (name, hashes) in table
+    ok = hashes isa AbstractVector && all(h -> h isa AbstractString && occursin(r"^[0-9a-f]{64}$", h), hashes)
+    ok || throw(_WebUIShippedHashesDamaged("$(path): the entry of $(name) is not a list of SHA-256 hex strings"))
+    out[String(name)] = Set{String}(String.(hashes))
+  end
+  return out
+end
+
+# How a shipped file under `name` is written and what its current version
+# hashes to, or nothing when the package ships no such file. The copy in the
+# case directory is never its own source: a writable checkout uses its own
+# data/mpower as the case directory, and there the search goes on to the
+# next directory.
+function _webui_shipped_source(application_root::AbstractString, name::AbstractString, copy_path::AbstractString)
+  folder = _webui_cgmes_demo_folder(application_root, name)
+  if folder !== nothing
+    # the ZIP is packed, not copied; packing is deterministic (stored
+    # entries, no time stamps), so the current version hashes as packed
+    write_zip! = dst -> _webui_pack_cgmes_demo!(folder, dst)
+    zip_sha256 = () -> mktempdir(dir -> _webui_shipped_sha256(_webui_pack_cgmes_demo!(folder, joinpath(dir, String(name)))))
+    return (write! = write_zip!, sha256 = zip_sha256)
+  end
+  for dir in _WEBUI_SHIPPED_SOURCE_DIRS
+    src = joinpath(application_root, "data", dir, String(name))
+    isfile(src) || continue
+    ispath(copy_path) && samefile(src, copy_path) && continue
+    return (write! = dst -> cp(src, dst), sha256 = () -> _webui_shipped_sha256(src))
+  end
+  return nothing
+end
+
+# `<name>.replaced-<date>`, with a counter when that name is taken (a second
+# replacement on the same day must not overwrite the first kept copy)
+function _webui_replaced_path(path::AbstractString, today::Date)::String
+  base = string(path, ".replaced-", Dates.format(today, "yyyy-mm-dd"))
+  candidate = base
+  n = 1
+  while ispath(candidate)
+    n += 1
+    candidate = string(base, "-", n)
+  end
+  return candidate
+end
+
+# The failures a copy step expects: a full disk or a missing permission
+# (IOError, SystemError), and a second Web UI instance that moved or wrote
+# the same file in between (ArgumentError from mv onto an existing name or
+# from a vanished source).
+_webui_expected_copy_failure(err)::Bool = err isa Base.IOError || err isa SystemError || err isa ArgumentError
+
+# write!(path) into a fresh temporary name in the directory of `dst`; the
+# caller renames it into place, so a crash or a full disk never leaves a
+# truncated file under the real name (a truncated copy would count as
+# changed by the user and never be refreshed again)
+function _webui_write_temp!(@nospecialize(write!), dst::AbstractString)::String
+  tmp = tempname(dirname(dst); cleanup = false)
+  try
+    write!(tmp)
+  catch
+    rm(tmp; force = true)
+    rethrow()
+  end
+  return tmp
+end
+
+"""
+    _webui_stage_shipped_file!(write!, current_sha256, dst; known=nothing, operation_log=nothing, today=Dates.today()) -> NamedTuple
+
+The one copy step for a shipped file. A missing `dst` is written with
+`write!` under a temporary name and renamed into place. An existing `dst`
+is replaced only when `known` (the hashes of its name from the hash list)
+and an `operation_log` are given and its content equals an EARLIER version
+(hash as [`_webui_shipped_sha256`](@ref)): equal to the current version
+(`current_sha256()`) it is left alone, and content that matches no listed
+version (a copy the user changed) is never touched. The replacement is
+written to a temporary file first; then the old copy is renamed to
+`<name>.replaced-<date>` and the new file into place. The operation log
+gets `shipped_case_file_replacing` (naming the kept copy) before the
+renames and `shipped_case_file_replaced` after them, both with the old and
+the new hash. A failure removes the temporary file, moves the old copy back
+when it was already moved, and is logged as `shipped_case_file_replace_failed`;
+an expected failure (disk, permission, a concurrent instance) returns
+status `:failed`, any other is rethrown. Returns `(status, old_sha256,
+new_sha256, kept_as)` with status `:copied`, `:kept`, `:current`,
+`:replaced` or `:failed`.
+"""
+function _webui_stage_shipped_file!(@nospecialize(write!), @nospecialize(current_sha256), dst::AbstractString; known::Union{Nothing,Set{String}} = nothing, operation_log::Union{Nothing,AbstractString} = nothing, today::Date = Dates.today())
+  if !isfile(dst)
+    tmp = _webui_write_temp!(write!, dst)
+    try
+      mv(tmp, dst)
+    catch err
+      rm(tmp; force = true)
+      # another instance staged the same file in between: its copy stays
+      (err isa ArgumentError && isfile(dst)) || rethrow()
+      return (status = :kept, old_sha256 = "", new_sha256 = "", kept_as = "")
+    end
+    return (status = :copied, old_sha256 = "", new_sha256 = "", kept_as = "")
+  end
+  (known === nothing || operation_log === nothing) && return (status = :kept, old_sha256 = "", new_sha256 = "", kept_as = "")
+  old = _webui_shipped_sha256(dst)
+  old in known || return (status = :kept, old_sha256 = old, new_sha256 = "", kept_as = "")
+  new = current_sha256()
+  old == new && return (status = :current, old_sha256 = old, new_sha256 = new, kept_as = "")
+  kept_as = _webui_replaced_path(dst, today)
+  log_fields = (route = "/powerflow", method = "START", user_action = false, file = basename(dst), old_sha256 = old, new_sha256 = new)
+  tmp = ""
+  moved = false
+  try
+    tmp = _webui_write_temp!(write!, dst)
+    record_webui_operation!(operation_log, "shipped_case_file_replacing"; log_fields..., status = "replacing", kept_as = basename(kept_as))
+    mv(dst, kept_as)
+    moved = true
+    mv(tmp, dst)
+  catch err
+    isempty(tmp) || rm(tmp; force = true)
+    restored = false
+    if moved && !ispath(dst)
+      restored = try
+        mv(kept_as, dst)
+        true
+      catch restore_err
+        _webui_expected_copy_failure(restore_err) || rethrow()
+        false
+      end
+    end
+    # the kept copy is named whenever it still exists, so nothing goes
+    # missing without a trace
+    left = moved && !restored ? basename(kept_as) : ""
+    record_webui_operation!(operation_log, "shipped_case_file_replace_failed"; log_fields..., status = "failed", kept_as = left, restored, message = sprint(showerror, err))
+    _webui_expected_copy_failure(err) || rethrow()
+    return (status = :failed, old_sha256 = old, new_sha256 = new, kept_as = left)
+  end
+  record_webui_operation!(operation_log, "shipped_case_file_replaced"; log_fields..., status = "replaced", kept_as = basename(kept_as))
+  return (status = :replaced, old_sha256 = old, new_sha256 = new, kept_as)
+end
+
+"""
+    _webui_refresh_shipped_copies!(application_root, case_directory, operation_log; known, today) -> Vector
+
+Bring the copies of shipped files in `case_directory` up to the package's
+version (0.50.0). Every name of the hash list ([`_webui_shipped_hashes`](@ref))
+that exists in the case directory goes through
+[`_webui_stage_shipped_file!`](@ref): a copy that equals an earlier
+committed version is replaced (old copy kept as `<name>.replaced-<date>`,
+operation-log event `shipped_case_file_replaced`), every other copy stays as
+it is. Only the listed names are looked at, and only existing files are
+hashed. Returns the replacements as `(file, kept_as)`.
+"""
+function _webui_refresh_shipped_copies!(application_root::AbstractString, case_directory::AbstractString, operation_log::AbstractString; known::Dict{String,Set{String}} = _webui_shipped_hashes(application_root), today::Date = Dates.today())
+  replaced = NamedTuple{(:file, :kept_as),Tuple{String,String}}[]
+  isdir(case_directory) || return replaced
+  for name in sort!(collect(keys(known)))
+    # a list entry is a bare file name; anything else would reach outside
+    # the case directory
+    (basename(name) == name && name != "." && name != "..") || continue
+    dst = joinpath(case_directory, name)
+    isfile(dst) || continue
+    source = _webui_shipped_source(application_root, name, dst)
+    source === nothing && continue
+    result = _webui_stage_shipped_file!(source.write!, source.sha256, dst; known = known[name], operation_log, today)
+    result.status === :replaced && push!(replaced, (file = name, kept_as = basename(result.kept_as)))
+  end
+  return replaced
+end
+
 """
     _webui_stage_bundled_case!(application_root, case_directory, requested) -> Union{Nothing,String}
 
@@ -121,8 +370,10 @@ stage it into `case_directory`.
 Returns the staged (or already cached) absolute path, or `nothing` when no
 bundled source carries the name. An SCF demo case is staged WITH its
 sidecars (`<stem>.config.yaml` pins the machine-neutral resolution, the
-measurement CSVs belong to the case); existing cache files are never
-overwritten, so user-saved settings survive. With no writable
+measurement CSVs belong to the case); existing cache files are not
+overwritten here, so user-saved settings survive (a copy that still holds an
+earlier shipped version is replaced at Web UI start by
+[`_webui_refresh_shipped_copies!`](@ref)). With no writable
 `case_directory` the bundled path itself is returned.
 """
 function _webui_stage_bundled_case!(application_root::AbstractString, case_directory::Union{Nothing,AbstractString}, requested::AbstractString)::Union{Nothing,String}
@@ -133,26 +384,23 @@ function _webui_stage_bundled_case!(application_root::AbstractString, case_direc
     target_dir = case_directory === nothing ? mktempdir() : String(case_directory)
     mkpath(target_dir)
     cached = joinpath(target_dir, name)
-    isfile(cached) || _webui_pack_cgmes_demo!(demo_folder, cached)
+    _webui_stage_shipped_file!(dst -> _webui_pack_cgmes_demo!(demo_folder, dst), () -> "", cached)
     return cached
   end
-  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"), joinpath(application_root, "data", "powsybl"))
-    bundled = joinpath(source_dir, name)
-    isfile(bundled) || continue
-    case_directory === nothing && return bundled
-    mkpath(case_directory)
-    cached = joinpath(String(case_directory), name)
-    if !isfile(cached)
-      # the companions travel with the case, enumerated by the single
-      # definition: config pin, measurement CSVs, weights
-      for src in vcat([bundled], case_companion_files(bundled))
-        dst = joinpath(String(case_directory), basename(src))
-        isfile(dst) || cp(src, dst)
-      end
+  bundled = _webui_bundled_case_source(application_root, name)
+  bundled === nothing && return nothing
+  case_directory === nothing && return bundled
+  mkpath(case_directory)
+  cached = joinpath(String(case_directory), name)
+  if !isfile(cached)
+    # the companions travel with the case, enumerated by the single
+    # definition: config pin, measurement CSVs, weights
+    for src in vcat([bundled], case_companion_files(bundled))
+      dst = joinpath(String(case_directory), basename(src))
+      _webui_stage_shipped_file!(d -> cp(src, d), () -> "", dst)
     end
-    return cached
   end
-  return nothing
+  return cached
 end
 
 """Return the effective Web UI case directory used for selection and imports."""
@@ -872,6 +1120,166 @@ function _webui_case_config_field_values(casefile::AbstractString, case_director
   return values
 end
 
+# --- measurement sigma by voltage level (State Estimation section) ----------
+#
+# The table of state_estimation.sigma_by_voltage_level on the SE section:
+# one row per nominal voltage of the case, plus every configured level the
+# case does not have (shown so a save does not drop it). The form posts
+# se_sigma_lvl_n and per row i se_sigma_lvl_<i>_<column>; an empty cell is
+# "default", not zero.
+const _WEBUI_SIGMA_LEVEL_KEY = "state_estimation.sigma_by_voltage_level"
+const _WEBUI_SIGMA_LEVEL_SIGMA_COLUMNS = ["p_mw", "q_mvar", "i_a", "u_kv", "rel_pct"]
+
+# Nominal voltages per case, cached by path and mtime: the levels need the
+# imported net, and the section renders on every Runs page load. The import
+# runs outside the lock so a slow case does not block other pages.
+const _WEBUI_CASE_VN_CACHE = Dict{String,Tuple{Float64,Vector{Float64},String}}()
+const _WEBUI_CASE_VN_CACHE_LOCK = ReentrantLock()
+
+"""
+    _webui_case_voltage_levels(case_path, config_file) -> (levels, error)
+
+The distinct bus nominal voltages of a case in kV, highest first, and an
+error text (empty on success). A case that does not import gives no levels
+and the import error, which the SE section shows next to the table.
+"""
+function _webui_case_voltage_levels(case_path::AbstractString, config_file::AbstractString)
+  path = String(case_path)
+  (isfile(path) || isdir(path)) || return (Float64[], "case file not found")
+  stamp = mtime(path)
+  hit = lock(() -> get(_WEBUI_CASE_VN_CACHE, path, nothing), _WEBUI_CASE_VN_CACHE_LOCK)
+  (hit !== nothing && hit[1] == stamp) && return (hit[2], hit[3])
+  levels, err = try
+    cfg = load_sparlectra_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file))
+    net = import_case(path, cfg; run_kind = :state_estimation).net
+    (sort!(unique(Float64[nd.comp.cVN for nd in net.nodeVec]); rev = true), "")
+  catch err
+    # the expected failure: the case does not import (format, content);
+    # the section shows the reason instead of the levels
+    err isa InterruptException && rethrow()
+    (Float64[], first(split(sprint(showerror, err), '\n')))
+  end
+  lock(() -> (_WEBUI_CASE_VN_CACHE[path] = (stamp, levels, err)), _WEBUI_CASE_VN_CACHE_LOCK)
+  return (levels, err)
+end
+
+"""
+    _webui_sigma_level_table(case_path, case_directory, config_file) -> NamedTuple
+
+The rows the SE section shows: `(rows, error, editable, stored)` with one
+row per nominal voltage of the case and per configured level the case does
+not have, each `(vn_kv, values, in_case)`; `values` maps a column to its
+text, empty for "default". The values come from the case configuration
+file only; without a table there every cell is empty, also when the
+configuration file sets the key. `stored` says the case configuration has
+rows: the form then posts its table even when all cells were cleared (that
+clears the stored table), while an empty table that was empty on the page
+posts nothing, so the run resolves the key like an API run. When the case
+configuration cannot be read, `editable` is false: the section then posts
+no table, and the run stops with the same named error as an API run
+instead of replacing the stored value with empty cells.
+"""
+function _webui_sigma_level_table(case_path::AbstractString, case_directory, config_file::AbstractString)
+  path = isabspath(String(case_path)) ? String(case_path) : (case_directory === nothing ? String(case_path) : joinpath(String(case_directory), String(case_path)))
+  vns, err = _webui_case_voltage_levels(path, config_file)
+  configured = SESigmaLevel[]
+  editable = true
+  try
+    configured = _parse_sigma_by_voltage_level(get(load_case_config(path), _WEBUI_SIGMA_LEVEL_KEY, nothing))
+  catch e
+    # the expected failures: an unreadable case configuration (header,
+    # scope, a key outside the case scope) or an invalid table
+    # (ArgumentError), a line the YAML reader refuses (ErrorException); the
+    # run names the same error, the section shows it
+    (e isa ArgumentError || e isa ErrorException) || rethrow()
+    editable = false
+    err = isempty(err) ? sprint(showerror, e) : string(err, "; ", sprint(showerror, e))
+  end
+  text(x) = x === nothing ? "" : string(x)
+  rows = NamedTuple[]
+  for v in sort!(unique(vcat(vns, [r.vn_kv for r in configured])); rev = true)
+    r = findfirst(c -> abs(c.vn_kv - v) < Sparlectra.SE_SIGMA_LEVEL_VN_TOL_KV, configured)
+    c = r === nothing ? nothing : configured[r]
+    values = Dict{String,String}(
+      "p_mw" => c === nothing ? "" : text(c.p_mw), "q_mvar" => c === nothing ? "" : text(c.q_mvar),
+      "i_a" => c === nothing ? "" : text(c.i_a), "u_kv" => c === nothing ? "" : text(c.u_kv),
+      "rel_pct" => (c === nothing || c.rel_pct == 0.0) ? "" : text(c.rel_pct),
+    )
+    push!(rows, (vn_kv = v, values = values, in_case = any(x -> abs(x - v) < Sparlectra.SE_SIGMA_LEVEL_VN_TOL_KV, vns)))
+  end
+  return (rows = rows, error = err, editable = editable, stored = !isempty(configured))
+end
+
+"""
+    _webui_sigma_levels_from_form(form) -> Union{Nothing,Dict{String,Any}}
+
+The posted sigma table as the block mapping of the configuration (the
+nominal voltage as the row key, written by `_sigma_level_key`, => the sigma
+columns), or `nothing` when the form carries no
+table (`se_sigma_lvl_n` absent: the configured value stays). A row without
+any value is left out. An empty table is an empty mapping when the page
+showed stored rows (`se_sigma_lvl_stored`: the user cleared them), and
+`nothing` otherwise, so an untouched empty table changes no run and writes
+nothing. A cell that is not a number, or a row the configuration parser
+refuses, throws an `ArgumentError` naming the row.
+"""
+function _webui_sigma_levels_from_form(form::AbstractDict)::Union{Nothing,Dict{String,Any}}
+  n_raw = _webui_form_value(form, "se_sigma_lvl_n", nothing)
+  n_raw === nothing && return nothing
+  n = something(tryparse(Int, strip(String(n_raw))), 0)
+  out = Dict{String,Any}()
+  for i in 1:n
+    vn_raw = strip(String(something(_webui_form_value(form, "se_sigma_lvl_$(i)_vn_kv", ""), "")))
+    isempty(vn_raw) && continue
+    vn = tryparse(Float64, vn_raw)
+    vn === nothing && throw(ArgumentError("$(_WEBUI_SIGMA_LEVEL_KEY): row $(i): vn_kv '$(vn_raw)' is not a number"))
+    row = Dict{String,Any}()
+    for col in _WEBUI_SIGMA_LEVEL_SIGMA_COLUMNS
+      raw = strip(String(something(_webui_form_value(form, "se_sigma_lvl_$(i)_$(col)", ""), "")))
+      isempty(raw) && continue
+      x = tryparse(Float64, replace(raw, "," => "."))
+      x === nothing && throw(ArgumentError("$(_WEBUI_SIGMA_LEVEL_KEY): row $(i) ($(vn) kV): $(col) '$(raw)' is not a number"))
+      row[col] = x
+    end
+    isempty(row) && continue
+    out[_sigma_level_key(vn)] = row
+  end
+  isempty(out) && strip(String(something(_webui_form_value(form, "se_sigma_lvl_stored", ""), ""))) != "1" && return nothing
+  _parse_sigma_by_voltage_level(out)
+  return out
+end
+
+# meta.f_nom of an SCF/PGM case file, or nothing (no such file, no
+# sparlectra block, no or an invalid statement: the import reports that).
+# A bare name not yet in the case directory is looked up in the bundled
+# sources the combobox offers, the way the run resolves it before staging.
+function _webui_case_file_frequency(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,Float64}
+  name = String(strip(String(casefile)))
+  isempty(name) && return nothing
+  path = isabspath(name) ? name : (case_directory === nothing ? name : joinpath(String(case_directory), name))
+  if !isfile(path) && !isabspath(name) && !occursin('/', name) && !occursin('\\', name)
+    bundled = _webui_bundled_case_source(application_root, name)
+    bundled === nothing || (path = bundled)
+  end
+  (lowercase(splitext(path)[2]) == ".json" && isfile(path)) || return nothing
+  root = try
+    scf_json_parse(read(path, String))
+  catch err
+    # a malformed file leaves the select on the configuration; the run
+    # names the parse error (Web UI form seeding falls back silently)
+    err isa ArgumentError || rethrow()
+    return nothing
+  end
+  root isa AbstractDict || return nothing
+  spar = get(root, "sparlectra", nothing)
+  spar isa AbstractDict || return nothing
+  meta = get(spar, "meta", nothing)
+  meta isa AbstractDict || return nothing
+  v = get(meta, "f_nom", nothing)
+  (v isa Real && !(v isa Bool) && isfinite(v) && v > 0) || return nothing
+  return Float64(v)
+end
+
 # the machine-scope keys an old case file carries in its in-file block:
 # ignored by the run and named in the notice so nobody expects them to act
 function _webui_case_config_dropped_keys(casefile::AbstractString, case_directory)::Vector{String}
@@ -974,6 +1382,14 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
   config_values = _webui_config_field_values(config_path)
   merge!(values, config_values)
+  # an SCF file states its system frequency (meta.f_nom), and the import
+  # gives it precedence over the key: the select shows it, so an untouched
+  # form posts the file's value and never triggers the mismatch warning.
+  # A case configuration file below still wins (the user saved a value).
+  if apply_case_levels
+    case_f = _webui_case_file_frequency(selected_casefile, case_directory)
+    case_f === nothing || (values["model_nominal_frequency_hz"] = case_f)
+  end
   # Case levels seed the form in resolution order (deprecated in-file block,
   # then the case configuration file); no mtime logic anywhere. The
   # controls have to show these values: the form posts a value for EVERY
@@ -1132,8 +1548,9 @@ end
 ## minimal case configuration file when the case has none yet. Used by the
 ## SE generator so a case reload restores the generator options (the
 ## run-based save path never sees the generator form). Only persisted
-## fields (WEBUI_OPTION_SPECS) are accepted; existing configuration keys
-## stay untouched.
+## fields (WEBUI_OPTION_SPECS) are accepted; a config-backed field among
+## them is written as its case-scope configuration key, every other
+## existing configuration key stays untouched.
 function _webui_merge_case_settings!(output_root::AbstractString, casefile_path::AbstractString, updates::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing)
   source = isabspath(strip(String(casefile_path))) ? normpath(String(casefile_path)) : _webui_resolve_case_profile_source(casefile_path; case_directory)
   isempty(source) && return nothing
@@ -1153,14 +1570,24 @@ function _webui_merge_case_settings!(output_root::AbstractString, casefile_path:
   # bookkeeping for the pages, not settings; a merge drops the contradicting
   # value from the file along with them
   filter!(kv -> !startswith(first(kv), "_"), form)
+  config = Dict{String,Any}(existing_config)
   for (k, v) in updates
     field = String(k)
     field in _WEBUI_CASE_PROFILE_FIELDS || continue
     spec = get(_WEBUI_OPTION_BY_FIELD, field, nothing)
-    (spec === nothing || spec.config_key !== nothing) && continue
+    spec === nothing && continue
+    if spec.config_key !== nothing
+      # a config-backed field is a configuration key of the case, never a
+      # form-block entry (the generator's zero-injection checkbox)
+      key = String(spec.config_key)
+      scf_is_case_config_key(key) || continue
+      config[key] = v
+      delete!(form, field)
+      continue
+    end
     form[field] = v
   end
-  return write_case_config(source, existing_config; form = form)
+  return write_case_config(source, config; form = form)
 end
 
 function _webui_input_value(values::AbstractDict, field::AbstractString, default)::String
@@ -1392,6 +1819,11 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
       overrides[config_key] = _webui_parse_form_value(raw, type, field)
     end
     _webui_apply_qlimits_off!(overrides)
+    # the sigma table of the SE section: a table, not a scalar option
+    # field, so it is read here; absent from the POST, the configuration
+    # (case file first) stays
+    sigma_levels = _webui_sigma_levels_from_form(form)
+    sigma_levels === nothing || (overrides[_WEBUI_SIGMA_LEVEL_KEY] = sigma_levels)
   end
   # The tolerance is ONE value with a unit, not two competing fields: the
   # unit decides which configuration key the number becomes. MW is the
@@ -1521,12 +1953,17 @@ function _webui_is_measurement_csv(path::AbstractString)::Bool
   return strip(line) == "# sparlectra-measurements v1"
 end
 
+## a measurement file the SE page offers, shows and hands out: a measurement
+## CSV v1 or a measurement table (version line plus header, isMeasurementTable).
+## The editors and the noise action stay CSV v1 only.
+_webui_is_measurement_file(path::AbstractString)::Bool = _webui_is_measurement_csv(path) || isMeasurementTable(path)
+
 ## measurement sets offered on the SE page: .csv files in the case directory
-## whose content sniff confirms the v1 version comment (a .csv without it is
-## retained but never offered)
+## whose content sniff confirms the v1 version comment or the measurement
+## table (a .csv without either is retained but never offered)
 function _webui_measurement_options_in_directory(directory::AbstractString)
   isdir(directory) || return String[]
-  names = [name for name in readdir(directory) if lowercase(splitext(name)[2]) == ".csv" && _webui_is_measurement_csv(joinpath(directory, name))]
+  names = [name for name in readdir(directory) if lowercase(splitext(name)[2]) == ".csv" && _webui_is_measurement_file(joinpath(directory, name))]
   return sort!(names; by = lowercase)
 end
 
@@ -1599,9 +2036,12 @@ function _webui_measurement_set_case(path::AbstractString)::String
   isfile(path) || return ""
   result = ""
   open(path, "r") do io
-    for _ = 1:50
+    for i = 1:50
       eof(io) && break
-      line = strip(readline(io))
+      # a leading BOM goes first (strip keeps U+FEFF), blank lines before
+      # or between the header comments are skipped; readline drops a CRLF
+      line = strip(i == 1 ? lstrip(readline(io), '\ufeff') : readline(io))
+      isempty(line) && continue
       startswith(line, "#") || break
       m = match(r"^#\s*case:\s*(.+)$", line)
       if m !== nothing
@@ -1611,6 +2051,47 @@ function _webui_measurement_set_case(path::AbstractString)::String
     end
   end
   return result
+end
+
+## the stems a measurement set name may start with to belong to a case: the
+## case name without its extension, and for a compound extension
+## (`sp_case14.scf.json`) also without the inner one, because the shipped sets
+## are named `sp_case14.measurements.csv` and generated ones
+## `sp_case14.scf.measurements.<stamp>.csv`
+function _webui_case_stems(casefile::AbstractString)::Vector{String}
+  stem = String(first(splitext(basename(String(casefile)))))
+  stems = [stem]
+  inner, ext = splitext(stem)
+  lowercase(ext) in (".scf", ".pgm") && !isempty(inner) && push!(stems, String(inner))
+  return stems
+end
+
+"""
+    _webui_measurement_sets_for_case(directory, casefile; also_bound_to) -> Vector{NamedTuple{(:name, :case)}}
+
+The measurement sets in `directory` that belong to `casefile`, sorted by
+name. A set belongs to the case when its `# case:` line names the case or
+one of `also_bound_to` (the source an SCF case was exported from, which the
+SE service accepts as well). A set without a `# case:` line belongs to the
+case when its file name starts with a case stem followed by a dot
+(`sp_case14.measurements.csv` for `sp_case14.scf.json`). `case` is the case
+named in the file, empty for a set matched by its name. Only the header
+lines of each file are read.
+"""
+function _webui_measurement_sets_for_case(directory::AbstractString, casefile::AbstractString; also_bound_to::AbstractVector{<:AbstractString} = String[])
+  out = NamedTuple{(:name, :case),Tuple{String,String}}[]
+  isempty(casefile) && return out
+  accepted = Set{String}(vcat([basename(String(casefile))], [String(c) for c in also_bound_to if !isempty(c)]))
+  stems = _webui_case_stems(casefile)
+  for name in _webui_measurement_options_in_directory(directory)
+    bound = _webui_measurement_set_case(joinpath(directory, name))
+    if isempty(bound)
+      any(s -> startswith(name, s * "."), stems) && push!(out, (name = name, case = ""))
+    elseif bound in accepted
+      push!(out, (name = name, case = bound))
+    end
+  end
+  return out
 end
 
 ## documented tap deviations of a measurement set: rows of the
@@ -1661,6 +2142,8 @@ _webui_measurement_header_line(s::AbstractString)::Bool = startswith(s, "type,")
 
 function _webui_measurement_set_rows(path::AbstractString; limit::Int = 400)
   isfile(path) || return NamedTuple[]
+  isMeasurementTable(path) && return _webui_measurement_table_rows(path; limit = limit)
+  _webui_is_measurement_csv(path) || return NamedTuple[]
   out = NamedTuple[]
   delimiter = _webui_measurement_csv_delimiter(eachline(path))
   for (ln, line) in enumerate(eachline(path))
@@ -1668,7 +2151,31 @@ function _webui_measurement_set_rows(path::AbstractString; limit::Int = 400)
     (isempty(s) || startswith(s, "#") || _webui_measurement_header_line(s)) && continue
     parts = split(s, delimiter; limit = 11)
     length(parts) >= 11 || continue
-    push!(out, (line = ln, typ = String(parts[1]), bus = String(parts[2]), from_bus = String(parts[3]), to_bus = String(parts[4]), branch_nr = String(parts[5]), direction = String(parts[7]), value = String(parts[8]), sigma = String(parts[9]), active = String(parts[10]), id = String(parts[11])))
+    bus = String(parts[2])
+    location = isempty(bus) ? string(parts[3], "-", parts[4], " #", parts[5], " ", parts[7]) : string("bus ", bus)
+    push!(out, (line = ln, typ = String(parts[1]), location = location, value = String(parts[8]), sigma = String(parts[9]), active = String(parts[10]), id = String(parts[11])))
+    length(out) >= limit && break
+  end
+  return out
+end
+
+## the editable rows of a measurement table for the value editor: the file
+## line, the type (an Analog row takes its type from the model and shows as
+## "Analog"), the key as location, value, sigma and valid as written. Rows
+## the reader cannot split (wrong field count) are not offered. The
+## ArgumentError is the reader's refusal of the whole file.
+function _webui_measurement_table_rows(path::AbstractString; limit::Int = 400)
+  rows = try
+    readMeasurementTable(path)
+  catch err
+    err isa ArgumentError || rethrow()
+    return NamedTuple[]
+  end
+  out = NamedTuple[]
+  for r in rows
+    r.problem === :field_count && continue
+    location = !isempty(r.node_mrid) ? string("node ", r.node_mrid) : !isempty(r.terminal_mrid) ? string("terminal ", r.terminal_mrid) : string("Analog ", r.measurement_mrid)
+    push!(out, (line = r.line, typ = isempty(r.type) ? "Analog" : r.type, location = location, value = r.value_text, sigma = r.sigma_text, active = r.valid ? "true" : "false", id = ""))
     length(out) >= limit && break
   end
   return out
@@ -1678,6 +2185,7 @@ end
 ## "what is in this set" summary on the SE page
 function _webui_measurement_set_counts(path::AbstractString)::Vector{Tuple{String,Int}}
   isfile(path) || return Tuple{String,Int}[]
+  isMeasurementTable(path) && return _webui_measurement_table_counts(path)
   counts = Dict{String,Int}()
   delimiter = _webui_measurement_csv_delimiter(eachline(path))
   open(path, "r") do io
@@ -1687,6 +2195,25 @@ function _webui_measurement_set_counts(path::AbstractString)::Vector{Tuple{Strin
       typ = String(first(split(s, delimiter; limit = 2)))
       counts[typ] = get(counts, typ, 0) + 1
     end
+  end
+  return sort!([(k, v) for (k, v) in counts]; by = first)
+end
+
+## per-type row counts of a measurement table (column `type`; a row keyed
+## by measurement_mrid takes its type from the Analog and counts as
+## "Analog"). The ArgumentError is the reader's refusal of a table of
+## another version: the page then shows no counts, the run names the reason.
+function _webui_measurement_table_counts(path::AbstractString)::Vector{Tuple{String,Int}}
+  rows = try
+    readMeasurementTable(path)
+  catch err
+    err isa ArgumentError || rethrow()
+    return Tuple{String,Int}[]
+  end
+  counts = Dict{String,Int}()
+  for r in rows
+    t = isempty(r.type) ? "Analog" : r.type
+    counts[t] = get(counts, t, 0) + 1
   end
   return sort!([(k, v) for (k, v) in counts]; by = first)
 end

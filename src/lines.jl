@@ -15,105 +15,61 @@
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # Date: 10.05.2023
 # file: src/lines.jl
-# purpose: ACLineSegment branch type with constructors for length-based
-#          parameters and per-unit PI-model data, plus accessor and show
-#          methods
+# purpose: ACLineSegment branch type: physical line totals in ohm and siemens
+#          or per-unit PI-model data, plus accessor and show methods
 
 """
     ACLineSegment
 
-A mutable structure representing an AC line segment in a power system.
+An AC line between two buses of one voltage level.
+
+A physical line (built by [`addACLine!`](@ref) or [`addACLinePerKm!`](@ref))
+stores the totals of the whole line: `r` and `x` in ohm, `b` and `g` in
+siemens. A PI-model line (built by [`addPIModelACLine!`](@ref)) stores per-unit
+values on the bus voltage and the network base. [`getLineRXBG_pu`](@ref)
+returns per unit for both kinds.
 
 # Fields
-- `comp::AbstractComponent`: The component of the AC line segment.
-- `length::Float64`: The length of the AC line segment.
-- `r::Float64`: The resistance of the AC line segment.
-- `x::Float64`: The reactance of the AC line segment.
-- `b::Union{Nothing,Float64}`: The susceptance of the AC line segment. It can be `Nothing` or a `Float64` value.
-- `g::Union{Nothing,Float64}`: The conductance of the AC line segment. It can be `Nothing` or a `Float64` value.
-- `c_nf_per_km::Union{Nothing,Float64}`: The capacitance per kilometer of the AC line segment. It can be `Nothing` or a `Float64` value.
-- `tanδ::Union{Nothing,Float64}`: The tangent of the loss angle of the AC line segment. It can be `Nothing` or a `Float64` value.
-- `ratedS::Union{Nothing,Float64}`: The rated power of the AC line segment. It can be `Nothing` or a `Float64` value.
-- `paramsBasedOnLength::Bool`: A boolean indicating whether the parameters are based on the length of the AC line segment, if false, the parameters (r,x,g,b) have to multiply by length.
-- `_isPIModel::Bool`: A boolean indicating whether the AC line segment is a PI model, all parameters are p.u. .
+- `comp::AbstractComponent`: the component record.
+- `length_km::Union{Nothing,Float64}`: line length in km, information only
+  (used by `show` and as CGMES `Conductor.length` in the export); it never
+  scales `r`, `x`, `b` or `g`.
+- `r::Float64`, `x::Float64`: series resistance and reactance, ohm (physical)
+  or per unit (PI model).
+- `b::Float64`, `g::Float64`: total shunt susceptance and conductance,
+  siemens (physical) or per unit (PI model).
+- `ratedS::Union{Nothing,Float64}`: rated power in MVA.
+- `_isPIModel::Bool`: `true` when the values are per unit.
 
-# Constructors
-- `ACLineSegment(; vn_kv::Float64, from::Int, to::Int, length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing, c_nf_per_km::Union{Nothing,Float64} = nothing, 
-                           g::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, paramsBasedOnLength=true)`: Creates a new `ACLineSegment` instance. An explicit `g` overrides the `tanδ`-based derivation.
+# Constructor
+    ACLineSegment(; vn_kv, from, to, r, x, b = 0.0, g = 0.0, length_km = nothing, ratedS = nothing, isPIModel)
 
-# Methods
-- `Base.show(io::IO, acseg::ACLineSegment)`: Prints the `ACLineSegment` instance.
-
-An AC line with its physical parameters (ohm, siemens per length or
-absolute) and the PI-model form the solver consumes.
+`isPIModel` has no default: the caller states the unit of the four values.
 """
 mutable struct ACLineSegment <: AbstractBranch
   comp::AbstractComponent
-  length::Float64
+  length_km::Union{Nothing,Float64}
   r::Float64
   x::Float64
-  b::Union{Nothing,Float64}
-  g::Union{Nothing,Float64}
-  c_nf_per_km::Union{Nothing,Float64}
-  tanδ::Union{Nothing,Float64}
+  b::Float64
+  g::Float64
   ratedS::Union{Nothing,Float64}
-  paramsBasedOnLength::Bool
   _isPIModel::Bool
-  #! format: off
-  function ACLineSegment(; vn_kv::Float64,  from::Int,  to::Int,  length::Float64, r::Float64, x::Float64, b::Union{Nothing,Float64} = nothing,
-                           g::Union{Nothing,Float64} = nothing,
-                           c_nf_per_km::Union{Nothing,Float64} = nothing, tanδ::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing,
-                           paramsBasedOnLength::Bool = true, isPIModel::Bool = false)
-  #! format: on
+  function ACLineSegment(; vn_kv::Float64, from::Int, to::Int, r::Float64, x::Float64, b::Float64 = 0.0, g::Float64 = 0.0, length_km::Union{Nothing,Float64} = nothing, ratedS::Union{Nothing,Float64} = nothing, isPIModel::Bool)
     c = getLineImpPGMComp(vn_kv, from, to)
-    # An explicit shunt conductance (e.g. CGMES gch, given directly in Siemens)
-    # always wins over the tanδ-based derivation; it must also cover g > 0 with
-    # b == 0, which the tanδ route cannot express.
-    g_explicit = g
-    g = isnothing(g_explicit) ? 0.0 : g_explicit
-
-    if isPIModel
-      new(c, length, r, x, b, g, nothing, nothing, ratedS, paramsBasedOnLength, true)
-    else
-      if !isnothing(b)
-        b = b
-      elseif isnothing(g_explicit) && !isnothing(c_nf_per_km) && !isnothing(tanδ)
-        if paramsBasedOnLength
-          c_nf = c_nf_per_km * length
-        else
-          # b and g are multiplied by length in the getLineRXBG function!!          
-          c_nf = c_nf_per_km
-        end
-        y1_shunt_ = 2.0 * pi * 50.0 * c_nf * 1e-9 * (tanδ + im * 1.0)
-        g = real(y1_shunt_)
-        b = imag(y1_shunt_)
-      else
-        b = 0.0
-      end
-
-      new(c, length, r, x, b, g, c_nf_per_km, tanδ, ratedS, paramsBasedOnLength, isPIModel)
-    end
+    new(c, length_km, r, x, b, g, ratedS, isPIModel)
   end
 
   function Base.show(io::IO, acseg::ACLineSegment)
+    unit_z, unit_y = acseg._isPIModel ? ("pu", "pu") : ("Ohm", "S")
     print(io, "ACLineSegment( ")
     print(io, acseg.comp)
     print(io, " ")
-    print(io, "length: $(acseg.length), ")
-    print(io, "r: $(acseg.r), ")
-    print(io, "x: $(acseg.x), ")
-    if !isnothing(acseg.g)
-      print(io, "g: $(acseg.g), ")
-    end
-    if !isnothing(acseg.b)
-      print(io, "b: $(acseg.b), ")
-    end
-    if !isnothing(acseg.c_nf_per_km)
-      print(io, "c_nf_per_km: $(acseg.c_nf_per_km), ")
-    end
-    if !isnothing(acseg.tanδ)
-      print(io, "tanδ: $(acseg.tanδ), ")
-    end
+    isnothing(acseg.length_km) || print(io, "length_km: $(acseg.length_km), ")
+    print(io, "r: $(acseg.r) $(unit_z), ")
+    print(io, "x: $(acseg.x) $(unit_z), ")
+    print(io, "b: $(acseg.b) $(unit_y), ")
+    print(io, "g: $(acseg.g) $(unit_y), ")
     if !isnothing(acseg.ratedS)
       print(io, "ratedS: $(acseg.ratedS), ")
     end
@@ -122,48 +78,26 @@ mutable struct ACLineSegment <: AbstractBranch
 end
 
 """
-    getLineRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
+    getLineRXBG(o::ACLineSegment) -> NTuple{4,Float64}
 
-Returns the resistance, reactance, susceptance, and conductance of an AC line segment. 
-If the parameters are based on length, they are multiplied by the length of the line segment.
-
-# Arguments
-- `o::ACLineSegment`: The AC line segment.
-
-# Returns
-- `r::Float64`: The resistance of the AC line segment.
-- `x::Float64`: The reactance of the AC line segment.
-- `b::Union{Nothing,Float64}`: The susceptance of the AC line segment. It can be `Nothing` or a `Float64` value.
-- `g::Union{Nothing,Float64}`: The conductance of the AC line segment. It can be `Nothing` or a `Float64` value.
-
-# Example
-```julia
-getLineRXBG(acLineSegment)
-```
+The stored values `(r, x, b, g)` of the line: totals in ohm and siemens for a
+physical line, per unit for a PI-model line (see [`isLinePIModel`](@ref)).
+Use [`getLineRXBG_pu`](@ref) for per-unit values of either kind.
 """
-function getLineRXBG(o::ACLineSegment)::Tuple{Float64,Float64,Union{Nothing,Float64},Union{Nothing,Float64}}
-  if o.paramsBasedOnLength || o._isPIModel
-    return (o.r, o.x, o.b, o.g)
-  else
-    return (o.r * o.length, o.x * o.length, o.b * o.length, o.g * o.length)
-  end
+function getLineRXBG(o::ACLineSegment)::NTuple{4,Float64}
+  return (o.r, o.x, o.b, o.g)
 end
 
 """
     getLineRXBG_pu(o, vn_kV, baseMVA) -> (r, x, b, g)
 
-The line parameters converted to per unit on the given base.
+The line parameters in per unit on `vn_kV` and `baseMVA`. A physical line is
+converted with [`toPU_RXBG`](@ref); a PI-model line already holds per unit
+and is returned unchanged.
 """
-function getLineRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)
-  # Matpower import stores r/x/b already in pu -> do NOT convert again
-  # If you have a proper flag, use it; otherwise this vn_kV==1.0 check is a temporary guard.
-  if vn_kV == 1.0
-    r, x, b, g = getLineRXBG(o)   # <-- returns the stored values
-    return r, x, b, g
-  end
-
-  r, x, b, g = getLineRXBG(o)       # these would be Ohm/S in other importers
-  return toPU_RXBG(r = r, x = x, g = g, b = b, v_kv = vn_kV, baseMVA = baseMVA)
+function getLineRXBG_pu(o::ACLineSegment, vn_kV::Float64, baseMVA::Float64)::NTuple{4,Float64}
+  o._isPIModel && return getLineRXBG(o)
+  return toPU_RXBG(r = o.r, x = o.x, g = o.g, b = o.b, v_kv = vn_kV, baseMVA = baseMVA)
 end
 
 """

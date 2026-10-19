@@ -749,7 +749,7 @@ function _provision_webui_runtime!(root::AbstractString, config_file::Union{Noth
     source = joinpath(_WEBUI_PACKAGE_ROOT, "data", "webui", warmup_name)
     isfile(source) || continue
     destination = joinpath(case_directory, basename(source))
-    isfile(destination) || cp(source, destination)
+    _webui_stage_shipped_file!(dst -> cp(source, dst), () -> "", destination)
   end
   return (config_file = configuration, case_directory, operation_log, template_followed)
 end
@@ -781,7 +781,7 @@ still raises the explicit `ArgumentError`. Browser-process
 lifetime is not used for automatic shutdown by default because common browsers
 may return a short-lived launcher process instead of a reliably owned window.
 """
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser)::Union{Nothing,SparlectraWebUIServer}
+function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser, _refresh_shipped_cases::Bool = true)::Union{Nothing,SparlectraWebUIServer}
   host_string = String(host)
   host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
@@ -856,6 +856,31 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     rethrow()
   end
   _webui_startup_log(_lifecycle_io, "webui_server_bound"; operation_log = paths.operation_log, status = "bound", host = host_string, port = Int(port))
+  # Copies of shipped case files that still hold an earlier version follow
+  # the package (a rebuilt demo case reaches an existing case directory);
+  # copies the user changed stay. Only the instance that holds the port does
+  # this; it runs after the bind because a second start that only opens the
+  # running instance is recognized by the failing bind. The expected
+  # failures are a case directory that cannot be read or written
+  # (IOError, SystemError), a second instance working on the same files
+  # (ArgumentError from mv or cp) and a damaged hash list: none of them may
+  # stop the start, each is named in the log. Any other error closes the
+  # port again and is reported as a failed start.
+  refreshed = NamedTuple{(:file, :kept_as),Tuple{String,String}}[]
+  if _refresh_shipped_cases
+    try
+      refreshed = _webui_refresh_shipped_copies!(_webui_application_root(), paths.case_directory, paths.operation_log)
+    catch err
+      if _webui_expected_copy_failure(err) || err isa _WebUIShippedHashesDamaged
+        @warn "Could not refresh the shipped case files in $(paths.case_directory)" exception = err
+        record_webui_operation!(paths.operation_log, "shipped_case_refresh_failed"; route = "/powerflow", method = "START", status = "failed", user_action = false, message = sprint(showerror, err))
+      else
+        close(listener)
+        _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); operation_log = paths.operation_log, phase = "refresh_shipped_cases")
+        rethrow()
+      end
+    end
+  end
   effective_shutdown_on_browser_close = auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close)
   runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
   task = @async begin
@@ -914,6 +939,9 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   _webui_lifecycle_println(runtime, "Sparlectra Web UI is available at ", url)
   _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close(server), or Ctrl+C here.")
   _webui_lifecycle_println(runtime, "Operation log: ", paths.operation_log)
+  for r in refreshed
+    _webui_lifecycle_println(runtime, "Shipped case file updated: ", r.file, " (earlier copy kept as ", r.kept_as, ")")
+  end
   # every key the template follow-up changed is named here, the backup alone
   # tells nobody that something moved
   if !isempty(paths.template_followed)

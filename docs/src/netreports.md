@@ -15,8 +15,9 @@ addBus!(net = net, busName = "B2", vn_kV = 110.0)
 addBus!(net = net, busName = "B3", vn_kV = 110.0)
 addBus!(net = net, busName = "B4", vn_kV = 110.0)
 
-addACLine!(net = net, fromBus = "B1", toBus = "B2", length = 5.0, r = 0.05, x = 0.5)
-addACLine!(net = net, fromBus = "B3", toBus = "B4", length = 20.0, r = 0.05, x = 0.5)
+# line totals in ohm and siemens, or values per km and the length
+addACLine!(net = net, fromBus = "B1", toBus = "B2", r_ohm = 0.6, x_ohm = 1.95, b_s = 1.5e-5, length_km = 5.0)
+addACLinePerKm!(net = net, fromBus = "B3", toBus = "B4", length_km = 20.0, r_ohm_per_km = 0.12, x_ohm_per_km = 0.39, c_nf_per_km = 9.5)
 
 # Optional bus-link connection (reported in report.links)
 addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)

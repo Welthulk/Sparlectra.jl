@@ -74,281 +74,143 @@ function _island_diag_read_summary(path::AbstractString)
 end
 
 function run_island_diagnostics_tests()
-  @testset "AC island diagnostics reporting" begin (function ()
-    failed_status = _island_diag_failed_status()
 
-    @testset "failure message reports the failing island's own status (bug A)" begin (function ()
-      # Combined run status as _rectangular_run_status builds it: it carries
-      # no :iterations/:stage/:island_id -- the per-island record must win.
-      run_status = (
-        outcome = :not_converged,
-        numerical_converged = false,
-        solution_available = false,
-        limit_validation_status = :skip,
-        final_converged = false,
-        reason = :nr_mismatch_not_converged_active_set_unstable,
-        reason_text = "NR mismatch did not converge",
-        final_mismatch = 240324.3267233851,
-      )
-      settings = (start_projection = true,)
-      profile = Dict{Symbol,Any}(
-        :ac_island_artifacts => ("ac_island_solver_summary.csv", "ac_island_1_solver.log"),
-        :ac_island_diagnostics => [
-          (island_id = 1, n_bus = 6051, n_branch = 8202, ref_bus = 696, n_pq = 6050, n_pv = 0, n_ref = 1, settings = settings),
-          (island_id = 2, n_bus = 1, n_branch = 0, ref_bus = 37, n_pq = 1, n_pv = 0, n_ref = 0, settings = settings),
-        ],
-        :ac_island_solver_statuses => Dict(1 => failed_status),
-      )
-      out = Sparlectra._append_island_failure_message(run_status, profile)
-      @test occursin("AC island 1 power-flow solve failed", out.reason_text)
-      @test occursin("iterations=80", out.reason_text)
-      @test occursin("stage=newton_iteration", out.reason_text)
-      @test !occursin("iterations=0", out.reason_text)
-      @test !occursin("stage=before_nr", out.reason_text)
-      @test occursin("final_mismatch=240324.3267233851", out.reason_text)
-      @test occursin("reason=nr_mismatch_not_converged_active_set_unstable", out.reason_text)
+  @testset "no-slack failure names the isolation cause" begin (function ()
+    # A branch-less delivery (e.g. one side of a DC border crossing) leaves
+    # every bus isolated; the old error was a bare "no slack bus found".
+    # The message must now name the actual cause: nothing is energized.
+    onebus = Net(name = "island_diag_onebus", baseMVA = 100.0)
+    addBus!(net = onebus, busName = "B1", vn_kV = 110.0)
+    addProsumer!(net = onebus, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+    # CGMES import marks isolation before solving; mirror that state here.
+    markIsolatedBuses!(net = onebus)
+    err = try
+      runpf!(onebus, 30, 1e-8, 0)
+      nothing
+    catch e
+      e
+    end
+    @test err isa ErrorException
+    @test occursin("all 1 bus(es) of this network are isolated", sprint(showerror, err))
 
-      # When the combined status is untagged, the failing island is looked up
-      # in the per-island statuses -- not assumed to be the first row.
-      profile_island2 = copy(profile)
-      profile_island2[:ac_island_solver_statuses] = Dict(
-        1 => (island_id = 1, status = :converged, iterations = 6, final_mismatch = 1.0e-9, reason = :none, stage = :post_solve_validation),
-        2 => merge(failed_status, (island_id = 2, iterations = 40)),
-      )
-      out2 = Sparlectra._append_island_failure_message(run_status, profile_island2)
-      @test occursin("AC island 2 power-flow solve failed", out2.reason_text)
-      @test occursin("iterations=40", out2.reason_text)
+    # A net without any registered voltage reference keeps the plain
+    # "no slack" wording, now with a hint on how to register one.
+    noslack = Net(name = "island_diag_noslack", baseMVA = 100.0)
+    addBus!(net = noslack, busName = "C1", vn_kV = 110.0)
+    addBus!(net = noslack, busName = "C2", vn_kV = 110.0)
+    addPIModelACLine!(net = noslack, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addProsumer!(net = noslack, busName = "C2", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+    err2 = try
+      runpf!(noslack, 30, 1e-8, 0)
+      nothing
+    catch e
+      e
+    end
+    @test err2 isa ErrorException
+    @test occursin("no slack bus registered", sprint(showerror, err2))
 
-      # Single-island runs store no per-island statuses; the combined status
-      # (with the run iteration count merged in by _build_sparlectra_result)
-      # must still never claim "before_nr" for a solve that ran N>0 iterations.
-      profile_single = Dict{Symbol,Any}(
-        :ac_island_artifacts => ("ac_island_solver_summary.csv",),
-        :ac_island_diagnostics => [(island_id = 1, n_bus = 12, n_branch = 13, ref_bus = 10, n_pq = 10, n_pv = 1, n_ref = 1, settings = settings)],
-      )
-      out3 = Sparlectra._append_island_failure_message(merge(run_status, (iterations = 1,)), profile_single)
-      @test occursin("iterations=1", out3.reason_text)
-      @test occursin("stage=during_nr", out3.reason_text)
-      @test !occursin("stage=before_nr", out3.reason_text)
-    end)() end
-
-    @testset "unsolved islands do not inherit the failed island's statistics (bug B)" begin (function ()
-      mktempdir() do dir
-        net = _island_diag_testnet()
-        cfg = Sparlectra.PowerFlowConfig()
-        profile = Dict{Symbol,Any}(
-          :output_dir => dir,
-          :ac_island_solver_statuses => Dict(1 => failed_status),
-        )
-        # Mirrors execution.jl on failure: the combined status handed to the
-        # diagnostics writer is the failed island's own status (tagged with
-        # island_id = 1), plus the run-level iteration count.
-        Sparlectra._write_ac_island_diagnostics!(net, cfg, profile; status = failed_status, iterations = 80)
-        col, rows = _island_diag_read_summary(joinpath(dir, "ac_island_solver_summary.csv"))
-        @test length(rows) == 2
-        row1 = rows[1]
-        row2 = rows[2]
-
-        # Solved island keeps its true record (regression guard).
-        @test row1[col["island_id"]] == "1"
-        @test row1[col["iterations"]] == "80"
-        @test row1[col["final_mismatch"]] == "240324.326723385"   # 15 significant digits, the result-CSV writer (#386)
-        @test row1[col["final_status"]] == "not_converged"
-        @test row1[col["failure_reason"]] == "nr_mismatch_not_converged_active_set_unstable"
-        @test row1[col["stage"]] == "newton_iteration"
-        @test row1[col["pv_pq_switching_events"]] == "435"
-
-        # The never-attempted single-bus island must not repeat island 1's
-        # mismatch/iteration/switching values.
-        @test row2[col["island_id"]] == "2"
-        @test row2[col["iterations"]] == "0"
-        @test row2[col["final_status"]] == "not_attempted"
-        @test row2[col["failure_reason"]] == "not_attempted"
-        @test row2[col["stage"]] == "not_attempted"
-        @test row2[col["final_mismatch"]] == "unavailable"
-        @test row2[col["initial_mismatch"]] == "unavailable"
-        @test row2[col["mismatch_status"]] == "unavailable"
-        @test row2[col["pv_pq_switching_events"]] == "0"
-        @test !occursin("240324", join(row2, ','))
-
-        # Attempted islands keep their per-island artifacts; never-attempted
-        # islands are represented in the summary CSV only (open design
-        # question 2: summary-only, no header-only file pairs).
-        @test isfile(joinpath(dir, "ac_island_1_solver.log"))
-        @test isfile(joinpath(dir, "ac_island_1_mismatch_history.csv"))
-        @test !isfile(joinpath(dir, "ac_island_2_solver.log"))
-        @test !isfile(joinpath(dir, "ac_island_2_mismatch_history.csv"))
-        history = read(joinpath(dir, "ac_island_1_mismatch_history.csv"), String)
-        @test occursin("1,2220.61451058444", history)
-
-        # Bug C: q_limit_processing_status must not alias failure_reason.
-        @test row1[col["qlimits_enabled"]] == "true"
-        @test row1[col["q_limit_processing_status"]] == "unavailable"
-        @test row2[col["q_limit_processing_status"]] == "not_attempted"
-      end
-    end)() end
-
-    @testset "no-slack failure names the isolation cause" begin (function ()
-      # A branch-less delivery (e.g. one side of a DC border crossing) leaves
-      # every bus isolated; the old error was a bare "no slack bus found".
-      # The message must now name the actual cause: nothing is energized.
-      onebus = Net(name = "island_diag_onebus", baseMVA = 100.0)
-      addBus!(net = onebus, busName = "B1", vn_kV = 110.0)
-      addProsumer!(net = onebus, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-      # CGMES import marks isolation before solving; mirror that state here.
-      markIsolatedBuses!(net = onebus)
-      err = try
-        runpf!(onebus, 30, 1e-8, 0)
-        nothing
-      catch e
-        e
-      end
-      @test err isa ErrorException
-      @test occursin("all 1 bus(es) of this network are isolated", sprint(showerror, err))
-
-      # A net without any registered voltage reference keeps the plain
-      # "no slack" wording, now with a hint on how to register one.
-      noslack = Net(name = "island_diag_noslack", baseMVA = 100.0)
-      addBus!(net = noslack, busName = "C1", vn_kV = 110.0)
-      addBus!(net = noslack, busName = "C2", vn_kV = 110.0)
-      addPIModelACLine!(net = noslack, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-      addProsumer!(net = noslack, busName = "C2", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
-      err2 = try
-        runpf!(noslack, 30, 1e-8, 0)
-        nothing
-      catch e
-        e
-      end
-      @test err2 isa ErrorException
-      @test occursin("no slack bus registered", sprint(showerror, err2))
-
-      # Partially isolated net with the slack still registered on the dead
-      # side: the message-building helper names the slack and the ratio.
-      # (The solve path itself demotes the isolated slack before the message
-      # helper runs, so this branch is exercised directly.)
-      partial = _island_diag_testnet()
-      addBus!(net = partial, busName = "B2", vn_kV = 110.0)
-      markIsolatedBuses!(net = partial)
-      push!(partial.slackVec, 3)  # slack registration on isolated bus B1
-      msg = Sparlectra._no_slack_message("unit_test", partial)
-      @test occursin("lies on an isolated bus", msg)
-      @test occursin("2 of 4 buses isolated", msg)
-    end)() end
-
-    @testset "auto slack promotes the strongest candidate" begin (function ()
-      # Build a solvable two-bus net whose generator is not marked as slack.
-      # NOTE: private inner name — an anonymous fixture assigning to a name
-      # that also exists in the enclosing testset would rebind that local.
-      mkautonet = function ()
-        anet = Net(name = "island_diag_autoslack", baseMVA = 100.0)
-        addBus!(net = anet, busName = "G1", vn_kV = 110.0)
-        addBus!(net = anet, busName = "L1", vn_kV = 110.0)
-        addPIModelACLine!(net = anet, fromBus = "G1", toBus = "L1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-        addProsumer!(net = anet, busName = "G1", type = "GENERATOR", p = 20.0, q = 5.0, pMax = 150.0)
-        addProsumer!(net = anet, busName = "L1", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
-        return anet
-      end
-
-      # Keyword path: promotion happens, run converges, slack is registered.
-      auto1 = mkautonet()
-      erg = last(runpf!(auto1, 30, 1e-8, 0; auto_slack = true))
-      @test erg == 0
-      @test auto1.slackVec == [1]
-      @test getNodeType(auto1.nodeVec[1]) == Sparlectra.Slack
-
-      # Config path: power_flow.auto_slack reaches the solver.
-      auto2 = mkautonet()
-      cfg = Sparlectra.PowerFlowConfig(auto_slack = true)
-      erg2 = last(runpf!(auto2, cfg))
-      @test erg2 == 0
-      @test auto2.slackVec == [1]
-
-      # An external network injection outranks a larger generator.
-      # addProsumer! collapses the type string to Injection/Consumption, so the
-      # precise CGMES class marker is set directly, as the importer does.
-      auto3 = mkautonet()
-      addBus!(net = auto3, busName = "X1", vn_kV = 110.0)
-      addPIModelACLine!(net = auto3, fromBus = "L1", toBus = "X1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-      addProsumer!(net = auto3, busName = "X1", type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 0.0, pMax = 50.0)
-      auto3.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
-      picked = ensureSlack!(auto3; log = false)
-      @test picked == 3
-
-      # A registered slack is left alone: ensureSlack! is a no-op.
-      auto4 = mkautonet()
-      addProsumer!(net = auto4, busName = "G1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "G1")
-      @test ensureSlack!(auto4; log = false) === nothing
-    end)() end
-
-    @testset "an island without unknowns: a lone generator and a lone load" begin (function ()
-      # A PV generator left alone on its AC island (its only line out) is
-      # the island's reference and nothing else: no unknown, Newton has
-      # nothing to solve. The loop used to reduce over the empty mismatch
-      # vector and the whole run failed with an ArgumentError (found on
-      # case_ACTIVSg2000, a generator behind its outaged unit transformer).
-      # Power mode builds the light final diagnostics, which took the worst
-      # row of the same empty vector (argmax over nothing); both paths run.
-      for pm in (false, true)
-        net = Net(name = "pv_alone", baseMVA = 100.0)
-        for b in ("S", "L", "G")
-          addBus!(net = net, busName = b, vn_kV = 110.0)
-        end
-        addPIModelACLine!(net = net, fromBus = "S", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-        addPIModelACLine!(net = net, fromBus = "L", toBus = "G", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-        addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "S")
-        addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
-        addProsumer!(net = net, busName = "G", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.02, va_deg = 0.0)
-        Sparlectra.setBranchStatus!(net.branchVec[2], false)
-        prof = Dict{Symbol,Any}()
-        _, erg = redirect_stdout(devnull) do
-          runpf!(net, 30, 1e-8, 0; islands_enabled = true, power_mode = pm, performance_profile = prof)
-        end
-        @test erg == 0
-        lone = [st for st in values(prof[:ac_island_solver_statuses]) if get(st, :no_unknowns, false) === true]
-        @test length(lone) == 1
-        @test lone[1].status === :converged
-        @test lone[1].iterations == 0
-        @test net.nodeVec[3]._vm_pu == 1.02
-      end
-
-      # The N-1 engine on the shipped sp_case60: an outage that cuts off a
-      # generator bus and one that cuts off a pure load bus, both without
-      # error and with their own note (the generator out of service, the
-      # load not supplied; a bus without infeed is never promoted)
-      net60 = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
-      cases = [c for c in generateN1Branches(net60) if c.name in ("B_ACL_20_56_57", "B_ACL_20_53_54")]
-      @test length(cases) == 2
-      res = Dict(r.name => r for r in redirect_stdout(() -> runContingencies!(net60, cases), devnull))
-      gen_out = res["B_ACL_20_56_57"]
-      load_out = res["B_ACL_20_53_54"]
-      @test gen_out.converged && load_out.converged
-      @test occursin("generating unit(s)", something(gen_out.error, "")) && gen_out.shed_load_mw == 0.0
-      @test occursin("load disconnected", something(load_out.error, "")) && load_out.shed_load_mw > 0.0
-    end)() end
-
-    @testset "single-island run keeps the combined-status fallback" begin (function ()
-      # A connected net solved outside the island-wise path stores no
-      # per-island statuses; its one diagnostics row must still be filled
-      # from the combined status.
-      mktempdir() do dir
-        net = Net(name = "island_diag_single", baseMVA = 100.0)
-        for b in ("A1", "A2")
-          addBus!(net = net, busName = b, vn_kV = 110.0)
-        end
-        addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.02, status = 1)
-        addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
-        addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 50.0, q = 10.0)
-        cfg = Sparlectra.PowerFlowConfig()
-        profile = Dict{Symbol,Any}(:output_dir => dir)
-        combined = (status = :converged, final_converged = true, iterations = 5, final_mismatch = 1.0e-10, reason = :none, stage = :post_solve_validation)
-        Sparlectra._write_ac_island_diagnostics!(net, cfg, profile; status = combined, iterations = 5)
-        col, rows = _island_diag_read_summary(joinpath(dir, "ac_island_solver_summary.csv"))
-        @test length(rows) == 1
-        @test rows[1][col["iterations"]] == "5"
-        @test rows[1][col["final_status"]] == "converged"
-        @test rows[1][col["stage"]] == "post_solve_validation"
-        @test isfile(joinpath(dir, "ac_island_1_solver.log"))
-      end
-    end)() end
+    # Partially isolated net with the slack still registered on the dead
+    # side: the message-building helper names the slack and the ratio.
+    # (The solve path itself demotes the isolated slack before the message
+    # helper runs, so this branch is exercised directly.)
+    partial = _island_diag_testnet()
+    addBus!(net = partial, busName = "B2", vn_kV = 110.0)
+    markIsolatedBuses!(net = partial)
+    push!(partial.slackVec, 3)  # slack registration on isolated bus B1
+    msg = Sparlectra._no_slack_message("unit_test", partial)
+    @test occursin("lies on an isolated bus", msg)
+    @test occursin("2 of 4 buses isolated", msg)
   end)() end
+
+  @testset "auto slack promotes the strongest candidate" begin (function ()
+    # Build a solvable two-bus net whose generator is not marked as slack.
+    # NOTE: private inner name — an anonymous fixture assigning to a name
+    # that also exists in the enclosing testset would rebind that local.
+    mkautonet = function ()
+      anet = Net(name = "island_diag_autoslack", baseMVA = 100.0)
+      addBus!(net = anet, busName = "G1", vn_kV = 110.0)
+      addBus!(net = anet, busName = "L1", vn_kV = 110.0)
+      addPIModelACLine!(net = anet, fromBus = "G1", toBus = "L1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addProsumer!(net = anet, busName = "G1", type = "GENERATOR", p = 20.0, q = 5.0, pMax = 150.0)
+      addProsumer!(net = anet, busName = "L1", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+      return anet
+    end
+
+    # Keyword path: promotion happens, run converges, slack is registered.
+    auto1 = mkautonet()
+    erg = last(runpf!(auto1, 30, 1e-8, 0; auto_slack = true))
+    @test erg == 0
+    @test auto1.slackVec == [1]
+    @test getNodeType(auto1.nodeVec[1]) == Sparlectra.Slack
+
+    # Config path: power_flow.auto_slack reaches the solver.
+    auto2 = mkautonet()
+    cfg = Sparlectra.PowerFlowConfig(auto_slack = true)
+    erg2 = last(runpf!(auto2, cfg))
+    @test erg2 == 0
+    @test auto2.slackVec == [1]
+
+    # An external network injection outranks a larger generator.
+    # addProsumer! collapses the type string to Injection/Consumption, so the
+    # precise CGMES class marker is set directly, as the importer does.
+    auto3 = mkautonet()
+    addBus!(net = auto3, busName = "X1", vn_kV = 110.0)
+    addPIModelACLine!(net = auto3, fromBus = "L1", toBus = "X1", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addProsumer!(net = auto3, busName = "X1", type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 0.0, pMax = 50.0)
+    auto3.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
+    picked = ensureSlack!(auto3; log = false)
+    @test picked == 3
+
+    # A registered slack is left alone: ensureSlack! is a no-op.
+    auto4 = mkautonet()
+    addProsumer!(net = auto4, busName = "G1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "G1")
+    @test ensureSlack!(auto4; log = false) === nothing
+  end)() end
+
+  @testset "an island without unknowns: a lone generator and a lone load" begin (function ()
+    # A PV generator left alone on its AC island (its only line out) is
+    # the island's reference and nothing else: no unknown, Newton has
+    # nothing to solve. The loop used to reduce over the empty mismatch
+    # vector and the whole run failed with an ArgumentError (found on
+    # case_ACTIVSg2000, a generator behind its outaged unit transformer).
+    # Power mode builds the light final diagnostics, which took the worst
+    # row of the same empty vector (argmax over nothing); both paths run.
+    for pm in (false, true)
+      net = Net(name = "pv_alone", baseMVA = 100.0)
+      for b in ("S", "L", "G")
+        addBus!(net = net, busName = b, vn_kV = 110.0)
+      end
+      addPIModelACLine!(net = net, fromBus = "S", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "L", toBus = "G", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "S")
+      addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
+      addProsumer!(net = net, busName = "G", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.02, va_deg = 0.0)
+      Sparlectra.setBranchStatus!(net.branchVec[2], false)
+      prof = Dict{Symbol,Any}()
+      _, erg = redirect_stdout(devnull) do
+        runpf!(net, 30, 1e-8, 0; islands_enabled = true, power_mode = pm, performance_profile = prof)
+      end
+      @test erg == 0
+      lone = [st for st in values(prof[:ac_island_solver_statuses]) if get(st, :no_unknowns, false) === true]
+      @test length(lone) == 1
+      @test lone[1].status === :converged
+      @test lone[1].iterations == 0
+      @test net.nodeVec[3]._vm_pu == 1.02
+    end
+
+    # The N-1 engine on the shipped sp_case60: an outage that cuts off a
+    # generator bus and one that cuts off a pure load bus, both without
+    # error and with their own note (the generator out of service, the
+    # load not supplied; a bus without infeed is never promoted)
+    net60 = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
+    cases = [c for c in generateN1Branches(net60) if c.name in ("B_ACL_20_56_57", "B_ACL_20_53_54")]
+    @test length(cases) == 2
+    res = Dict(r.name => r for r in redirect_stdout(() -> runContingencies!(net60, cases), devnull))
+    gen_out = res["B_ACL_20_56_57"]
+    load_out = res["B_ACL_20_53_54"]
+    @test gen_out.converged && load_out.converged
+    @test occursin("generating unit(s)", something(gen_out.error, "")) && gen_out.shed_load_mw == 0.0
+    @test occursin("load disconnected", something(load_out.error, "")) && load_out.shed_load_mw > 0.0
+  end)() end
+
 end

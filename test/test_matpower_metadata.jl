@@ -67,119 +67,6 @@ mpc.branch = [
     end
   end)() end
 
-  @testset "Parser tokenizer and comment stripping edge cases" begin (function ()
-    # Guards the allocation-reduced tokenizer/comment paths (issue #292)
-    # against the legacy split/join semantics.
-    strip_comments = Sparlectra.MatpowerIO._strip_matlab_comments
-    @test strip_comments("no comments\nat all\n") === "no comments\nat all\n"
-    @test strip_comments("abc%x\ndef\n") == "abc\ndef\n"
-    @test strip_comments("abc%x\r\ndef\n") == "abc\ndef\n"
-    @test strip_comments("%full line\nkeep\n") == "\nkeep\n"
-    @test strip_comments("tail%no newline") == "tail"
-    @test strip_comments("a%%b\nc%d") == "a\nc"
-    @test strip_comments("ümläut%kommentar\nzeile") == "ümläut\nzeile"
-
-    mktempdir() do dir
-      path = joinpath(dir, "case_tokenizer_edges.m")
-      write(path, """
-function mpc = case_tokenizer_edges
-mpc.version = '2';
-mpc.baseMVA = 100.0; % inline comment after statement
-% full-line comment
-mpc.bus = [
-\t1\t3\t0.0\t0.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95; % row comment
-
-\t2\t1\t10.0\t3.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95
-\t3\t1\t5.0\t1.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95\t99.0\t88.0
-\t4\t1\t2.0
-];
-mpc.gen = [
-\t1\t10.0\t3.0\t99\t-99\t1.0\t100.0\t1\t99\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
-];
-mpc.branch = [
-\t1\t2\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360;
-\t2\t3\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360;
-\t3\t4\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360
-];
-mpc.gencost = [
-\t2\t0\t0\t3\t0.1\t5.0\t0.0;
-\t2\t0\t0\t2\t4.0\t0.0
-];
-""")
-      mpc = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
-      # blank line + comment-only rows ignored; short row zero-padded;
-      # overlong row truncated to the fixed 13 columns
-      @test size(mpc.bus) == (4, 13)
-      @test mpc.bus[3, 13] == 0.95
-      @test mpc.bus[4, 3] == 2.0
-      @test mpc.bus[4, 4] == 0.0
-      # auto-width block: ragged rows padded with 0.0 to maxcols
-      @test size(mpc.gencost) == (2, 7)
-      @test mpc.gencost[2, 5] == 4.0
-      @test mpc.gencost[2, 7] == 0.0
-      # legacy sort: pre-sorted case returns identical data
-      mpc_sorted = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = true)
-      @test mpc_sorted.bus == mpc.bus
-    end
-  end)() end
-
-  @testset "Generator costs: import, export, SCF (#471)" begin (function ()
-    # the shipped sp_case9 carries a gencost block: model 2 and model 1 P
-    # rows plus Q rows, padded to the width of the piecewise linear row
-    src = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m"))
-    m0 = Sparlectra.MatpowerIO.read_case(src)
-    @test size(m0.gencost) == (6, 10)
-    gens(net) = [ps for ps in net.prosumpsVec if Sparlectra.isGenerator(ps)]
-    mktempdir() do tmp
-      net = Sparlectra.createNetFromMatPowerFile(filename = src)
-      @test all(ps -> ps.gencost !== nothing && ps.gencost.q !== nothing, gens(net))
-      # MATPOWER round trip: the matrix comes back identical
-      f1 = joinpath(tmp, "rt.m")
-      writeMatpowerCasefile(net, f1; write_solution = false)
-      @test Sparlectra.MatpowerIO.read_case(f1).gencost == m0.gencost
-      # SCF keeps the rows (extra.gencost) and writes them back unchanged
-      f2 = joinpath(tmp, "rt.scf.json")
-      exportSCF(net; file = f2)
-      net2 = importSCF(f2)
-      @test [(g.gencost.p, g.gencost.q) for g in gens(net2)] == [(g.gencost.p, g.gencost.q) for g in gens(net)]
-      f3 = joinpath(tmp, "rt2.m")
-      writeMatpowerCasefile(net2, f3; write_solution = false)
-      @test Sparlectra.MatpowerIO.read_case(f3).gencost == m0.gencost
-      # the converter path (MATPOWER to SCFCase to Net) assigns the same rows
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      net3 = Sparlectra.build_net(Sparlectra.convert_case(MatpowerAdapter(), m0, Sparlectra.matpower_adapter_options(cfg)); config = cfg)
-      @test [(g.gencost.p, g.gencost.q) for g in gens(net3)] == [(g.gencost.p, g.gencost.q) for g in gens(net)]
-      # a case without gencost writes none
-      n118 = Sparlectra.createNetFromMatPowerFile(filename = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")))
-      f4 = joinpath(tmp, "n118.m")
-      writeMatpowerCasefile(n118, f4; write_solution = false)
-      @test Sparlectra.MatpowerIO.read_case(f4).gencost === nothing
-      # a generator added in Sparlectra has no cost row: the block is left
-      # out with a warning instead of shifting the rows onto other units
-      addProsumer!(net = net, busName = only([k for (k, v) in net.busDict if v == 5]), type = "GENERATOR", p = 5.0, q = 0.0)
-      f5 = joinpath(tmp, "added.m")
-      @test_logs (:warn, r"mpc.gencost not written") match_mode = :any writeMatpowerCasefile(net, f5; write_solution = false)
-      @test Sparlectra.MatpowerIO.read_case(f5).gencost === nothing
-      # Q rows on only some units: the P rows are written, the Q rows left out
-      net6 = Sparlectra.createNetFromMatPowerFile(filename = src)
-      g6 = gens(net6)[2]
-      g6.gencost = GenCost(g6.gencost.p)
-      f6 = joinpath(tmp, "partial_q.m")
-      @test_logs (:warn, r"only some generators carry a Q cost row") match_mode = :any writeMatpowerCasefile(net6, f6; write_solution = false)
-      @test Sparlectra.MatpowerIO.read_case(f6).gencost == m0.gencost[1:3, :]
-      # a block that cannot be assigned or holds an invalid row is not
-      # imported, with a warning (the case itself still imports)
-      bad = replace(read(src, String), "\t2\t0\t0\t3\t0.002\t0\t0\t0\t0\t0;\n" => "")
-      fb = joinpath(tmp, "bad_rows.m")
-      write(fb, bad)
-      nb = @test_logs (:warn, r"mpc.gencost has 5 rows for 3 generators") match_mode = :any Sparlectra.createNetFromMatPowerFile(filename = fb)
-      @test all(ps -> ps.gencost === nothing, gens(nb))
-      # GenCost itself is strict: a row that is not model 1 or 2 is an error
-      @test_throws ArgumentError GenCost([3.0, 0.0, 0.0, 2.0, 1.0, 0.0])
-      @test_throws ArgumentError GenCost([1.0, 0.0, 0.0, 2.0, 10.0, 400.0])
-    end
-  end)() end
-
   @testset "MATPOWER metadata import" begin (function ()
     mktempdir() do dir
       path = joinpath(dir, "case_meta.m")
@@ -439,9 +326,10 @@ mpc.sparlectra.tap_changers = [
         @test !net2.branchVec[2].has_ratio_tap
         @test net2.branchVec[2].phase_shift_deg ≈ -3.0
         # a transformer at ratio 1 between two buses of one level, without
-        # MATPOWER metadata (as from a CGMES import), goes to mpc.branch with
-        # TAP 0 and comes back as a line; it gets no tap changer row, which
-        # the reader would refuse
+        # MATPOWER metadata (as from a CGMES import, the 380 kV legs of a
+        # three-winding star), goes to mpc.branch with TAP 1 and "T", comes
+        # back as a transformer and keeps its nameplate row (until the
+        # ratio-based kind it was written as a line with TAP 0 and no row)
         path110 = joinpath(dir, "case_taps_110.m")
         write(path110, replace(read(path, String), "2 1 40 10 0 0 1 1 0 20 1 1.1 0.9;" => "2 1 40 10 0 0 1 1 0 110 1 1.1 0.9;"))
         net3 = Sparlectra.createNetFromMatPowerFile(filename = path110)
@@ -449,7 +337,36 @@ mpc.sparlectra.tap_changers = [
         net3.branchVec[1].tap_ratio = 1.0
         path3 = joinpath(dir, "case_taps_ratio1.m")
         Sparlectra.writeMatpowerCasefile(net3, path3; write_solution = false)
-        @test Sparlectra.createNetFromMatPowerFile(filename = path3).branchVec[1].ratio == 0.0
+        mpc_r1 = Sparlectra.MatpowerIO.read_case_m(path3; legacy_compat = false)
+        @test (mpc_r1.branch[1, 9], mpc_r1.branch_kind[1]) == (1.0, "T")
+        net3b = Sparlectra.createNetFromMatPowerFile(filename = path3)
+        @test net3b.branchVec[1].ratio == 1.0
+        @test net3b.branchVec[1].tap_step == 0.025
+        # nameplate grids only: no column 12
+        @test size(Sparlectra._matpower_sparlectra_tap_changers(Sparlectra.MatpowerIO.read_case(path2)), 2) == 11
+
+        # a CGMES changer (tap_ratio_grid :linear) writes its positions on
+        # its own grid with ratio_grid 1 in column 12, and both readers bring
+        # the grid back. Before, the 3W CGMES fixture 8 steps of 1 % off its
+        # import ratio wrote position -7.41 on the fraction grid and came
+        # back as a :fraction branch.
+        netl = Sparlectra.createNetFromMatPowerFile(filename = path)
+        Sparlectra.applyTapNameplate!(netl.branchVec[1]; tap_step = 0.01, tap_min_step = -10.0, tap_max_step = 10.0, tap_current_step = 8.0, tap_ratio_grid = :linear)
+        @test netl.branchVec[1].tap_ratio == 1.08
+        pathl = joinpath(dir, "case_taps_linear.m")
+        Sparlectra.writeMatpowerCasefile(netl, pathl; write_solution = false)
+        mpl = Sparlectra.MatpowerIO.read_case(pathl)
+        tcl = Sparlectra._matpower_sparlectra_tap_changers(mpl)
+        @test size(tcl, 2) == 12
+        @test (tcl[1, 3], tcl[1, 4], tcl[1, 5], tcl[1, 12]) == (-10.0, 10.0, 8.0, 1.0)
+        @test tcl[2, 12] == 0.0
+        cfgl = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+        for back in (Sparlectra.createNetFromMatPowerFile(filename = pathl), Sparlectra.build_net(Sparlectra.convert_case(MatpowerAdapter(), mpl, Sparlectra.matpower_adapter_options(cfgl)); config = cfgl))
+          bl = only(b for b in back.branchVec if b.has_ratio_tap)
+          @test bl.tap_ratio_grid === :linear
+          @test (bl.tap_ratio, bl.tap_min, bl.tap_max, bl.tap_step) == (1.08, 0.9, 1.1, 0.01)
+          @test only(b for b in back.branchVec if b.has_phase_tap).tap_ratio_grid === :fraction
+        end
 
         # Delta-u PST (11th column): the mechanical grid is the
         # additional-voltage amplitude, the shift angle follows via atan

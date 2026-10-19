@@ -849,7 +849,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   # standard MATPOWER cannot express. The mpc.branch TAP/SHIFT columns stay
   # the NEUTRAL position; the current steps move the LIVE tap_ratio /
   # phase_shift_deg off it on the same grids the estimation fixes to
-  # (ratio: tap = neutral / (1 + n * tap_step); phase: additive degrees).
+  # (ratio: tap = neutral / (1 + n * tap_step), or TAP + n * tap_step with
+  # ratio_grid 1; phase: additive degrees).
   # A ratio tap_step of 0 explicitly declares "no ratio tap changer" and
   # keeps that transformer out of the estimator's mass release.
   sp_taps = _matpower_sparlectra_tap_changers(mpc)
@@ -872,7 +873,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       # same thing no matter which format carried it
       psi = size(sp_taps, 2) >= 10 ? Float64(row[10]) : 0.0
       dustep = size(sp_taps, 2) >= 11 ? Float64(row[11]) : 0.0
-      applyTapNameplate!(br; tap_step = tstep, tap_min_step = tminS, tap_max_step = tmaxS, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pminS, phase_max_step = pmaxS, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, context = "mpc.sparlectra.tap_changers branch $(k)")
+      # column 12: the positions count on the linear grid of a CGMES changer
+      # (1) or on the fraction grid (0, and every file without the column)
+      tgrid = (size(sp_taps, 2) >= 12 && row[12] == 1.0) ? :linear : :fraction
+      applyTapNameplate!(br; tap_step = tstep, tap_min_step = tminS, tap_max_step = tmaxS, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pminS, phase_max_step = pmaxS, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "mpc.sparlectra.tap_changers branch $(k)")
     end
   end
 
