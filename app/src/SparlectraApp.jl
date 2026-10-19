@@ -27,6 +27,9 @@ using AnalyticLoadFlow
 # for the service and the Web UI; the library itself stays KLU-free
 using KLU
 using Dates
+# HTTP for the update check of the Info panel (a standard library the
+# library already loads for its case downloads)
+import Downloads
 using Logging
 using Markdown  # Web UI artifact viewer renders Markdown reports
 using Printf

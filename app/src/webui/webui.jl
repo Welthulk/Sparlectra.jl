@@ -154,6 +154,7 @@ include("help_excerpts.jl")  # generated from docs/src by tools/generate_webui_h
 include("operations.jl")
 include("views.jl")
 include("handlers.jl")
+include("update.jl")
 include("routes.jl")
 
 mutable struct SparlectraWebUIServer
@@ -495,6 +496,7 @@ function _webui_shutdown_reason_text(reason::Union{Symbol,Nothing})::String
   reason === :server_closed && return " by server close"
   reason === :process_exit && return " by process exit"
   reason === :hard_reset && return " after hard reset"
+  reason === :update_install && return " to install an update"
   return ""
 end
 

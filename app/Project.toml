@@ -6,6 +6,7 @@ authors = ["Udo Schmitz"]
 [deps]
 AnalyticLoadFlow = "19ecf91d-4042-490c-adc1-7fb0fdb392c0"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+Downloads = "f43a241f-c20a-4ad4-852c-f6b1247861c6"
 KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -27,6 +28,7 @@ Sparlectra = {path = ".."}
 [compat]
 AnalyticLoadFlow = "0.10"
 Dates = "1"
+Downloads = "1"
 KLU = "0.6"
 LinearAlgebra = "1"
 Logging = "1"

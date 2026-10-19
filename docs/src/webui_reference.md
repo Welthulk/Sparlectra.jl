@@ -38,6 +38,9 @@ three questions:
 
 Unattended installs answer with `SPARLECTRA_UPDATE=1/0`,
 `SPARLECTRA_BUILD_SYSIMAGE=1/0` and `SPARLECTRA_CREATE_SHORTCUT=1/0`.
+`SPARLECTRA_INSTALL_DIR` names the folder for `Sparlectra/` instead of the
+current one, `SPARLECTRA_START_WEBUI=0` ends the script without starting
+the Web UI; the update from the Web UI uses both ([Updates](@ref webui_update)).
 
 ### Start script
 
@@ -99,8 +102,46 @@ previous file kept as `configuration.yaml.template-follow.bak`),
 `configuration.yaml.user-keys.txt` (keys the Web UI itself saved, never
 followed) and `configuration.yaml.settings-save.bak` (backup of a
 settings save). The browser cannot change the output root. The **Info**
-panel names the serving build (`sysimage, built ...` or `native session`)
-and links to the Sysimage page.
+panel names the serving build (`sysimage, built ...` or `native session`),
+links to the Sysimage page and checks for updates.
+
+### [Updates](@id webui_update)
+
+**Check for updates** in the **Info** panel asks the GitHub releases API
+for the latest release of `Welthulk/Sparlectra.jl` and compares it with
+the running version. The page says up to date, names the newer release
+with its release notes, or names why the check failed (no network,
+timeout, rate limit, an answer without a release tag). The request goes
+out on the click only, never at start, with a timeout of 10 s and no data
+about the installation.
+
+What happens with a newer release depends on how the copy was installed:
+
+- **Installed copy**: a folder named `Sparlectra` without `.git`, with
+  `start_webui.jl` and `tools/install_webui.sh` (`.bat` on Windows), the
+  layout the one-line install creates. **Install update**, after a
+  confirm, writes an updater and a copy of the install script to
+  `logs/update/` next to the operation log, starts the updater detached
+  and stops the Web UI. The updater waits until the Web UI process has
+  ended, runs the install script unattended (`SPARLECTRA_UPDATE=1`; a
+  sysimage is rebuilt when the copy has one, the desktop launcher is
+  written again when it exists) and starts the new version through
+  `start_webui.sh` or `start_webui.bat`. The previous copy stays as
+  `Sparlectra.old`; the log is `logs/update/update.log`. On Linux and
+  macOS the update and the new Web UI run without a terminal and write to
+  that log. On Windows the update opens a console window of its own and
+  waits until the console of the old Web UI is closed, because Windows
+  does not move a folder that a program still uses.
+- **Git checkout** (`.git` present): nothing is changed; the page shows
+  `git fetch --tags` and `git checkout` of the release tag.
+- **Anything else** (standalone app, registry installation, a renamed
+  download): the page shows the one-line install.
+
+The install action is refused while a run or a sysimage build is active,
+and for a Web UI started from a REPL, whose process does not end with the
+Web UI. It takes a POST from the update page only: the form carries a
+value that is new for every Web UI process, so another page in the browser
+cannot start it.
 
 ## Importing cases
 

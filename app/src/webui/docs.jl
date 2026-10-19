@@ -177,6 +177,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "webui.performance_timing" => (label = "Performance timing", hint = "Write performance.log with the phases of one request (parsing, case loading, solve, artifacts); full adds internal profile entries, off writes nothing.", doc = "webui_reference/#webui-output-modes"),
   "webui.detailed_result_csv" => (label = "Bus/branch CSV files", hint = "Write bus_voltages_complex.csv and branch_flows.csv with per-bus voltages and per-branch flows. Off by default because large networks produce large files.", doc = "webui_reference/#webui-output-modes"),
   "webui.detailed_result_csv_format" => (label = "CSV format (every CSV file of a run)", hint = "Delimiter and decimal separator of every CSV a run writes: auto (default, regional settings), technical, excel_de or excel_us. A machine-wide setting.", doc = "webui_reference/#webui-output-modes"),
+  "webui.update_check" => (label = "Check for updates", hint = "Asks GitHub for the latest release, only on this click. An installed copy can install it after a confirm; a git checkout shows the commands.", doc = "webui_reference/#webui_update"),
   "webui.export_cgmes" => (label = "CGMES export artifact", hint = "Write the case as one re-importable CGMES delivery (EQ, TP, SSH, SV in a ZIP) into the run's artifacts, for every case format and also on non-converged runs.", doc = "cgmes_export/#cgmes-export-webui"),
 )
 
@@ -340,6 +341,8 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "detailed_result_csv" => "webui.detailed_result_csv",
   "detailed_result_csv_format" => "webui.detailed_result_csv_format",
   "export_cgmes" => "webui.export_cgmes",
+  # the button of the Info panel, not a form field
+  "update_check" => "webui.update_check",
 )
 
 """Resolve an allowlisted Web UI help topic to its label, hint and documentation link."""
