@@ -4,6 +4,7 @@ Measurement table for the state estimation, `addACLine!` in physical units.
 
 ## Breaking
 - `addACLine!` takes totals in ohm and siemens, `addACLinePerKm!` takes per-km values and the system frequency; `paramsBasedOnLength` is removed. Lines built from `c_nf_per_km` had their charging Z_base times too small and give other results now. See Migrating from 0.42 in the documentation.
+- A YAML root key with a dot (`power_flow.max_iter: 3`) is rejected; use the nested form.
 ## Added
 - Measurement table for the state estimation, addressed by CGMES mRID or element name, with pseudo measurements and sigma per voltage level (editable in the Web UI).
 - System frequency per network (`model.nominal_frequency_hz`, default 50 Hz), selectable in the Web UI; enters lines built from per-km capacitance and SCF `c1`, cases in ohm, siemens or per unit are unaffected.
@@ -18,7 +19,7 @@ Measurement table for the state estimation, `addACLine!` in physical units.
 ## Fixed
 - Generated measurement sets at buses joined by closed couplers carried the coupler flow in their injections.
 - Tap positions of CGMES tap changers in SE, SCF, MATPOWER and scenarios.
-- Exports: MATPOWER lines and ratio-1 transformers, SCF shunt measurements and SVC shunts.
+- Exports: MATPOWER lines, ratio-1 transformers and the voltage setpoints of an unsolved net, SCF shunt measurements and SVC shunts.
 - The short-circuit page claimed breaking and thermal currents were computed; only Ik'', ip and κ are.
 
 # Version 0.42.0 - 2026-10-16

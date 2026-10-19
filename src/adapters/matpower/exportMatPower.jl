@@ -157,7 +157,29 @@ function _matpower_bus_shunts(net::Net; branch_shunt_rows = _matpower_branch_shu
   return gs, bs
 end
 
-function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_rows = _matpower_branch_shunt_rows(net))
+# Voltage setpoint of a regulating or slack generator, or nothing. An
+# unsolved net carries the setpoint only here: its node voltage is still
+# the start value (1.0 for a hand-built net), so the export takes Vg and
+# the PV and slack bus Vm from the unit, as the solver does.
+function _matpower_generator_setpoint(ps::ProSumer)::Union{Nothing,Float64}
+  isGenerator(ps.proSumptionType) || return nothing
+  (isRegulating(ps) || isSlack(ps)) || return nothing
+  return ps.vm_pu === nothing ? nothing : Float64(ps.vm_pu)
+end
+
+# bus index -> setpoint of the first regulating generator at that bus (the
+# solver keeps the first one as well, see _bus_voltage_setpoints_from_prosumers)
+function _matpower_bus_setpoints(net::Net)::Dict{Int,Float64}
+  vset = Dict{Int,Float64}()
+  for ps in net.prosumpsVec
+    v = _matpower_generator_setpoint(ps)
+    v === nothing && continue
+    haskey(vset, ps.comp.cFrom_bus) || (vset[ps.comp.cFrom_bus] = v)
+  end
+  return vset
+end
+
+function writeBusData(net::Net, file; write_solution::Bool = true, solved::Bool = true, branch_shunt_rows = _matpower_branch_shunt_rows(net))
   for r in branch_shunt_rows
     br = net.branchVec[Int(r[1])]
     write(file, "% branch-derived shunt of branch $(Int(r[1])) ($(br.comp.cName)) at bus $(Int(r[2])): Gs=$(r[3]) MW, Bs=$(r[4]) MVar (asymmetric branch shunt or line conductance, see mpc.sparlectra.branch_shunts)\n")
@@ -167,6 +189,7 @@ function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_
   write(file, "%% bus data\n")
   write(file, "mpc.bus = [\n")
   write(file, "%bus\ttype\tPd\tQd\tGs\tBs\tarea\tVm\tVa\tbaseKV\tzone\tVmax\tVmin\n")
+  vset = solved ? Dict{Int,Float64}() : _matpower_bus_setpoints(net)
 
   rows = 0
   hasPVBus = false
@@ -191,7 +214,6 @@ function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_
       num = 3
       Name = Name * " (slack)"
       slackIdx = bus_i
-      vgSlack = node._vm_pu
     elseif val == 4
       num = 4
       Name = Name * " (isolated)"
@@ -207,9 +229,11 @@ function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_
 
     # write_solution = false: the export is a pure model file, so non-slack/
     # non-PV buses do not carry a (possibly solved) voltage state. Slack and
-    # PV setpoints are meaningful pre-solve input and are preserved.
+    # PV setpoints are meaningful pre-solve input and are preserved. An
+    # unsolved net writes the generator setpoint there (vset is empty when
+    # the net is solved, then the solved voltage is the setpoint).
     if write_solution || num in (2, 3)
-      vm_pu = (node._vm_pu === nothing) ? 1.0 : node._vm_pu
+      vm_pu = get(vset, bus_i, (node._vm_pu === nothing) ? 1.0 : node._vm_pu)
       va_deg = (node._va_deg === nothing) ? 0.0 : node._va_deg
     else
       vm_pu = 1.0
@@ -222,6 +246,7 @@ function writeBusData(net::Net, file; write_solution::Bool = true, branch_shunt_
       baseKV = node.comp.cVN
     end
 
+    num == 3 && (vgSlack = vm_pu)
     lZone = (node._lZone === nothing) ? 1 : node._lZone
 
     Vmax = 1.1
@@ -240,7 +265,7 @@ end # writeBusData
 # unit got +-baseMVA, which binds a unit that produces more than baseMVA.
 const _MATPOWER_UNLIMITED_P_MW = 9999.0
 
-function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec::Vector{ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64)
+function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec::Vector{ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64; solved::Bool = true)
   #! format: off
   write(file, "%% generator data\n")
   write(file, "mpc.gen = [\n")
@@ -258,7 +283,10 @@ function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec
 
     bus_i = node.busIdx
 
-    Vg = (node._vm_pu === nothing) ? 1.0 : node._vm_pu
+    # unsolved: the unit's own setpoint, a non-regulating unit keeps the
+    # node voltage as before
+    vg_set = solved ? nothing : _matpower_generator_setpoint(prosum)
+    Vg = vg_set !== nothing ? vg_set : (node._vm_pu === nothing) ? 1.0 : node._vm_pu
 
     p = (prosum.pVal === nothing) ? 0 : prosum.pVal
     q = (prosum.qVal === nothing) ? 0 : prosum.qVal
@@ -685,7 +713,9 @@ Write Matpower case files.
   the historical 13-column model-only `mpc.branch` export instead of writing
   empty result columns. When `false`, the export is a pure model file:
   `mpc.branch` keeps 13 columns and `VM = 1.0`/`VA = 0.0` for all
-  non-slack/non-PV buses (slack and PV setpoints are preserved).
+  non-slack/non-PV buses (slack and PV setpoints are preserved). A network
+  without solved branch flows writes the generator voltage setpoint as `Vg`
+  and as `VM` of its PV and slack bus.
 
 # Example
 ```julia
@@ -722,9 +752,9 @@ function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::U
 
   file = open(pathfilename, "w")
   writeHeader(net.baseMVA, file, case; has_transformer_loss_metadata = !isempty(transformer_loss_rows), source_case = source_case, solution_written = write_result_columns)
-  hasPVBus, slackIdx, vgSlack = writeBusData(net, file; write_solution = requested_write_solution, branch_shunt_rows = branch_shunt_rows)
+  hasPVBus, slackIdx, vgSlack = writeBusData(net, file; write_solution = requested_write_solution, solved = has_solution, branch_shunt_rows = branch_shunt_rows)
 
-  exported_gens = writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack)
+  exported_gens = writeGeneratorData(net.baseMVA, NodeDict, net.prosumpsVec, file, hasPVBus, slackIdx, vgSlack; solved = has_solution)
 
   writeBranchData(net, file; write_solution = write_result_columns)
   # generator costs (#471): carried from the import, written back unchanged
