@@ -144,6 +144,10 @@ Case management, run history and results in the browser. Cases can be taken from
 
 <a href="docs/src/assets/webui_overview.png"><img src="docs/src/assets/webui_overview.png" alt="Sparlectra Web UI: case, settings, run and result" /></a>
 
+Every run file opens in the browser: CSV as a sortable table, Markdown rendered.
+
+<a href="docs/src/assets/webui_artifacts.png"><img src="docs/src/assets/webui_artifacts.png" alt="Sparlectra Web UI: CSV table, measurement verdict and Markdown report of a run" /></a>
+
 ---
 
 ## Documentation

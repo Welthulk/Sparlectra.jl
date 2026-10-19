@@ -1158,7 +1158,7 @@ function run_measurement_table_tests()
         @test sum(r["measurements"] for r in lvl) == 862
         @test d_on["metadata"]["se_sigma_levels_not_in_case"] == [999.0]
         on_log = read(joinpath(d, "on", "run.log"), String)
-        @test occursin("999.0 kV is configured in state_estimation.sigma_by_voltage_level, but no bus of this case has that nominal voltage", on_log)
+        @test occursin("999.0 kV is configured in `state_estimation.sigma_by_voltage_level`, but no bus of this case has that nominal voltage", on_log)
         @test occursin(string(sg_levels[1], " kV: "), on_log)
         @test occursin("## Measurement sigma by voltage level", read(joinpath(d, "on", "se_diagnostics.md"), String))
         # state_estimation.zero_injection on (the default): the passive buses
