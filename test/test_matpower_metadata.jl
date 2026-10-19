@@ -33,6 +33,78 @@ function _metadata_case(; branch_kind = ["L"], dcline = nothing)
   )
 end
 
+# Y-bus of the mpc.branch rows of a written file with plain MATPOWER
+# semantics: TAP (column 9) is the ratio, SHIFT (column 10) the shift in
+# degrees, TAP 0 means 1; only the transformer conductance comes from the
+# Sparlectra loss block, MATPOWER has no column for it (#513)
+function _mp_rows_ybus(path::AbstractString)
+  mpc = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
+  g = Dict{Int,Float64}()
+  if mpc.sparlectra !== nothing
+    for row in mpc.sparlectra.transformer_losses
+      g[Int(row.branch_row)] = Float64(row.g_pu)
+    end
+  end
+  n = size(mpc.bus, 1)
+  Y = zeros(ComplexF64, n, n)
+  for b in eachrow(mpc.bus)
+    Y[Int(b[1]), Int(b[1])] += (b[5] + im * b[6]) / mpc.baseMVA
+  end
+  for (r, l) in enumerate(eachrow(mpc.branch))
+    l[11] == 0.0 && continue
+    f, t = Int(l[1]), Int(l[2])
+    ys = 1 / (l[3] + im * l[4])
+    ysh = (get(g, r, 0.0) + im * l[5]) / 2
+    tap = (l[9] == 0.0 ? 1.0 : l[9]) * cis(deg2rad(l[10]))
+    Y[f, f] += (ys + ysh) / abs2(tap)
+    Y[t, t] += ys + ysh
+    Y[f, t] -= ys / conj(tap)
+    Y[t, f] -= ys / tap
+  end
+  return Y
+end
+
+# The text an exporter before 0.50.0 wrote for the same net: TAP/SHIFT of
+# every tap-block row (and its loss row) at the neutral position, the block
+# without columns 13 and 14, and without column 12 when no row needs it.
+# Checked against a file of the 0.50.0 exporter (3d04b5ee) on sp_case14:
+# identical apart from the time stamp
+function _mp_old_format_text(text::AbstractString)::String
+  lines = split(String(text), '\n')
+  i0 = findfirst(l -> startswith(l, "mpc.sparlectra.tap_changers = ["), lines)
+  neutral = Dict{Int,Tuple{String,String}}()
+  i = i0 + 1
+  while lines[i] != "];"
+    f = split(strip(lines[i], ['\t', ';']), '\t')
+    neutral[parse(Int, f[1])] = (f[13], f[14])
+    i += 1
+  end
+  ncol = all(k -> split(strip(lines[k], ['\t', ';']), '\t')[12] == "0.0", (i0 + 1):(i - 1)) ? 11 : 12
+  for k in (i0 + 1):(i - 1)
+    lines[k] = "\t" * join(split(strip(lines[k], ['\t', ';']), '\t')[1:ncol], '\t') * ";"
+  end
+  lines[i0 - 1] = "%% tap-changer nameplate data (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step psi_deg phase_du_step" * (ncol == 12 ? " ratio_grid" : "") * ")"
+  b0 = findfirst(l -> startswith(l, "mpc.branch = ["), lines)
+  row = 0
+  for k in (b0 + 2):length(lines)
+    lines[k] == "];" && break
+    row += 1
+    haskey(neutral, row) || continue
+    head, tail = split(lines[k], ';'; limit = 2)
+    f = split(head, '\t')
+    f[9], f[10] = neutral[row]
+    lines[k] = join(f, '\t') * ";" * tail
+  end
+  # the loss rows named the neutral position as well
+  for (k, l) in enumerate(lines)
+    m = match(r"^struct\('branch_row', (\d+),", l)
+    (m === nothing || !haskey(neutral, parse(Int, m.captures[1]))) && continue
+    r, a = neutral[parse(Int, m.captures[1])]
+    lines[k] = replace(l, r"'tap_ratio', [^,]+, 'phase_shift_deg', [^,]+," => "'tap_ratio', $(r), 'phase_shift_deg', $(a),")
+  end
+  return join(lines, '\n')
+end
+
 function run_matpower_metadata_tests()
   @testset "Newline-separated matrix rows (RTS-GMLC style)" begin (function ()
     # MATLAB accepts bare newlines as matrix row separators; official MATPOWER
@@ -342,8 +414,8 @@ mpc.sparlectra.tap_changers = [
         net3b = Sparlectra.createNetFromMatPowerFile(filename = path3)
         @test net3b.branchVec[1].ratio == 1.0
         @test net3b.branchVec[1].tap_step == 0.025
-        # nameplate grids only: no column 12
-        @test size(Sparlectra._matpower_sparlectra_tap_changers(Sparlectra.MatpowerIO.read_case(path2)), 2) == 11
+        # 14 columns since 0.50.0: the neutral position in 13 and 14 (#513)
+        @test size(Sparlectra._matpower_sparlectra_tap_changers(Sparlectra.MatpowerIO.read_case(path2)), 2) == 14
 
         # a CGMES changer (tap_ratio_grid :linear) writes its positions on
         # its own grid with ratio_grid 1 in column 12, and both readers bring
@@ -357,7 +429,7 @@ mpc.sparlectra.tap_changers = [
         Sparlectra.writeMatpowerCasefile(netl, pathl; write_solution = false)
         mpl = Sparlectra.MatpowerIO.read_case(pathl)
         tcl = Sparlectra._matpower_sparlectra_tap_changers(mpl)
-        @test size(tcl, 2) == 12
+        @test size(tcl, 2) == 14
         @test (tcl[1, 3], tcl[1, 4], tcl[1, 5], tcl[1, 12]) == (-10.0, 10.0, 8.0, 1.0)
         @test tcl[2, 12] == 0.0
         cfgl = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
@@ -414,6 +486,85 @@ mpc.sparlectra.tap_changers = [
         bado = joinpath(dir, "case_taps_outofband.m")
         write(bado, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 5 0 0 0 0;"))
         @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = bado)
+        # 13 columns (a neutral ratio without its shift) and a neutral ratio
+        # of 0 are rejected
+        bad13 = joinpath(dir, "case_taps_13.m")
+        write(bad13, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 1 0 0 0 0 0 0 0 1.0;"))
+        @test_throws ArgumentError Sparlectra.MatpowerIO.read_case_m(bad13; legacy_compat = false)
+        bad0 = joinpath(dir, "case_taps_neutral0.m")
+        write(bad0, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 1 0 0 0 0 0 0 0 0 0;", "2 0 0 0 0 0.5 -10 10 -2;" => "2 0 0 0 0 0.5 -10 10 -2 0 0 0 1.0 -2.0;"))
+        @test_throws ArgumentError Sparlectra.MatpowerIO.read_case_m(bad0; legacy_compat = false)
+
+        # #513: TAP/SHIFT carry the ratio and shift in effect, so the rows
+        # alone give the Y-bus Sparlectra solves; the PST of branch 2 off
+        # neutral (-2 deg neutral, -3 deg in effect) and the Delta-u PST
+        # (ratio and shift from the cascade) included
+        for (n, p) in ((net, path2), (netdu, pathdu2))
+          @test maximum(abs.(Matrix(createYBUS(net = n, sparse = true)) .- _mp_rows_ybus(p))) <= 1e-12
+        end
+        mp2 = Sparlectra.MatpowerIO.read_case_m(path2; legacy_compat = false)
+        @test (mp2.branch[1, 9], mp2.branch[2, 10]) == (b1.tap_ratio, b2.phase_shift_deg)
+        @test (mp2.sparlectra.tap_changers[1, 13], mp2.sparlectra.tap_changers[2, 14]) == (1.0, -2.0)
+
+        # sp_case14, transformer Wehrden (branch 17): neutral 1.025, four
+        # steps of 0.625 %, 1.0 in effect. The export writes 1.0 as TAP,
+        # the neutral and the position into the block
+        sp14 = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
+        bw = sp14.branchVec[17]
+        @test (bw.ratio, bw.tap_ratio) == (1.025, 1.0)
+        p14 = joinpath(dir, "sp_case14.m")
+        Sparlectra.writeMatpowerCasefile(sp14, p14; write_solution = false)
+        Y14 = Matrix(createYBUS(net = sp14, sparse = true))
+        @test maximum(abs.(Y14 .- _mp_rows_ybus(p14))) <= 1e-12
+        mp14 = Sparlectra.MatpowerIO.read_case_m(p14; legacy_compat = false)
+        tc14 = mp14.sparlectra.tap_changers
+        w = findfirst(==(17.0), tc14[:, 1])
+        @test mp14.branch[17, 9] == 1.0
+        @test (tc14[w, 13], round(tc14[w, 5]; digits = 9)) == (1.025, 4.0)
+        # the Sparlectra re-import: same neutral, position, band and grid on
+        # both readers, the same Y-bus bitwise; the power flow agrees to
+        # 1e-12 (not bitwise: the MATPOWER import starts from other values)
+        cfg14 = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+        back14 = Sparlectra.createNetFromMatPowerFile(filename = p14)
+        conv14 = Sparlectra.build_net(Sparlectra.convert_case(MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(p14), Sparlectra.matpower_adapter_options(cfg14)); config = cfg14)
+        # transformer tap fields (the line rows of the SCF and MATPOWER
+        # imports differ in fields a line never reads)
+        tapfields(n) = [(b.ratio, b.angle, b.tap_ratio, b.phase_shift_deg, b.tap_min, b.tap_max, b.tap_step, b.tap_ratio_grid, b.has_ratio_tap, b.has_phase_tap, b.phase_min_deg, b.phase_max_deg) for b in n.branchVec if b.ratio != 0.0]
+        for back in (back14, conv14)
+          @test tapfields(back) == tapfields(sp14)
+          @test Matrix(createYBUS(net = back, sparse = true)) == Y14
+        end
+        pf14 = deepcopy(sp14)
+        pfb = deepcopy(back14)
+        @test runpf!(pf14, 40, 1e-10, 0)[2] == 0
+        @test runpf!(pfb, 40, 1e-10, 0)[2] == 0
+        @test maximum(abs(a._vm_pu - b._vm_pu) for (a, b) in zip(pf14.nodeVec, pfb.nodeVec)) <= 1e-12
+        @test maximum(abs(a._va_deg - b._va_deg) for (a, b) in zip(pf14.nodeVec, pfb.nodeVec)) <= 1e-12
+
+        # a file of the exporter before 0.50.0 (TAP the neutral 1.025, block
+        # of 11 columns) still reads with the old rule: the position applies
+        # on top of TAP and gives the same net as the new file, bitwise
+        p14old = joinpath(dir, "sp_case14_old.m")
+        write(p14old, _mp_old_format_text(read(p14, String)))
+        mpold = Sparlectra.MatpowerIO.read_case_m(p14old; legacy_compat = false)
+        @test (mpold.branch[17, 9], size(mpold.sparlectra.tap_changers, 2)) == (1.025, 11)
+        # plain MATPOWER sees Wehrden at 1.025 in such a file
+        @test maximum(abs.(Y14 .- _mp_rows_ybus(p14old))) > 1e-3
+        old14 = Sparlectra.createNetFromMatPowerFile(filename = p14old)
+        @test tapfields(old14) == tapfields(back14)
+        pfo = deepcopy(old14)
+        @test runpf!(pfo, 40, 1e-10, 0)[2] == 0
+        @test [(n._vm_pu, n._va_deg) for n in pfo.nodeVec] == [(n._vm_pu, n._va_deg) for n in pfb.nodeVec]
+
+        # TAP edited by hand in a new file: the tap position is kept and the
+        # difference is named
+        p14ed = joinpath(dir, "sp_case14_edited.m")
+        txt14 = read(p14, String)
+        txt_ed = replace(txt14, "\t25.0\t0\t0\t1.0\t0.0\t1\t" => "\t25.0\t0\t0\t1.01\t0.0\t1\t")
+        @test count("1.01", txt_ed) == count("1.01", txt14) + 1
+        write(p14ed, txt_ed)
+        ed14 = @test_logs (:warn, r"differ from the ratio and shift of the tap position") match_mode = :any Sparlectra.createNetFromMatPowerFile(filename = p14ed)
+        @test ed14.branchVec[17].tap_ratio == 1.0
       end
     end)() end
 

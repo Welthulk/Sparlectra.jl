@@ -82,8 +82,9 @@ function _sparlectra_transformer_loss_rows(net::Net)
       active_no_load_g_pu = g_pu,
       reactive_shunt_b_pu = b_row,
       allocation = "native_branch_pi",
-      tap_ratio = Float64(br.ratio),
-      phase_shift_deg = Float64(br.angle),
+      # the values of the branch row: ratio and shift in effect (#513)
+      tap_ratio = br.ratio == 0.0 ? 0.0 : Float64(br.tap_ratio),
+      phase_shift_deg = Float64(br.ratio == 0.0 ? br.angle : br.phase_shift_deg),
       stage_position = meta !== nothing && hasproperty(meta, :actual_tap_step) && meta.actual_tap_step !== nothing ? Float64(meta.actual_tap_step) : NaN,
     ))
   end
@@ -420,6 +421,19 @@ function _matpower_branch_kind(net::Net, i::Int, br::Branch)
   return br.ratio != 0.0 ? "T" : "L"
 end
 
+# TAP and SHIFT of a branch row (#513): a transformer writes the values
+# calcBranchRatio stamps (the live tap_ratio and phase_shift_deg), because
+# MATPOWER has no tap changer and a foreign reader must solve the network
+# Sparlectra solves; the neutral position travels in columns 13 and 14 of
+# mpc.sparlectra.tap_changers. Before 0.50.0 the neutral ratio stood here, so
+# a transformer off neutral (sp_case14 Wehrden: neutral 1.025, 1.0 in
+# effect) solved differently outside Sparlectra. A line row writes TAP 0 and
+# keeps its stored angle, which the Y-bus ignores (ratio 0).
+function _matpower_branch_tap_in_effect(br::Branch, kind::AbstractString)::Tuple{Float64,Float64}
+  br.ratio == 0.0 && return (0.0, br.angle)
+  return (kind == "T" ? br.tap_ratio : 0.0, br.phase_shift_deg)
+end
+
 function writeBranchData(net::Net, file; write_solution::Bool = true)
   branchVec = net.branchVec
   #! format: off
@@ -453,8 +467,7 @@ function writeBranchData(net::Net, file; write_solution::Bool = true)
     rateC = 0 # 0 for unlimited
 
     kind = _matpower_branch_kind(net, i, br)
-    ratio = kind == "T" ? br.ratio : 0.0
-    angle = br.angle
+    ratio, angle = _matpower_branch_tap_in_effect(br, kind)
     status = Int(br.status)
     angmin = -360 #br.angmin
     angmax = 360 #br.angmax
@@ -543,7 +556,7 @@ end
 # emitted once whenever any extension content is present (transformer-loss
 # metadata, the tap-changer-model roundtrip marker, or the solution-written
 # marker); each sub-field is otherwise independently optional.
-function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool, link_rows = Tuple{Int,Int,Int}[], tap_changer_rows = NTuple{12,Float64}[], branch_shunt_rows = NTuple{4,Float64}[])
+function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool, link_rows = Tuple{Int,Int,Int}[], tap_changer_rows = NTuple{14,Float64}[], branch_shunt_rows = NTuple{4,Float64}[])
   isempty(loss_rows) && tap_changer_model_marker === nothing && !solution_written && isempty(link_rows) && isempty(tap_changer_rows) && isempty(branch_shunt_rows) && return nothing
   write(file, "mpc.sparlectra = struct();\n")
   write(file, "mpc.sparlectra.format_version = 1;\n")
@@ -566,14 +579,15 @@ function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker
     write(file, "];\n")
   end
   if !isempty(tap_changer_rows)
-    # column 12 (ratio_grid) only when a row needs it, so files without a
-    # CGMES changer stay as they were
-    ncol = any(r -> r[12] != 0.0, tap_changer_rows) ? 12 : 11
-    write(file, "%% tap-changer nameplate data (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step psi_deg phase_du_step", ncol == 12 ? " ratio_grid" : "", ")\n")
+    # always 14 columns (#513): 13 neutral_ratio and 14 neutral_shift_deg
+    # mark that TAP/SHIFT of mpc.branch carry the position in effect; a
+    # reader before 0.50.0 rejects the width instead of applying the
+    # position a second time
+    write(file, "%% tap-changer nameplate data (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step psi_deg phase_du_step ratio_grid neutral_ratio neutral_shift_deg); TAP/SHIFT in mpc.branch are the ratio and shift in effect\n")
     write(file, "mpc.sparlectra.tap_changers = [\n")
     for r in tap_changer_rows
       write(file, "\t", string(Int(r[1])))
-      for v in r[2:ncol]
+      for v in r[2:14]
         write(file, "\t", string(v))
       end
       write(file, ";\n")
@@ -587,8 +601,9 @@ end
 _matpower_snap_position(p::Float64)::Float64 = (r = round(p); abs(p - r) <= 1e-9 ? r : p)
 
 # Tap-changer nameplate rows for the extension block, in mpc.branch row
-# numbering (12 columns incl. psi_deg, phase_du_step and ratio_grid; the
-# writer drops column 12 when every row has 0 there). Emitted only for
+# numbering (14 columns incl. psi_deg, phase_du_step, ratio_grid and the
+# neutral position neutral_ratio, neutral_shift_deg, while mpc.branch
+# carries the position in effect, #513). Emitted only for
 # transformer branches whose LIVE position sits off neutral or whose grid
 # deviates from the constructor defaults, so legacy exports stay
 # byte-identical. Steps may be fractional (a controller can leave a tap
@@ -602,8 +617,8 @@ _matpower_snap_position(p::Float64)::Float64 = (r = round(p); abs(p - r) <= 1e-9
 # (-7.41 for 8 steps of 1 %) and the reimport lost the grid. A tabular
 # changer stays on the fraction grid: MATPOWER does not carry the table, so
 # only the fraction position brings its ratio back.
-function _sparlectra_tap_changer_rows(net::Net)::Vector{NTuple{12,Float64}}
-  rows = NTuple{12,Float64}[]
+function _sparlectra_tap_changer_rows(net::Net)::Vector{NTuple{14,Float64}}
+  rows = NTuple{14,Float64}[]
   for (k, br) in enumerate(net.branchVec)
     br.ratio != 0.0 || continue
     base = br.ratio
@@ -638,7 +653,7 @@ function _sparlectra_tap_changer_rows(net::Net)::Vector{NTuple{12,Float64}}
       pmaxS = pstep > 0.0 ? br.phase_max_deg / pstep : 0.0
       pcur = pstep > 0.0 ? (br.phase_shift_deg - br.angle) / pstep : 0.0
     end
-    push!(rows, (Float64(k), tstep, tminS, tmaxS, tcur, pstep, pminS, pmaxS, pcur, psi, du, linear ? 1.0 : 0.0))
+    push!(rows, (Float64(k), tstep, tminS, tmaxS, tcur, pstep, pminS, pmaxS, pcur, psi, du, linear ? 1.0 : 0.0, base, br.angle))
   end
   return rows
 end
@@ -690,6 +705,11 @@ end
     writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::Union{Nothing,Bool} = nothing, source_case = nothing)
 
 Write Matpower case files.
+
+A transformer row carries the ratio and shift in effect in `TAP`/`SHIFT`,
+so every MATPOWER reader solves the same network. Tap-changer nameplates
+and the neutral position go to `mpc.sparlectra.tap_changers` (14 columns),
+which Sparlectra reads back; see the MATPOWER page of the documentation.
 
 # Arguments
 - `net::Net`: Network object.

@@ -596,7 +596,12 @@ function try_parse_sparlectra_extension(txt::String)
   # and current steps may be fractional (a controller can leave a tap
   # between mechanical positions). Optional columns: 10 psi_deg, 11
   # phase_du_step, 12 ratio_grid (0 = the fraction grid above, 1 = the
-  # linear grid of a CGMES changer, ratio = TAP + n * tap_step).
+  # linear grid of a CGMES changer, ratio = neutral + n * tap_step).
+  # Columns 13 neutral_ratio and 14 neutral_shift_deg (0.50.0, #513) come
+  # as a pair and are the marker of the current rule: TAP/SHIFT in
+  # mpc.branch carry the ratio and shift in effect, the neutral position
+  # stands here. A block of 9 to 12 columns is the rule before 0.50.0:
+  # TAP/SHIFT are the neutral position and the steps move the tap off it.
   tap_changers = nothing
   if occursin("mpc.sparlectra.tap_changers", txt)
     tap_changers = try
@@ -605,10 +610,15 @@ function try_parse_sparlectra_extension(txt::String)
       throw(ArgumentError("mpc.sparlectra.tap_changers could not be parsed: $(sprint(showerror, err))"))
     end
   end
-  if tap_changers !== nothing && !(size(tap_changers, 2) in (9, 10, 11, 12))
-    throw(ArgumentError("mpc.sparlectra.tap_changers needs 9 columns (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step) plus optional columns 10 psi_deg (PST regulating-vector direction, 0 = unspecified -> 90), 11 phase_du_step (additional-voltage amplitude per step for a Delta-u PST; exclusive with phase_step_deg) and 12 ratio_grid (0 = fraction grid, 1 = linear grid), got $(size(tap_changers, 2))."))
+  if tap_changers !== nothing && !(size(tap_changers, 2) in (9, 10, 11, 12, 14))
+    throw(ArgumentError("mpc.sparlectra.tap_changers needs 9 columns (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step) plus optional columns 10 psi_deg (PST regulating-vector direction, 0 = unspecified -> 90), 11 phase_du_step (additional-voltage amplitude per step for a Delta-u PST; exclusive with phase_step_deg), 12 ratio_grid (0 = fraction grid, 1 = linear grid) and the pair 13 neutral_ratio, 14 neutral_shift_deg (TAP/SHIFT then carry the position in effect), got $(size(tap_changers, 2))."))
   end
-  if tap_changers !== nothing && size(tap_changers, 2) == 12
+  if tap_changers !== nothing && size(tap_changers, 2) == 14
+    for r in axes(tap_changers, 1)
+      tap_changers[r, 13] != 0.0 || throw(ArgumentError("mpc.sparlectra.tap_changers row $(r): column 13 (neutral_ratio) must not be 0, the row names a transformer."))
+    end
+  end
+  if tap_changers !== nothing && size(tap_changers, 2) >= 12
     for g in view(tap_changers, :, 12)
       g in (0.0, 1.0) || throw(ArgumentError("mpc.sparlectra.tap_changers column 12 (ratio_grid) must be 0 (fraction grid) or 1 (linear grid), got $(g)."))
     end

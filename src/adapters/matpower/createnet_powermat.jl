@@ -246,6 +246,29 @@ function _matpower_sparlectra_tap_changers(mpc)::Union{Nothing,Matrix{Float64}}
   return getproperty(sp, :tap_changers)
 end
 
+# Branch matrix with TAP/SHIFT at the NEUTRAL position of every transformer
+# with a mpc.sparlectra.tap_changers row (#513). Since 0.50.0 the exporter
+# writes the ratio and shift in effect into TAP/SHIFT, so that a plain
+# MATPOWER reader solves the same network, and the neutral position into
+# columns 13 (neutral_ratio) and 14 (neutral_shift_deg); the two columns are
+# the marker. A block of 9 to 12 columns comes from an older exporter, whose
+# TAP/SHIFT already are the neutral position: the matrix is returned as it
+# is. Both readers (direct import and SCF converter) take the result, build
+# the transformer on the neutral position and apply the steps on top of it,
+# as for an older file. The input is never written to (it may alias
+# mpc.branch, which the net cache serializes).
+function _matpower_neutral_branch_data(brData::Matrix{Float64}, sp_taps::Union{Nothing,AbstractMatrix}, TAP::Int, SHIFT::Int)::Matrix{Float64}
+  (sp_taps === nothing || size(sp_taps, 2) < 13) && return brData
+  out = copy(brData)
+  for row in eachrow(sp_taps)
+    k = Int(row[1])
+    1 <= k <= size(out, 1) || throw(ArgumentError("mpc.sparlectra.tap_changers references unknown branch $(k)."))
+    out[k, TAP] = Float64(row[13])
+    out[k, SHIFT] = Float64(row[14])
+  end
+  return out
+end
+
 function _matpower_sparlectra_transformer_losses(mpc)
   hasproperty(mpc, :sparlectra) || return NamedTuple[]
   ext = getproperty(mpc, :sparlectra)
@@ -355,6 +378,12 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   MBASE = genDict["mBase"]; GEN_STATUS = genDict["status"]; PMAX = genDict["Pmax"]; PMIN = genDict["Pmin"]; APF = genDict["apf"]
   F_BUS = branchDict["fbus"]; T_BUS = branchDict["tbus"]; BR_R = branchDict["r"]; BR_X = branchDict["x"]; BR_B = branchDict["b"]
   RATE_A = branchDict["rateA"]; TAP = branchDict["ratio"]; SHIFT = branchDict["angle"]; BR_STATUS = branchDict["status"]
+  # TAP/SHIFT as written (the position in effect when the tap block carries
+  # the 0.50.0 neutral columns, #513); the branches are built on the
+  # neutral position and the tap block below moves them off it
+  sp_taps = _matpower_sparlectra_tap_changers(mpc)
+  brData_file = brData
+  brData = _matpower_neutral_branch_data(brData, sp_taps, TAP, SHIFT)
 
   mp_bus_type = Dict{Int,Int}()
   bus_row_by_i = Dict{Int,Int}()
@@ -846,14 +875,15 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   end
 
   # Optional mpc.sparlectra.tap_changers rows: nameplate tap-changer data
-  # standard MATPOWER cannot express. The mpc.branch TAP/SHIFT columns stay
-  # the NEUTRAL position; the current steps move the LIVE tap_ratio /
-  # phase_shift_deg off it on the same grids the estimation fixes to
-  # (ratio: tap = neutral / (1 + n * tap_step), or TAP + n * tap_step with
-  # ratio_grid 1; phase: additive degrees).
+  # standard MATPOWER cannot express. The branches were built on the
+  # NEUTRAL position (the TAP/SHIFT columns of a file before 0.50.0, columns
+  # 13 and 14 of the block since, see _matpower_neutral_branch_data); the
+  # current steps move the LIVE tap_ratio / phase_shift_deg off it on the
+  # same grids the estimation fixes to (ratio: tap = neutral / (1 + n *
+  # tap_step), or neutral + n * tap_step with ratio_grid 1; phase: additive
+  # degrees).
   # A ratio tap_step of 0 explicitly declares "no ratio tap changer" and
   # keeps that transformer out of the estimator's mass release.
-  sp_taps = _matpower_sparlectra_tap_changers(mpc)
   if sp_taps !== nothing
     for row in eachrow(sp_taps)
       k = Int(row[1])
@@ -877,6 +907,16 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       # (1) or on the fraction grid (0, and every file without the column)
       tgrid = (size(sp_taps, 2) >= 12 && row[12] == 1.0) ? :linear : :fraction
       applyTapNameplate!(br; tap_step = tstep, tap_min_step = tminS, tap_max_step = tmaxS, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pminS, phase_max_step = pmaxS, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "mpc.sparlectra.tap_changers branch $(k)")
+      # a 0.50.0 file states the position twice: TAP/SHIFT in effect and the
+      # steps. They differ only after an edit of one of them; the steps are
+      # kept, so the nameplate stays consistent, and the edit is named
+      if size(sp_taps, 2) >= 13
+        tap_file = _matpower_import_ratio(Float64(brData_file[k, TAP]); mode = ratio_mode)
+        shift_file = _matpower_shift_degrees(Float64(brData_file[k, SHIFT]); sign = shift_sign, unit = shift_unit)
+        if abs(br.tap_ratio - tap_file) > 1e-9 || abs(br.phase_shift_deg - shift_file) > 1e-7
+          @warn "mpc.sparlectra.tap_changers branch $(k): TAP/SHIFT in mpc.branch differ from the ratio and shift of the tap position; the tap position is kept" tap_column = tap_file tap_of_position = br.tap_ratio shift_column_deg = shift_file shift_of_position_deg = br.phase_shift_deg
+        end
+      end
     end
   end
 
