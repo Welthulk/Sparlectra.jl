@@ -299,7 +299,7 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.baseMVA` | Common power base for per-unit quantities | Typically `100`. |
 | `mpc.bus` | Network nodes: type (`1` PQ, `2` PV, `3` reference, `4` isolated), demand, shunts, `VM`/`VA` start or reference values, base voltage, limits | Lines and transformers refer to `BUS_I`. |
 | `mpc.gen` | Generators: `PG`, `VG` setpoint, `QMAX`/`QMIN` for Q-limit handling, status | `PG`, `VG`, `QMAX` and `QMIN` are the values to inspect first. |
-| `mpc.branch` | Lines and transformers: `BR_R`/`BR_X`, charging, ratings, `TAP`, `SHIFT`, status | A non-zero tap ratio or phase shift marks a transformer; `TAP = 0` is treated as ratio `1`. |
+| `mpc.branch` | Lines and transformers: `BR_R`/`BR_X`, charging, ratings, `TAP`, `SHIFT`, status | A non-zero tap ratio or phase shift marks a transformer; `TAP = 0` is treated as ratio `1`. `TAP` (column 9) and `SHIFT` (column 10) are the ratio and shift in effect; Sparlectra exports write them that way since 0.50.0. |
 | `mpc.gencost` | Optimal power flow | Kept per generator ([`GenCost`](@ref)) and written back unchanged on export; no calculation reads it. |
 | `mpc.bus_name` | Readable bus names | `matpower_import.apply_bus_names: true`; the original `BUS_I` values stay in `busOrigIdxDict`. |
 | `mpc.branch_name` | Readable branch/source names, outage mapping | `matpower_import.apply_branch_names = true`; lands in `net.matpower_branch_metadata`. |
@@ -309,7 +309,7 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.sparlectra` | Versioned extension namespace (`mpc.sparlectra.format_version = 1`) for metadata that standard MATPOWER does not model | Recognized automatically when present; sub-blocks below. |
 | `mpc.sparlectra.transformer_losses` | Transformer no-load conductance from FOR/DTF sources | One entry per transformer branch: MATPOWER branch row, original FOR/DTF identifier, terminal bus names, raw `R/X/G/B` values where available, converted per-unit values, tap/phase-shift data, source marker and allocation convention. |
 | `mpc.sparlectra.links` | Busbar couplers, one `fbus tbus status` row per impedance-less coupler (`1` = closed) | Each row becomes a `BusLink`: a closed link merges its two buses into one electrical node (the same contraction CGMES switch imports use), an open link keeps them separate. Exports write the block from `net.linkVec`. Unknown bus numbers or a wrong column count are rejected. |
-| `mpc.sparlectra.tap_changers` | Tap-changer nameplates, one row per transformer branch | Columns `branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step` plus optional `psi_deg`, `phase_du_step` and `ratio_grid`; see below. |
+| `mpc.sparlectra.tap_changers` | Tap-changer nameplates, one row per transformer branch | Columns `branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step` plus optional `psi_deg`, `phase_du_step`, `ratio_grid` and the pair `neutral_ratio`, `neutral_shift_deg`; see below. |
 | `mpc.sparlectra.tap_changer_model` | Roundtrip marker `'impedance_correction'` | See [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport). |
 | `mpc.sparlectra.solution_written` | Marker `1` that columns 8/9 and 14-17 are a solution | Written by `writeMatpowerCasefile` with `write_solution = true`. |
 
@@ -334,15 +334,36 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 
 ### Tap-changer nameplates
 
-Standard MATPOWER knows only the continuous `TAP`/`SHIFT` columns. With
-`mpc.sparlectra.tap_changers` present, `TAP`/`SHIFT` are the neutral
-position and the current steps move the live position off it (ratio grid
-`tap = neutral / (1 + n * tap_step)`, the grid the tap estimation fixes to).
-`psi_deg` is the PST regulating-vector direction (`0` = unspecified, default
-the symmetric 90 degrees). `ratio_grid` (column 12) is `1` for a CGMES ratio
-changer, whose positions count on its linear grid `tap = TAP + n * tap_step`;
-`0` or a missing column means the fraction grid. Exports write the column
-only when a row needs it.
+Standard MATPOWER knows only the continuous `TAP`/`SHIFT` columns and no
+tap changer. The block adds the nameplate: the current steps move the live
+position off the neutral (ratio grid `tap = neutral / (1 + n * tap_step)`,
+the grid the tap estimation fixes to). `psi_deg` is the PST
+regulating-vector direction (`0` = unspecified, default the symmetric 90
+degrees). `ratio_grid` (column 12) is `1` for a CGMES ratio changer, whose
+positions count on its linear grid `tap = neutral + n * tap_step`; `0` or a
+missing column means the fraction grid.
+
+Where the neutral position stands depends on the width of the block:
+
+- 14 columns (written since 0.50.0): `TAP`/`SHIFT` of the branch row are
+  the ratio and shift in effect, so MATPOWER and every other reader solve
+  the network Sparlectra solves. Column 13 `neutral_ratio` and column 14
+  `neutral_shift_deg` hold the neutral position; Sparlectra builds the
+  transformer on it and applies the steps. If `TAP`/`SHIFT` were edited and
+  no longer match the steps, the steps are kept and a warning names the
+  branch.
+- 9 to 12 columns (files written before 0.50.0): `TAP`/`SHIFT` are the
+  neutral position and the steps are applied on top of it. Such files read
+  as before. A plain MATPOWER reader sees a transformer off neutral at its
+  neutral ratio in these files.
+
+Example, transformer Wehrden in `sp_case14`: neutral 1.025, four steps of
+0.625 percent, ratio in effect 1.0. The export writes `TAP = 1.0` and
+`1.025` in column 13. The step grid cannot be expressed in MATPOWER; other
+tools see the fixed ratio.
+
+Releases before 0.50.0 reject the 14-column block, so a new file never
+reads there with the position applied twice.
 
 Two phase-changer flavors exist, and declaring both grids at once is
 rejected: `phase_step_deg` steps the shift angle in degrees; `phase_du_step`
@@ -357,8 +378,10 @@ the estimator's ratio mass release; declared phase changers join the mass
 release in `:pst` mode along their nameplate direction. Current steps may
 be fractional; short rows are zero-padded like MATPOWER optional trailing
 columns. Exports write the block for every transformer off neutral or with
-a non-default grid. Rows referencing non-transformer branches, unknown
-branches, or positions outside the declared band are rejected at import.
+a non-default grid, always with 14 columns. Rows referencing
+non-transformer branches, unknown branches, or positions outside the
+declared band are rejected at import, as are a 13-column block and a
+`neutral_ratio` of 0.
 
 ## Export
 

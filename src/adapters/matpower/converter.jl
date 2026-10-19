@@ -134,7 +134,10 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   baseMVA = Float64(getproperty(mpc, :baseMVA))
   busData = convert(Matrix{Float64}, getproperty(mpc, :bus))
   genData = convert(Matrix{Float64}, getproperty(mpc, :gen))
-  brData = convert(Matrix{Float64}, getproperty(mpc, :branch))
+  # the transformers are built on the neutral position (TAP/SHIFT of a
+  # file before 0.50.0, columns 13 and 14 of the tap block since, #513);
+  # the tap_changer rows below move them off it
+  brData = _matpower_neutral_branch_data(convert(Matrix{Float64}, getproperty(mpc, :branch)), _matpower_sparlectra_tap_changers(mpc), TAP, SHIFT)
   nbus = size(busData, 1)
   nbranch = size(brData, 1)
   s_base_va = baseMVA * 1.0e6
@@ -524,7 +527,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
       end
       isempty(controllers) && continue
       tid = nid()
-      # the branch row keeps the NEUTRAL position (mpc TAP/SHIFT); the
+      # the branch row keeps the NEUTRAL position (see brData above); the
       # nameplate application moves the live tap off it, exactly like the
       # direct import's applyTapNameplate! call
       push!(spar.components.tap_changer, SCFTapChangerRow(id = tid, branch = bid, side = "from", controllers = controllers, control = Dict{String,Any}("mode" => "fixed")))
