@@ -203,7 +203,7 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
     # whatever the voltage error, without a probe, and the phase waits
     # for the next pass
     lo, hi = _tap_control_range(ctrl, br)
-    _warn_start_outside_control_range(ctrl, br, lo, hi)
+    _warn_start_outside_control_range(br, lo, hi)
     return (old_ratio = old_ratio, new_ratio = _ratio_toward_control_range(br, lo, hi), old_phase = old_phase, new_phase = old_phase)
   end
   if !ctrl.converged && ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)
@@ -432,7 +432,7 @@ end
 # The plain step grid counts positions from the ratio 1.0, as the report
 # rows do; a modelled transformer names its model step, a tabular changer
 # the table point.
-function _warn_start_outside_control_range(ctrl::PowerTransformerControl, br::Branch, lo::Float64, hi::Float64)
+function _warn_start_outside_control_range(br::Branch, lo::Float64, hi::Float64)
   m = _derived_tap_model(br, :ratio)
   position = function (ratio::Float64, step::Union{Nothing,Int})
     step !== nothing && return string("model step ", step)
