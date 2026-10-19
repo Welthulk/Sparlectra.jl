@@ -142,7 +142,7 @@ const TEST_GROUPS = TestGroup[
     TestGroup("distributed_slack", ["test_distributed_slack.jl"], [:run_distributed_slack_tests]),
     TestGroup("island_diagnostics", ["test_island_diagnostics.jl"], [:run_island_diagnostics_tests]),
     TestGroup("external_grid", ["test_external_grid.jl"], [:run_external_grid_tests]),
-    TestGroup("matpower_metadata", ["test_matpower_metadata.jl"], [:run_matpower_metadata_tests]),
+    TestGroup("matpower_metadata", ["testgrid.jl", "test_matpower_metadata.jl"], [:run_matpower_metadata_tests]),
     TestGroup("programmatic_api", ["test_api.jl"], [:run_api_fast_tests]),
     # --- pf: the rest of the power-flow surface, controllers, contingencies, scenarios
     TestGroup("auto_powerflow", ["test_auto_powerflow.jl"], [:run_auto_powerflow_tests]),

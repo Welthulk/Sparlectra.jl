@@ -520,6 +520,27 @@ mpc.sparlectra.tap_changers = [
         # "unlimited" convention, not with +-baseMVA
         gen_row = findfirst(==(1.0), mpc_false.gen[:, 1])
         @test (mpc_false.gen[gen_row, 9], mpc_false.gen[gen_row, 10]) == (9999.0, -9999.0)
+
+        # a hand-built net exported before any solve: its node voltages are
+        # still 1.0, the setpoints (1.03 for every CIGRE unit) live on the
+        # generators; Vg and the PV and slack bus Vm must carry them
+        cigre = createCIGRE()
+        path_cigre = joinpath(dir, "cigre_unsolved.m")
+        Sparlectra.writeMatpowerCasefile(cigre, path_cigre; write_solution = false)
+        mpc_cigre = Sparlectra.MatpowerIO.read_case_m(path_cigre; legacy_compat = false)
+        @test size(mpc_cigre.gen, 1) == 4
+        @test all(==(1.03), mpc_cigre.gen[:, 6])
+        regulated = [r for r in axes(mpc_cigre.bus, 1) if mpc_cigre.bus[r, 2] in (2.0, 3.0)]
+        @test length(regulated) == 4
+        @test all(==(1.03), mpc_cigre.bus[regulated, 8])
+        # the round trip keeps the result: the reimported net solves to the
+        # same voltages as the net it was written from
+        cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 50, tol = 1e-10, qlimits = Sparlectra.QLimitConfig(ignore_q_limits = true)), output = OutputConfig(logfile_results = :off, startup_latency_hint = false))
+        back = Sparlectra.createNetFromMatPowerFile(filename = path_cigre)
+        @test run_sparlectra(net = cigre, config = cfg).numerical_converged
+        @test run_sparlectra(net = back, config = cfg).numerical_converged
+        @test maximum(abs(a._vm_pu - b._vm_pu) for (a, b) in zip(cigre.nodeVec, back.nodeVec)) < 1e-8
+        @test maximum(abs(a._va_deg - b._va_deg) for (a, b) in zip(cigre.nodeVec, back.nodeVec)) < 1e-6
       end
     end)() end
 
