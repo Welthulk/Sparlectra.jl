@@ -596,13 +596,13 @@ _se_sigma_pu_text(x) = x === nothing ? "default" : string(round(Float64(x); sigd
 # the per-level lines of run.log and se_diagnostics.md
 function _se_sigma_level_lines(report)::Vector{String}
   lines = String[]
-  push!(lines, string("measurement sigma by voltage level", report.configured ? "" : " (state_estimation.sigma_by_voltage_level not set: every row without its own sigma takes the default)", ":"))
+  push!(lines, string("measurement sigma by voltage level", report.configured ? "" : " (`state_estimation.sigma_by_voltage_level` not set: every row without its own sigma takes the default)", ":"))
   for r in report.rows
     push!(lines, string("  ", r["vn_kv"], " kV: ", r["measurements"], " measurement(s), sigma from the row ", r["sigma_row"], ", from the level ", r["sigma_level"], ", default ", r["sigma_default"],
       r["configured"] ? string("; level sigma in pu: P ", _se_sigma_pu_text(r["p_pu"]), ", Q ", _se_sigma_pu_text(r["q_pu"]), ", I ", _se_sigma_pu_text(r["i_pu"]), ", U ", _se_sigma_pu_text(r["u_pu"]), r["rel_pct"] > 0 ? string(", at least ", r["rel_pct"], " % of the value") : "") : "; no row configured"))
   end
   for v in report.unused
-    push!(lines, string("  note: ", v, " kV is configured in state_estimation.sigma_by_voltage_level, but no bus of this case has that nominal voltage"))
+    push!(lines, string("  note: ", v, " kV is configured in `state_estimation.sigma_by_voltage_level`, but no bus of this case has that nominal voltage"))
   end
   report.unlocated > 0 && push!(lines, string("  ", report.unlocated, " measurement(s) without a bus or branch are not counted"))
   return lines
