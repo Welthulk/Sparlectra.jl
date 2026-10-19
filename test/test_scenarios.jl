@@ -406,6 +406,9 @@ function run_scenario_engine_extended_tests()
     # its group release does not hold and is undone, every value stays.
     # Regenerated at 0.40.0 (#355): the columns kind and elements after the
     # name; every other cell unchanged (compared column by column).
+    # Regenerated at 0.50.0: the three islanding outages (109-105, 114-93,
+    # 94-107) converge in 8 instead of 10 iterations, their values move in
+    # the 12th digit; every other row is unchanged.
     fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
     case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
     @test isfile(case_path)
@@ -546,7 +549,7 @@ function run_scenario_engine_extended_tests()
     # Regenerated at 0.40.0 (#355): the columns kind and elements, the case
     # and overload names from the case file (contingency_names with the
     # typed case), every numeric cell unchanged.
-    # Changed at 0.50.0 (link groups): the row of Neubach_Waldsee#29 no
+    # Changed at 0.41.0 (link groups): the row of Neubach_Waldsee#29 no
     # longer reports Neubach_110b cut off; the bus hangs on Neubach_110a
     # through the coupler and the solve feeds it. Every numeric cell
     # unchanged.

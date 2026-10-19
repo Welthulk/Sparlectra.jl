@@ -13,7 +13,10 @@ of the case (general file, case file, form values) the same way.
 `zero_injection` and `sigma_by_voltage_level` are case-scope keys like `power_flow.solver`: a case configuration file may
 carry them (Web UI: **Save settings for this case** on the State Estimation
 page or the Settings page), and the State Estimation form shows the
-effective value (case file, else the general file, else the default below).
+effective value: from the case configuration file when the case has one
+(a key it does not state takes the default below, not the general file),
+otherwise from the general file, else the default. The run, the topology
+hypothesis test and the measurement generator use this value.
 The other keys are installation-wide: this file or the API.
 
 Mechanisms: [Bad-data thresholds and robust modes](@ref se-bad-data),
@@ -38,7 +41,7 @@ Mechanisms: [Bad-data thresholds and robust modes](@ref se-bad-data),
 | `state_estimation.update_shunts` | Bool | `true` | `true`, `false` | Write the estimated susceptances of released shunts (`setShuntEstimation!`) back into the model (`Shunt.y_pu_shunt`/`B_shunt`) after a converged run. Off keeps the model data authoritative. Keyword `updateShunts`; estimates in `SEResult.shuntEstimates`. |
 | `state_estimation.update_taps` | Bool | `false` | `true`, `false` | Write the fixed tap positions (`tap_ratio`/`phase_shift_deg`) of released transformers (`setTapEstimation!`) back after a converged fixed run; frozen regulators keep their model value. Off: an estimation never overwrites tap data silently. Keyword `updateTaps`; results in `SEResult.tapEstimates`/`tapFixation`. |
 | `state_estimation.measurement_table` | Bool | `true` | `true`, `false` | Let the SE service read a [measurement table](state_estimation_measurement_table.md) (CSV, one measurement set per timestamp, keys resolved by CGMES mRID for a CGMES case and by element name for every other format). Off: such a file is refused with this key named. |
-| `state_estimation.zero_injection` | Symbol/String | `on` | `on`, `off` | Zero-injection rows (`ZI_PINJ_bus_<k>`/`ZI_QINJ_bus_<k>` at `ZERO_INJECTION_SIGMA`) at passive buses (`findPassiveBuses`: no generation, load or shunt; not the slack, not isolated) that carry no injection measurement. `on` adds them in every SE path: the measurement generator, a measurement CSV v1, the measurements of a case file and a [measurement table](state_estimation_measurement_table.md) (service, Web UI, and `applyMeasurementSet!` before `runse!`). `off` adds none, and the generator writes zero balance rows instead. Rows a set already contains are read as they are. The Web UI generator checkbox "passive as zero-injection constraint" shows and sets this key for the case. The key is case scope: a case with its own `<case>.config.yaml` takes the value from that file (written by the generator checkbox), not from the general configuration file. |
+| `state_estimation.zero_injection` | Symbol/String | `on` | `on`, `off`, `constraint` | Zero-injection rows (`ZI_PINJ_bus_<k>`/`ZI_QINJ_bus_<k>` at `ZERO_INJECTION_SIGMA`) at passive buses (`findPassiveBuses`: no generation, load or shunt; not the slack, not isolated) that carry no injection measurement. `on` adds them in every SE path: the measurement generator, the measurements of a case file and a [measurement table](state_estimation_measurement_table.md) (service, Web UI, and `applyMeasurementSet!` before `runse!`). `constraint` adds the same rows and solves every zero-injection row (added by the switch or marked as one in the set, never decided by the id alone) as an equality constraint: exact, its sigma is not used, it leaves J but counts in the redundancy, and it stays in the diagnostics ranking with normalized residual 0, sorts last there and is marked as a constraint, never suspicious (see [State Estimation](state_estimation.md)). `off` adds none, and the generator writes zero balance rows instead. Rows a set already contains are read as they are. The Web UI generator checkbox "passive as zero-injection constraint" shows and sets this key for the case (`on` or `off`; a case on `constraint` shows the box checked and keeps `constraint` while it stays checked). The key is case scope: a case with its own `<case>.config.yaml` takes the value from that file (written by the generator checkbox), not from the general configuration file. |
 | `state_estimation.sigma_by_voltage_level` | mapping | `{}` (empty) | one row per level keyed by the nominal voltage in kV, block style | Measurement sigmas per voltage level in physical units, for rows without their own sigma and for the measurement table generators; see [Measurement sigma by voltage level](@ref se-sigma-by-level). |
 | `state_estimation.topology_precheck` | Bool | `true` | `true`, `false` | Run the advisory stage-1 topology checks (`validate_topology`, linear and cheap) at the start of every estimation; findings warn and land in `SEResult.topologyFindings`, nothing is blocked. |
 | `state_estimation.topology_open_flow_k` | Float64 | `4.0` | positive | Sigma multiple above which a measured flow over an open element is a status contradiction. |
@@ -95,7 +98,7 @@ column or row, for example `(sp_case14.config.yaml line 9)`.
 Order per measurement:
 
 1. The sigma of the row itself (the `sigma` column of a measurement table,
-   every row of a measurement CSV v1, a measurement set in code).
+   every row of an SCF case file, a measurement set in code).
 2. The row of the level of the measuring bus: the bus of the node, of the
    injection or shunt bay, or, at a branch end, the bus at that end. A
    measurement at the 110 kV side of a 380/110 kV transformer takes the

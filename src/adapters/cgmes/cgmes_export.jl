@@ -122,6 +122,22 @@ function _scRecordOf(bymrid::Dict{String,NamedTuple}, records, rec, bus::Abstrac
   return length(on_bus) == 1 ? on_bus[1] : nothing
 end
 
+# The CIM class of the GeneratingUnit an exported machine is written with:
+# the wind or solar class its short-circuit record names (`converter_unit`,
+# set by the CGMES and the IIDM import), else the plain GeneratingUnit.
+function _exportUnitClass(sm_sc)::String
+  u = (sm_sc !== nothing && hasproperty(sm_sc, :converter_unit)) ? sm_sc.converter_unit : nothing
+  return u in ("WindGeneratingUnit", "SolarGeneratingUnit") ? String(u) : "GeneratingUnit"
+end
+
+# WindGeneratingUnit.windGenUnitType is mandatory in CGMES 2.4.15: the
+# delivered value where the record carries one, else onshore (a unit from
+# an IIDM import or from a delivery without the attribute).
+function _exportWindGenUnitType(sm_sc)::String
+  t = (sm_sc !== nothing && hasproperty(sm_sc, :windGenUnitType)) ? sm_sc.windGenUnitType : nothing
+  return t in ("onshore", "offshore") ? String(t) : "onshore"
+end
+
 function writeXmlHeader(io::IO, created::Dates.DateTime)
   println(io, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>")
   # tool provenance; the stamp is the export date (`created` keyword), so a
@@ -713,9 +729,19 @@ end
 
 # Concrete export class per prosumer, from the component-type marker the
 # importers maintain (programmatic/MATPOWER nets carry the generic
-# Generator/Load pair and classify as machine/load).
+# Generator/Load pair and classify as machine/load). A CGMES 3.0
+# PowerElectronicsConnection has no class in 2.4.15. It goes out as an
+# EquivalentInjection (:ei): a SynchronousMachine would change the class
+# without a trace and give the unit a machine's short-circuit contribution
+# on a re-import. The EquivalentInjection carries P, Q, the P and Q limits
+# and the voltage regulation of 2.4.15 (regulationCapability in EQ,
+# regulationStatus and regulationTarget in kV in SSH), no fault current.
+# Its IdentifiedObject.description names the class (_PEC_EI_DESCRIPTION),
+# so a re-import keeps the converter type and the short circuit flags the
+# lost fault current instead of dropping it unnoticed.
 function _prosumerExportKind(cTyp)::Union{Nothing,Symbol}
   (cTyp == Sparlectra.SynchronousMachine || cTyp == Sparlectra.Generator) && return :sm
+  cTyp == Sparlectra.PowerElectronicsConnection && return :ei
   cTyp == Sparlectra.ExternalNetworkInjection && return :eni
   cTyp == Sparlectra.AsynchronousMachine && return :asm
   (cTyp == Sparlectra.Load || cTyp == Sparlectra.EnergyConsumer) && return :ec
@@ -748,15 +774,16 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
       push!(notices, "$(ps.comp.cTyp) $(ps.comp.cName) at $(bus) not exported")
       continue
     end
-    kindTag = kind === :sm ? "SM" : kind === :eni ? "ENI" : kind === :asm ? "ASM" : kind === :svc ? "SVC" : "EC"
+    kindTag = kind === :sm ? "SM" : kind === :eni ? "ENI" : kind === :ei ? "EI" : kind === :asm ? "ASM" : kind === :svc ? "SVC" : "EC"
     k = cgmesNextBusEquipmentIndex!(counter, kindTag, bus)
     key = cgmesKeyBusEquipment(kindTag, bus, k)
     vn = ps.comp.cVN
     pv = something(ps.pVal, 0.0)
     qv = something(ps.qVal, 0.0)
     # CGMES load convention in SSH: machine-kind units consume with p > 0,
-    # so injections stored injection-positive flip sign
-    machine_kind = kind === :sm || kind === :eni || kind === :svc
+    # so injections stored injection-positive flip sign (EquivalentInjection
+    # included, the importer negates its p and q)
+    machine_kind = kind === :sm || kind === :eni || kind === :svc || kind === :ei
     rc_target_kV = (machine_kind && ps.isRegulated && ps.vm_pu !== nothing) ? ps.vm_pu * vn : nothing
     push!(
       recs,
@@ -765,7 +792,9 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
         id = claim(key),
         terminalId = claim(cgmesKeyTerminal(key, 1)),
         guId = kind === :sm ? claim(string(key, "|GU")) : nothing,
-        rcId = rc_target_kV === nothing ? nothing : claim(string(key, "|RC")),
+        # an EquivalentInjection regulates through its own attributes and
+        # has no RegulatingControl object
+        rcId = (rc_target_kV === nothing || kind === :ei) ? nothing : claim(string(key, "|RC")),
         busIdx = busIdx,
         vn = vn,
         name = ps.comp.cName,
@@ -783,6 +812,8 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
     )
   end
   _noticeReferencePriorityConflict!(notices, recs, slackset, idx2busName)
+  n_ei = count(r -> r.kind === :ei, recs)
+  n_ei == 0 || push!(notices, "$(n_ei) PowerElectronicsConnection prosumer(s) written as EquivalentInjection with description $(_PEC_EI_DESCRIPTION) (CGMES 2.4.15 has no class for them; a re-import keeps them as converters without the fault current maxIFault and ratedS, so Ik''max in their island is flagged as a lower bound, and does not read their P limits)")
   return recs
 end
 
@@ -1238,12 +1269,18 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
           _optNum(io, "RotatingMachine.ratedU", sm_sc.ratedU_kV)
         end
         println(io, "  </cim:SynchronousMachine>")
-        println(io, "  <cim:GeneratingUnit rdf:ID=\"_$(rec.guId)\">")
+        # the unit keeps the class it was delivered with when that is a wind
+        # or solar unit: the short circuit
+        # treats such a machine as a converter current source, a decision of
+        # the calculation, not of the model
+        gu_class = _exportUnitClass(sm_sc)
+        println(io, "  <cim:$(gu_class) rdf:ID=\"_$(rec.guId)\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))_GU</cim:IdentifiedObject.name>")
         rec.minP === nothing || println(io, "    <cim:GeneratingUnit.minOperatingP>$(fmtVal(rec.minP))</cim:GeneratingUnit.minOperatingP>")
         rec.maxP === nothing || println(io, "    <cim:GeneratingUnit.maxOperatingP>$(fmtVal(rec.maxP))</cim:GeneratingUnit.maxOperatingP>")
         rec.normalPF === nothing || println(io, "    <cim:GeneratingUnit.normalPF>$(fmtVal(rec.normalPF))</cim:GeneratingUnit.normalPF>")
-        println(io, "  </cim:GeneratingUnit>")
+        gu_class == "WindGeneratingUnit" && println(io, "    <cim:WindGeneratingUnit.windGenUnitType rdf:resource=\"$(CIM16_NS)WindGenUnitKind.$(_exportWindGenUnitType(sm_sc))\"/>")
+        println(io, "  </cim:$(gu_class)>")
       elseif rec.kind === :eni
         println(io, "  <cim:ExternalNetworkInjection rdf:ID=\"_$(rec.id)\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))</cim:IdentifiedObject.name>")
@@ -1291,8 +1328,20 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         (rec.minQ !== nothing && rec.minQ != 0.0) && _optNum(io, "StaticVarCompensator.inductiveRating", rec.vn^2 / rec.minQ)
         rec.rcId === nothing || println(io, "    <cim:RegulatingCondEq.RegulatingControl rdf:resource=\"#_$(rec.rcId)\"/>")
         println(io, "  </cim:StaticVarCompensator>")
+      elseif rec.kind === :ei
+        println(io, "  <cim:EquivalentInjection rdf:ID=\"_$(rec.id)\">")
+        println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))</cim:IdentifiedObject.name>")
+        # the marker the importer reads to keep the converter type
+        println(io, "    <cim:IdentifiedObject.description>$(_PEC_EI_DESCRIPTION)</cim:IdentifiedObject.description>")
+        vnKnown && println(io, "    <cim:ConductingEquipment.BaseVoltage rdf:resource=\"#_$(ctx.baseVoltageIds[rec.vn])\"/>")
+        rec.minP === nothing || println(io, "    <cim:EquivalentInjection.minP>$(fmtVal(rec.minP))</cim:EquivalentInjection.minP>")
+        rec.maxP === nothing || println(io, "    <cim:EquivalentInjection.maxP>$(fmtVal(rec.maxP))</cim:EquivalentInjection.maxP>")
+        rec.minQ === nothing || println(io, "    <cim:EquivalentInjection.minQ>$(fmtVal(rec.minQ))</cim:EquivalentInjection.minQ>")
+        rec.maxQ === nothing || println(io, "    <cim:EquivalentInjection.maxQ>$(fmtVal(rec.maxQ))</cim:EquivalentInjection.maxQ>")
+        println(io, "    <cim:EquivalentInjection.regulationCapability>$(rec.rc_target_kV !== nothing)</cim:EquivalentInjection.regulationCapability>")
+        println(io, "  </cim:EquivalentInjection>")
       end
-      if rec.rc_target_kV !== nothing
+      if rec.rcId !== nothing
         # voltage regulation at the unit's own terminal; targetValue lives in SSH
         println(io, "  <cim:RegulatingControl rdf:ID=\"_$(rec.rcId)\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))_RC</cim:IdentifiedObject.name>")
@@ -1485,8 +1534,17 @@ function writeSSHFile(ctx::CGMESContext, path::AbstractString, created::Dates.Da
         println(io, "  <cim:StaticVarCompensator rdf:about=\"#_$(rec.id)\">")
         println(io, "    <cim:StaticVarCompensator.q>$(fmtVal(rec.q_ssh))</cim:StaticVarCompensator.q>")
         println(io, "  </cim:StaticVarCompensator>")
+      elseif rec.kind === :ei
+        # the SSH attributes of a SmallGrid EquivalentInjection: a unit that
+        # does not regulate states false and a target of 0
+        println(io, "  <cim:EquivalentInjection rdf:about=\"#_$(rec.id)\">")
+        println(io, "    <cim:EquivalentInjection.regulationStatus>$(rec.rc_target_kV !== nothing)</cim:EquivalentInjection.regulationStatus>")
+        println(io, "    <cim:EquivalentInjection.regulationTarget>$(fmtVal(something(rec.rc_target_kV, 0.0)))</cim:EquivalentInjection.regulationTarget>")
+        println(io, "    <cim:EquivalentInjection.p>$(fmtVal(rec.p_ssh))</cim:EquivalentInjection.p>")
+        println(io, "    <cim:EquivalentInjection.q>$(fmtVal(rec.q_ssh))</cim:EquivalentInjection.q>")
+        println(io, "  </cim:EquivalentInjection>")
       end
-      if rec.rc_target_kV !== nothing
+      if rec.rcId !== nothing
         println(io, "  <cim:RegulatingControl rdf:about=\"#_$(rec.rcId)\">")
         println(io, "    <cim:RegulatingControl.enabled>true</cim:RegulatingControl.enabled>")
         println(io, "    <cim:RegulatingControl.targetValue>$(fmtVal(rec.rc_target_kV))</cim:RegulatingControl.targetValue>")
@@ -1689,7 +1747,7 @@ function writeSVFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
     # unit of a cluster absorbs the residual against the scheduled values,
     # so per-cluster sums are exact even when the solver moved Q or the
     # slack picked up P. compareWithSV balances units the same way.
-    units = [rec for rec in ctx.prosumerRecs if rec.kind === :sm || rec.kind === :eni]
+    units = [rec for rec in ctx.prosumerRecs if rec.kind === :sm || rec.kind === :eni || rec.kind === :ei]
     if !isempty(units)
       load_sum = zeros(ComplexF64, length(net.nodeVec))
       for rec in ctx.prosumerRecs

@@ -203,13 +203,14 @@ file states.
 Ids are deterministic: the writer walks the components in a fixed type
 order and, inside a type, in lexicographic name order, so the same
 network, or a case rebuilt from its source, gets the same ids. `extra`
-records each element's internal index and `measurements.rows` each row's
-position, because internal order fixes generated ids and summation order.
-The writer emits the SI value that reads back into exactly the per-unit
-value it started from (both sides derive the impedance base from
-`u_rated` and `s_base` with the same formula); `measurements.rows` carries
-the internal sigmas (one PGM sensor sigma cannot express a P and a Q
-sigma) and a value only where the SI value would not read back exactly.
+records each element's internal index, and `measurements.rows` lists the
+measurements in their internal order, because internal order fixes
+generated ids and summation order. The writer emits the SI value that
+reads back into exactly the per-unit value it started from (both sides
+derive the impedance base from `u_rated` and `s_base` with the same
+formula); `measurements.rows` carries the sigma of each measurement (one
+PGM sensor sigma cannot express a P and a Q sigma) and a value only where
+the SI value would not read back exactly.
 Floats use the shortest round-trip representation; the file is
 pretty-printed with one key per line (lists of plain scalars inline), so
 a diff points at the changed field.
@@ -282,7 +283,7 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 
 | Key | Content |
 |---|---|
-| `format_version` | schema version of the block (`1.0`) |
+| `format_version` | schema version of the block (`1.2`) |
 | `meta` | case name, `s_base` in VA, `f_nom` (system frequency in Hz, optional; the writer always states the frequency of the net; on read it sets the frequency of the net and wins over `model.nominal_frequency_hz`, which applies only when `f_nom` is absent, default 50 Hz; a value that is not a positive number is an `ArgumentError` naming `meta.f_nom`; see [System frequency](@ref system_frequency)), source format and reference, producer, and `intended_calculations` as the file's contract |
 | `roles` | what PGM cannot express: `slack.mode` (`single`, `distributed`, `source`) with its nodes or participation factors, auxiliary nodes, isolated nodes |
 | `extra` | per-component annotations keyed by id: `name` (the reference name every other section resolves against), `external_id` (CGMES mRID, MATPOWER index), bus/branch index, node type, ratings |
@@ -297,8 +298,7 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 | `contingencies` | removed in 0.40.0. A file that still carries the block fails on load with a message naming the `scenarios` block and the Web UI scenario editor |
 | `scenarios` | the scenario model: `mode` (`explicit`, `n1_branches`, `n1_generators`, `n1_all`), `exclusions`, `events` (correlated event classes generated next to the list: `double_circuits`, `busbars`, `substations`, `links`, `name_groups`, `pairs`), and the ordered scenario list, each scenario `name`, `weight`, an optional `kind` (written when it is not `explicit`) and its `ops` (`op` = `status`/`set`/`scale`, `target` component class, `id` the SCF component id, plus `value`, `field`, `factor` as the op needs). The N-1 modes and the event classes expand through the same generators `runContingencies!` uses ([N-1 Contingency Analysis](contingency.md)); a scenario of status-0 ops only runs as one outage event |
 | `short_circuit` | IEC 60909 study definition: `case` (`max`/`min`), optional `c_factor`, `sweep` (`all_buses`/`explicit`) and, for an explicit sweep, the `buses` list of node ids |
-| `measurements.rows` | what PGM sensors cannot carry: the Sparlectra row ids and sigmas behind each sensor, their positions in the measurement vector, active flags where they deviate, and a value only where the SI conversion is not bit-reversible |
-| `measurements.shunt_bay_rows` | the bus-referenced shunt-bay rows PGM has no sensor for (`ShuntQ` in MVar, `Imag` in A, `Ia` in degrees): `type`, `node`, `id`, `value`, `sigma`, `position`, and `active` only when false |
+| `measurements.rows` | one row per measured value with the semantics of the [measurement table](state_estimation_measurement_table.md), in the order of the measurement vector; see [Measurements](#Measurements) |
 | `config` | case-specific dotted configuration keys (same allowlist the API and Web UI use); deprecated in favour of the case configuration file |
 | `start_state` | opt-in bus voltages as start values, never as results |
 
@@ -479,15 +479,50 @@ together.
 
 ## Measurements
 
-Measurement rows map onto PGM sensors: a bus `Vm` (plus `Va` if present)
-becomes one `sym_voltage_sensor`, a `Pinj`/`Qinj` pair one
-`sym_power_sensor` with `measured_terminal_type = node`, a `Pflow`/`Qflow`
-pair one branch power sensor, current magnitude/angle one
-`sym_current_sensor`; a missing half of a pair is `null`, and the rows
-behind each sensor are listed in `measurements.rows`. Shunt-bay rows
-(`ShuntQMeas` and the bus-referenced `ImagMeas`/`IaMeas`) have no PGM
-sensor and go to `measurements.shunt_bay_rows`. Provenance, noise,
-file formats and generators:
+The measurements of a case travel twice: as PGM sensors in `data`, in SI,
+for a PGM reader, and as `sparlectra.measurements.rows` with the semantics
+of the [measurement table](state_estimation_measurement_table.md), which
+Sparlectra reads.
+
+PGM sensors: a bus voltage (plus its angle if present) becomes one
+`sym_voltage_sensor`, a bus balance P/Q pair one `sym_power_sensor` with
+`measured_terminal_type = node`, a branch-end P/Q pair one branch power
+sensor, a current magnitude/angle pair one `sym_current_sensor` (magnitude
+and sigma in A); a missing half of a pair is `null`. The shunt bay has no
+PGM sensor.
+
+`measurements.rows` holds one entry per measured value, in the order of
+the measurement vector (the WLS objective sums in that order):
+
+| Key | Content |
+|---|---|
+| `type` | `U`, `P`, `Q`, `Va` at a node; `P`, `Q`, `I`, `Ia` at a terminal |
+| `node` | node id: `U`, `Va`, and `P`/`Q` as the bus balance (injection positive) |
+| `terminal` | `{"branch": id, "side": "from"}` (or `"to"`) for a branch end; `{"shunt_bay": node id}` for the shunt bay of a node: `Q` is the sum over its shunts, `I` and `Ia` the bay current |
+| `sensor` | the PGM sensor that carries the reading; absent for a shunt-bay row |
+| `id` | the Sparlectra measurement id; absent when it equals the default id of its location, which the reader restores: `Vm_bus_<k>`, `Pflow_branch_<k>_from` and so on, where `k` is the bus or branch number inside Sparlectra (the index recorded in `extra`), not the node or branch id of the file |
+| `value` | in kV (`U`), MW, MVAr, A or degrees; written only where the sensor value would not read back bit for bit, and always for a shunt-bay row |
+| `sigma` | in the same unit |
+| `valid` | `false` for an inactive measurement; absent means `true` |
+| `zero_injection` | `true` for a zero-injection row (a `P` or `Q` balance at a node, the source token `zero_injection` of the table); absent means `false`. In 1.2 the id decides nothing; a 1.0 file marks such a row only by the id `ZI_PINJ_bus_<k>` / `ZI_QINJ_bus_<k>` with value 0, and the reader keeps that rule for 1.0 |
+
+Units carry no base, as in the table: only `U` is divided by the rated
+voltage of the node (`u_rated` / 1000) on reading. A `U` value or sigma
+that no 64-bit float divides back to its per-unit value is written with up
+to 18 significant digits. The reader keeps the text of `value` and `sigma`
+in `measurements.rows` only, and divides such a `U` text at 256 bits, as
+the table does; every other number of the file is read as a 64-bit float.
+A row without `value` or `sigma` takes it from its sensor; a sensor no row
+names is read after the rows with the id `Vm_<node id>` (`Pinj_<node id>`,
+`Imag_<branch id>`, ... with the ids of the file). A bus link flow has no row:
+the link is no branch of the model, the export names such rows as
+`not_modelled` in a warning, as the table import does.
+
+Two places where the block differs from the table: it is keyed by the ids
+of the file instead of names or mRIDs, and the shunt bay is keyed by its
+node (the measurement is the sum over the shunts of the bus) and also
+carries a current angle `Ia`, which the table has no place for. Provenance,
+noise, file formats and generators:
 [Measurements](state_estimation_measurements.md).
 
 ## Interoperability
@@ -515,19 +550,22 @@ feeder data, so a short circuit runs on the file as it stands, and
 ([Power-Flow Configuration](powerflow_configuration.md)) moves the
 reference behind $z = U_n^2 / S_k''$ and reproduces what PGM computes; the
 default stays the ideal slack. An export writes `sk`/`rx_ratio` back
-whenever the network carries them.
+whenever the network carries them. Its `sym_current_sensor` rows are read
+in A, as PGM defines them (`i_measured = 50.0` is 50 A); before 0.50.0
+Sparlectra divided them by 1000.
 
 ## Version and compatibility
 
-`sparlectra.format_version` is always written with the current revision,
-and a reader accepts exactly its own. Backward compatibility across
-revisions is not promised: a breaking change is named in the changelog; a
-case file is an exchange and archive format for the version that wrote
-it.
+`sparlectra.format_version` is always written with the current revision.
+A reader accepts its own and the older revisions listed below. Backward
+compatibility across revisions is not promised: a breaking change is named
+in the changelog; a case file is an exchange and archive format for the
+version that wrote it.
 
 | SCF revision | Reader behaviour |
 |---|---|
-| `1.0` | the current revision: accepted, written by every export |
-| `1.1` | the pre-release name of the same structure: read as `1.0` with an info message asking for a re-export |
+| `1.2` | the current revision: accepted, written by every export. Current sensors carry A, `measurements.rows` follows the measurement table |
+| `1.0` | accepted; its `i_measured` and `i_sigma` are 1000 times too large and are divided by 1000 on reading, giving the value that was exported; its `measurements.rows` (one entry per sensor with `sparlectra_ids`, `sigmas`, `positions`) and `measurements.shunt_bay_rows` are read as before |
+| `1.1` | the pre-release name of `1.0`: read as `1.0` with an info message asking for a re-export |
 | any other value | refused by name, stating what it found, what it expected, and that the case has to be re-exported |
 | field absent | refused the same way; a dataset written by power-grid-model has no namespaced block and skips the check |

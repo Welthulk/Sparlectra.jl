@@ -17,10 +17,13 @@
 #          bundles (test/fixtures/powsybl) against the OpenLoadFlow solution
 #          they carry (bus voltages, line flows, generator outputs). Voltage
 #          and flow legs are copies from test_powsybl_importer.jl, the
-#          generator leg is new.
+#          generator leg is new. Since 0.50.0 also the test grids, the CIGRE
+#          HV net and sp_case14 against OpenLoadFlow solutions of their
+#          MATPOWER export (test/fixtures/openloadflow).
 using Sparlectra
 using Test
 using DelimitedFiles
+using SHA
 
 const _REF_POWSYBL = normpath(joinpath(@__DIR__, "..", "fixtures", "powsybl"))
 const _REF_POWSYBL_CASES = ["ieee14", "ieee57", "four_substations", "micro_grid_be", "eurostag_tie_lines"]
@@ -76,6 +79,60 @@ function _ref_olf_config()
 end
 
 _ref_olf_options(case) = case == "micro_grid_be" ? PowsyblAdapterOptions(remote_regulation = :remote) : PowsyblAdapterOptions()
+
+# Sparlectra's own test nets against OpenLoadFlow (0.50.0): the shared test
+# grids (createTest3BusNet, also with its reactive limit of 15 Mvar binding,
+# and createTest5BusNet), the CIGRE HV benchmark (createCIGRE) and the
+# shipped sp_case14. test/fixtures/openloadflow holds per case the MATPOWER
+# model file the net was exported to and the OLF solution of that file; the
+# header of each CSV names the tool, its parameters and the sha256 of the
+# input. The nets are built here as the other tests build them, so a change
+# of a builder or of sp_case14 shows up as a deviation.
+const _REF_OLF_NETS = normpath(joinpath(@__DIR__, "..", "fixtures", "openloadflow"))
+const _REF_OLF_NET_CASES = [
+  (case = "test3bus", build = () -> createTest3BusNet()),
+  (case = "test3bus_qlim15", build = () -> createTest3BusNet(qlim_min = -15.0, qlim_max = 15.0)),
+  (case = "test5bus", build = () -> createTest5BusNet(qlim_min = -200.0, qlim_max = 200.0)),
+  (case = "cigre", build = () -> createCIGRE()),
+  (case = "sp_case14", build = () -> _ref_olf_flat!(Sparlectra.import_case(normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_case14.scf.json")), Sparlectra.SparlectraConfig(Dict())).net)),
+]
+
+# sp_case14 carries its solved state as start state, so Newton would stop
+# after one step; a flat start (setpoints kept on PV and slack buses) makes
+# the solver do the work
+function _ref_olf_flat!(net)
+  for n in net.nodeVec
+    n._nodeType == Sparlectra.PQ && (n._vm_pu = 1.0)
+    n._va_deg = 0.0
+  end
+  return net
+end
+
+# the run configuration of these nets: one slack, no distributed slack, the
+# reactive limits enforced (they bind only in test3bus_qlim15, where OLF
+# runs with its reactive limits on as well), controllers off (sp_case14
+# declares a tap controller; the fixture is the file state, as the demo-case
+# test solves it with runpf!)
+function _ref_olf_net_config()
+  pf = PowerFlowConfig(max_iter = 50, tol = 1e-10)
+  return SparlectraConfig(powerflow = pf, output = OutputConfig(logfile_results = :off, startup_latency_hint = false), control = ControlConfig(enabled = false))
+end
+
+# rows of a fixture CSV as Dicts keyed by column name, header lines skipped
+function _ref_olf_rows(path::AbstractString)
+  data, header = readdlm(path, ',', String; header = true, comments = true, comment_char = '#')
+  cols = strip.(vec(header))
+  return [Dict(String(c) => String(data[i, k]) for (k, c) in enumerate(cols)) for i in axes(data, 1)]
+end
+
+# the input hash the fixture header states, against the shipped input file
+# (line endings normalized, so a CRLF checkout compares equal)
+function _ref_olf_input_matches(case::AbstractString)
+  m = match(r"# input: (\S+) sha256 ([0-9a-f]{64})", read(joinpath(_REF_OLF_NETS, case * "_buses.csv"), String))
+  m === nothing && return false
+  text = replace(read(joinpath(_REF_OLF_NETS, m.captures[1]), String), "\r\n" => "\n")
+  return bytes2hex(SHA.sha256(text)) == m.captures[2]
+end
 
 function run_ref_openloadflow_tests()
   @testset "PowSyBl bundles: power flow against OpenLoadFlow ($(case))" for case in _REF_POWSYBL_CASES
@@ -137,5 +194,40 @@ function run_ref_openloadflow_tests()
     end
     @test checked == length(ln.id)
   end)() end
+
+  # Bands: the models are identical (the export script checks the Y-bus of
+  # the written rows against createYBUS to 1e-12), so the bands are the
+  # existing exact-model bands of ieee14: 1e-6 pu, 1e-4 deg, 1e-3 MW/Mvar.
+  @testset "Sparlectra test nets: power flow against OpenLoadFlow ($(c.case))" for c in _REF_OLF_NET_CASES
+    (function ()
+      @test _ref_olf_input_matches(c.case)
+      net = c.build()
+      res = run_sparlectra(net = net, config = _ref_olf_net_config())
+      @test res.numerical_converged
+      node_of = Dict(n.busIdx => n for n in net.nodeVec)
+      slack = only(n for n in net.nodeVec if n._nodeType == Sparlectra.Slack)
+      rows = Dict(x.bus => x for x in buildACPFlowReport(net).nodes)
+      buses = _ref_olf_rows(joinpath(_REF_OLF_NETS, c.case * "_buses.csv"))
+      @test length(buses) == length(net.nodeVec)
+      for r in buses
+        b = parse(Int, r["bus"])
+        node = node_of[b]
+        @test abs(node._vm_pu - parse(Float64, r["v_pu"])) <= 1e-6
+        @test abs(node._va_deg - slack._va_deg - parse(Float64, r["v_angle_deg"])) <= 1e-4
+        @test abs(rows[b].p_gen_MW - parse(Float64, r["p_gen_mw"])) <= 1e-3
+        @test abs(rows[b].q_gen_MVar - parse(Float64, r["q_gen_mvar"])) <= 1e-3
+      end
+      branches = _ref_olf_rows(joinpath(_REF_OLF_NETS, c.case * "_branches.csv"))
+      @test length(branches) == length(net.branchVec)
+      for r in branches
+        br = net.branchVec[parse(Int, r["row"])]
+        @test (br.fromBus, br.toBus) == (parse(Int, r["from_bus"]), parse(Int, r["to_bus"]))
+        @test abs(br.fBranchFlow.pFlow - parse(Float64, r["p_from_mw"])) <= 1e-3
+        @test abs(br.fBranchFlow.qFlow - parse(Float64, r["q_from_mvar"])) <= 1e-3
+        @test abs(br.tBranchFlow.pFlow - parse(Float64, r["p_to_mw"])) <= 1e-3
+        @test abs(br.tBranchFlow.qFlow - parse(Float64, r["q_to_mvar"])) <= 1e-3
+      end
+    end)()
+  end
   return true
 end

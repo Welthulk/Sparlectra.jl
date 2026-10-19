@@ -94,6 +94,7 @@ mutable struct UpfcFullControl <: AbstractOuterController
   deadband_q_mvar::Float64
   max_outer_iters::Int
   enabled::Bool
+  priority::Int                # rank in the outer loop, 0 acts first (control_priority)
   # runtime state, owned by the control loop
   status::Symbol
   converged::Bool
@@ -206,7 +207,9 @@ function addUpfcFullControl!(
   name::Union{Nothing,String} = nothing,
   max_outer_iters::Int = 40,
   enabled::Bool = true,
+  priority::Int = 0,
 )
+  _check_control_priority(priority, "UpfcControl(full)")
   series_phase in (:free, :quadrature) || error("UpfcControl(full): series_phase must be :free or :quadrature, got $(series_phase).")
   # branch existence and line-kind, mirroring the series controller
   br = getNetBranch(net = net, fromBus = fromBus, toBus = toBus)
@@ -249,7 +252,7 @@ function addUpfcFullControl!(
     cname, fromBus, toBus, br.branchIdx, shunt_bus, ps_idx,
     p_target_mw, q_target_mvar, q_shunt_mvar, v_inj_max_pu, s_rating,
     br.r_pu, br.x_pu, series_phase,
-    deadband_p_mw, deadband_q_mvar, max_outer_iters, enabled,
+    deadband_p_mw, deadband_q_mvar, max_outer_iters, enabled, priority,
     :active, false, false,
     complex(0.0, 0.0), complex(0.0, 0.0), 0.0, 0.0, 0.0,
     -s_rating, s_rating,

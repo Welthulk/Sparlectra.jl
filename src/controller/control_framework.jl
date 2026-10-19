@@ -99,6 +99,30 @@ function control_max_outer_iterations(ctrl::AbstractOuterController)::Int
   return Int(getproperty(ctrl, :max_outer_iters))
 end
 
+"""
+    control_priority(ctrl) -> Int
+
+Rank of a controller in the outer loop: 0 (the default) acts first. A
+controller with a larger number acts in a pass only if no active controller
+with a smaller number moved its actuator in that pass, that is each of them
+is inside its deadband, at its limit (tap at `tap_min`/`tap_max`, bank on
+its outermost block or parked, machine at its Q limit) or blocked
+otherwise. A move along the limit does not count: a controller that was at
+its limit at the end of the previous pass and is at its limit again (a
+STATCOM following `V * S_max`) lets the larger numbers act. Controllers
+with the same number act together, so equal numbers give the loop without
+ranks. Built-in controllers carry the number in their
+`priority` field; a user-defined controller without that field ranks at 0
+unless it adds a method.
+"""
+control_priority(ctrl::AbstractOuterController)::Int = hasproperty(ctrl, :priority) ? Int(getproperty(ctrl, :priority)) : 0
+
+# the check every controller constructor runs on its priority keyword
+function _check_control_priority(priority::Int, who::AbstractString)::Int
+  priority >= 0 || throw(ArgumentError(string(who, ": priority must be 0 or larger (0 acts first), got ", priority)))
+  return priority
+end
+
 # Generic controllable-element record of one controller: what the device is,
 # which actuator it moves, which quantity it steers onto which target, and
 # within which limits — the shared vocabulary over all controller types.
@@ -180,10 +204,12 @@ end
 
 Outer-loop orchestration layer around `runpf!` for controller-based network updates.
 It does not replace `runpf!`; it coordinates built-in or user-defined controllers and
-returns a `ControlRunResult`. A pass in which no controller moves ends the
-loop with status `:blocked` after one closing solve at the final controller
-state, so the net carries its voltages and not those of a probe solve; that
-solve counts in `powerflow_solves` and `total_pf_iterations`.
+returns a `ControlRunResult`. Within a pass the controllers act by rank
+(`control_priority`): a rank waits while a smaller one still moves. A pass
+in which no controller moves ends the loop with status `:blocked` after one
+closing solve at the final controller state, so the net carries its
+voltages and not those of a probe solve; that solve counts in
+`powerflow_solves` and `total_pf_iterations`.
 """
 function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} = collect_outer_controllers(net), pf_config = nothing, control_config::ControlConfig = ControlConfig(), verbose::Int = 0, performance_profile = nothing)
   net.control_result = nothing
@@ -231,6 +257,14 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   # limits. Inner Newton/PF iteration limits stay inside pf_config/runpf!.
   controller_limit = minimum(control_max_outer_iterations(controllers[i]) for i in active_ids)
   max_outer = min(control_config.max_outer_iterations, controller_limit)
+  # one group per priority rank, smallest number first, each group in the
+  # order of `controllers`; with equal priorities (the default) there is a
+  # single group and the pass below is the loop without ranks
+  ranks = sort!(unique(control_priority(controllers[i]) for i in active_ids))
+  rank_groups = [filter(i -> control_priority(controllers[i]) == r, active_ids) for r in ranks]
+  # at-limit flag of every controller at the end of the previous pass, read
+  # by the rank gate below (no controller is at its limit before pass 1)
+  limited_before = falses(length(controllers))
   status = :max_outer_iterations
   trace = NamedTuple[]
   outer_iterations = 0
@@ -246,13 +280,32 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
       break
     end
     moved = false
-    for i in active_ids
-      ctx = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
-      upd = control_propose_update!(controllers[i], net, states[i], ctx)
-      moved = control_apply_update!(controllers[i], net, states[i], upd, ctx) || moved
-      if control_config.trace
-        append!(trace, control_trace_rows(controllers[i], net, states[i], ctx))
+    for group in rank_groups
+      holds = false
+      for i in group
+        ctx = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
+        upd = control_propose_update!(controllers[i], net, states[i], ctx)
+        moved_i = control_apply_update!(controllers[i], net, states[i], upd, ctx)
+        moved = moved_i || moved
+        # A move that only follows the limit does not hold later groups:
+        # the controller stood at its limit at the end of the previous pass
+        # and stands there again (a STATCOM tracking V * S_max as the
+        # terminal voltage moves, a tap settling onto tap_min from a ratio
+        # a rounding error above it). Every other move holds them.
+        holds = holds || (moved_i && !(limited_before[i] && control_is_blocked(controllers[i], states[i])))
+        if control_config.trace
+          append!(trace, control_trace_rows(controllers[i], net, states[i], ctx))
+        end
       end
+      # a group whose move holds lets no later group act until the next
+      # pass; a group in which nothing moved (each member inside its
+      # deadband, at its limit or parked) or that only followed its limits
+      # lets the next one act now. A controller held back proposes nothing
+      # and writes no trace row.
+      holds && break
+    end
+    for i in active_ids
+      limited_before[i] = control_is_blocked(controllers[i], states[i])
     end
     # A pass without a move ends the loop as :blocked. Its proposals may
     # still have solved the net: a tap controller probes one step and

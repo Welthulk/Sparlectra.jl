@@ -70,5 +70,79 @@ function run_install_tests()
             @test !occursin("First start", second_start)
         end
     end)() end
+    @testset "sysimage build environment takes a checkout with another version" begin (function ()
+        # The build environment is shared by all checkouts of a user. It
+        # holds both packages developed from checkout A (0.40.1, application
+        # compat Sparlectra 0.40); the build from checkout B (0.42.0) must
+        # replace both. Developing them one at a time failed with a
+        # ResolverError on the library. The two checkouts are stand-ins with
+        # the real names and UUIDs and only a Project.toml and an empty
+        # module each, so the child resolves offline in a second or two.
+        # The child runs the real develop step of tools/build_sysimage.jl
+        # (dry-run include, then `_develop_checkout`) in a temporary
+        # environment; the shared build environment is never touched.
+        mktempdir() do tmp
+            fake_checkout(dir, version, compat) = begin
+                mkpath(joinpath(dir, "src"))
+                mkpath(joinpath(dir, "app", "src"))
+                write(joinpath(dir, "src", "Sparlectra.jl"), "module Sparlectra end\n")
+                write(joinpath(dir, "app", "src", "SparlectraApp.jl"), "module SparlectraApp end\n")
+                write(joinpath(dir, "Project.toml"), """
+                    name = "Sparlectra"
+                    uuid = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
+                    version = "$(version)"
+                    """)
+                write(joinpath(dir, "app", "Project.toml"), """
+                    name = "SparlectraApp"
+                    uuid = "2e39659a-4f4c-4326-b34e-e3df865cea74"
+                    version = "$(version)"
+
+                    [deps]
+                    Sparlectra = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
+
+                    [sources]
+                    Sparlectra = {path = ".."}
+
+                    [compat]
+                    Sparlectra = "$(compat)"
+                    """)
+                dir
+            end
+            a = fake_checkout(joinpath(tmp, "a"), "0.40.1", "0.40")
+            b = fake_checkout(joinpath(tmp, "b"), "0.42.0", "0.42")
+            envdir = mkpath(joinpath(tmp, "env"))
+            script = joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "build_sysimage.jl")
+            child = """
+                using Pkg
+                sandbox = Module()
+                redirect_stdout(devnull) do
+                    Base.include(sandbox, $(repr(script)))
+                end
+                Pkg.activate($(repr(envdir)); io = devnull)
+                Base.invokelatest(sandbox._develop_checkout, Pkg, $(repr(a)))
+                Base.invokelatest(sandbox._develop_checkout, Pkg, $(repr(b)))
+                for (_, d) in Pkg.dependencies()
+                    println("dep ", d.name, " ", d.version, " ", d.source)
+                end
+                """
+            exe = joinpath(Sys.BINDIR, Base.julia_exename())
+            env = copy(ENV)
+            env["JULIA_PKG_OFFLINE"] = "true"
+            env["JULIA_PKG_PRECOMPILE_AUTO"] = "0"     # never compile the stand-ins into the depot
+            env["JULIA_LOAD_PATH"] = "@:@stdlib"
+            env["SPARLECTRA_SYSIMAGE_DRY_RUN"] = "1"
+            env["XDG_STATE_HOME"] = joinpath(tmp, "state")
+            io = IOBuffer()
+            cmd = Cmd(`$(exe) --startup-file=no -e $(child)`; env = env, dir = tmp)
+            ok = success(pipeline(cmd; stdout = io, stderr = io))
+            text = String(take!(io))
+            ok || println("      develop child failed:\n", text)
+            @test ok
+            for name in ("Sparlectra", "SparlectraApp")
+                src = name == "Sparlectra" ? b : joinpath(b, "app")
+                @test occursin("dep $(name) 0.42.0 $(src)", text)
+            end
+        end
+    end)() end
     end
 end

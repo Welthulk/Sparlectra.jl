@@ -263,6 +263,7 @@ makedocs(
       "DC Power Flow" => "reference_powerflow_dc.md",
       "Short Circuit" => "reference_shortcircuit.md",
       "Format Adapters" => "reference_adapters.md",
+      "CGMES Adapter" => "reference_cgmes.md",
       "State Estimation and Measurements" => "reference_stateestimation.md",
       "Configuration Internals" => "reference_config.md",
       "Controllers" => "reference_controller.md",

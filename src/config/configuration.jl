@@ -692,7 +692,9 @@ Base.@kwdef struct StateEstimationConfig
   measurement_table::Bool = true
   # zero-injection rows (ZI) at passive buses without an injection
   # measurement: :on adds them in every SE path (measurement generator,
-  # measurement CSV, case file, measurement table), :off in none
+  # measurement CSV, case file, measurement table) as weighted rows,
+  # :constraint adds the same rows and solves every ZI row as an equality
+  # constraint (Lagrange), :off adds none
   zero_injection::Symbol = :on
   # measurement sigmas per voltage level in physical units, keyed by the
   # nominal voltage in the file (rows sorted by vn_kv, highest first); empty: every row without its own sigma takes the
@@ -800,6 +802,15 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   as a fixed PQ injection (`p = -activePower`, `q = -reactivePower` from the
   SSH, load sign convention). Off by default: the objects are then left out
   and counted in one import notice.
+- `map_power_electronics::Bool`: map every in-service, connected CGMES 3.0
+  `PowerElectronicsConnection` as an injection (`p = -p`, `q = -q` from the
+  SSH, load sign convention), PV with an enabled voltage
+  `RegulatingControl`, else PQ. Off by default: the objects are then left
+  out and counted in one import notice.
+- `shunt_control::Bool`: attach a switched-bank voltage controller
+  (`ShuntVoltageControl`) to every mapped `LinearShuntCompensator` whose
+  `controlEnabled` and voltage `RegulatingControl` are set and regulate its
+  own bus. Off by default: the banks stay at their SSH sections.
 - `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
   `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal
   voltage. A target outside the band is treated as a placeholder: it is ignored
@@ -831,6 +842,8 @@ Base.@kwdef struct CGMESImportConfig
   machine_control::Bool = false
   ignore_connected::Bool = false
   map_energy_source::Bool = false
+  map_power_electronics::Bool = false
+  shunt_control::Bool = false
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
@@ -860,9 +873,18 @@ short-circuit evaluation (`runShortCircuit!`).
   table for every bus — intended for expert/verification runs where a worked
   example prescribes the factor. A configurable per-voltage-level table is
   not configurable.
+- `converter_current_factor::Float64`: fault current of a converter-connected
+  unit (`PowerElectronicsConnection` without `maxIFault`, synchronous
+  machine on a wind or solar unit), as a multiple of its rated current
+  `ratedS/(sqrt(3)*ratedU)`. `0.0` (default) is off: such a unit feeds
+  nothing and its island is flagged as a lower bound. A positive value
+  makes it a current source of that size, flagged as a substitute; a
+  stated `maxIFault` always wins. The value is a manufacturer figure to be
+  set per case; about 1.0 to 1.5 is the usual range, as orientation only.
 """
 Base.@kwdef struct ShortCircuitConfig
   c_factor::Float64 = 0.0
+  converter_current_factor::Float64 = 0.0
   # all-bus Thevenin sweep strategy: :auto picks the Takahashi selected
   # inverse for islands with at least takahashi_min_buses buses (measured
   # 34x to 264x over per-bus solves, machine-precision identical, automatic
@@ -1246,7 +1268,7 @@ const POWERFLOW_ISLAND_REFERENCE_POLICY_VALUES = (:matpower_like,)
 const RECTANGULAR_PREALLOCATE_WORKSPACE_VALUES = (:off, :on, :auto)
 const STATE_ESTIMATION_METHOD_VALUES = (:wls,)
 const STATE_ESTIMATION_ROBUST_MODE_VALUES = (:off, :staged, :replacement)
-const STATE_ESTIMATION_ZERO_INJECTION_VALUES = (:on, :off)
+const STATE_ESTIMATION_ZERO_INJECTION_VALUES = (:on, :off, :constraint)
 const STATE_ESTIMATION_PMU_REF_OFFSET_VALUES = (:auto, :off)
 const STATE_ESTIMATION_LINEAR_SOLVER_VALUES = (:umfpack, :klu)
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
@@ -2244,6 +2266,8 @@ function CGMESImportConfig(raw::AbstractDict)
     machine_control = _as_bool_cfg(_raw_get(merged, "machine_control", false)),
     ignore_connected = _as_bool_cfg(_raw_get(merged, "ignore_connected", false)),
     map_energy_source = _as_bool_cfg(_raw_get(merged, "map_energy_source", false)),
+    map_power_electronics = _as_bool_cfg(_raw_get(merged, "map_power_electronics", false)),
+    shunt_control = _as_bool_cfg(_raw_get(merged, "shunt_control", false)),
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
@@ -2282,8 +2306,13 @@ function ShortCircuitConfig(raw::AbstractDict)
   # 0.0 is the "use the IEC 60909-0 Table 1 defaults" sentinel; a real
   # override must stay within the physically sensible band around 1.0.
   (c == 0.0 || (isfinite(c) && 0.5 <= c <= 1.2)) || throw(ArgumentError("short_circuit.c_factor must be 0 (automatic IEC 60909-0 Table 1) or within [0.5, 1.2]; got $(c)."))
+  # 0.0 is "off" (no converter current without maxIFault); anything else
+  # is a multiple of the rated current and must be a finite positive number
+  f = _as_float_cfg(_raw_get(merged, "converter_current_factor", 0.0))
+  (f == 0.0 || (isfinite(f) && f > 0.0)) || throw(ArgumentError("short_circuit.converter_current_factor must be 0 (off) or a positive multiple of the converter rated current; got $(f)."))
   return ShortCircuitConfig(
     c_factor = c,
+    converter_current_factor = f,
     sweep_method = _validate_allowed_symbol("short_circuit.sweep_method", _as_symbol_cfg(_raw_get(merged, "sweep_method", :auto)), SHORT_CIRCUIT_SWEEP_METHOD_VALUES),
     takahashi_min_buses = Int(_validate_positive("short_circuit.takahashi_min_buses", _as_int_cfg(_raw_get(merged, "takahashi_min_buses", 50)))),
   )

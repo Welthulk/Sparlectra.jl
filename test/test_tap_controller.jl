@@ -578,8 +578,7 @@ function run_tap_controller_tests()
 
 
   @testset "Tap controller reporting rows and classic section" begin (function ()
-    net, tbr = _build_net()
-    addPowerTransformerControl!(net;
+    add_ctrl! = (net, tbr) -> addPowerTransformerControl!(net;
       trafo = string(tbr.branchIdx),
       mode = :voltage_and_branch_active_power,
       target_bus = "Load",
@@ -591,6 +590,19 @@ function run_tap_controller_tests()
       is_discrete = true,
       max_outer_iters = 4,
     )
+    # a bare runpf! leaves the branch flows unset (calcNetLosses! writes
+    # them): the report builds and the row says missing, then the value
+    # after calcNetLosses!; it threw a FieldError on the unset flow before
+    bare, bare_tbr = _build_net()
+    add_ctrl!(bare, bare_tbr)
+    ite, erg = runpf!(bare, 30, 1e-8, 0)
+    @test erg == 0
+    @test ismissing(only(buildACPFlowReport(bare; ite = ite).transformer_controls).achieved_p_mw)
+    calcNetLosses!(bare)
+    @test only(buildACPFlowReport(bare; ite = ite).transformer_controls).achieved_p_mw == get_branch_p_from_to_mw(bare, "Slack", "Mid")
+
+    net, tbr = _build_net()
+    add_ctrl!(net, tbr)
     result = run_sparlectra(net = net, config = _runner_cfg())
     erg = result.numerical_converged ? 0 : 1
     @test erg == 0
@@ -796,6 +808,197 @@ function run_tap_controller_tests()
       case = (entry = c[1], control = c[2], dc_seed = c[3])
       @test (; case..., fanout = c[6]) == (; case..., fanout = c[4])
       @test (; case..., status = c[5]) == (; case..., status = c[2] == "true" ? "converged" : "disabled")
+    end
+  end)() end
+
+  @testset "Controller priority: a bank waits for the tap of its bus" begin (function ()
+    # the load sags the bus so far that the tap (rank 0, the default) runs
+    # to tap_min = 0.95; the bank on the same bus gets the rank under test
+    build = function (bank_priority::Int; tap_priority::Int = 0, tap_min = nothing)
+      net = Net(name = "prio_ctrl", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = net, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = net, busName = "Load", type = "LOAD", p = 90.0, q = 35.0)
+      addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.00, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      tbr = getNetBranch(net = net, fromBus = "Slack", toBus = "Mid")
+      tbr.has_ratio_tap = true
+      (tbr.tap_min, tbr.tap_max, tbr.tap_step) = (0.95, 1.05, 0.0125)
+      addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, deadband_vm_pu = 0.005, priority = tap_priority, tap_min = tap_min)
+      add_bank = () -> addShuntVoltageControl!(net; bus = "Load", target_vm_pu = 1.0, bs_min_mvar = 0.0, bs_max_mvar = 30.0, step_mvar = 5.0, deadband_vm_pu = 0.02, priority = bank_priority)
+      # the cross-type warning (two controllers on one voltage) fires at
+      # equal rank; at different ranks with the same target the bank is the
+      # intended cascade behind the tap
+      bank = bank_priority == tap_priority ? (@test_logs (:warn, r"already regulates the voltage of bus Load \(target 1.0 pu, priority \d+\)") add_bank()) : (@test_logs add_bank())
+      return net, tbr, bank
+    end
+
+    # one pass: the tap is outside its band and moves, the bank waits; at
+    # equal rank both move in the same pass, as without ranks
+    for (prio, bank_after_one_pass) in ((1, 0.0), (0, 5.0))
+      net, tbr, bank = build(prio)
+      run_control!(net; control_config = ControlConfig(max_outer_iterations = 1))
+      @test tbr.tap_ratio ≈ 0.9875
+      @test bank.bs_mvar == bank_after_one_pass
+    end
+
+    # full run: the bank acts first in a pass in which the tap stands at
+    # tap_min, and then lifts the voltage the tap cannot reach
+    net, tbr, bank = build(1)
+    res = run_control!(net)
+    @test tbr.tap_ratio == tbr.tap_min
+    @test only(Sparlectra._tap_controllers(net)).at_limit
+    @test bank.bs_mvar > 0.0
+    first_bank_pass = minimum(r.outer_iteration for r in res.trace if r.controller_type == "ShuntVoltageControl")
+    @test first_bank_pass > 1
+    @test only(r for r in res.trace if r.controller_type == "PowerTransformerControl" && r.outer_iteration == first_bank_pass).tap_ratio == tbr.tap_min
+    # four whole steps leave the ratio a rounding error above tap_min (at
+    # its limit already); the snap onto tap_min in the next pass is a move
+    # along the limit and lets the bank act in that pass
+    first_tap_at_limit = minimum(r.outer_iteration for r in res.trace if r.controller_type == "PowerTransformerControl" && r.at_limit)
+    @test first_bank_pass == first_tap_at_limit + 1
+    # the bank ends inside its band; read from the trace, which holds the
+    # voltage of the last loop solve
+    last_bank = filter(r -> r.controller_type == "ShuntVoltageControl", res.trace)[end]
+    @test last_bank.converged && last_bank.achieved_vm_pu >= 0.98
+
+    # equal ranks act together whatever the number: both at 3 give the run
+    # of both at 0, where the bank switches before the tap reaches its limit
+    finals = map((0, 3)) do r
+      n, b, k = build(r; tap_priority = r)
+      run_control!(n)
+      (b.tap_ratio, k.bs_mvar, get_bus_vm_pu(n, "Load"))
+    end
+    @test finals[1] == finals[2]
+    @test finals[1][1] > 0.95
+
+    # with different targets the two walk against each other at any ranks,
+    # so the warning stays for a bank at rank 1 with its own target
+    wnet, _, _ = build(0)
+    clearShuntControllers!(wnet)
+    @test_logs (:warn, r"already regulates the voltage of bus Load") addShuntVoltageControl!(wnet; bus = "Load", target_vm_pu = 1.03, bs_min_mvar = 0.0, bs_max_mvar = 30.0, step_mvar = 5.0, deadband_vm_pu = 0.005, priority = 1)
+    # a target on the edge of the tap band agrees: a bank at 1.01 pu (band
+    # 0.02) at rank 1 behind the tap at 1.0 +/- 0.01 pu gives no warning,
+    # although 1.01 - 1.0 lies a little above 0.01 in floats
+    enet, _, _ = build(0)
+    clearShuntControllers!(enet)
+    only(Sparlectra._tap_controllers(enet)).deadband_vm_pu = 0.01
+    @test_logs addShuntVoltageControl!(enet; bus = "Load", target_vm_pu = 1.01, bs_min_mvar = 0.0, bs_max_mvar = 30.0, step_mvar = 5.0, deadband_vm_pu = 0.02, priority = 1)
+
+    # config surface: every type takes the key; a negative rank fails at
+    # apply time naming the entry
+    cnet, _, _ = build(0)
+    clearShuntControllers!(cnet)
+    @test all(spec -> "priority" in spec.optional, values(Sparlectra._CONTROLLER_TYPE_SPECS))
+    bank_entry = Dict{String,Any}("type" => "shunt_voltage", "name" => "bank", "bus" => "Mid", "target_vm_pu" => 1.0, "bs_min_mvar" => 0.0, "bs_max_mvar" => 30.0, "step_mvar" => 5.0, "priority" => 2)
+    @test applyConfiguredControllers!(cnet, ControlConfig(enabled = true, controllers = Any[bank_entry])) == 1
+    @test Sparlectra.control_priority(only(Sparlectra._shunt_controllers(cnet))) == 2
+    clearShuntControllers!(cnet)
+    bank_entry["priority"] = -1
+    err = try
+      applyConfiguredControllers!(cnet, ControlConfig(enabled = true, controllers = Any[bank_entry]))
+      nothing
+    catch e
+      e
+    end
+    @test err isa ArgumentError && occursin("control.controllers.bank", err.msg) && occursin("priority must be 0 or larger", err.msg)
+
+    # a control range on the tap inside its physical range 0.95 .. 1.05:
+    # the tap stops at 0.975, stands at its limit there, and the bank
+    # switches in the pass after; the ratio never leaves the range
+    rnet, rtbr, rbank = build(1; tap_min = 0.975)
+    rres = run_control!(rnet)
+    rtaps = filter(r -> r.controller_type == "PowerTransformerControl", rres.trace)
+    @test rtbr.tap_ratio == 0.975 && only(Sparlectra._tap_controllers(rnet)).at_limit
+    @test all(r -> r.tap_ratio >= 0.975 - 1e-12, rtaps)
+    @test rbank.bs_mvar > 0.0
+    @test minimum(r.outer_iteration for r in rres.trace if r.controller_type == "ShuntVoltageControl") == minimum(r.outer_iteration for r in rtaps if r.at_limit) + 1
+    @test (only(buildTapControllerReportRows(rnet)).ratio_tap_min, only(buildTapControllerReportRows(rnet)).ratio_tap_max) == (0.975, 1.05)
+    # the same range on a tabular changer: the tap steps over its table
+    # points, stops on 0.98 (the next point 0.9625 lies outside the range),
+    # stands at its limit there, and the bank switches in the pass after
+    pnet, ptbr, pbank = build(1; tap_min = 0.975)
+    ptbr.tap_ratio_points = [0.95, 0.9625, 0.98, 0.99, 1.0, 1.0125, 1.025, 1.05]
+    pres = run_control!(pnet)
+    ptaps = filter(r -> r.controller_type == "PowerTransformerControl", pres.trace)
+    @test ptbr.tap_ratio == 0.98 && only(Sparlectra._tap_controllers(pnet)).at_limit
+    @test all(r -> r.tap_ratio in ptbr.tap_ratio_points && r.tap_ratio >= 0.975, ptaps)
+    @test pbank.bs_mvar > 0.0
+    @test minimum(r.outer_iteration for r in pres.trace if r.controller_type == "ShuntVoltageControl") == minimum(r.outer_iteration for r in ptaps if r.at_limit) + 1
+
+    # config surface: an entry for a transformer that already carries a tap
+    # controller adds nothing but sets that controller's range, a side the
+    # entry leaves out keeps its value; a range outside the physical one or
+    # an empty range fails naming the entry, on both paths
+    apply_tap = (n, extra) -> applyConfiguredControllers!(n, ControlConfig(enabled = true, controllers = Any[merge(Dict{String,Any}("type" => "power_transformer", "name" => "tap", "trafo" => string(getNetBranch(net = n, fromBus = "Slack", toBus = "Mid").branchIdx), "mode" => "voltage"), extra)]))
+    apply_err = (n, extra) -> try
+      apply_tap(n, extra)
+      nothing
+    catch e
+      e
+    end
+    tnet, _, _ = build(1)
+    tctrl = only(Sparlectra._tap_controllers(tnet))
+    @test apply_tap(tnet, Dict{String,Any}("tap_min" => 0.975)) == 0
+    @test (tctrl.tap_min, tctrl.tap_max) == (0.975, nothing)
+    @test apply_tap(tnet, Dict{String,Any}("tap_max" => 1.0)) == 0
+    @test (tctrl.tap_min, tctrl.tap_max) == (0.975, 1.0)
+    for (extra, text) in ((Dict{String,Any}("tap_min" => 0.9), "lies outside the physical tap range 0.95 .. 1.05"), (Dict{String,Any}("tap_min" => 1.0, "tap_max" => 0.99), "must be below tap_max"))
+      e = apply_err(tnet, extra)
+      @test e isa ArgumentError && occursin("control.controllers.tap", e.msg) && occursin(text, e.msg)
+    end
+    Sparlectra.clearTapControllers!(tnet)
+    e = apply_err(tnet, Dict{String,Any}("target_bus" => "Load", "target_vm_pu" => 1.0, "tap_max" => 1.2))
+    @test e isa ArgumentError && occursin("control.controllers.tap", e.msg) && occursin("tap_max = 1.2 lies outside", e.msg)
+    @test apply_tap(tnet, Dict{String,Any}("target_bus" => "Load", "target_vm_pu" => 1.0, "tap_min" => 0.975)) == 1
+    @test only(Sparlectra._tap_controllers(tnet)).tap_min == 0.975
+
+    # a start ratio of 1.0 outside the control range (tap_min above it)
+    # goes onto the nearer end of the range in the first pass, whatever the
+    # voltage error: in band, and with the voltage too low, which alone asks
+    # for a lower ratio. Plain grid (tap_min 1.0125 is that end), a
+    # modelled transformer (1.5 kV steps on 110 kV: tap_min 1.02 lies
+    # between step 1 at 1.0136 and step 2 at 1.0273, the first inside) and
+    # a tabular changer (tap_min 1.02 between the points 1.0125 and 1.03,
+    # the tap goes onto 1.03 and stays on its table). The move logs one
+    # warning with the transformer, its start ratio and step, the limit and
+    # the ratio it goes to.
+    start_net_grid = function (modelled::Bool)
+      net = Net(name = "range_start", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = net, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = net, busName = "Load", type = "LOAD", p = 70.0, q = 20.0)
+      taps = modelled ? PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -8, highStep = 8, neutralStep = 0, voltageIncrement_kV = 1.5) : nothing
+      addPIModelTrafo!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.00, ratio = 1.0, shift_deg = 0.0, status = 1, taps = taps)
+      addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      sbr = getNetBranch(net = net, fromBus = "Slack", toBus = "Mid")
+      modelled || ((sbr.has_ratio_tap, sbr.tap_min, sbr.tap_max, sbr.tap_step) = (true, 0.95, 1.05, 0.0125))
+      return net, sbr
+    end
+    start_net = function (kind::Symbol)
+      net, sbr = start_net_grid(kind === :modelled)
+      kind === :tabular && (sbr.tap_ratio_points = [0.95, 0.975, 1.0, 1.0125, 1.03, 1.05])
+      return net, sbr
+    end
+    v_start = let n = first(start_net(:plain))
+      runpf!(n, 30, 1e-10, 0)
+      get_bus_vm_pu(n, "Load")
+    end
+    for (kind, lo, ratio_in) in ((:plain, 1.0125, 1.0125), (:modelled, 1.02, 1.0 + 3.0 / 110.0), (:tabular, 1.02, 1.03)), dv in (0.0, 0.03)
+      snet, sbr = start_net(kind)
+      addPowerTransformerControl!(snet; trafo = string(sbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = v_start + dv, deadband_vm_pu = 0.005, tap_min = lo)
+      start_label, end_label = Dict(:plain => ("tap position \\+0", "tap position \\+1"), :modelled => ("model step 0", "model step 2"), :tabular => ("table point 3 of 6", "table point 5 of 6"))[kind]
+      start_warning = Regex(string("transformer ", sbr.comp.cName, " starts at ratio 1\\.00000 \\(", start_label,
+        "\\) below its control range \\(tap_min = ", replace(string(lo), "." => "\\."), "\\) and goes to ", replace(@sprintf("%.5f", ratio_in), "." => "\\."),
+        " \\(", end_label, "\\) in the first pass"))
+      sres = @test_logs (:warn, start_warning) run_control!(snet)
+      @test sbr.tap_ratio ≈ ratio_in atol = 1e-12
+      @test first(r.tap_ratio for r in sres.trace if r.controller_type == "PowerTransformerControl") ≈ ratio_in atol = 1e-12
+      @test sres.status === :blocked && only(Sparlectra._tap_controllers(snet)).at_limit
     end
   end)() end
 

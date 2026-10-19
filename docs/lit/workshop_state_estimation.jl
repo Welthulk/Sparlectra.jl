@@ -669,11 +669,13 @@ println("with P/Q injection at B7: quality = ", grepaired.quality, " (rank ", gr
 # exactly zero, and that knowledge is itself a measurement pair
 # $P = 0,\ Q = 0$, free of charge and free of noise. Sparlectra models it
 # as PSEUDO-measurements with a very small sigma
-# (`addZeroInjectionMeasurements!`), not as hard constraints. The
-# trade-off is honest: the smaller the sigma, the closer to a true
-# constraint, but the weight $1/\sigma^2$ explodes and degrades the
-# conditioning of $G$. The ratio between a ZIB row at $\sigma = 10^{-6}$
-# and a normal injection row at $\sigma = 1$ is
+# (`addZeroInjectionMeasurements!`), not as hard constraints. With
+# `state_estimation.zero_injection = constraint` the same rows become hard
+# equality constraints instead. The trade-off of the default is honest:
+# the smaller the sigma, the closer to a true constraint, but the weight
+# $1/\sigma^2$ explodes and degrades the conditioning of $G$. The ratio
+# between a ZIB row at $\sigma = 10^{-6}$ and a normal injection row at
+# $\sigma = 1$ is
 #
 # $$\frac{1/(10^{-6})^2}{1/1^2} = 10^{12}$$
 #

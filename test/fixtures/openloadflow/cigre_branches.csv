@@ -1,0 +1,25 @@
+# OpenLoadFlow reference solution of cigre.m
+# tool: pypowsybl 1.16.1 (OpenLoadFlow), written 2026-10-19T04:12:44Z
+# input: cigre.m sha256 73861b178aeea8e3b402458adcd55d993c819926a28b3ec210308c21deac6b0f
+# network: IIDM built row by row from the MATPOWER file: lines with b/2 at each end; transformers with rated_u1 = baseKV1 * ratio,
+#   rated_u2 = baseKV2 and their g + jb (g from mpc.sparlectra.transformer_losses) as shunts (g + jb)/2/ratio^2 at the from bus and (g + jb)/2 at the to bus;
+#   branch flows of a transformer include these shunts; slack generation = slack bus mismatch (no distributed slack)
+# parameters: distributed_slack=false, use_reactive_limits=false, voltage_init_mode=UNIFORM_VALUES, transformer/shunt/phase-shifter control off, slack bus forced to VL2
+# provider: generatorsWithZeroMwTargetAreNotStarted=false, maxNewtonRaphsonIterations=50, maxOuterLoopIterations=100, maxPlausibleTargetVoltage=1.5, minPlausibleTargetVoltage=0.5, newtonRaphsonConvEpsPerEq=1e-12, plausibleActivePowerLimit=100000, reactiveRangeCheckMode=TARGET_P, slackBusPMaxMismatch=1e-6, slackBusSelectionMode=NAME, slackBusesIds=VL2
+# result: status ComponentStatus.CONVERGED, 4 iterations, slack bus mismatch 206.60520292535858 MW written as slack generation
+row,from_bus,to_bus,p_from_mw,q_from_mvar,p_to_mw,q_to_mvar
+1,1,4,-45.95420862150555,54.705100616341,46.3119217377093,-67.31912832592882
+2,1,6,171.69694662687755,3.352965483863937,-169.8951650403939,-36.837632900770636
+3,4,9,168.6880782622908,-107.12157180942354,-166.46560827828463,76.10227266152299
+4,11,10,100.27233731797797,-5.445364036511926,-99.67571011872143,-6.026607607855169
+5,11,10,100.27233731797804,-20.645728658396603,-99.67571011872151,-21.043007876668202
+6,10,9,-86.02107279756416,-24.662978249157874,86.46560827828466,-17.967646150938307
+7,10,6,-34.627506964992975,25.75482624746716,34.839440219556664,-68.82101515056532
+8,6,7,-299.94427517914824,-0.5747631722257307,299.9999999999827,0.9129471398200152
+9,3,12,80.73581238946707,-190.05622188073542,-80.54467463595597,-165.69182490561965
+10,3,1,-80.73581238946693,190.05622188073716,80.86246491998654,-184.5444344583546
+11,12,11,80.54467463595596,165.69182490561892,-80.54467463595596,-161.833321954054
+12,1,2,-206.60520292535858,126.48636835814841,206.60520292535858,-119.5057358746355
+13,4,5,-499.9999999999999,-25.559299864648118,500.0,56.58602927570837
+14,11,13,-200.00000000000006,157.92441464896547,200.00000000000006,-150.2563896312875
+15,7,8,-299.99999999999994,-0.9129471398754726,299.99999999999994,23.100471185437726

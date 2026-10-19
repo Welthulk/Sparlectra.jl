@@ -89,8 +89,9 @@ controller parks on the reached step (`status = :parked`, the last step
 before crossing, so under-compensation rather than overvoltage) and
 releases itself when another controller moves the operating point enough
 for a block to help. At the outermost block the constant-B limit applies:
-delivered Q follows $V^2$ with the last block connected. Coordination of a
-bank with an OLTC on the same bus is not implemented.
+delivered Q follows $V^2$ with the last block connected. A bank behind the
+OLTC of its bus switches only when the tap stands in its band or at a tap
+limit, see [Controller priority](@ref controller_priority_ranks).
 
 ## Series side: fixed window versus voltage-bounded window
 

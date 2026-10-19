@@ -47,7 +47,9 @@ three depends on the system frequency.
 fault through its subtransient reactance (`x''_d`), a network feeder
 through an equivalent impedance from its declared short-circuit power and
 R/X ratio; asynchronous motors contribute briefly, mostly to the peak
-current. Neglecting motors underestimates the maximum current, the
+current. A unit behind a full-size converter (wind, solar, battery) feeds a
+current its control limits; IEC 60909-0:2016 models it as a current source.
+Neglecting motors or converters underestimates the maximum current, the
 non-conservative direction, so an implementation must say when it does it.
 
 **Unbalanced faults.** Single line-to-earth (the most common real fault),
@@ -126,7 +128,7 @@ sweeps (`runtime.parallel.*`) compose with the pass.
 | Use | Where |
 |---|---|
 | Call | [`runShortCircuit!`](@ref) (`case = :max` or `:min`, `buses = :all` or a list), `printShortCircuitResult`; coverage: `shortCircuitCoverage`, `printShortCircuitCoverage` |
-| Config key | `short_circuit.c_factor` (or the `c_factor` keyword): scalar expert override of the voltage factor for verification runs; `short_circuit.sweep_method` (`:auto`, `:takahashi`, `:solves`), `short_circuit.takahashi_min_buses` (default 50) |
+| Config key | `short_circuit.c_factor` (or the `c_factor` keyword): scalar expert override of the voltage factor for verification runs; `short_circuit.sweep_method` (`:auto`, `:takahashi`, `:solves`), `short_circuit.takahashi_min_buses` (default 50); `short_circuit.converter_current_factor` (default 0, off): converter current without `maxIFault` as a multiple of the rated current |
 | Result field | per fault bus `Ik''` (kA), `Sk''` (MVA), `κ`, `i_p`, `status` (`:no_source` with `NaN` currents), `contains_defaulted_data` plus a reason list, `lower_bound`; per run `status` and `status_reason` |
 | Artifact | `short_circuit_max.csv`, `short_circuit_min.csv` (one row per bus; `flagged`, `reasons` and `lower_bound` carry the flags); coverage view in `cgmes.log` |
 | Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; which cases offer it: [Web UI](webui.md) |
@@ -146,6 +148,7 @@ disconnected, out of service) feeds no fault current:
 | `PowerTransformerEnd` | `r0`, `x0`, `grounded`, `rground`, `xground` | zero-sequence transformer model and star-point treatment |
 | `EquivalentInjection` | `r`, `x`, `r0`, `x0`, `r2`, `x2` | boundary equivalents in all three sequence networks |
 | `AsynchronousMachine` | `iaIrRatio`, `rxLockedRotorRatio`, `efficiency`, `ratedMechanicalPower`, `polePairNumber`, `ratedS`, `ratedU`, `ratedPowerFactor` | motor contribution to the maximum current (locked-rotor impedance) |
+| `PowerElectronicsConnection` (CGMES 3.0, mapped ones only) | `maxIFault` (CIM17, per unit of the rated current; in no CGMES 3.0 profile, read where a delivery carries it), `ratedS`, `ratedU` | converter current source in the maximum current |
 
 `shortCircuitCoverage(result.shortcircuit)` reports the record count per
 class and the fill rate per attribute; `printShortCircuitCoverage` renders
@@ -164,7 +167,7 @@ printShortCircuitResult(sc)
 Per fault bus: `Ik''` (kA), `Sk''` (MVA), and `κ`/`i_p` from the R/X ratio
 of $Z_k$ at the fault location (IEC 60909-0 method b: the reported value is
 $\kappa = \min\bigl(1.15\,(1.02 + 0.98\, e^{-3R/X}),\ \kappa_{\max}\bigr)$
-with $\kappa_{\max} = 1.8$ up to and including 1 kV and $2.0$ above). Four
+with $\kappa_{\max} = 1.8$ up to and including 1 kV and $2.0$ above). Five
 source types feed the fault:
 
 - synchronous machines: `x''_d` on machine base, converted to network
@@ -176,7 +179,13 @@ source types feed the fault:
 - asynchronous motors: locked-rotor impedance
   `Z_M = (1/(I_LR/I_rM)) · U_rM²/S_rM` per §6.7, with `S_rM` from the rated
   apparent power or from mechanical power, efficiency and power factor;
-  motors enter only the maximum case.
+  motors enter only the maximum case;
+- converter-connected units (CGMES 3.0 `PowerElectronicsConnection`: wind,
+  solar and battery parks, mapped with `cgmes_import.map_power_electronics`):
+  current sources (IEC 60909-0:2016 clause 6.9), maximum case only;
+- synchronous machines on a wind or solar unit (CGMES `SynchronousMachine`
+  on a `WindGeneratingUnit` or `SolarGeneratingUnit`, IIDM generator with
+  `energySource` `WIND` or `SOLAR`): the same current sources, see below.
 
 A branch built from a CGMES `EquivalentBranch` enters with its series
 impedance as delivered, also with a negative `r`: a network equivalent is no
@@ -184,6 +193,74 @@ equipment. A leg of a three-winding transformer in its star equivalent does
 the same, since only the sum of two legs is physical. The report names the
 number of such branches with negative `r` in the islands of the fault buses,
 one line for the equivalent branches and one for the three-winding legs.
+
+A converter feeds $I_{sk} = \mathrm{maxIFault} \cdot S_r / (\sqrt{3}\, U_r)$
+from its `ratedS` and `ratedU`. Its share is superposed on the equivalent
+voltage source. With $Z$ the impedance matrix of the island in which the
+voltage sources are short-circuited (the matrix of the first term) and $j$
+over the converter buses, the current at fault bus $i$ is
+
+```math
+I_k'' = \frac{c \, U_n}{\sqrt{3}\,\lvert Z_{ii} \rvert}
+      + \frac{1}{\lvert Z_{ii} \rvert} \sum_j \lvert Z_{ij} \rvert \, I_{sk,j}
+```
+
+The magnitudes are added, which bounds the phasor sum from above for any
+angle of the converter currents. `κ` applies to the first term only,
+$i_p = \kappa \sqrt{2}\, I''_{vs} + \sqrt{2}\, I''_{conv}$; the reported
+`zk_ohm`, R/X and `κ` are those of $Z_{ii}$.
+
+An island fed by converters alone has no voltage source and no $Z_{ii}$.
+At a bolted fault IEC 60909 neglects loads and shunt branches, so the whole
+current of every converter of the island flows into the fault. Every bus
+of such an island reports `status = :ok` with the arithmetic sum
+$I_k'' = \sum_j I_{sk,j}$ over the converters of the island, referred to
+the voltage of the fault bus, and $i_p = \sqrt{2}\, I_k''$ without `κ`;
+`zk_ohm`, R/X and `κ` are `NaN`. The sum assumes all currents in phase and
+is therefore an upper bound: the row is flagged with the reason
+`converter-only island, arithmetic sum, no voltage source`, but not marked
+as a lower bound (a skipped unit in the island still marks it). With no
+converter feeding (factor off, no `maxIFault`) the island stays
+`:no_source`.
+
+`maxIFault` comes from CIM17. No CGMES 3.0 profile (EQ, SC, SSH, DY, OP)
+defines it, so a conforming delivery has none and its converters feed
+nothing and flag their island (next paragraph). The current source applies
+where a delivery carries the attribute beyond the profile, or where the
+source data is built in code.
+
+`short_circuit.converter_current_factor` (default `0.0`, off) fills the
+gap: a converter without `maxIFault` then feeds that multiple of its rated
+current, $I_{sk} = k \cdot S_r / (\sqrt{3}\, U_r)$, and the rows of its
+island carry the substitute as a reason instead of the lower-bound flag. A
+stated `maxIFault` always wins over the factor; a stated value that is not
+positive feeds nothing and flags the island with that value. The factor
+is a case key: the configuration file, the case configuration file and an
+API override can set it. The keyword of [`runShortCircuit!`](@ref) is
+`converter_current_factor`.
+
+The fault current of a converter is a manufacturer figure, not a standard
+value, so the factor has no numeric default and has to be set for the
+case. As orientation, converters typically feed about 1.0 to 1.5 times
+their rated current. Left off, every converter unit feeds nothing and its
+island is reported as a lower bound.
+
+A synchronous machine on a wind or solar unit is a converter unit as well:
+a CGMES `SynchronousMachine` whose `GeneratingUnit` is a
+`WindGeneratingUnit` or `SolarGeneratingUnit`, an IIDM generator with
+`energySource` `WIND` or `SOLAR`. It takes the converter path, not the
+machine path: $I_{sk} = k \cdot S_r / (\sqrt{3}\, U_r)$ with $k$ =
+`short_circuit.converter_current_factor`, $S_r$ from `ratedS`, else from
+the maximum active power of the unit (CGMES
+`GeneratingUnit.maxOperatingP`, IIDM `maxP`, taken at power factor 1).
+A rated power of 9999 MVA and above and a maximum of 9999 MW and above are
+placeholders, not sizes. With the factor off or without a size the machine
+feeds nothing and flags its island as a lower bound, like a converter
+without `maxIFault` or `ratedS`. Its record carries the unit class in the
+field `converter_unit`; an SCF file keeps the field in its `sc_source` row,
+so the rule holds after an SCF round trip. The CGMES export writes the
+unit with its wind or solar class, so the rule also holds after a CGMES
+round trip ([CGMES Export](cgmes_export.md)).
 
 Voltage factors follow IEC 60909-0 Table 1 by voltage level (`c_max`
 1.05/1.10, `c_min` 0.95/1.00).
@@ -212,8 +289,16 @@ its island flagged: the maximum current is then a lower bound, the
 non-conservative direction. Every row of such an island carries
 `lower_bound = true` (CSV column `lower_bound`, count
 `sc_lower_bound_rows` in the run metadata); a row on a default alone is
-flagged but has `lower_bound = false`. Buses in islands without any source report
-`status = :no_source` with `NaN` currents. A machine without data counts
+flagged but has `lower_bound = false`. A converter without `maxIFault`
+(with `short_circuit.converter_current_factor` off) or without `ratedS`
+(and a converter-connected unit of a network whose source data has no
+record for it, and a machine on a wind or solar unit with the factor off
+or without a size) feeds nothing and flags its island the same way in the
+maximum case; a missing `ratedU` is replaced by the bus nominal voltage
+and flagged. The minimum case needs no flag, because a missing source
+lowers the current. Buses in islands without any source report
+`status = :no_source` with `NaN` currents; an island with feeding
+converters alone gets their sum (above). A machine without data counts
 as a source on the default in every format, so a run is `succeeded` only
 when every source carries its data (next section).
 
@@ -230,7 +315,8 @@ One rule holds for the source data of every format:
 
 A `succeeded` run with flagged rows gives the reason
 `short_circuit_flagged_lower_bound` when at least one row is a lower bound
-(a skipped source), else `short_circuit_flagged_defaults` (defaults only).
+(a skipped source), else `short_circuit_flagged_defaults` (defaults or a
+substituted converter current only).
 
 The rule lives in the library: [`runShortCircuit!`](@ref) stores the
 status and its reason on the result (`status`, `status_reason`; `failed`
@@ -249,7 +335,9 @@ flagged, 2 rows with a lower bound`.
 
 The quantity is `x''_d` of a synchronous machine, the short-circuit current
 of a feeder, the reactance of an equivalent injection, the locked-rotor
-ratio of a motor.
+ratio of a motor. Converters do not enter this count; one without
+`maxIFault` flags the rows of its island instead (with the factor set, as a
+substitute).
 
 **Limitations.** The transformer impedance correction `K_T` (IEC 60909-0
 §6.3.3) and the generator correction `K_G` (§6.6.3) are not applied (the

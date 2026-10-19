@@ -49,7 +49,7 @@ _ref_sc_machine(; bus, xdpp = nothing, ratedS = nothing, ratedU = nothing, name 
   (mrid = name, name = name, bus = bus, satDirectSubtransX_pu = xdpp, satDirectTransX_pu = nothing, r0_pu = nothing, x0_pu = nothing, r2_pu = nothing, x2_pu = nothing, earthing = nothing, ratedS_MVA = ratedS, ratedU_kV = ratedU)
 _ref_sc_asm(; bus, ilr = nothing, rx = nothing, ratedS = nothing, ratedU = nothing, p_mech = nothing, efficiency = nothing, cosphi = nothing, pole_pairs = nothing, name = "M1") =
   (mrid = name, name = name, bus = bus, iaIrRatio = ilr, rxLockedRotorRatio = rx, efficiency_percent = efficiency, ratedMechanicalPower_MW = p_mech, polePairNumber = pole_pairs, ratedS_MVA = ratedS, ratedU_kV = ratedU, ratedPowerFactor = cosphi)
-_ref_sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[]) = _REF_SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms)
+_ref_sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[]) = _REF_SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms, NamedTuple[])
 
 # Two-bus feeder in per unit, load P + jQ behind R + jX from a stiff source
 # V1 = 1 at angle 0. With I = conj(S / V2) and V1 = V2 + Z I the magnitude

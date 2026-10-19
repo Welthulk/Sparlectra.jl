@@ -225,6 +225,19 @@ function _log_tail(n::Int = 25)
   return lines[max(1, end - n + 1):end]
 end
 
+# Both packages of a checkout go into the build environment in ONE develop
+# call. The environment is shared by every checkout of this user, so it may
+# still hold both packages developed from another checkout with another
+# version. Developing the library alone first resolves it against the
+# application that is still there, whose compat pins the old library version,
+# and fails with a ResolverError (seen with an environment from a 0.40.1
+# checkout and a 0.42.0 clone). One call replaces both at once.
+function _develop_checkout(pkgm::Module, root::AbstractString)
+  specs = [Base.invokelatest(pkgm.PackageSpec; path = root), Base.invokelatest(pkgm.PackageSpec; path = joinpath(root, "app"))]
+  Base.invokelatest(pkgm.develop, specs)
+  return nothing
+end
+
 function _prepare_build_env(pkgm::Module)::Bool
   println("activating shared build environment @", _BUILD_ENV)
   Base.invokelatest(pkgm.activate, _BUILD_ENV; shared = true)
@@ -238,8 +251,7 @@ function _prepare_build_env(pkgm::Module)::Bool
   in_checkout = isfile(project_file) && occursin("name = \"Sparlectra\"", read(project_file, String))
   if in_checkout
     println("developing Sparlectra and SparlectraApp from ", _REPO_ROOT)
-    Base.invokelatest(pkgm.develop; path = _REPO_ROOT)
-    Base.invokelatest(pkgm.develop; path = joinpath(_REPO_ROOT, "app"))
+    _develop_checkout(pkgm, _REPO_ROOT)
   else
     println("adding the released Sparlectra package")
     Base.invokelatest(pkgm.add, "Sparlectra")

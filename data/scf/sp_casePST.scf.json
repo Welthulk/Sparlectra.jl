@@ -793,216 +793,521 @@
         "zone": 1
       }
     },
-    "format_version": "1.0",
+    "format_version": "1.2",
     "measurements": {
       "rows": [
         {
-          "positions": [1],
+          "id": "Vm_1",
+          "node": 1,
           "sensor": 28,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_1"]
+          "sigma": 0.0775,
+          "type": "U"
         },
         {
-          "positions": [4],
-          "sensor": 29,
-          "sigmas": [0.005002617796575459],
-          "sparlectra_ids": ["Vm_2"]
-        },
-        {
-          "positions": [7],
-          "sensor": 30,
-          "sigmas": [0.005085822413101242],
-          "sparlectra_ids": ["Vm_3"]
-        },
-        {
-          "positions": [10],
-          "sensor": 31,
-          "sigmas": [0.0049829876835803715],
-          "sparlectra_ids": ["Vm_4"],
-          "values": [0.9923234450198463]
-        },
-        {
-          "positions": [13],
-          "sensor": 32,
-          "sigmas": [0.004961034588385106],
-          "sparlectra_ids": ["Vm_5"]
-        },
-        {
-          "positions": [16],
-          "sensor": 33,
-          "sigmas": [0.004963362304197675],
-          "sparlectra_ids": ["Vm_6"]
-        },
-        {
-          "positions": [19],
-          "sensor": 34,
-          "sigmas": [0.0049621467327226],
-          "sparlectra_ids": ["Vm_7"]
-        },
-        {
-          "positions": [22],
-          "sensor": 35,
-          "sigmas": [0.004962201296815864],
-          "sparlectra_ids": ["Vm_8"]
-        },
-        {
-          "positions": [25],
-          "sensor": 36,
-          "sigmas": [0.005002617796575459],
-          "sparlectra_ids": ["Vm_9"]
-        },
-        {
-          "positions": [2, 3],
+          "id": "Pinj_1",
+          "node": 1,
           "sensor": 37,
-          "sigmas": [6.193479183209725, 1.6046708720127771],
-          "sparlectra_ids": ["Pinj_1", "Qinj_1"]
+          "sigma": 6.193479183209725,
+          "type": "P"
         },
         {
-          "positions": [5, 6],
+          "id": "Qinj_1",
+          "node": 1,
+          "sensor": 37,
+          "sigma": 1.6046708720127771,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_2",
+          "node": 2,
+          "sensor": 29,
+          "sigma": 1.15060209321235563,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_2",
+          "node": 2,
           "sensor": 38,
-          "sigmas": [0.05, 0.05],
-          "sparlectra_ids": ["Pinj_2", "Qinj_2"]
+          "sigma": 0.05,
+          "type": "P"
         },
         {
-          "positions": [8, 9],
+          "id": "Qinj_2",
+          "node": 2,
+          "sensor": 38,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_3",
+          "node": 3,
+          "sensor": 30,
+          "sigma": 1.1697391550132856,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_3",
+          "node": 3,
           "sensor": 39,
-          "sigmas": [0.05, 0.05],
-          "sparlectra_ids": ["Pinj_3", "Qinj_3"]
+          "sigma": 0.05,
+          "type": "P"
         },
         {
-          "positions": [11, 12],
+          "id": "Qinj_3",
+          "node": 3,
+          "sensor": 39,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_4",
+          "node": 4,
+          "sensor": 31,
+          "sigma": 1.1460871672234854,
+          "type": "U",
+          "value": 228.23439235456465
+        },
+        {
+          "id": "Pinj_4",
+          "node": 4,
           "sensor": 40,
-          "sigmas": [0.05, 0.05],
-          "sparlectra_ids": ["Pinj_4", "Qinj_4"]
+          "sigma": 0.05,
+          "type": "P"
         },
         {
-          "positions": [14, 15],
+          "id": "Qinj_4",
+          "node": 4,
+          "sensor": 40,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_5",
+          "node": 5,
+          "sensor": 32,
+          "sigma": 1.1410379553285743,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_5",
+          "node": 5,
           "sensor": 41,
-          "sigmas": [1.000000000000001, 0.05],
-          "sparlectra_ids": ["Pinj_5", "Qinj_5"]
+          "sigma": 1.000000000000001,
+          "type": "P"
         },
         {
-          "positions": [17, 18],
+          "id": "Qinj_5",
+          "node": 5,
+          "sensor": 41,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_6",
+          "node": 6,
+          "sensor": 33,
+          "sigma": 1.1415733299654651,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_6",
+          "node": 6,
           "sensor": 42,
-          "sigmas": [0.9999999999999988, 0.05],
-          "sparlectra_ids": ["Pinj_6", "Qinj_6"]
+          "sigma": 0.9999999999999988,
+          "type": "P"
         },
         {
-          "positions": [20, 21],
+          "id": "Qinj_6",
+          "node": 6,
+          "sensor": 42,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_7",
+          "node": 7,
+          "sensor": 34,
+          "sigma": 1.141293748526198,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_7",
+          "node": 7,
           "sensor": 43,
-          "sigmas": [1.9999999999999907, 0.05],
-          "sparlectra_ids": ["Pinj_7", "Qinj_7"]
+          "sigma": 1.9999999999999907,
+          "type": "P"
         },
         {
-          "positions": [23, 24],
+          "id": "Qinj_7",
+          "node": 7,
+          "sensor": 43,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_8",
+          "node": 8,
+          "sensor": 35,
+          "sigma": 1.1413062982676487,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_8",
+          "node": 8,
           "sensor": 44,
-          "sigmas": [1.9999999999999987, 0.05],
-          "sparlectra_ids": ["Pinj_8", "Qinj_8"]
+          "sigma": 1.9999999999999987,
+          "type": "P"
         },
         {
-          "positions": [26, 27],
+          "id": "Qinj_8",
+          "node": 8,
+          "sensor": 44,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Vm_9",
+          "node": 9,
+          "sensor": 36,
+          "sigma": 1.15060209321235563,
+          "type": "U"
+        },
+        {
+          "id": "Pinj_9",
+          "node": 9,
           "sensor": 45,
-          "sigmas": [0.05, 0.05],
-          "sparlectra_ids": ["Pinj_9", "Qinj_9"]
+          "sigma": 0.05,
+          "type": "P"
         },
         {
-          "positions": [28, 30],
+          "id": "Qinj_9",
+          "node": 9,
+          "sensor": 45,
+          "sigma": 0.05,
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_ACL_230_2_7_from",
           "sensor": 46,
-          "sigmas": [0.7991438413366438, 0.3396089747172937],
-          "sparlectra_ids": ["Pflow_B_ACL_230_2_7_from", "Qflow_B_ACL_230_2_7_from"]
+          "sigma": 0.7991438413366438,
+          "terminal": {
+            "branch": 10,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [29, 31],
+          "id": "Pflow_B_ACL_230_2_7_to",
           "sensor": 47,
-          "sigmas": [0.7962962927737022, 0.32821878799728665],
-          "sparlectra_ids": ["Pflow_B_ACL_230_2_7_to", "Qflow_B_ACL_230_2_7_to"]
+          "sigma": 0.7962962927737022,
+          "terminal": {
+            "branch": 10,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [32, 34],
+          "id": "Qflow_B_ACL_230_2_7_from",
+          "sensor": 46,
+          "sigma": 0.3396089747172937,
+          "terminal": {
+            "branch": 10,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_ACL_230_2_7_to",
+          "sensor": 47,
+          "sigma": 0.32821878799728665,
+          "terminal": {
+            "branch": 10,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_ACL_230_9_8_from",
           "sensor": 48,
-          "sigmas": [2.0153541492879334, 0.0614165565400242],
-          "sparlectra_ids": ["Pflow_B_ACL_230_9_8_from", "Qflow_B_ACL_230_9_8_from"]
+          "sigma": 2.0153541492879334,
+          "terminal": {
+            "branch": 15,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [33, 35],
+          "id": "Pflow_B_ACL_230_9_8_to",
           "sensor": 49,
-          "sigmas": [1.9999999999999984, 0.05],
-          "sparlectra_ids": ["Pflow_B_ACL_230_9_8_to", "Qflow_B_ACL_230_9_8_to"]
+          "sigma": 1.9999999999999984,
+          "terminal": {
+            "branch": 15,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [36, 38],
+          "id": "Qflow_B_ACL_230_9_8_from",
+          "sensor": 48,
+          "sigma": 0.0614165565400242,
+          "terminal": {
+            "branch": 15,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_ACL_230_9_8_to",
+          "sensor": 49,
+          "sigma": 0.05,
+          "terminal": {
+            "branch": 15,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_ACL_230_4_5_from",
           "sensor": 50,
-          "sigmas": [2.2287858438630526, 0.2278903077924781],
-          "sparlectra_ids": ["Pflow_B_ACL_230_4_5_from", "Qflow_B_ACL_230_4_5_from"],
-          "values": [224.525323717315, -22.65390001195002]
+          "sigma": 2.2287858438630526,
+          "terminal": {
+            "branch": 12,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [37, 39],
+          "id": "Pflow_B_ACL_230_4_5_to",
           "sensor": 51,
-          "sigmas": [2.209679021705595, 0.30431754588478555],
-          "sparlectra_ids": ["Pflow_B_ACL_230_4_5_to", "Qflow_B_ACL_230_4_5_to"],
-          "values": [-221.66010510263496, 29.437473497411588]
+          "sigma": 2.209679021705595,
+          "terminal": {
+            "branch": 12,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [40, 42],
+          "id": "Qflow_B_ACL_230_4_5_from",
+          "sensor": 50,
+          "sigma": 0.2278903077924781,
+          "terminal": {
+            "branch": 12,
+            "side": "from"
+          },
+          "type": "Q",
+          "value": -22.65390001195002
+        },
+        {
+          "id": "Qflow_B_ACL_230_4_5_to",
+          "sensor": 51,
+          "sigma": 0.30431754588478555,
+          "terminal": {
+            "branch": 12,
+            "side": "to"
+          },
+          "type": "Q",
+          "value": 29.437473497411588
+        },
+        {
+          "id": "Pflow_B_ACL_230_4_6_from",
           "sensor": 52,
-          "sigmas": [1.0038367417452498, 0.05],
-          "sparlectra_ids": ["Pflow_B_ACL_230_4_6_from", "Qflow_B_ACL_230_4_6_from"],
-          "values": [99.73506264113443, 1.5920730116037105]
+          "sigma": 1.0038367417452498,
+          "terminal": {
+            "branch": 13,
+            "side": "from"
+          },
+          "type": "P",
+          "value": 99.73506264113443
         },
         {
-          "positions": [41, 43],
+          "id": "Pflow_B_ACL_230_4_6_to",
           "sensor": 53,
-          "sigmas": [0.9999999999999964, 0.05],
-          "sparlectra_ids": ["Pflow_B_ACL_230_4_6_to", "Qflow_B_ACL_230_4_6_to"]
+          "sigma": 0.9999999999999964,
+          "terminal": {
+            "branch": 13,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [44, 46],
+          "id": "Qflow_B_ACL_230_4_6_from",
+          "sensor": 52,
+          "sigma": 0.05,
+          "terminal": {
+            "branch": 13,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_ACL_230_4_6_to",
+          "sensor": 53,
+          "sigma": 0.05,
+          "terminal": {
+            "branch": 13,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_ACL_230_5_7_from",
           "sensor": 54,
-          "sigmas": [1.2096790217055968, 0.30431754588477844],
-          "sparlectra_ids": ["Pflow_B_ACL_230_5_7_from", "Qflow_B_ACL_230_5_7_from"]
+          "sigma": 1.2096790217055968,
+          "terminal": {
+            "branch": 14,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [45, 47],
+          "id": "Pflow_B_ACL_230_5_7_to",
           "sensor": 55,
-          "sigmas": [1.2037037072262873, 0.32821878799730797],
-          "sparlectra_ids": ["Pflow_B_ACL_230_5_7_to", "Qflow_B_ACL_230_5_7_to"]
+          "sigma": 1.2037037072262873,
+          "terminal": {
+            "branch": 14,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [48, 50],
+          "id": "Qflow_B_ACL_230_5_7_from",
+          "sensor": 54,
+          "sigma": 0.30431754588477844,
+          "terminal": {
+            "branch": 14,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_ACL_230_5_7_to",
+          "sensor": 55,
+          "sigma": 0.32821878799730797,
+          "terminal": {
+            "branch": 14,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_ACL_230_3_4_from",
           "sensor": 56,
-          "sigmas": [3.339196418099675, 2.27999245865459],
-          "sparlectra_ids": ["Pflow_B_ACL_230_3_4_from", "Qflow_B_ACL_230_3_4_from"]
+          "sigma": 3.339196418099675,
+          "terminal": {
+            "branch": 11,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [49, 51],
+          "id": "Pflow_B_ACL_230_3_4_to",
           "sensor": 57,
-          "sigmas": [3.2336733982441928, 0.21254335095965615],
-          "sparlectra_ids": ["Pflow_B_ACL_230_3_4_to", "Qflow_B_ACL_230_3_4_to"]
+          "sigma": 3.2336733982441928,
+          "terminal": {
+            "branch": 11,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [52, 54],
+          "id": "Qflow_B_ACL_230_3_4_from",
+          "sensor": 56,
+          "sigma": 2.27999245865459,
+          "terminal": {
+            "branch": 11,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_ACL_230_3_4_to",
+          "sensor": 57,
+          "sigma": 0.21254335095965615,
+          "terminal": {
+            "branch": 11,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_2WT_15_1_2_from",
           "sensor": 58,
-          "sigmas": [6.193479183209718, 1.6046708720127754],
-          "sparlectra_ids": ["Pflow_B_2WT_15_1_2_from", "Qflow_B_2WT_15_1_2_from"]
+          "sigma": 6.193479183209718,
+          "terminal": {
+            "branch": 16,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [53, 55],
+          "id": "Pflow_B_2WT_15_1_2_to",
           "sensor": 59,
-          "sigmas": [6.154789040476864, 1.7594314429441908],
-          "sparlectra_ids": ["Pflow_B_2WT_15_1_2_to", "Qflow_B_2WT_15_1_2_to"]
+          "sigma": 6.154789040476864,
+          "terminal": {
+            "branch": 16,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [56, 58],
+          "id": "Qflow_B_2WT_15_1_2_from",
+          "sensor": 58,
+          "sigma": 1.6046708720127754,
+          "terminal": {
+            "branch": 16,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_2WT_15_1_2_to",
+          "sensor": 59,
+          "sigma": 1.7594314429441908,
+          "terminal": {
+            "branch": 16,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Pflow_B_2WT_230_2_3_from",
           "sensor": 60,
-          "sigmas": [3.3402910498522678, 2.1604569742016793],
-          "sparlectra_ids": ["Pflow_B_2WT_230_2_3_from", "Qflow_B_2WT_230_2_3_from"]
+          "sigma": 3.3402910498522678,
+          "terminal": {
+            "branch": 17,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [57, 59],
+          "id": "Pflow_B_2WT_230_2_3_to",
           "sensor": 61,
-          "sigmas": [3.3402910498522678, 2.279992458654732],
-          "sparlectra_ids": ["Pflow_B_2WT_230_2_3_to", "Qflow_B_2WT_230_2_3_to"]
+          "sigma": 3.3402910498522678,
+          "terminal": {
+            "branch": 17,
+            "side": "to"
+          },
+          "type": "P"
+        },
+        {
+          "id": "Qflow_B_2WT_230_2_3_from",
+          "sensor": 60,
+          "sigma": 2.1604569742016793,
+          "terminal": {
+            "branch": 17,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "id": "Qflow_B_2WT_230_2_3_to",
+          "sensor": 61,
+          "sigma": 2.279992458654732,
+          "terminal": {
+            "branch": 17,
+            "side": "to"
+          },
+          "type": "Q"
         }
       ]
     },

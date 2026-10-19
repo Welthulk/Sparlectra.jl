@@ -50,7 +50,7 @@ run_sparlectra(; casefile = "case14.m", path = "...", ...)
 | Configuration | `control.controllers`, `control.max_outer_iterations` | Declarative controllers, global outer-loop budget ([Configuration](configuration.md)) |
 | Result | `latest_control_result(net)`, `net.control_result`, `controllableElements(net)` | The `ControlRunResult` of the last run and the generic element records |
 | `ControlRunResult` fields | `status`, `converged`, `outer_iterations`, `powerflow_solves`, `last_pf_iterations`, `total_pf_iterations` (sum over all passes; the result header reports the last pass and this total), `last_pf_status`, `controllers`, `trace`, `elements` | Terminal `status`: `:no_controllers`, `:disabled`, `:no_active_controllers`, `:pf_failed`, `:converged`, `:blocked` (a pass in which no controller moved; one closing solve at the final controller state follows and counts in both totals), `:max_outer_iterations` |
-| Trace rows (transformer control) | `outer_iteration`, `controller_name`, `controller_type`, `transformer_id`, `mode`, `status`, `converged`, `at_limit`, `achieved_vm_pu`, `target_vm_pu`, `achieved_p_mw`, `target_p_mw`, `tap_ratio`, `phase_shift_deg` | One row per controller and outer iteration |
+| Trace rows (transformer control) | `outer_iteration`, `controller_name`, `controller_type`, `transformer_id`, `mode`, `status`, `converged`, `at_limit`, `achieved_vm_pu`, `target_vm_pu`, `achieved_p_mw`, `target_p_mw`, `tap_ratio`, `phase_shift_deg` | One row per controller and outer iteration in which it acted; a controller held back by its [priority](@ref controller_priority_ranks) writes none |
 | Element record (`controllableElements`) | `name`, `element`, `device`, `actuator`, `actuator_min`/`actuator_max`, `quantity`, `target`, `target_value`, `discrete`, `enabled`, live `status`/`converged`/`at_limit` | `ControlRunResult.elements` stores the same records at run end |
 | Framework result | `SparlectraRunResult.numerical_converged` (the last PF solve only), `solution_available` (that solve is usable), `final_converged` (converged PF solve, passed limit validation, `control_status` `:none` or `:converged`) | `:blocked`, `:max_outer_iterations` and other non-success states keep the last usable solution without counting as framework convergence |
 | Legacy boundary | `erg` reflects inner PF success only: `:pf_failed` maps to `erg = 1` | `:blocked` or `:max_outer_iterations` are not PF failures |
@@ -75,6 +75,89 @@ the net or adjust it programmatically. There is no generic
 live on the winding in `side.controls`, the others in
 `net.machineControls`), and the `add*Control!` functions carry the
 reference resolution and exclusivity checks.
+
+## [Controller priority](@id controller_priority_ranks)
+
+Every controller takes an integer `priority` (keyword of the
+`add*Control!` functions, key `priority` in `control.controllers`, default
+0). In each pass the controllers act by rank, smallest number first. A
+rank acts only if no controller with a smaller number moved its actuator in
+that pass: each of them is inside its deadband, at its limit, or parked.
+Controllers with the same number act together, so the default (all 0) is
+the loop without ranks. Unlike `referencePriority` of a machine, 0 is a
+rank here (the first), not "no preference".
+
+A controller is at its limit when its actuator stands at the end of its
+range:
+
+| Controller | At its limit |
+|---|---|
+| Tap changer | ratio at the end of its control range: `tap_min`/`tap_max` of the controller where set, of the transformer otherwise (phase tap: `phase_min_deg`/`phase_max_deg`) |
+| Switched bank (`step_mvar`) | on its outermost block, or parked (no whole block brings the voltage closer to the target) |
+| SVC | susceptance at `bs_min_mvar`/`bs_max_mvar` |
+| Machine, STATCOM | reactive output at its Q limit (STATCOM: `V * S_max`, which moves with the terminal voltage) |
+| TCSC, SSSC, UPFC, HVDC pair | at the end of their own range or rating |
+
+The common case is a switched bank behind the tap changer of its bus:
+
+```yaml
+control:
+  controllers:
+    bank_LV:
+      type: shunt_voltage
+      bus: LV
+      target_vm_pu: 1.0
+      bs_min_mvar: 0.0
+      bs_max_mvar: 20.0
+      step_mvar: 5.0
+      deadband_vm_pu: 0.02
+      priority: 1
+```
+
+With the tap controller at rank 0 the bank switches only when the tap
+stands in its band or at a tap limit. At equal rank both move in the same
+pass, and the bank switches as soon as the bus leaves the bank's band,
+while the tap would have brought the voltage back alone. The cascade needs
+targets that agree within both deadbands (a bank at 1.01 pu behind a tap
+at 1.0 +/- 0.01 pu agrees): with targets further apart the lower rank
+pulls the voltage out of the tap's band whenever the tap is in band, and
+the two walk against each other at any ranks. The cross-type warning at
+registration names that case.
+
+A tap controller can get its own control range inside the physical one
+(`tap_min`/`tap_max` on the `power_transformer` entry or as keywords of
+`addPowerTransformerControl!`). The range sets where the bank behind it
+takes over. A ratio outside the range goes onto its nearer end in the
+first pass, whatever the voltage error; until then the controller does
+not count as converged. The move logs a warning with the transformer, its
+start ratio and step, the limit and the ratio it goes to, once per
+controller and run. The entry below sets the range of the controller the case file puts
+on `T1`; on a transformer without a controller the entry adds one and
+needs `target_bus` and `target_vm_pu` as well:
+
+```yaml
+control:
+  controllers:
+    tap_T1:
+      type: power_transformer
+      trafo: T1
+      mode: voltage
+      tap_min: 0.95
+      tap_max: 1.05
+```
+
+A move along the limit does not hold the next rank: a controller that was
+at its limit at the end of the previous pass and is there again after its
+move (a STATCOM following `V * S_max`, a tap settling onto `tap_min` from
+a ratio a rounding error above it) lets the next rank act in the same
+pass. A last partial tap step onto a limit off the step grid is a move.
+
+A waiting rank costs passes: after the last move of a higher rank one
+solve runs before the lower rank acts, so a long chain of ranks may need a
+larger `control.max_outer_iterations`. A controller held back proposes
+nothing and writes no trace row for that pass. `control_priority(ctrl)`
+returns the rank; a user-defined controller without a `priority` field
+ranks at 0.
 
 ## Controllable elements (generic view)
 
@@ -107,7 +190,10 @@ the STATCOM alternative is `addMachineVoltageControl!` with `s_max_mva`.
 Limit physics of all three: [FACTS Devices](@ref facts_devices).
 
 The bus must be PQ; a second shunt controller on the same bus is rejected,
-a tap controller regulating the same bus triggers the cross-type warning.
+a tap controller regulating the same bus triggers the cross-type warning,
+except for a shunt controller at another priority with the same target
+within both deadbands (the cascade in
+[Controller priority](@ref controller_priority_ranks)).
 `runShortCircuit!` and the power flow see the SVC only through its shunt
 stamp.
 

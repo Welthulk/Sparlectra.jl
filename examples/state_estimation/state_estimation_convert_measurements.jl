@@ -50,9 +50,10 @@ function run_state_estimation_convert_measurements()
     println("  ", line)
   end
 
-  # the same measurements both ways: v1 reader against table import
+  # the same measurements both ways: the set written to the v1 file (the
+  # writer is lossless; the v1 reader was removed in 0.50.0) against the
+  # table import
   a = deepcopy(net)
-  readMeasurementsCSV!(a; file = v1)
   b = deepcopy(net)
   applyMeasurementSet!(b, only(importMeasurementTable(readMeasurementTable(table), nameMeasurementKeys(net)).sets); zero_injection = false)
   same = all(x.value === y.value && x.sigma === y.sigma && x.typ == y.typ for (x, y) in zip(a.measurements, b.measurements))

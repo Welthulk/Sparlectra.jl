@@ -72,7 +72,8 @@ are accepted: the `power_flow.*` solver, start, Q-limit, merit,
 trust-region, rescue and slack keys, `contingency.*`, `output.*`,
 `benchmark.*`, `runtime.parallel.enabled`, the import keys of `model.*`,
 `matpower_import.*`, `matpower_export.*`, `cgmes_import.*` and
-`powsybl_import.*`, `state_estimation.*` and `short_circuit.sweep_method`.
+`powsybl_import.*`, `state_estimation.*`, `short_circuit.sweep_method` and
+`short_circuit.converter_current_factor`.
 Anything else, and invalid types, enum values or ranges, is rejected
 before execution.
 

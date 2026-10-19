@@ -5,22 +5,31 @@ Measurement table for the state estimation, `addACLine!` in physical units.
 ## Breaking
 - `addACLine!` takes totals in ohm and siemens, `addACLinePerKm!` takes per-km values and the system frequency; `paramsBasedOnLength` is removed. Lines built from `c_nf_per_km` had their charging Z_base times too small and give other results now. See Migrating from 0.42 in the documentation.
 - A YAML root key with a dot (`power_flow.max_iter: 3`) is rejected; use the nested form.
+- SCF 1.2: current sensors in A, measurement rows follow the measurement table; measurement CSV v1 files are refused with the converter named.
 ## Added
+- Zero injections as equality constraints in the state estimation (`state_estimation.zero_injection: constraint`): exact, without the conditioning cost of a tiny sigma. See [State Estimation](state_estimation.md).
 - Measurement table for the state estimation, addressed by CGMES mRID or element name, with pseudo measurements and sigma per voltage level (editable in the Web UI).
 - System frequency per network (`model.nominal_frequency_hz`, default 50 Hz), selectable in the Web UI; enters lines built from per-km capacitance and SCF `c1`, cases in ohm, siemens or per unit are unaffected.
 - Web UI CSV view sorts text columns and hides columns and rows.
+- Web UI: Check for updates in the Info panel; a copy made by the one-line install installs the new release after a confirm and keeps the old copy as Sparlectra.old.
+- Web UI case options follow the case format; the system frequency shows for every format and is greyed where it has no effect.
+- CGMES PowerElectronicsConnection (wind, solar, battery converters) is imported as PQ or voltage-regulating injection (`cgmes_import.map_power_electronics`, default off), exported as EquivalentInjection, and fed into the short circuit as a current source from `maxIFault`.
+- CGMES bank regulators are imported as shunt controllers (`cgmes_import.shunt_control`, default off).
+- Controller priority: a controller of lower rank waits until the higher ranks are in their band or at a limit. Tap controllers get a control range inside the physical tap range.
 ## Changed
 - The measurement table is the one measurement format: the Web UI generator and the shipped sets use it, `convertMeasurementsV1` converts old files.
 - Zero injection rows at passive buses are added in every SE path (`state_estimation.zero_injection`, default `on`).
 - Shipped demo cases rebuilt; transformer magnetizing from the nameplate is now in the files, so their results change (losses 2 to 4 percent).
 - Test suite rebuilt around reference solutions: `fast` checks known networks against MATPOWER headers, ENTSO-E state variables, hand calculations and OpenLoadFlow in under 30 s; pinned regression tests run in the new `legacy` profile; `adapters` is split into `cgmes` and `formats`.
-## Deprecated
-- The v1 measurement CSV is read with a warning and is removed in 0.60.0.
+- An SE run writes its measurements as a table with `measurements_verdict.csv` next to it; `se_bad_data.csv` is gone.
+- A bus built with `addBus!` keeps its `busName` as node name; auxiliary buses are marked by type and listed in `mpc.sparlectra.aux_buses`.
 ## Fixed
 - Generated measurement sets at buses joined by closed couplers carried the coupler flow in their injections.
 - Tap positions of CGMES tap changers in SE, SCF, MATPOWER and scenarios.
 - Exports: MATPOWER lines, ratio-1 transformers and the voltage setpoints of an unsolved net, SCF shunt measurements and SVC shunts.
 - The short-circuit page claimed breaking and thermal currents were computed; only Ik'', ip and κ are.
+- MATPOWER export writes the tap ratio in effect, so other tools solve the same network; files of earlier versions read as before (#513).
+- The topology hypothesis test uses the settings of the run it tests; a MATPOWER model-only export keeps three-winding star points auxiliary.
 
 # Version 0.42.0 - 2026-10-16
 

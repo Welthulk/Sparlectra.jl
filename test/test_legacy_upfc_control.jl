@@ -289,7 +289,7 @@ function run_legacy_upfc_control_tests()
         # contaminates fault or export data. The base net (no UPFC) and the
         # compensated net must then agree.
         _feeder(bus) = (mrid = bus, name = "F_" * bus, bus = bus, maxInitialSymShCCurrent_A = 20_000.0, minInitialSymShCCurrent_A = 16_000.0, maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = 0.1, maxR0ToX0Ratio = nothing, maxZ0ToZ1Ratio = nothing, ikSecond = nothing, governorSCD = nothing)
-        scd = Sparlectra.CGMESImporter.CGMESShortCircuitData([_feeder("S")], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
+        scd = Sparlectra.CGMESImporter.CGMESShortCircuitData([_feeder("S")], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
         # base network (no UPFC): the short circuit reference result
         base = _build_upfc_mesh()
         rb = runShortCircuit!(base, scd; case = :max)

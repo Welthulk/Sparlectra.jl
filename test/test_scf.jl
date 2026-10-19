@@ -228,14 +228,17 @@ function run_scf_tests()
     # sensor count stays below the raw row count
     rows = root["sparlectra"]["measurements"]["rows"]
     nsensors = length(data["sym_voltage_sensor"]) + length(data["sym_power_sensor"]) + length(get(data, "sym_current_sensor", []))
-    @test nsensors == length(rows)
     @test nsensors < length(net.measurements)
-    # every Sparlectra row is accounted for exactly once
-    allids = String[]
-    for r in rows
-      append!(allids, String[String(x) for x in r["sparlectra_ids"]])
-    end
-    @test sort(allids) == sort(String[m.id for m in net.measurements])
+    # one row per measurement in the order of the measurement vector, with
+    # the table types; every sensor is named by a row
+    @test length(rows) == length(net.measurements)
+    @test String[r["type"] for r in rows] == String[Sparlectra._scf_table_type(m) for m in net.measurements]
+    @test Set(r["sensor"] for r in rows) == Set(s["id"] for k in ("sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor") for s in get(data, k, []))
+    # units without a base: U and its sigma in kV of the node
+    ku = findfirst(r -> r["type"] == "U", rows)
+    u = rows[ku]
+    m1 = net.measurements[ku]
+    @test u["sigma"] ≈ m1.sigma * Sparlectra.getNodeVn(net.nodeVec[m1.busIdx])
     # voltage sensors carry SI volts, power sensors watt
     v = first(data["sym_voltage_sensor"])
     @test v["u_measured"] > 1000.0
@@ -283,11 +286,11 @@ function run_scf_tests()
     br.fromBus, br.toBus = br.toBus, br.fromBus
     @test only(Sparlectra.net_to_scf(turned)["sparlectra"]["components"]["transformer3w"])["leg_direction"] == "mixed"
     # reference names (the busDict keys every other section resolves
-    # against) are what `extra.name` carries; the internal component name
-    # travels separately when it differs
+    # against) are what `extra.name` carries; addBus! names the node after
+    # its busName, so no separate component name travels
     byname = Dict(e["name"] => e for e in values(sp["extra"]))
     @test haskey(byname, "AUX3WT_T1")
-    @test byname["AUX3WT_T1"]["component_name"] != "AUX3WT_T1"
+    @test !haskey(byname["AUX3WT_T1"], "component_name")
     @test haskey(byname, "HV") && haskey(byname, "MV") && haskey(byname, "LV")
   end)() end
 
@@ -348,22 +351,137 @@ function run_scf_tests()
     @test length(full_back.measurements) == length(full.measurements)
     @test [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in full_back.measurements] == [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in full.measurements]
     @test read(exportSCF(full_back; file = joinpath(d, "full_b.scf.json")), String) == read(fa, String)
-    # reader validation of the shunt-bay rows: an unknown type and an
-    # undefined node are named, a row without a position goes to the end
-    root = Sparlectra.scf_json_parse(read(fa, String))
-    bay_rows = root["sparlectra"]["measurements"]["shunt_bay_rows"]
-    bad_type = deepcopy(root)
-    bad_type["sparlectra"]["measurements"]["shunt_bay_rows"][1]["type"] = "Pinj"
-    @test_throws ArgumentError Sparlectra.scf_to_net(bad_type)
-    bad_node = deepcopy(root)
-    bad_node["sparlectra"]["measurements"]["shunt_bay_rows"][1]["node"] = 99999
-    @test_throws ArgumentError Sparlectra.scf_to_net(bad_node)
-    no_pos = deepcopy(root)
-    delete!(no_pos["sparlectra"]["measurements"]["shunt_bay_rows"][1], "position")
-    moved = Sparlectra.scf_to_net(no_pos).measurements
+    mtuple(n) = [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in n.measurements]
+    # SCF 1.2: one row per measurement with the table semantics; the shunt
+    # bay is a row of its own with the value, current sensors carry ampere
+    fdoc = Sparlectra.scf_json_parse(read(fa, String))
+    @test fdoc["sparlectra"]["format_version"] == Sparlectra.SCF_FORMAT_VERSION == "1.2"
+    rows = fdoc["sparlectra"]["measurements"]["rows"]
+    @test !haskey(fdoc["sparlectra"]["measurements"], "shunt_bay_rows")
+    @test length(rows) == length(full.measurements)
+    @test String[r["type"] for r in rows] == String[Sparlectra._scf_table_type(m) for m in full.measurements]
+    # an id is written only where it is not the default of its location
+    # (the generated rows), and it reads back either way
+    @test [get(r, "id", nothing) for r in rows] == [m.id == Sparlectra._default_measurement_id(m.typ; busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.branchIdx === nothing ? :none : m.direction) ? nothing : m.id for m in full.measurements]
+    @test count(r -> haskey(r, "id"), rows) == 2
+    bay_row = only(r for r in rows if get(r, "id", "") == "Imag_shunt_probe")
+    @test haskey(bay_row["terminal"], "shunt_bay") && bay_row["type"] == "I" && bay_row["value"] == 12.5 && !haskey(bay_row, "sensor")
+    @test only(r for r in rows if get(r, "id", "") == "Ia_shunt_probe")["valid"] == false
+    @test all(r -> !haskey(r, "sensor") && haskey(r, "value"), [r for (r, m) in zip(rows, full.measurements) if m.typ == Sparlectra.ShuntQMeas])
+    ki = findfirst(r -> r["type"] == "I" && haskey(r, "sensor"), rows)
+    isensor = only(s for s in fdoc["data"]["sym_current_sensor"] if s["id"] == rows[ki]["sensor"])
+    @test isensor["i_measured"] == full.measurements[ki].value
+    # a U value no Float64 divides back to its per-unit value is written
+    # with 18 digits and read at 256 bits, as the measurement table does
+    vn = Sparlectra.getNodeVn(full.nodeVec[bay])
+    pu18 = first(x for x in (0.9 + k * 1.0e-6 for k in 1:200_000) if Sparlectra._measurement_table_digits(Sparlectra._measurement_table_kv_text(x, vn * 1.0e3 / 1.0e3)) > 17)
+    long = deepcopy(full)
+    # (the sigma is always written in kV, the value only where the sensor
+    # does not read back, so the sigma carries the long number here)
+    Sparlectra.addMeasurement!(long.measurements; typ = Sparlectra.VmMeas, value = pu18, sigma = pu18, busIdx = bay, id = "Vm_long")
+    fl = exportSCF(long; file = joinpath(d, "long.scf.json"))
+    @test occursin("\"sigma\": " * Sparlectra._measurement_table_kv_text(pu18, vn * 1.0e3 / 1.0e3) * ",", read(fl, String))
+    @test last(importSCF(fl).measurements).value === pu18 && last(importSCF(fl).measurements).sigma === pu18
+    @test read(exportSCF(importSCF(fl); file = joinpath(d, "long_b.scf.json")), String) == read(fl, String)
+    # a zero-injection row carries its flag in the row (written only when
+    # true); in 1.2 the id decides nothing, so a row with the ZI id shape
+    # but without the flag stays an ordinary measurement
+    zinet = deepcopy(full)
+    empty!(zinet.measurements)
+    Sparlectra.addZeroInjectionMeasurements!(zinet.measurements; net = zinet, busIdxs = [bay])
+    Sparlectra.addMeasurement!(zinet.measurements; typ = Sparlectra.PinjMeas, value = 0.0, sigma = 0.001, busIdx = bay, id = "ZI_PINJ_bus_99")
+    Sparlectra.addMeasurement!(zinet.measurements; typ = Sparlectra.QinjMeas, value = 0.5, sigma = 0.001, busIdx = bay, id = "meter_q", zero_injection = true)
+    fz = exportSCF(zinet; file = joinpath(d, "zi.scf.json"))
+    @test [get(r, "zero_injection", false) for r in Sparlectra.scf_json_parse(read(fz, String))["sparlectra"]["measurements"]["rows"]] == [true, true, false, true]
+    @test [m.zero_injection for m in importSCF(fz).measurements] == [true, true, false, true]
+    @test read(exportSCF(importSCF(fz); file = joinpath(d, "zi_b.scf.json")), String) == read(fz, String)
+    # only value and sigma of measurements.rows keep a long literal as
+    # text; anywhere else it is a Float64 (parsed as before), and the writer
+    # never refuses what the reader produced
+    for lit in ("0.10000000000000000000", "0.123456789012345678", "110.000000000000000000", "1.0000000000000000001e-8", "12345678901234567890.5")
+      doc = Sparlectra.scf_json_parse("{\"a\": $(lit), \"sparlectra\": {\"measurements\": {\"rows\": [{\"value\": $(lit), \"type\": \"P\"}]}}}")
+      @test doc["a"] isa Float64 && doc["a"] === parse(Float64, lit)
+      cell = doc["sparlectra"]["measurements"]["rows"][1]["value"]
+      @test cell isa Sparlectra.ScfDecimalText && cell.text == lit && cell.value === parse(Float64, lit)
+      out = Sparlectra.scf_json_string(doc)
+      @test occursin("\"a\": $(repr(parse(Float64, lit)))", out) && occursin("\"value\": $(lit)", out)
+    end
+    # a 1.2 file whose U row carries such a literal (a hand edit) reads and
+    # writes back unchanged through the typed reader and writer
+    hand = replace(read(fl, String), r"\"type\": \"U\"\n( *)\}" => s"\"type\": \"U\",\n\1  \"value\": 110.000000000000000000\n\1}"; count = 1)
+    @test occursin("110.000000000000000000", hand)
+    fh = joinpath(d, "hand.scf.json")
+    write(fh, hand)
+    @test any(m -> m.typ == Sparlectra.VmMeas, importSCF(fh).measurements)
+    fh2 = joinpath(d, "hand_b.scf.json")
+    write_scf_json(read_scf_json(fh), fh2)
+    @test read(fh2, String) == hand
+    # reader validation: a wrong type at a node, an undefined node, a sensor
+    # at another location and an unknown key are named
+    # (row 2 is a U at a node with its sensor, row 1 a shunt-bay Q)
+    @test rows[2]["type"] == "U" && haskey(rows[1]["terminal"], "shunt_bay")
+    psens = first(r["sensor"] for r in rows if r["type"] == "P")
+    for (k, f) in ((2, r -> r["zero_injection"] = true), (2, r -> r["type"] = "I"), (2, r -> r["node"] = 99999), (2, r -> r["sensor"] = psens), (2, r -> r["mystery"] = 1), (1, r -> r["terminal"] = Dict("shunt_bay" => 99999)), (1, r -> r["type"] = "P"))
+      bad = deepcopy(fdoc)
+      f(bad["sparlectra"]["measurements"]["rows"][k])
+      @test_throws ArgumentError Sparlectra.scf_to_net(bad)
+    end
+    # a sensor no row names (added by hand) is read after the rows with its
+    # default id; the rows keep their values
+    dropped = deepcopy(fdoc)
+    gone = popat!(dropped["sparlectra"]["measurements"]["rows"], 2)
+    moved = Sparlectra.scf_to_net(dropped).measurements
     @test length(moved) == length(full.measurements)
-    @test (last(moved).id, last(moved).value) == (bay_rows[1]["id"], bay_rows[1]["value"])
-    @test last(full.measurements).value != bay_rows[1]["value"]
+    @test last(moved).typ == Sparlectra.VmMeas && isapprox(last(moved).value, full.measurements[2].value; rtol = 1e-14) && last(moved).id != full.measurements[2].id && !haskey(gone, "id")
+    @test mtuple((measurements = moved[1:(end-1)],)) == mtuple((measurements = full.measurements[[1; 3:end]],))
+    # a revision 1.0 file (rows per sensor, shunt_bay_rows, currents 1000
+    # times too large) still reads to the same measurements: built here
+    # from the 1.2 rows the way the 1.0 writer laid them out
+    old = deepcopy(fdoc)
+    old["sparlectra"]["format_version"] = "1.0"
+    for s in old["data"]["sym_current_sensor"]
+      s["i_measured"] === nothing || (s["i_measured"] *= 1.0e3)
+      s["i_sigma"] === nothing || (s["i_sigma"] *= 1.0e3)
+    end
+    rank = Dict("U" => 1, "Va" => 2, "P" => 1, "Q" => 2, "I" => 1, "Ia" => 2)
+    per_sensor = Dict{Int,Vector{Int}}()
+    bay_old = Any[]
+    for (k, r) in enumerate(rows)
+      m = full.measurements[k]
+      if haskey(r, "sensor")
+        push!(get!(per_sensor, r["sensor"], Int[]), k)
+      else
+        e = Dict{String,Any}("type" => m.typ == Sparlectra.ShuntQMeas ? "ShuntQ" : (m.typ == Sparlectra.ImagMeas ? "Imag" : "Ia"), "node" => r["terminal"]["shunt_bay"], "id" => m.id, "value" => m.value, "sigma" => m.sigma, "position" => k)
+        m.active || (e["active"] = false)
+        push!(bay_old, e)
+      end
+    end
+    old_rows = Any[]
+    for (s, ks) in sort!(collect(per_sensor))
+      sort!(ks; by = k -> rank[rows[k]["type"]])
+      ms = full.measurements[ks]
+      e = Dict{String,Any}("sensor" => s, "sparlectra_ids" => [m.id for m in ms], "sigmas" => [m.sigma for m in ms], "values" => [m.value for m in ms], "positions" => ks)
+      all(m -> m.active, ms) || (e["active"] = [m.active for m in ms])
+      push!(old_rows, e)
+    end
+    old["sparlectra"]["measurements"]["rows"] = old_rows
+    old["sparlectra"]["measurements"]["shunt_bay_rows"] = bay_old
+    old_file = joinpath(d, "full_old.scf.json")
+    write(old_file, Sparlectra.scf_json_string(old))
+    @test mtuple(importSCF(old_file)) == mtuple(full)
+    # without the exact values a 1.0 current is the sensor number / 1000
+    for e in old_rows
+      delete!(e, "values")
+    end
+    write(old_file, Sparlectra.scf_json_string(old))
+    imag_vals(n) = [(m.id, m.value, m.sigma) for m in n.measurements if m.typ == Sparlectra.ImagMeas]
+    old_back = importSCF(old_file)
+    @test length(imag_vals(old_back)) == length(imag_vals(full_back)) > 0
+    @test all(a[1] == b[1] && isapprox(a[2], b[2]; rtol = 1e-14) && isapprox(a[3], b[3]; rtol = 1e-14) for (a, b) in zip(imag_vals(old_back), imag_vals(full_back)))
+    # a 1.2 file carries no shunt_bay_rows block
+    stray = deepcopy(fdoc)
+    stray["sparlectra"]["measurements"]["shunt_bay_rows"] = Any[]
+    @test_throws ArgumentError Sparlectra.scf_to_net(stray)
     # power flow: identical iterations and identical voltages
     i1, e1 = runpf!(net, 60, 1e-8, 0)
     i2, e2 = runpf!(back, 60, 1e-8, 0)
@@ -374,7 +492,7 @@ function run_scf_tests()
     # silently
     @test !isempty(back.linkVec)
     Sparlectra.addMeasurement!(back.measurements; typ = Sparlectra.PflowMeas, value = 1.0, sigma = 0.1, linkIdx = 1)
-    nf = @test_logs (:warn, r"no slot in the case file") match_mode = :any exportSCF(back; file = joinpath(d, "noslot.scf.json"), kw...)
+    nf = @test_logs (:warn, r"not_modelled") match_mode = :any exportSCF(back; file = joinpath(d, "noslot.scf.json"), kw...)
     @test length(importSCF(nf).measurements) == length(back.measurements) - 1
     # The shunt of a shunt voltage controller belongs to the controller: the
     # export leaves it out and the controller entry rebuilds it. Written as a
@@ -636,7 +754,7 @@ function run_scf_tests()
     # controllers in the control.controllers schema verbatim, and the
     # reader instantiates them through applyConfiguredControllers!
     net = _scf_test_net()
-    addSeriesReactanceControl!(net; fromBus = "3", toBus = "4", p_target_mw = 35.0, x_min_pu = 0.003, x_max_pu = 0.02, name = "tcsc_3_4")
+    addSeriesReactanceControl!(net; fromBus = "3", toBus = "4", p_target_mw = 35.0, x_min_pu = 0.003, x_max_pu = 0.02, name = "tcsc_3_4", priority = 2)
     restoreBaseImpedances!(net)
     d = mktempdir()
     f = exportSCF(net; file = joinpath(d, "ctrl.scf.json"))
@@ -646,6 +764,8 @@ function run_scf_tests()
     @test entry["from_bus"] == "3" && entry["to_bus"] == "4"
     @test entry["p_target_mw"] == 35.0
     @test entry["x_min_pu"] == 0.003 && entry["x_max_pu"] == 0.02
+    # the outer-loop rank is written when set (rank 0 stays out of the file)
+    @test entry["priority"] == 2
     back = importSCF(f)
     c1 = only(collect_outer_controllers(net))
     c2 = only(collect_outer_controllers(back))
@@ -653,8 +773,26 @@ function run_scf_tests()
     @test c2.p_target_mw == c1.p_target_mw
     @test (c2.x_min_pu, c2.x_max_pu) == (c1.x_min_pu, c1.x_max_pu)
     @test c2.limit_mode == c1.limit_mode
+    @test c2.priority == c1.priority == 2
     restoreBaseImpedances!(back)
     @test read(exportSCF(back; file = joinpath(d, "ctrl2.scf.json")), String) == read(f, String)
+
+    # the control range of a tap controller travels with it: a
+    # configuration narrows the range of the Moorau controller of the
+    # shipped sp_case14, export writes tap_min/tap_max, import restores
+    # them, and a controller without a range writes neither key
+    tnet = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
+    tctrl = only(Sparlectra._tap_controllers(tnet))
+    tf0 = exportSCF(tnet; file = joinpath(d, "tap0.scf.json"))
+    c0 = Sparlectra.scf_json_parse(read(tf0, String))["sparlectra"]["components"]["controllers"]
+    @test !any(v -> haskey(v, "tap_min") || haskey(v, "tap_max"), values(c0))
+    range_entry = Dict{String,Any}("type" => "power_transformer", "name" => "tap_range", "trafo" => tctrl.trafo, "mode" => "voltage", "tap_min" => 1.0, "tap_max" => 1.05)
+    @test applyConfiguredControllers!(tnet, ControlConfig(enabled = true, controllers = Any[range_entry])) == 0
+    tf = exportSCF(tnet; file = joinpath(d, "tap.scf.json"))
+    tentry = only(v for v in values(Sparlectra.scf_json_parse(read(tf, String))["sparlectra"]["components"]["controllers"]) if v["type"] == "power_transformer")
+    @test (tentry["tap_min"], tentry["tap_max"]) == (1.0, 1.05)
+    tback = only(Sparlectra._tap_controllers(importSCF(tf)))
+    @test (tback.tap_min, tback.tap_max) == (1.0, 1.05)
 
     # Voltage-dependent control travels in extra.<machine> as its points,
     # its interpolation mode and its limits. Before
@@ -1323,7 +1461,7 @@ mpc.branch = [
     se_req = start_powerflow_run(Dict{String,Any}("casefile" => joinpath(scf_dir, "sp_case5.scf.json"), "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(d, "se_req_root"), "se_mode" => true, "measurement_file" => joinpath(scf_dir, "sp_case5.measurements.csv"), "detailed_result_csv_format" => "excel_de"))
     @test se_req["status"] == "succeeded"
     se_dir = se_req["output_dir"]
-    for f in ("se_bad_data.csv", "se_state.csv", "se_deltas.csv")
+    for f in ("measurements_verdict.csv", "se_state.csv", "se_deltas.csv")
       isfile(joinpath(se_dir, f)) || continue
       se_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(se_dir, f)))
       @test occursin(';', isempty(se_lines) ? "" : se_lines[1])
@@ -1586,7 +1724,7 @@ mpc.branch = [
     # ... and the run with it goes through
     se_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_se_gen"), "se_mode" => true, "measurement_file" => gen_name); case_directory = cases)
     @test se_run["status"] == "succeeded"
-    # the ONE CSV setting (0.15.1, a Web UI run: se_bad_data.csv kept
+    # the ONE CSV setting (0.15.1, a Web UI run: the bad-data extract kept
     # the comma): a state-estimation request WITHOUT any CSV field under a
     # configuration file that says excel_de writes every CSV of the run
     # with the semicolon; nothing in the request may fall back to a
@@ -1596,10 +1734,12 @@ mpc.branch = [
     @test occursin("csv_format: excel_de", read(cfg_de, String))
     se_de = SparlectraApp.start_powerflow_run(Dict("casefile" => "warmup_casePST.pgm.json", "config_file" => cfg_de, "output_root" => joinpath(root, "runs_se_de"), "se_mode" => true, "measurement_file" => gen_name); case_directory = cases)
     @test se_de["status"] == "succeeded"
-    # measurements.csv is the measurement set itself (measurement CSV v1,
-    # an input format with its own fixed header), not a result artifact
+    # measurements.csv is the measurement set itself (a measurement table,
+    # an input format with its own fixed layout), not a result artifact;
+    # its verdict file is one
     se_de_csvs = filter(f -> endswith(f, ".csv") && f != "measurements.csv", readdir(se_de["output_dir"]))
     @test "se_state.csv" in se_de_csvs
+    @test "measurements_verdict.csv" in se_de_csvs
     for f in se_de_csvs
       data_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(se_de["output_dir"], f)))
       @test occursin(';', isempty(data_lines) ? "" : data_lines[1])

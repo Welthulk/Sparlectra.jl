@@ -297,6 +297,19 @@ function run_legacy_scf_tests()
       @test resp_m.status == 303
       @test read(mfile, String) == before_m
       @test isfile(joinpath(cases, "case_api_saved.scf.json"))
+      # a measurement CSV v1 sidecar (reader removed in 0.50.0) does not
+      # stop save as or the SCF export: the case is written without it, the
+      # set is not copied, and the message names it and the converter
+      cp(mfile, joinpath(cases, "case_v1.m"))
+      write(joinpath(cases, "case_v1.measurements.csv"), "﻿# sparlectra-measurements v1\n# case: case_v1.m\ntype,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id\n")
+      for (route, form) in (("/powerflow/case/save-as", Dict{String,Any}("casefile" => "case_v1.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "save_as_name" => "case_v1_saved")), ("/powerflow/export-scf", Dict{String,Any}("casefile" => "case_v1.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)))
+        r_v1 = SparlectraApp.route_sparlectra_webui("POST", route, form; output_root = root, runtime = rt)
+        msg_v1 = SparlectraApp._webui_urldecode(only(h.second for h in r_v1.headers if h.first == "Location"))
+        @test r_v1.status == 303 && occursin("case_v1.measurements.csv", msg_v1) && occursin("convertMeasurementsV1", msg_v1) && !occursin("failed", msg_v1)
+      end
+      @test isfile(joinpath(cases, "case_v1_saved.scf.json")) && isfile(joinpath(cases, "case_v1.scf.json"))
+      @test !isfile(joinpath(cases, "case_v1_saved.measurements.csv"))
+      @test isempty(Sparlectra.importSCF(joinpath(cases, "case_v1_saved.scf.json")).measurements)
       original_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "case_api.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_original")); case_directory = cases)
       saved_run = SparlectraApp.start_powerflow_run(Dict("casefile" => "case_api_saved.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(root, "runs_saved")); case_directory = cases)
       @test original_run["status"] == "succeeded" && saved_run["status"] == "succeeded"

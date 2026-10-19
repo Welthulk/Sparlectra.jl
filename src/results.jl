@@ -967,8 +967,8 @@ function printACPFlowResults(
         nslack += 1
       end
     end
-    # auxiliary buses (star points and other internal nodes); the component
-    # name of an isAux build starts with "Aux_" (getNodeComp)
+    # auxiliary buses (star points and other internal nodes): the AuxBus
+    # component type of an isAux build (getNodeComp)
     if _is_aux_node(n)
       auxb += 1
     end

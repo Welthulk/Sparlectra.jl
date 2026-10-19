@@ -120,7 +120,10 @@ maximum active power of the unit (`:pmax`), else `nothing` (`:none`, the
 caller falls back to the network base and flags it). The maximum active
 power comes from the record (`pmax_MW`) where the adapter carries it, and
 otherwise from the generating unit of the network at the machine's bus:
-the unit of the same name, or the only unit with a maximum at that bus. A maximum of
+the unit of the same name, or the only unit with a maximum at that bus.
+Only units of component type `Generator` or `SynchronousMachine` count; a
+converter-connected unit (`PowerElectronicsConnection`) at the same bus is
+not the machine. A maximum of
 `SC_PMAX_PLACEHOLDER_MW` and above is a placeholder and no size, and so
 is a rated power of `SC_RATEDS_PLACEHOLDER_MVA` and above: the search goes
 on with the maximum active power as if the record had no rated power.
@@ -156,11 +159,35 @@ end
 #   some sources without data     -> warning, the rows they feed are flagged
 #   every source with data        -> success
 _sc_field(record, name::Symbol) = hasproperty(record, name) ? getproperty(record, name) : nothing
+
+# A synchronous machine on a wind or solar generating unit is a converter
+# unit in fact, and the short circuit treats it as a current source like a
+# PowerElectronicsConnection. The adapters
+# mark its record with `converter_unit`, the class name of the unit
+# (`WindGeneratingUnit` or `SolarGeneratingUnit`; the IIDM import maps
+# energySource WIND and SOLAR onto the same names). Such a record is no
+# voltage source and does not count in the state of the source data, as a
+# PowerElectronicsConnection does not.
+_sc_converter_unit(m) = (u = _sc_field(m, :converter_unit); (u isa AbstractString && !isempty(u)) ? String(u) : nothing)
+
+# The rated power behind the current of such a unit: ratedS unless a
+# placeholder, else the maximum active power of the unit (`pmax_MW`, the
+# CGMES GeneratingUnit.maxOperatingP) unless a placeholder, else none. The
+# maximum active power stands for the rated power at power factor 1.
+function _sc_converter_unit_size(m)
+  rated = _sc_field(m, :ratedS_MVA)
+  _sc_usable_rated(rated) && return (value = Float64(rated), source = :rated_s)
+  pmax = _sc_field(m, :pmax_MW)
+  _sc_usable_pmax(pmax) && return (value = Float64(pmax), source = :pmax)
+  return (value = nothing, source = :none)
+end
+
 function _sc_source_data_state(sc)
   total = 0
   with_data = 0
   without_any = 0
   for m in sc.synchronous_machines
+    _sc_converter_unit(m) === nothing || continue
     total += 1
     has = _sc_usable(_sc_field(m, :satDirectSubtransX_pu))
     has && (with_data += 1)
@@ -199,6 +226,10 @@ function _sc_run_status(state, rows::AbstractVector)
   return (status = :succeeded, reason = nothing)
 end
 
+# The reason on every row of an island fed by converter current sources
+# alone.
+const _SC_CONVERTER_ONLY_ISLAND = "short-circuit: converter-only island, arithmetic sum, no voltage source"
+
 # The Takahashi/Erisman-Tinney recursion moved to the shared module
 # src/takahashi.jl (the SE diagnostics reuse the identical backward pass
 # for the selected inverse). This alias keeps every short-circuit call
@@ -208,14 +239,17 @@ end
 const _takahashi_diag = takahashi_diag
 
 # One source-admittance table for the whole net: bus index → added shunt
-# admittance (pu on `base_mva`), plus per-bus and per-island safety-flag
-# reasons. Islands are flagged as a whole where a skipped contribution
-# affects every fault location fed from that island (motor/feeder skips).
+# admittance (pu on `base_mva`), the converter current sources (bus index →
+# current in pu of the bus current base, `:max` only), plus per-bus and
+# per-island safety-flag reasons. Islands are flagged as a whole where a
+# skipped contribution affects every fault location fed from that island
+# (motor/feeder/converter skips).
 # `lower_islands` holds the islands in which a skipped source makes Ik''max
 # a lower bound; the rows read their typed `lower_bound` from it, not from
 # the reason text.
-function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64, bus_island::Dict{Int,Int}, messages::Vector{String})
+function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64, converter_factor::Float64, bus_island::Dict{Int,Int}, messages::Vector{String})
   y_add = Dict{Int,ComplexF64}()
+  i_src = Dict{Int,Float64}()
   bus_reasons = Dict{Int,Vector{String}}()
   island_reasons = Dict{Int,Vector{String}}()
   lower_islands = Set{Int}()
@@ -238,6 +272,9 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
   # is substituted with documented defaults AND flagged (safety contract) —
   # a silent default on a safety-relevant quantity is not acceptable.
   for m in sc.synchronous_machines
+    # a machine on a wind or solar unit is a current source, below with
+    # the converters
+    _sc_converter_unit(m) === nothing || continue
     m.bus === nothing && continue
     busidx = get(net.busDict, String(m.bus), nothing)
     busidx === nothing && continue
@@ -422,9 +459,132 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       flag_island(busidx, why)
       flag_lower(busidx)
     end
+    # Converter-connected units (CGMES 3.0 PowerElectronicsConnection: wind,
+    # solar and battery parks behind a full-size converter) are current
+    # sources (IEC 60909-0:2016, clause 6.9): no admittance on the diagonal,
+    # an injected current instead, which runShortCircuit! superposes on the
+    # equivalent voltage source. The current is maxIFault times the rated
+    # current ratedS/(sqrt(3)*ratedU), here in per unit of the current base
+    # of the bus, baseMVA/(sqrt(3)*Vn). A unit without maxIFault or ratedS
+    # feeds nothing and flags its island; so does a converter prosumer whose
+    # bus carries no record at all (a network whose source data has none).
+    # maxIFault is CIM17 and in no CGMES 3.0 profile, so on a conforming
+    # delivery every converter takes the flag branch, unless
+    # converter_factor (short_circuit.converter_current_factor) is positive:
+    # then a unit without maxIFault feeds that multiple of its rated current
+    # instead, and the rows of its island name the substitute. A stated
+    # maxIFault always wins over the factor: only an absent attribute
+    # (nothing) takes it, a stated value that is not a positive current
+    # (0, negative, NaN) feeds nothing and flags the island with its value.
+    # Ik''min needs no flag: leaving a source out lowers the current, the
+    # safe side for the minimum, and converters never enter it (like motors).
+    pec_bus_names = nothing
+    pec_name = busidx -> begin
+      pec_bus_names === nothing && (pec_bus_names = _bus_name_by_idx(net))
+      get(pec_bus_names, busidx, string(busidx))
+    end
+    no_model = busidx -> "short-circuit: PowerElectronicsConnection at bus $(pec_name(busidx)): no converter short-circuit model, contribution skipped; Ik''max in its island is a lower bound"
+    recorded_buses = Set{Int}()
+    for rec in sc.power_electronics_connections
+      rec.bus === nothing && continue
+      busidx = get(net.busDict, String(rec.bus), nothing)
+      busidx === nothing && continue
+      push!(recorded_buses, busidx)
+      name = something(rec.name, rec.mrid)
+      from_factor = rec.maxIFault_pu === nothing && converter_factor > 0.0
+      if !from_factor && !_sc_usable(rec.maxIFault_pu)
+        why = rec.maxIFault_pu === nothing ? no_model(busidx) : "short-circuit: PowerElectronicsConnection $(name) has maxIFault $(rec.maxIFault_pu), not a usable current: contribution skipped; Ik''max in its island is a lower bound"
+        note(why)
+        flag_island(busidx, why)
+        flag_lower(busidx)
+        continue
+      end
+      if !_sc_usable(rec.ratedS_MVA)
+        why = "short-circuit: PowerElectronicsConnection $(name) has $(from_factor ? "no maxIFault (short_circuit.converter_current_factor set)" : "maxIFault") but no usable ratedS, so its rated current is unknown: contribution skipped; Ik''max in its island is a lower bound"
+        note(why)
+        flag_island(busidx, why)
+        flag_lower(busidx)
+        continue
+      end
+      ifault_pu = if from_factor
+        why = "short-circuit: PowerElectronicsConnection $(name) has no maxIFault: short_circuit.converter_current_factor $(converter_factor) times the rated current substituted"
+        note(why)
+        flag_bus(busidx, why)
+        flag_island(busidx, why)
+        converter_factor
+      else
+        Float64(rec.maxIFault_pu)
+      end
+      vn = getNodeVn(net.nodeVec[busidx])
+      urated = rec.ratedU_kV
+      if !_sc_usable(urated)
+        urated = vn
+        why = "short-circuit: PowerElectronicsConnection $(name) has no usable ratedU: bus nominal $(vn) kV substituted"
+        note(why)
+        flag_bus(busidx, why)
+        flag_island(busidx, why)
+      end
+      i_pu = ifault_pu * (Float64(rec.ratedS_MVA) / sbase) * (vn / Float64(urated))
+      i_src[busidx] = get(i_src, busidx, 0.0) + i_pu
+    end
+    # Synchronous machines on a wind or solar unit (_sc_converter_unit): the
+    # same current source with another origin. They state no maxIFault, so
+    # the current is converter_factor times the rated current, the rated
+    # power from ratedS, else from the maximum active power of the unit
+    # (_sc_converter_unit_size). With the factor off or without a size the
+    # unit feeds nothing and its island is a lower bound, as a
+    # PowerElectronicsConnection without maxIFault or ratedS.
+    for m in sc.synchronous_machines
+      origin = _sc_converter_unit(m)
+      origin === nothing && continue
+      m.bus === nothing && continue
+      busidx = get(net.busDict, String(m.bus), nothing)
+      busidx === nothing && continue
+      label = "SynchronousMachine $(something(m.name, m.mrid)) on a $(origin)"
+      if converter_factor <= 0.0
+        why = "short-circuit: $(label) is a converter unit without a converter short-circuit model (short_circuit.converter_current_factor off): contribution skipped; Ik''max in its island is a lower bound"
+        note(why)
+        flag_island(busidx, why)
+        flag_lower(busidx)
+        continue
+      end
+      size = _sc_converter_unit_size(m)
+      placeholder = _sc_rated_placeholder(_sc_field(m, :ratedS_MVA)) ? " (ratedS $(m.ratedS_MVA) MVA is a placeholder)" : ""
+      if size.value === nothing
+        why = "short-circuit: $(label) is a converter unit without a usable ratedS or maximum active power$(placeholder), so its rated current is unknown: contribution skipped; Ik''max in its island is a lower bound"
+        note(why)
+        flag_island(busidx, why)
+        flag_lower(busidx)
+        continue
+      end
+      basis = size.source === :rated_s ? "ratedS $(size.value) MVA" : "maximum active power $(size.value) MW$(placeholder)"
+      why = "short-circuit: $(label) is a converter unit: short_circuit.converter_current_factor $(converter_factor) times the rated current from its $(basis) substituted"
+      note(why)
+      flag_bus(busidx, why)
+      flag_island(busidx, why)
+      vn = getNodeVn(net.nodeVec[busidx])
+      urated = _sc_field(m, :ratedU_kV)
+      if !_sc_usable(urated)
+        urated = vn
+        why = "short-circuit: $(label) has no usable ratedU: bus nominal $(vn) kV substituted"
+        note(why)
+        flag_bus(busidx, why)
+        flag_island(busidx, why)
+      end
+      i_src[busidx] = get(i_src, busidx, 0.0) + converter_factor * (size.value / sbase) * (vn / Float64(urated))
+    end
+    for ps in net.prosumpsVec
+      ps.comp.cTyp == PowerElectronicsConnection || continue
+      busidx = Int(ps.comp.cFrom_bus)
+      (busidx in eachindex(net.nodeVec) && !(busidx in recorded_buses)) || continue
+      why = no_model(busidx)
+      note(why)
+      flag_island(busidx, why)
+      flag_lower(busidx)
+    end
   end
 
-  return y_add, bus_reasons, island_reasons, lower_islands
+  return y_add, i_src, bus_reasons, island_reasons, lower_islands
 end
 
 # Assemble the positive-sequence short-circuit admittance matrix of one
@@ -501,10 +661,13 @@ sequence only, series impedances only.
 - `buses`: `:all` (per-bus sweep as a loop over the per-bus path) or a vector
   of bus names.
 - `case`: `:max` (equipment rating, `c_max`) or `:min` (protection
-  sensitivity, `c_min`). Asynchronous machines never contribute to `:min`.
+  sensitivity, `c_min`). Asynchronous machines and converter-connected
+  units never contribute to `:min`.
 - `c_factor`: `0.0` uses the hardcoded IEC 60909-0 Table-1 values per voltage
   level (`short_circuit.c_factor` carries the same semantics in YAML); a
   positive scalar overrides the table for every bus.
+- `converter_current_factor`: `0.0` (off) or the fault current of a
+  converter without `maxIFault` as a multiple of its rated current (below).
 
 Per fault bus the short-circuit impedance is obtained by a Z-bus column
 solve: one sparse LU factorization per island and case, one triangular solve
@@ -512,6 +675,47 @@ per fault bus — the full inverse is never formed. Outputs per bus: `Ik''`
 (kA), `Sk''` (MVA), and `kappa`/`i_p` from the R/X ratio at the fault
 location (IEC 60909-0 method b: `κ = min(1.15·(1.02 + 0.98·e^{-3R/X}),
 cap)` with cap 1.8 below 1 kV and 2.0 above).
+
+Converter-connected units (`sc_data.power_electronics_connections`, one
+record per mapped CGMES 3.0 `PowerElectronicsConnection`) feed `:max` as
+current sources, the model IEC 60909-0:2016 gives power station units with
+full size converter (clause 6.9). The current of a unit is
+`I_sk = maxIFault·ratedS/(√3·ratedU)` (`maxIFault` is in per unit of the
+rated current; a missing `ratedU` is replaced by the bus nominal voltage
+and flagged). `maxIFault` is a CIM17 attribute that no CGMES 3.0 profile
+defines: a conforming delivery has none, and its converters take the
+lower-bound flag below. `converter_current_factor` (config
+`short_circuit.converter_current_factor`, default `0.0` = off) replaces a
+missing `maxIFault` by that multiple of the rated current; the rows of the
+island are flagged with the substitute instead of the lower bound. A
+stated `maxIFault` wins, also one that is not positive. The converter
+share at fault bus `i` is superposed on the equivalent voltage source:
+`Ik'' = c·Un/(√3·|Z_ii|) + (1/|Z_ii|)·Σ_j |Z_ij|·I_sk,j`, with `Z` the
+impedance matrix of the island in which the voltage sources are
+short-circuited (the matrix the first term uses) and `j` over the
+converter buses. Magnitudes are added, which bounds the complex sum from
+above for any phase of the converter currents. `κ` belongs to the first
+term: `i_p = κ·√2·I''_vs + √2·I''_conv`. `zk_ohm` and `rx_ratio` stay those
+of `Z_ii`, so with converters `ik_kA` is more than `c·Un/(√3·zk_ohm)`. A
+unit without `maxIFault` (factor off), with a `maxIFault` that is not
+positive or without `ratedS`, and a converter prosumer whose bus
+has no record, feeds nothing and flags its island as a lower bound. An
+island fed by converters alone has no voltage source and no `Z_ii`: every
+bus of it reports `:ok` with the arithmetic sum of the converter currents
+of the island, `i_p = √2·Ik''`, `NaN` for `zk_ohm`, `rx_ratio` and `κ`,
+and the flagged reason `converter-only island, arithmetic sum, no voltage
+source` (an upper bound, no lower bound of its own). Without any feeding
+converter (factor off, no `maxIFault`) such an island stays `:no_source`.
+
+A synchronous machine record with `converter_unit` set (a CGMES
+`SynchronousMachine` on a `WindGeneratingUnit` or `SolarGeneratingUnit`,
+an IIDM generator with `energySource` `WIND` or `SOLAR`) takes the same
+path instead of the machine path: `converter_current_factor` times the
+rated current, the rated power from `ratedS_MVA`, else from `pmax_MW` (the
+maximum active power of the unit, at power factor 1), each unless a
+placeholder (`SC_RATEDS_PLACEHOLDER_MVA`, `SC_PMAX_PLACEHOLDER_MW`). With
+the factor off or without a size it feeds nothing and flags its island as
+a lower bound. Such a machine never enters `:min`.
 
 Substituted defaults and skipped contributions are flagged on the affected
 result rows (`contains_defaulted_data` + reasons), not only logged — for
@@ -551,7 +755,8 @@ default `:auto` uses Takahashi for islands with at least
 `takahashi_min_buses` buses and plain solves below (the pass overhead
 only pays off from a certain island size); `:solves` forces the per-bus
 solves everywhere. The service and Web UI paths take both settings from
-`short_circuit.sweep_method` / `short_circuit.takahashi_min_buses`.
+`short_circuit.sweep_method` / `short_circuit.takahashi_min_buses`, and
+`converter_current_factor` from `short_circuit.converter_current_factor`.
 """
 function runShortCircuit!(
   net::Net,
@@ -564,12 +769,15 @@ function runShortCircuit!(
   parallel_min_work_items::Union{Nothing,Int} = nothing,
   sweep_method::Symbol = :auto,
   takahashi_min_buses::Int = 50,
+  converter_current_factor::Real = 0.0,
 )::ShortCircuitResult
   case in (:max, :min) || throw(ArgumentError("runShortCircuit!: case must be :max or :min; got $(case)."))
   sweep_method in (:auto, :solves, :takahashi) || throw(ArgumentError("runShortCircuit!: sweep_method must be :auto, :solves, or :takahashi; got $(sweep_method)."))
   takahashi_min_buses >= 1 || throw(ArgumentError("runShortCircuit!: takahashi_min_buses must be at least 1; got $(takahashi_min_buses)."))
   c_override = Float64(c_factor)
   (c_override == 0.0 || (isfinite(c_override) && 0.5 <= c_override <= 1.2)) || throw(ArgumentError("runShortCircuit!: c_factor must be 0 (automatic Table 1) or within [0.5, 1.2]; got $(c_factor)."))
+  conv_factor = Float64(converter_current_factor)
+  (conv_factor == 0.0 || (isfinite(conv_factor) && conv_factor > 0.0)) || throw(ArgumentError("runShortCircuit!: converter_current_factor must be 0 (off) or positive; got $(converter_current_factor)."))
 
   fault_buses = if buses === :all
     collect(eachindex(net.nodeVec))
@@ -608,7 +816,7 @@ function runShortCircuit!(
   end
 
   messages = String[]
-  y_add, bus_reasons, island_reasons, lower_islands = _sc_source_admittances(net, sc_data, case, c_override, bus_island, messages)
+  y_add, i_src, bus_reasons, island_reasons, lower_islands = _sc_source_admittances(net, sc_data, case, c_override, conv_factor, bus_island, messages)
 
   # Result rows carry the user-facing bus names (busDict keys), not the
   # generated component names ("Bus_<idx>_<vn>").
@@ -651,6 +859,33 @@ function runShortCircuit!(
   n_3w_neg = length(neg_r_used) - n_eb_neg
   n_eb_neg == 0 || push!(messages, string(_SC_EB_NEGATIVE_R, n_eb_neg, " in the islands of the fault buses, taken over unchanged"))
   n_3w_neg == 0 || push!(messages, string(_SC_3W_NEGATIVE_R, n_3w_neg, " in the islands of the fault buses, taken over unchanged"))
+
+  # Converter current sources: per island the vector s_i = sum_j |Z_ij|·I_j
+  # over the converter buses j, one column solve per converter bus on the
+  # island factorization (Y·z = e_j gives column j of Z). The sweep divides
+  # by |Z_ii|. Formed here, serially and before any task spawns, so the
+  # parallel sweep only reads it. An island with converters but no voltage
+  # source has no factorization: it gets the arithmetic sum of its converter
+  # currents in pu (conv_only_sum, see the row below).
+  island_conv = Dict{Int,Vector{Float64}}()
+  conv_only_sum = Dict{Int,Float64}()
+  for (bus, i_pu) in i_src
+    island = get(bus_island, bus, 0)
+    sol = get(island_solutions, island, nothing)
+    sol === nothing && continue
+    if sol.factor === nothing
+      conv_only_sum[island] = get(conv_only_sum, island, 0.0) + i_pu
+      continue
+    end
+    lj = get(sol.local_index, reps[bus], 0)
+    lj == 0 && continue
+    n = length(sol.local_index)
+    rhs = zeros(ComplexF64, n)
+    rhs[lj] = 1.0
+    col = sol.factor \ rhs
+    s = get!(() -> zeros(Float64, n), island_conv, island)
+    s .+= abs.(col) .* i_pu
+  end
 
   # sweep_method = :takahashi: ONE selected-inverse pass per island replaces
   # the per-bus triangular solves (Erisman-Tinney on the UMFPACK factors;
@@ -703,6 +938,19 @@ function runShortCircuit!(
       return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :isolated, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = !isempty(reasons), lower_bound = lower, reasons = reasons)
     end
     sol = solution_for(island)
+    i_conv_only = sol === nothing ? 0.0 : get(conv_only_sum, island, 0.0)
+    if i_conv_only > 0.0
+      # An island fed by converter current sources alone: no voltage
+      # source, so no Thevenin impedance,
+      # but the current sources still feed. IEC 60909 neglects loads and
+      # shunt branches at a bolted fault, so their whole current flows into
+      # it. The arithmetic sum is the upper bound (all currents in phase):
+      # the row is flagged but no lower bound of its own, and the peak has
+      # no kappa (no DC component), as the converter share above.
+      ik = i_conv_only * net.baseMVA / (sqrt(3.0) * vn)
+      push!(reasons, _SC_CONVERTER_ONLY_ISLAND)
+      return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = ik, sk_MVA = sqrt(3.0) * vn * ik, kappa = NaN, ip_kA = sqrt(2.0) * ik, contains_defaulted_data = true, lower_bound = lower, reasons = reasons)
+    end
     if sol === nothing || sol.factor === nothing
       push!(reasons, "no short-circuit source in island $(island) — fault current undefined")
       return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :no_source, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = true, lower_bound = lower, reasons = reasons)
@@ -721,7 +969,12 @@ function runShortCircuit!(
     z_base = vn^2 / net.baseMVA
     z_ohm = z_pu * z_base
     zk = abs(z_ohm)
-    ik = c * vn / (sqrt(3.0) * zk)
+    ik_vs = c * vn / (sqrt(3.0) * zk)
+    # converter share (1/|Z_ii|)·sum_j |Z_ij|·I_j, from pu to kA with the
+    # current base baseMVA/(sqrt(3)·Vn) of the fault bus
+    s_conv = get(island_conv, island, nothing)
+    ik_pf = s_conv === nothing ? 0.0 : s_conv[li] / abs(z_pu) * net.baseMVA / (sqrt(3.0) * vn)
+    ik = ik_vs + ik_pf
     sk = sqrt(3.0) * vn * ik
     # R/X at the fault location (method b); a non-positive reactance would
     # mean a badly conditioned source model — guard with a flag instead of
@@ -733,7 +986,9 @@ function runShortCircuit!(
       push!(reasons, "short-circuit: non-positive reactance at the fault point — kappa/i_p unavailable")
       NaN
     end
-    ip = isfinite(kappa) ? kappa * sqrt(2.0) * ik : NaN
+    # kappa belongs to the voltage-source part; the converter part enters
+    # the peak with sqrt(2) alone
+    ip = isfinite(kappa) ? kappa * sqrt(2.0) * ik_vs + sqrt(2.0) * ik_pf : NaN
     return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = zk, rx_ratio = rx, ik_kA = ik, sk_MVA = sk, kappa = kappa, ip_kA = ip, contains_defaulted_data = !isempty(reasons), lower_bound = lower, reasons = reasons)
   end
 

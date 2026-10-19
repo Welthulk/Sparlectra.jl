@@ -409,6 +409,119 @@ function run_cgmes_export_tests()
     end
   end)() end
 
+  @testset "a PowerElectronicsConnection goes out as EquivalentInjection" begin (function ()
+    # CGMES 2.4.15 has no PowerElectronicsConnection class. One PQ and
+    # one voltage-regulating converter, marked as the CGMES importer
+    # marks them, leave as EquivalentInjection and come back with the same
+    # injection, Q limits, regulation and converter type; without them the
+    # same net exports for the short-circuit comparison. `bind` gives the
+    # regulating one a Q limit it cannot hold its target with.
+    function pec_net(with_pec::Bool; bind::Bool = false)
+      net = Net(name = with_pec ? "pecnet" : "nopecnet", baseMVA = 100.0)
+      for b in ("A", "B", "C")
+        addBus!(net = net, busName = b, vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+      end
+      addPIModelACLine!(net = net, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.05, b_pu = 0.02, status = 1)
+      addPIModelACLine!(net = net, fromBus = "B", toBus = "C", r_pu = 0.015, x_pu = 0.04, b_pu = 0.01, status = 1)
+      addProsumer!(net = net, busName = "A", type = "SYNCHRONOUSMACHINE", referencePri = "A", vm_pu = 1.02, va_deg = 0.0)
+      addProsumer!(net = net, busName = "B", type = "ENERGYCONSUMER", p = 40.0, q = 10.0)
+      addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 20.0, q = bind ? 25.0 : 5.0)
+      if with_pec
+        addProsumer!(net = net, busName = "B", type = "GENERATOR", p = 12.5, q = 3.0, pMin = -5.0, pMax = 15.0, qMin = -8.0, qMax = 8.0)
+        net.prosumpsVec[end].comp.cTyp = Sparlectra.PowerElectronicsConnection
+        qlim = bind ? 5.0 : 30.0
+        addProsumer!(net = net, busName = "C", type = "GENERATOR", p = 20.0, q = 0.0, vm_pu = bind ? 1.05 : 1.01, isRegulated = true, qMin = -qlim, qMax = qlim)
+        net.prosumpsVec[end].comp.cTyp = Sparlectra.PowerElectronicsConnection
+      end
+      return net
+    end
+    C = Sparlectra.CGMESImporter
+    # the re-imported converters by bus name
+    back_of(res) = Dict(only(k for (k, v) in res.net.busDict if v == Int(ps.comp.cFrom_bus)) => ps for ps in (res.net.prosumpsVec[last(res.element_by_mrid[o.mrid])] for o in C.objectsOf(res.store, :EquivalentInjection)))
+    net = pec_net(true)
+    @test _solve!(net)[2] == 0
+    dir = mktempdir()
+    notes = String[]
+    files = writeCGMESFiles(net; path = dir, created = _EXPORT_STAMP, notices = notes)
+    # the class change is the one line of the export report
+    @test notes == ["2 PowerElectronicsConnection prosumer(s) written as EquivalentInjection with description PowerElectronicsConnection (CGMES 2.4.15 has no class for them; a re-import keeps them as converters without the fault current maxIFault and ratedS, so Ik''max in their island is flagged as a lower bound, and does not read their P limits)"]
+    eq = read(files[1], String)
+    ssh = read(files[3], String)
+    @test count("<cim:EquivalentInjection rdf:ID", eq) == 2
+    @test count("<cim:IdentifiedObject.description>PowerElectronicsConnection</cim:IdentifiedObject.description>", eq) == 2
+    @test count("<cim:SynchronousMachine rdf:ID", eq) == 1
+    # limits and regulation capability in EQ, regulation in SSH (kV)
+    for tag in ("minP>-5.0", "maxP>15.0", "minQ>-8.0", "maxQ>8.0", "minQ>-30.0", "maxQ>30.0")
+      @test occursin("<cim:EquivalentInjection.$(tag)</cim:EquivalentInjection.", eq)
+    end
+    @test count("<cim:EquivalentInjection.regulationCapability>true<", eq) == 1
+    @test count("<cim:EquivalentInjection.regulationStatus>true<", ssh) == 1
+    @test occursin("<cim:EquivalentInjection.regulationTarget>$(1.01 * 110.0)</cim:EquivalentInjection.regulationTarget>", ssh)
+    # the one RegulatingControl is the slack machine's
+    @test count("<cim:RegulatingControl rdf:ID", eq) == 1
+
+    res = importCGMES(path = dir, name = "pec_back")
+    eis = C.objectsOf(res.store, :EquivalentInjection)
+    @test length(eis) == 2 && length(C.objectsOf(res.store, :SynchronousMachine)) == 1
+    @test all(first(res.element_by_mrid[o.mrid]) == :external_grid for o in eis)
+    back = back_of(res)
+    orig = Dict(b => net.prosumpsVec[k] for (b, k) in (("B", 4), ("C", 5)))
+    for b in ("B", "C")
+      @test (back[b].pVal, back[b].qVal) == (orig[b].pVal, orig[b].qVal)
+      @test (back[b].minQ, back[b].maxQ) == (orig[b].minQ, orig[b].maxQ)
+      @test Sparlectra.isRegulating(back[b]) == Sparlectra.isRegulating(orig[b])
+      # the description brings the converter type back
+      @test back[b].comp.cTyp == Sparlectra.PowerElectronicsConnection
+    end
+    @test back["C"].vm_pu ≈ 1.01
+    @test !Sparlectra.isRegulating(back["B"])
+    # the SV of the export validates, and the re-import solves to the
+    # same state from it
+    cmp = C.compareWithSV(res)
+    @test maximum(abs(r.dvm) for r in cmp.rows) < 1e-12
+    @test count(r -> r.kind == :units, cmp.flows.rows) == 3
+    @test maximum(abs(r.dp) for r in cmp.flows.rows) < 1e-9
+    its, erg = _solve!(res.net)
+    @test erg == 0 && its <= 2
+    _compare_solved(net, res.net)
+    # a second export writes them as EquivalentInjection again
+    notes2 = String[]
+    writeCGMESFiles(res.net; path = mktempdir(), created = _EXPORT_STAMP, notices = notes2)
+    @test notes2 == notes
+
+    # a Q limit that binds: C cannot hold 1.05 pu with 5 MVAr and ends PQ
+    # at the limit, before the export and after the re-import
+    bnet = pec_net(true; bind = true)
+    @test _solve!(bnet)[2] == 0
+    @test bnet.nodeVec[bnet.busDict["C"]]._nodeType == Sparlectra.PQ
+    bdir = mktempdir()
+    writeCGMESFiles(bnet; path = bdir, created = _EXPORT_STAMP)
+    bres = importCGMES(path = bdir, name = "pec_bind_back")
+    @test (back_of(bres)["C"].minQ, back_of(bres)["C"].maxQ) == (-5.0, 5.0)
+    @test _solve!(bres.net)[2] == 0
+    @test bres.net.nodeVec[bres.net.busDict["C"]]._nodeType == Sparlectra.PQ
+    _compare_solved(bnet, bres.net)
+
+    # no machine record for them in the short-circuit harvest: Ik'' as
+    # the network without them, and every row flagged as a lower bound
+    # for the converter fault current the export could not carry
+    @test all(m -> m.bus == "A", res.shortcircuit.synchronous_machines)
+    @test isempty(res.shortcircuit.equivalent_injections) && isempty(res.shortcircuit.power_electronics_connections)
+    ref_dir = mktempdir()
+    ref_net = pec_net(false)
+    @test _solve!(ref_net)[2] == 0
+    writeCGMESFiles(ref_net; path = ref_dir, created = _EXPORT_STAMP)
+    sc_rows(r) = Dict(row.bus => row for row in run_with_expected_warnings(() -> runShortCircuit!(r; case = :max), ["short-circuit: SynchronousMachine", "short-circuit: PowerElectronicsConnection"]).rows)
+    sc_pec, sc_ref = sc_rows(res), sc_rows(importCGMES(path = ref_dir, name = "nopec_back"))
+    @test sort!(collect(keys(sc_pec))) == sort!(collect(keys(sc_ref))) == ["A", "B", "C"]
+    @test all(isapprox(sc_pec[b].ik_kA, sc_ref[b].ik_kA; rtol = 1e-12) for b in keys(sc_ref))
+    for (b, row) in sc_pec
+      @test row.contains_defaulted_data
+      @test count(r -> occursin("PowerElectronicsConnection at bus", r) && occursin("Ik''max in its island is a lower bound", r), row.reasons) == 2
+      @test !any(r -> occursin("PowerElectronicsConnection", r), sc_ref[b].reasons)
+    end
+  end)() end
+
   @testset "three-winding transformer with a tapped leg round-trips" begin (function ()
     # the importer builds the tapped end-1 leg side bus -> star; the
     # export must still write one PowerTransformer with three ends

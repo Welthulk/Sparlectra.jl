@@ -1297,33 +1297,37 @@ function _progress_tick!(p::_BatchProgress)
   return nothing
 end
 
-# The batch runner: chunked over Julia threads exactly like the old
+# The parallel map under every engine batch: item k of 1:n is
+# `eval_one(worker, k)`, chunked over Julia threads exactly like the old
 # runContingencies! fan-out, with the serial path running the SAME
-# evaluate! on one worker (threads rule: serial path is the same function).
-# The per-chunk workers are created SERIALLY before spawning (threads
-# rule: never create shared-resource copies under threads), and worker
-# state is indexed by CHUNK, never by threadid. With screening :off the
-# batch returns the historical Vector{ContingencyResult}; otherwise every
-# row is a ScenarioResult.
-function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing))
-  screening_off = engine.screening_mode === :off
-  isempty(items) && return screening_off ? ContingencyResult[] : ScenarioResult[]
-  eval_one = screening_off ? evaluate! : _evaluate_item
-  results = Vector{Any}(undef, length(items))
+# eval_one on one worker (threads rule: serial path is the same function).
+# `make_worker()` builds one worker per chunk; all of them are created
+# SERIALLY before any task spawns (threads rule: never create
+# shared-resource copies under threads), and worker state is indexed by
+# CHUNK, never by threadid. A worker is reused for every item of its chunk,
+# so whatever eval_one leaves on it is seen by the next item of that chunk.
+# The parallel switches resolve once here, against the active
+# runtime.parallel configuration for every keyword left at `nothing`.
+# Returns the results in item order. Both callables are @nospecialize: the
+# map compiles once, and one dynamic call per item costs nothing against a
+# power-flow solve.
+function _engine_parallel_map(@nospecialize(eval_one), @nospecialize(make_worker), n::Int; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing))::Vector{Any}
+  results = Vector{Any}(undef, n)
+  n == 0 && return results
   # shared by all chunks; only read and atomically incremented in the tasks
-  tracker = _BatchProgress(progress, length(items))
+  tracker = _BatchProgress(progress, n)
   parallel_on, parallel_cap, parallel_min_items = _resolve_parallel_runtime(parallel_enabled, parallel_max_tasks, parallel_min_work_items)
-  use_parallel = parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && length(items) >= parallel_min_items
+  use_parallel = parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && n >= parallel_min_items
   if use_parallel
-    chunks = collect(Iterators.partition(eachindex(items), cld(length(items), parallel_cap)))
-    chunk_workers = [ScenarioWorker(deepcopy(engine.template)) for _ in chunks]
+    chunks = collect(Iterators.partition(1:n, cld(n, parallel_cap)))
+    chunk_workers = [make_worker() for _ in chunks]
     tasks = [
       Threads.@spawn begin
         for idx in chunks[ci]
           # an N-1 batch is the longest run the Web UI offers; the abort
           # token is process-wide, so it is visible inside this task
           sparlectra_check_abort()
-          results[idx] = eval_one(engine, chunk_workers[ci], items[idx])
+          results[idx] = eval_one(chunk_workers[ci], idx)
           # no assignment here: the task body must not rebind enclosing names
           _progress_tick!(tracker)
         end
@@ -1331,13 +1335,27 @@ function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem};
     ]
     foreach(wait, tasks)
   else
-    serial_worker = ScenarioWorker(deepcopy(engine.template))
-    for idx in eachindex(items)
+    serial_worker = make_worker()
+    for idx in 1:n
       sparlectra_check_abort()
-      results[idx] = eval_one(engine, serial_worker, items[idx])
+      results[idx] = eval_one(serial_worker, idx)
       _progress_tick!(tracker)
     end
   end
+  return results
+end
+
+# The batch runner of the engine: picks the evaluation (screening off or
+# on), lets _engine_parallel_map run it over the items on per-chunk
+# ScenarioWorkers, and converts the rows. With screening :off the batch
+# returns the historical Vector{ContingencyResult}; otherwise every row is a
+# ScenarioResult.
+function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing))
+  screening_off = engine.screening_mode === :off
+  isempty(items) && return screening_off ? ContingencyResult[] : ScenarioResult[]
+  evaluate_fn = screening_off ? evaluate! : _evaluate_item
+  results = _engine_parallel_map((worker, idx) -> evaluate_fn(engine, worker, items[idx]), () -> ScenarioWorker(deepcopy(engine.template)), length(items);
+    parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
   screening_off && return ContingencyResult[results[i] for i in eachindex(items)]
   return ScenarioResult[results[i] for i in eachindex(items)]
 end

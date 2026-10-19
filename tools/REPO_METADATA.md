@@ -2,8 +2,7 @@
 
 Values for manual entry in the GitHub repository settings; none of these
 can be set from the working tree. Companion of the on-site artifacts
-(`robots.txt`, `llms.txt`, `sitemap.xml`, title/meta tags) added by the
-search-discoverability task.
+(`robots.txt`, `llms.txt`, `sitemap.xml`, title/meta tags).
 
 ## GitHub settings
 

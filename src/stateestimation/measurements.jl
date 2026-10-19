@@ -83,6 +83,14 @@ Fields:
   is not part of the Ybus, so it constrains only the post-SE flow
   allocation (`calcLinkFlowsSE!`).
 - `id`: Optional measurement identifier.
+- `zero_injection`: the row is a zero-injection row, set by the code that
+  creates it (`addZeroInjectionMeasurements!`, the `zero_injection` source
+  token of a measurement table, the `zero_injection` key of an SCF 1.2
+  measurement row, the ZI rows of a measurement CSV v1 or an SCF 1.0 case
+  file, which carry no such field). With
+  `state_estimation.zero_injection = constraint` such rows are equality
+  constraints, and they are protected from bad-data elimination. The id
+  alone never decides it: a measurement table uses the meter mRID as id.
 """
 struct Measurement
   typ::MeasurementType
@@ -95,13 +103,14 @@ struct Measurement
   direction::Symbol
   id::String
   linkIdx::Union{Nothing,Int}
+  zero_injection::Bool
 end
 
-function Measurement(; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing)
+function Measurement(; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false)
   σ = Float64(sigma)
   σ <= 0.0 && error("Measurement sigma must be > 0.0")
   w = inv(σ * σ)
-  return Measurement(typ, Float64(value), σ, w, active, busIdx, branchIdx, direction, String(id), linkIdx)
+  return Measurement(typ, Float64(value), σ, w, active, busIdx, branchIdx, direction, String(id), linkIdx, zero_injection)
 end
 
 @inline function _default_measurement_id(typ::MeasurementType; busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, linkIdx::Union{Nothing,Int} = nothing)
@@ -156,11 +165,11 @@ end
 end
 
 """
-    addMeasurement!(measurements; typ, value, sigma, active=true, busIdx=nothing, branchIdx=nothing, direction=:none, id="")
+    addMeasurement!(measurements; typ, value, sigma, active=true, busIdx=nothing, branchIdx=nothing, direction=:none, id="", zero_injection=false)
 
 Append a state-estimation measurement to `measurements` and return it.
 """
-function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing)
+function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false)
   if !isnothing(linkIdx) && (typ != PflowMeas && typ != QflowMeas)
     error("linkIdx is only valid for flow measurements (PflowMeas/QflowMeas)")
   end
@@ -190,7 +199,7 @@ function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real
   end
 
   meas_id = isempty(id) ? _default_measurement_id(typ; busIdx = busIdx, branchIdx = branchIdx, direction = direction, linkIdx = linkIdx) : String(id)
-  meas = Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = meas_id, linkIdx = linkIdx)
+  meas = Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = meas_id, linkIdx = linkIdx, zero_injection = zero_injection)
   push!(measurements, meas)
   return meas
 end
@@ -534,8 +543,8 @@ function addZeroInjectionMeasurements!(measurements::Vector; net::Net, sigma::Re
   added = Measurement[]
   for busIdx in selected
     1 <= busIdx <= length(net.nodeVec) || error("Bus index $(busIdx) out of bounds")
-    push!(added, addMeasurement!(measurements; typ = PinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_PINJ_bus_$(busIdx)"))
-    push!(added, addMeasurement!(measurements; typ = QinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_QINJ_bus_$(busIdx)"))
+    push!(added, addMeasurement!(measurements; typ = PinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_PINJ_bus_$(busIdx)", zero_injection = true))
+    push!(added, addMeasurement!(measurements; typ = QinjMeas, value = 0.0, sigma = sigma, active = active, busIdx = busIdx, id = "$(idPrefix)_QINJ_bus_$(busIdx)", zero_injection = true))
   end
   return added
 end
@@ -543,6 +552,15 @@ end
 function addZeroInjectionMeasurements!(net::Net; sigma::Real = ZERO_INJECTION_SIGMA, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
   return addZeroInjectionMeasurements!(_net_measurements(net); net = net, sigma = sigma, busNames = busNames, busIdxs = busIdxs, active = active, idPrefix = idPrefix)
 end
+
+# Formats without a source field (measurement CSV v1, read by the converter
+# and the run artifact reader; the measurement rows of an SCF 1.0 or 1.1
+# file; SCF 1.2 writes the flag itself) store a zero-injection row only as the
+# row addZeroInjectionMeasurements! wrote: an injection row with value 0
+# and the id ZI_PINJ_bus_<k> / ZI_QINJ_bus_<k>. Their readers set
+# `zero_injection` on exactly that shape; every other path takes the flag
+# from the code that adds the row or from the table's source token.
+_zero_injection_written_row(typ::MeasurementType, value::Real, id::AbstractString)::Bool = (typ == PinjMeas || typ == QinjMeas) && value == 0 && occursin(r"^ZI_[PQ]INJ_bus_\d+$", id)
 
 # The switch state_estimation.zero_injection applied to a measurement list:
 # ZI rows at every passive bus (findPassiveBuses: no generation, load or
@@ -1005,7 +1023,7 @@ function addMeasurementNoise!(
       stddev[m.typ]
     end
     net.measurements[k] = Measurement(typ = m.typ, value = m.value + σ * randn(rng), sigma = σ, active = m.active,
-                                      busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
+                                      busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
   end
   return Measurement[m for m in net.measurements]
 end
@@ -1049,10 +1067,11 @@ measurements including the shunt-bay `ImagMeas`, `from_bus`/`to_bus` plus
 Buses are written by NAME (matched whitespace-insensitively on read) or,
 with `busReference = :mrid`, by their preserved CGMES mRID (ENTSO-E UUID;
 name fallback where none is recorded; MATPOWER/DTF nets have no mRIDs and
-always use bus numbers/names). The reader resolves names, component
-ids/names, and mRIDs. Values use round-trip-exact Float64 formatting
-(UTF-8), so `readMeasurementsCSV!` restores a bitwise-equal measurement
-vector. `format` (`technical`, `excel_de`, `excel_us`, default the active
+always use bus numbers/names). `convertMeasurementsV1` resolves names,
+component ids/names, and mRIDs. Values use round-trip-exact Float64
+formatting (UTF-8), so the converter reads back a bitwise-equal
+measurement vector. The reader `readMeasurementsCSV!` was removed in
+0.50.0; the converter reads every v1 file. `format` (`technical`, `excel_de`, `excel_us`, default the active
 `output.csv_format`) sets the delimiter and the decimal separator like every
 other CSV a run writes; the numbers keep their shortest round-trip form in
 every format, and the reader tells the format from the header line.
@@ -1069,17 +1088,14 @@ skips them. `footerComments` lines are written as `#` comments AFTER the
 data rows (bulky per-row blocks such as the generator's truth values),
 so the file opens with its data; the reader skips comment lines wherever
 they stand. `extraHeader`/`extraCells` append diagnostic columns behind
-`id` (the state-estimation run writes `bad_data` and `status`);
-`extraCells(i, m)` returns the cells of the i-th measurement, and the
-reader ignores the extra columns.
+`id`; `extraCells(i, m)` returns the cells of the i-th measurement, and the
+converter ignores the extra columns.
 """
 function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Vector{String} = String[], footerComments::Vector{String} = String[], busReference::Symbol = :name, format = result_csv_format(), extraHeader::Vector{String} = String[], extraCells = nothing)
-  # Diagnostic columns behind `id` (the state-estimation run writes
-  # `bad_data` and `status`): `extraHeader` names them, `extraCells(i, m)`
-  # returns their cells for the i-th measurement (the index is what the
-  # diagnostics report, ids may be empty). The reader takes the fixed
-  # columns and ignores whatever follows, so the annotated artifact still
-  # reads back as the same measurement set.
+  # Diagnostic columns behind `id` (until 0.50.0 the state-estimation run
+  # wrote `bad_data` and `status` there): `extraHeader` names them,
+  # `extraCells(i, m)` returns their cells for the i-th measurement. The
+  # converter takes the fixed columns and ignores whatever follows.
   (isempty(extraHeader) || extraCells !== nothing) || error("writeMeasurementsCSV: extraHeader needs extraCells")
   busReference in (:name, :mrid) || error("writeMeasurementsCSV: busReference must be :name or :mrid")
   # The file follows output.csv_format like every other CSV a run writes
@@ -1207,97 +1223,36 @@ function _measurement_type_from_name(s::AbstractString)
 end
 
 """
-    MEASUREMENT_CSV_V1_DEPRECATION
+    MEASUREMENT_CSV_V1_REMOVED
 
-The deprecation notice of the measurement CSV v1: `readMeasurementsCSV!`
-logs it as a warning once per session, the SE service writes it to the run
-log of every run on a v1 file and the Web UI shows it at such a file. It
-names the converter and the removal in 0.60.0.
+The message for a measurement CSV v1 file where a measurement set is read:
+its reader `readMeasurementsCSV!` was removed in 0.50.0. The SE service and
+the Web UI refuse such a file with it, and the Web UI shows it at the file.
+It names the converter.
 """
-const MEASUREMENT_CSV_V1_DEPRECATION = "The measurement CSV v1 (# sparlectra-measurements v1) is deprecated and will be removed in 0.60.0. Convert the file to a measurement table with convertMeasurementsV1(v1_file, net; out) or `sparlectra convert-measurements <case> <v1.csv>`."
+const MEASUREMENT_CSV_V1_REMOVED = "The measurement CSV v1 (# sparlectra-measurements v1) is no longer read since Sparlectra 0.50.0. Convert the file once to a measurement table with convertMeasurementsV1(v1_file, net; out) or `sparlectra convert-measurements <case> <v1.csv>`."
 
-"""
-    readMeasurementsCSV!(net; file, replace=true) -> NamedTuple
-
-Read a measurement CSV v1 file (see `writeMeasurementsCSV`) into
-`net.measurements`. The import is ATOMIC: the whole file is parsed and
-validated first, and any error (unknown version comment, unknown type name,
-malformed row, unresolvable bus/branch/link) aborts with a line-precise
-message (`file:line: reason`) leaving `net.measurements` untouched; there is
-never a partial import. `replace = true` (default) replaces the stored
-measurements, `replace = false` appends.
-
-Returns `(counts = Dict{MeasurementType,Int}, total, skipped)`; `skipped`
-counts empty and comment lines after the version line.
-
-Deprecated: the measurement CSV v1 is read in 0.50.0 with a warning (once
-per session, `MEASUREMENT_CSV_V1_DEPRECATION`) and the reader is removed in
-0.60.0. `convertMeasurementsV1` writes the measurement table of a v1 file
-and its case; `readMeasurementTable!` reads the table.
-"""
-function readMeasurementsCSV!(net::Net; file::AbstractString, replace::Bool = true)
-  # once per session (maxlog): a script reading many v1 files is told once;
-  # the SE service notes it in every run.log and the Web UI at the file
-  @warn MEASUREMENT_CSV_V1_DEPRECATION maxlog = 1
-  return _take_measurements_csv_v1!(net; file = file, replace = replace)
+# true when the first line of `file` is the version comment of the
+# measurement CSV v1
+function _is_measurement_csv_v1(file::AbstractString)::Bool
+  isfile(file) || return false
+  line = open(io -> readline(io; keep = false), file, "r")
+  # a byte order mark (Windows editors write one) is not part of the line
+  return strip(chopprefix(line, "﻿")) == "# " * _MEASUREMENT_CSV_VERSION
 end
 
-# The take-over of readMeasurementsCSV! without the deprecation warning:
-# for the measurement.csv artifact a Sparlectra run writes itself (still a
-# CSV v1 with its verdict columns), which is no user file to convert.
-function _take_measurements_csv_v1!(net::Net; file::AbstractString, replace::Bool = true)
-  v1 = _read_measurements_csv_v1(net, file)
-  parsed = v1.measurements
-  counts = v1.counts
-  skipped = v1.skipped
-
-  # A zero-injection row is a constraint, and older sets wrote it with sigma
-  # 1e-6, i.e. weight 1e12. On a large network that does not bind the bus, it
-  # crushes the normal equations: a 25000-bus set with 27268 such rows did not
-  # converge in 30 iterations and reported an objective of 3.8e15 per degree of
-  # freedom. The same set at ZERO_INJECTION_SIGMA converges in 7 iterations to
-  # J/dof 4.97 (and to 1.00 once the documented tap deviations are released).
-  # Reading therefore lifts a constraint row to the current floor and says so;
-  # ordinary telemetry is untouched, its tightest rows are orders of magnitude
-  # above this.
-  lifted = 0
-  for (i, m) in enumerate(parsed)
-    m.sigma < ZERO_INJECTION_SIGMA || continue
-    parsed[i] = Measurement(typ = m.typ, value = m.value, sigma = ZERO_INJECTION_SIGMA, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, active = m.active, linkIdx = m.linkIdx)
-    lifted += 1
-  end
-  lifted > 0 && @info "measurement set: $(lifted) constraint row(s) had a sigma below $(ZERO_INJECTION_SIGMA) and were read at that value (a tighter weight makes the normal equations unsolvable at scale)"
-
-  # atomic take-over only after the whole file validated
-  if replace
-    empty!(net.measurements)
-  end
-  append!(net.measurements, parsed)
-
-  # A generated set holds each physical quantity once. Two readings of the same
-  # quantity are legal in real telemetry (redundant transducers), but a set that
-  # doubles EVERY quantity is the signature of a corrupted file, and it inflates
-  # J without any single residual looking wrong - which then reads as a topology
-  # error. Name it here instead of letting the estimate mislead.
-  # checked on the RESULT, not on the parsed rows: with `replace = false` the
-  # doubling arises from the combination, which is exactly how a set gets
-  # corrupted (generated rows appended onto rows the case already carried)
-  duplicates = _duplicate_measured_quantities(net.measurements)
-  if !isempty(duplicates)
-    @warn "$(basename(file)): $(sum(values(duplicates))) measurement(s) repeat a quantity already measured; a set that repeats every quantity is usually a corrupted file and inflates J." duplicates
-  end
-  return (counts = counts, total = length(parsed), skipped = skipped, duplicates = duplicates)
-end
-
-# The parse of a measurement CSV v1 shared by readMeasurementsCSV! and
-# convertMeasurementsV1: every row as a Measurement (sigma as written, not
-# lifted), its line number in the file, the count per type and the skipped
-# comment and empty lines. Errors name file and line; nothing is changed in
-# `net`.
+# The private parse of a measurement CSV v1, for convertMeasurementsV1; the
+# public reader readMeasurementsCSV! was removed in 0.50.0. Every row as a
+# Measurement (sigma as written, not lifted), its line number in the file,
+# the count per type, the skipped comment and empty lines, and the names of
+# the columns behind `id` (the verdict columns bad_data and status of a run
+# artifact written before 0.50.0). Errors name file and line; nothing is
+# changed in `net`.
 function _read_measurements_csv_v1(net::Net, file::AbstractString)
   lines = readlines(file)
   isempty(lines) && error("$(file): empty file, expected the version comment '# $(_MEASUREMENT_CSV_VERSION)'")
-  vline = strip(lines[1])
+  # a byte order mark before the version comment is skipped
+  vline = strip(chopprefix(lines[1], "﻿"))
   expected = "# " * _MEASUREMENT_CSV_VERSION
   vline == expected || error("$(file):1: unknown measurement file version ('$(vline)'; expected '$(expected)')")
 
@@ -1309,6 +1264,7 @@ function _read_measurements_csv_v1(net::Net, file::AbstractString)
   hasBranchNr = true
   delimiter = ','
   nextra = 0
+  extra_header = String[]
   for (ln, raw) in enumerate(lines)
     ln == 1 && continue
     line = strip(raw)
@@ -1328,6 +1284,7 @@ function _read_measurements_csv_v1(net::Net, file::AbstractString)
       if header == _MEASUREMENT_CSV_HEADER || startswith(header, _MEASUREMENT_CSV_HEADER * ",")
         hasBranchNr = true
         nextra = header == _MEASUREMENT_CSV_HEADER ? 0 : count(==(','), header) - count(==(','), _MEASUREMENT_CSV_HEADER)
+        extra_header = String[strip(c) for c in split(header, ",")[12:end]]
       elseif header == _MEASUREMENT_CSV_HEADER_NO_BRANCH_NR
         hasBranchNr = false
       else
@@ -1392,7 +1349,7 @@ function _read_measurements_csv_v1(net::Net, file::AbstractString)
       else
         isempty(dirStr) || error("direction must be empty for a bus measurement")
         busIdx = geNetBusIdx(net = net, busName = _measurement_csv_bus_key(net, bus))
-        Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id)
+        Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, id = id, zero_injection = _zero_injection_written_row(typ, value, id))
       end
     catch e
       msg = e isa ErrorException ? e.msg : sprint(showerror, e)
@@ -1403,7 +1360,7 @@ function _read_measurements_csv_v1(net::Net, file::AbstractString)
     counts[typ] = get(counts, typ, 0) + 1
   end
   headerSeen || error("$(file): missing header line '$(_MEASUREMENT_CSV_HEADER)'")
-  return (measurements = parsed, lines = parsed_lines, counts = counts, skipped = skipped)
+  return (measurements = parsed, lines = parsed_lines, counts = counts, skipped = skipped, extra_header = extra_header)
 end
 
 """

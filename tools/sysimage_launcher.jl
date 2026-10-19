@@ -260,17 +260,25 @@ function relaunch_with_sysimage(image::AbstractString, script::AbstractString, p
   startup = get(ENV, "SPARLECTRA_STARTUP_FILE", "no")
   cmd = `$(exe) -J$(image) --startup-file=$(startup) --project=$(project_dir) $(thread_flag) $(script) $(args)`
   println("Sysimage: ", image)
-  # Ctrl+C reaches the whole process group, so it hits this process too. The
-  # child prints its own "closing Sparlectra Web UI"; a stack trace from the
-  # parent on top of that would look like a crash. ignorestatus keeps a
+  # Ctrl+C reaches the whole process group, so it hits this process too. A
+  # script run would end on it with the signal and a native backtrace, and
+  # the shell prompt would come back before the child has printed its own
+  # "Sparlectra Web UI stopped by Ctrl+C." So SIGINT becomes an exception
+  # here, and this process keeps waiting until the child has stopped; the
+  # child ends at the latest on a second Ctrl+C. ignorestatus keeps a
   # non-zero child exit from raising here as well - it is forwarded instead.
-  code = try
-    run(ignorestatus(cmd)).exitcode
-  catch err
-    err isa InterruptException || rethrow()
-    0
+  Base.exit_on_sigint(false)
+  # run(...; wait = false) points the streams at devnull unless they are given
+  child = run(pipeline(ignorestatus(cmd); stdin = stdin, stdout = stdout, stderr = stderr); wait = false)
+  while true
+    try
+      wait(child)
+      break
+    catch err
+      err isa InterruptException || rethrow()
+    end
   end
-  exit(code)
+  exit(child.exitcode)
 end
 
 """

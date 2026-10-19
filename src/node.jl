@@ -62,7 +62,10 @@ A mutable structure representing a node in a power system.
     vmax_pu::Union{Nothing,Float64} = nothing,
     isAux::Bool = false,
     oBusIdx::Union{Nothing,Int} = nothing,
-  )`: Creates a new `Node` instance.
+    name::AbstractString = "",
+  )`: Creates a new `Node` instance. `name` becomes the component name; an
+  empty `name` gives the schematic name (see `getNodeComp`). `isAux` gives
+  the component type `AuxBus`, the marker of an auxiliary node.
 
 # Methods
 - `Base.show(io::IO, node::Node)`: Prints the `Node` instance.
@@ -106,12 +109,13 @@ mutable struct Node
     vmax_pu::Union{Nothing,Float64} = nothing,
     isAux::Bool = false,
     oBusIdx::Union{Nothing,Int} = nothing,
+    name::AbstractString = "",
   )
     bIdx = busIdx
     if !isnothing(oBusIdx)
       bIdx = oBusIdx
     end
-    c = getNodeComp(vn_kV, bIdx, nodeType, isAux)
+    c = getNodeComp(vn_kV, bIdx, nodeType, isAux; name = name)
 
     new(c, busIdx, nodeType, ratedS, zone, area, vm_pu, va_deg, pƩLoad, qƩLoad, pShunt, qShunt, pƩGen, qƩGen, vmin_pu, vmax_pu)
   end
@@ -165,24 +169,34 @@ mutable struct Node
   end
 end
 
-function getNodeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false)::ImpPGMComp
-  cTyp = toComponentTyp("Busbarsection")
-  if (nodeType == Slack)
-    name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))*"
+# The component of a node. A given `name` (addBus!'s busName) is the
+# component name. Without one the name is schematic: Bus_<idx>_<kV>, with a
+# trailing "*" for a node built as slack and Aux_<idx>_<kV> for an auxiliary
+# node; the "*" is never appended to a given name, which stays the name the
+# user looks the bus up by. An auxiliary node carries the component type
+# AuxBus whatever its name; that type is the marker _is_aux_node tests.
+function getNodeComp(Vn_kV::Float64, node_idx::Int, nodeType, isAux::Bool = false; name::AbstractString = "")::ImpPGMComp
+  cTyp = isAux ? AuxBus : Busbarsection
+  vn_tag = string(convert(Int, trunc(Vn_kV)))
+  if !isempty(name)
+    cName = String(name)
+  elseif (nodeType == Slack)
+    cName = "Bus_$(Int(node_idx))_$(vn_tag)*"
   elseif isAux
-    name = "Aux_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
+    cName = "Aux_$(Int(node_idx))_$(vn_tag)"
   else
-    name = "Bus_$(Int(node_idx))_$(string(convert(Int,trunc(Vn_kV))))"
+    cName = "Bus_$(Int(node_idx))_$(vn_tag)"
   end
-  cID = "#" * name * "#"
-  return ImpPGMComp(cID, name, cTyp, Vn_kV, node_idx, node_idx)
+  cID = "#" * cName * "#"
+  return ImpPGMComp(cID, cName, cTyp, Vn_kV, node_idx, node_idx)
 end
 
-# A node is auxiliary when it carries the AuxBus component type or was built
-# with `isAux` (getNodeComp above gives it the "Aux_" component name; every
-# importer creates its star points and internal nodes that way). Used by the
-# SCF export and the auxiliary-bus flat start of the rectangular solver.
-_is_aux_node(node::Node)::Bool = node.comp.cTyp == AuxBus || startswith(getCompName(node.comp), "Aux_")
+# A node is auxiliary when it carries the AuxBus component type. Every
+# isAux build gets it (getNodeComp above), whatever the bus is called; every
+# importer creates its star points and internal nodes that way. Readers: the
+# auxiliary-bus flat start of the rectangular solver, the SCF and MATPOWER
+# exports, contingency events, the result header count.
+_is_aux_node(node::Node)::Bool = node.comp.cTyp == AuxBus
 
 """
     addShuntPower!(; node, p, q)

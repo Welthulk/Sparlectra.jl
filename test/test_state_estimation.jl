@@ -187,6 +187,171 @@ function test_state_estimation_passive_bus_zero_injection_helpers()::Bool
   return true
 end
 
+"""
+`state_estimation.zero_injection = constraint` against `on` (weighted ZI
+rows at 1 kW): on the shipped sp_case14 and sp_case60 with noisy sets whose
+passive buses carry only ZI rows, the same state within 1e-6 pu (measured
+4.2e-7 and below), the same iterations
+and dof, the constraint rows hold to 1e-6 MW and are marked as constraints
+in the ranking, never suspicious. A wrong constraint (ZI at a load bus) plus
+a gross error: the bad-data elimination never removes a constraint. A
+two-island net with a passive bus per island: each island holds its
+constraint and recovers the power flow.
+"""
+function test_state_estimation_zero_injection_constraint()::Bool
+  @testset "Zero injection as equality constraint" begin (function ()
+    for name in ("sp_case14", "sp_case60")
+      path = joinpath(dirname(@__DIR__), "data", "scf", name * ".scf.json")
+      net = SparlectraApp._se_import_case_net(path, Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, path).config)
+      _, erg = runpf!(net, 60, 1e-8, 0; method = :rectangular)
+      @test erg == 0
+      meas = generateMeasurementsFromPF(net; noise = true, relativeSigma = true, rng = MersenneTwister(7))
+      passive = Set(findPassiveBuses(net))
+      @test !isempty(passive)
+      filter!(m -> !(m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) && m.busIdx in passive), meas)
+      @test Sparlectra._add_missing_zero_injections!(meas, net) == 2 * length(passive)
+      runs = Dict{Symbol,Any}()
+      for mode in (:on, :constraint)
+        n2 = deepcopy(net)
+        r = with_state_estimation_config(zero_injection = mode) do
+          runse!(n2, meas)
+        end
+        @test r.converged
+        runs[mode] = (r = r, vm = Float64[nd._vm_pu for nd in n2.nodeVec])
+      end
+      @test runs[:on].r.iterations == runs[:constraint].r.iterations
+      @test runs[:on].r.dof == runs[:constraint].r.dof
+      @test maximum(abs.(runs[:on].vm .- runs[:constraint].vm)) < 1e-6
+      d = with_state_estimation_config(zero_injection = :constraint) do
+        validate_measurements(net, meas)
+      end
+      con = [row for row in d.measurement_ranking if row.constraint]
+      # every ZI row is a constraint; on sp_case60 the passive buses 7 and 21
+      # sit in one closed-link cluster and enter as its aggregate, which
+      # carries the zero-injection flag of its members
+      aggs = name == "sp_case60" ? ["LINKAGG_Pinj_rep_7", "LINKAGG_Qinj_rep_7"] : String[]
+      for a in aggs
+        @test only(row for row in d.measurement_ranking if row.id == a).constraint
+      end
+      @test length(con) == count(row -> startswith(String(row.id), "ZI"), d.measurement_ranking) + length(aggs)
+      @test all(row -> abs(row.residual) < 1e-6 && row.normalized_residual == 0.0 && !row.suspicious, con)
+      # with on the same rows are measurements
+      don = with_state_estimation_config(zero_injection = :on) do
+        validate_measurements(net, meas)
+      end
+      @test !any(row -> row.constraint, don.measurement_ranking)
+      # under on the aggregate keeps its id and is protected by the flag
+      for a in aggs
+        @test Sparlectra._elimination_protected(only(m for m in Sparlectra._se_prepare(net, meas).meas if m.id == a))
+      end
+    end
+
+    # J bookkeeping: constraint rows are not part of J. After one iteration
+    # from the flat start the constraints are not yet met, so their weighted
+    # residuals are large; J must equal the sum over the measurement rows.
+    path14 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+    net14 = SparlectraApp._se_import_case_net(path14, Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, path14).config)
+    _, erg = runpf!(net14, 60, 1e-8, 0; method = :rectangular)
+    @test erg == 0
+    m14 = generateMeasurementsFromPF(net14; noise = true, relativeSigma = true, rng = MersenneTwister(7))
+    p14 = Set(findPassiveBuses(net14))
+    filter!(m -> !(m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) && m.busIdx in p14), m14)
+    Sparlectra._add_missing_zero_injections!(m14, net14)
+    r1 = with_state_estimation_config(zero_injection = :constraint, max_iter = 1, update_net = false) do
+      runse!(deepcopy(net14), m14)
+    end
+    @test length(r1.residuals) == length(m14)   # no contraction on sp_case14: rows in input order
+    jM = sum(m.zero_injection ? 0.0 : r1.residuals[i]^2 / m.sigma^2 for (i, m) in enumerate(m14))
+    jC = sum(m.zero_injection ? r1.residuals[i]^2 / m.sigma^2 : 0.0 for (i, m) in enumerate(m14))
+    @test jC > 1e-3 * jM   # the check below would see constraint rows in J
+    @test isapprox(r1.objectiveJ, jM; rtol = 1e-12)
+
+    # a real injection measurement whose id happens to start with ZI (a
+    # measurement table uses the meter mRID as id) stays a weighted row
+    mreal = copy(m14)
+    k = findfirst(m -> m.typ == Sparlectra.PinjMeas && !m.zero_injection && m.value < -5.0, mreal)
+    g = mreal[k]
+    mreal[k] = Measurement(typ = g.typ, value = g.value, sigma = g.sigma, busIdx = g.busIdx, id = "ZI_real")
+    dreal = with_state_estimation_config(zero_injection = :constraint) do
+      validate_measurements(net14, mreal)
+    end
+    @test !only(row for row in dreal.measurement_ranking if row.id == "ZI_real").constraint
+    @test !Sparlectra._elimination_protected(mreal[k])
+
+    # dependent constraints (one balance stated twice): the singular KKT
+    # step falls back to least squares and the run says why
+    mdup = copy(m14)
+    zi1 = first(m for m in m14 if m.zero_injection)
+    push!(mdup, Measurement(typ = zi1.typ, value = 0.0, sigma = zi1.sigma, busIdx = zi1.busIdx, id = zi1.id * "_dup", zero_injection = true))
+    @test_logs (:warn, r"KKT matrix of the zero-injection constraints was singular, dependent constraints") match_mode = :any with_state_estimation_config(zero_injection = :constraint, update_net = false) do
+      runse!(deepcopy(net14), mdup)
+    end
+
+    # a wrong constraint (zero injection at a load bus) and one gross error:
+    # the elimination works on the telemetry and never on a constraint
+    path = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+    net = SparlectraApp._se_import_case_net(path, Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, path).config)
+    _, erg = runpf!(net, 60, 1e-8, 0; method = :rectangular)
+    @test erg == 0
+    meas = generateMeasurementsFromPF(net; noise = true, relativeSigma = true, rng = MersenneTwister(11))
+    loadBus = first(m.busIdx for m in meas if m.typ == Sparlectra.PinjMeas && m.value < -5.0)
+    filter!(m -> !(m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) && m.busIdx == loadBus), meas)
+    addZeroInjectionMeasurements!(meas; net = net, busIdxs = [loadBus])
+    k = findfirst(m -> m.typ == Sparlectra.PflowMeas && abs(m.value) > 5.0, meas)
+    g = meas[k]
+    meas[k] = Measurement(typ = g.typ, value = g.value + 30.0 * g.sigma, sigma = g.sigma, busIdx = g.busIdx, branchIdx = g.branchIdx, direction = g.direction, id = g.id, active = g.active)
+    dd = with_state_estimation_config(zero_injection = :constraint) do
+      runse_diagnostics(net, meas)
+    end
+    @test !isempty(dd.eliminations)
+    @test !any(t -> startswith(String(t.id), "ZI"), dd.eliminations)
+    @test all(row -> !row.suspicious, (row for row in dd.final_diagnostics.measurement_ranking if row.constraint))
+
+    # two islands, one passive transit bus each, constraint in both
+    function _two_island_transit_net()
+      tnet = Net(name = "se_zi_islands", baseMVA = 100.0)
+      for sfx in ("a", "b")
+        for b in ("Slack", "Transit", "Load")
+          addBus!(net = tnet, busName = b * sfx, vn_kV = 110.0)
+        end
+        addPIModelACLine!(net = tnet, fromBus = "Slack" * sfx, toBus = "Transit" * sfx, r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = tnet, fromBus = "Transit" * sfx, toBus = "Load" * sfx, r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+        addProsumer!(net = tnet, busName = "Slack" * sfx, type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack" * sfx)
+        addProsumer!(net = tnet, busName = "Load" * sfx, type = "ENERGYCONSUMER", p = sfx == "a" ? 10.0 : 6.0, q = sfx == "a" ? 4.0 : 2.0)
+      end
+      return tnet
+    end
+    inet = _two_island_transit_net()
+    _, erg = runpf!(inet, 40, 1e-10, 0; method = :rectangular, islands_enabled = true)
+    @test erg == 0
+    @test findPassiveBuses(inet) == [2, 5]
+    truth = Float64[nd._vm_pu for nd in inet.nodeVec]
+    std = measurementStdDevs(vm = 1e-5, pinj = 1e-5, qinj = 1e-5, pflow = 1e-5, qflow = 1e-5)
+    all_meas = generateMeasurementsFromPF(inet; noise = false, stddev = std)
+    imeas = Measurement[m for m in all_meas if (m.typ == Sparlectra.VmMeas && m.busIdx in (1, 4)) ||
+                                              (m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas) && ((m.branchIdx in (1, 3) && m.direction == :from) || (m.branchIdx in (2, 4) && m.direction == :to)))]
+    @test length(imeas) == 10
+    @test Sparlectra._add_missing_zero_injections!(imeas, inet) == 4
+    snet = _two_island_transit_net()
+    ri = with_state_estimation_config(zero_injection = :constraint, max_iter = 20, tol = 1e-8, jac_eps = 1e-6) do
+      runse!(snet, imeas)
+    end
+    @test ri.converged
+    @test ri.islands !== nothing && length(ri.islands) == 2
+    @test ri.objectiveJ < 1e-6
+    @test maximum(abs.(Float64[nd._vm_pu for nd in snet.nodeVec] .- truth)) < 1e-6
+    di = with_state_estimation_config(zero_injection = :constraint, max_iter = 20, tol = 1e-8, jac_eps = 1e-6) do
+      validate_measurements(_two_island_transit_net(), imeas)
+    end
+    icon = [row for row in di.measurement_ranking if row.constraint]
+    @test length(icon) == 4
+    @test sort(unique(row.island for row in icon)) == [1, 2]
+    @test all(row -> abs(row.residual) < 1e-6, icon)
+    @test occursin("4 row(s) solved as equality constraints", sprint(io -> print_se_diagnostics(io, di; format = :markdown)))
+  end)() end
+  return true
+end
+
 function test_state_estimation_bad_data_diagnostics()::Bool
   # Injects a controlled bad measurement and verifies diagnostics:
   # residual ranking, suspect identification, formatted reporting, and rerun improvement.
@@ -1223,16 +1388,17 @@ function test_state_estimation_diagnostics_unification()::Bool
 end
 
 function test_state_estimation_measurement_csv()::Bool
-  # Measurement CSV v1 core, the one test of the deprecated v1 reader (its
-  # writer stays for the measurements.csv artifact of a run). Lossless
-  # roundtrip over all types and location groups, atomic import,
-  # line-precise errors, version guard, and the deprecation warning: once in
-  # the session however often the reader runs, naming the converter and the
-  # removal in 0.60.0.
+  # Measurement CSV v1 layout: the writer and the private parse stay for
+  # convertMeasurementsV1; the public reader readMeasurementsCSV! was removed
+  # in 0.50.0, and since 0.50.0 the SE run artifact is a measurement table.
+  # Lossless roundtrip over all types and location groups, line-precise
+  # errors, version guard, and the removal (a v1 file is refused with the
+  # converter named).
   @testset "State estimation measurement CSV v1" begin
-  v1_log = Test.TestLogger(min_level = Logging.Warn)
-  Logging.with_logger(v1_log) do
   (function ()
+    # the private parse into the net, as the converter sees the file
+    v1read!(n, file) = (v = Sparlectra._read_measurements_csv_v1(n, file); empty!(n.measurements); append!(n.measurements, v.measurements); (counts = v.counts, total = length(v.measurements)))
+    @test !isdefined(Sparlectra, Symbol("readMeasurementsCSV!"))
     net = create_se_link_net(shunt_buses = ["B2"])
     runpf!(net, 40, 1e-10, 0; method = :rectangular)
     m = generateMeasurementsFromPF(net; includeImag = true, includeShuntQ = true, includeVa = true, noise = true, rng = MersenneTwister(3))
@@ -1246,7 +1412,7 @@ function test_state_estimation_measurement_csv()::Bool
     f = joinpath(dir, "meas.csv")
     w = writeMeasurementsCSV(net; file = f)
     @test w.count == length(orig)
-    r = readMeasurementsCSV!(net; file = f, replace = true)
+    r = v1read!(net, f)
     @test r.total == length(orig)
     # bitwise-equal measurement vectors (all fields, incl. linkIdx and active)
     @test length(net.measurements) == length(orig)
@@ -1267,16 +1433,17 @@ function test_state_estimation_measurement_csv()::Bool
     @test any(l -> occursin(r";\d+,\d+;", l), de_lines[3:end])
     @test !occursin(",", de_lines[2])
     @test all(l -> length(split(l, ";")) == 11, filter(l -> !startswith(l, "#") && !isempty(l), de_lines[3:end]))
-    rde = readMeasurementsCSV!(net; file = fde, replace = true)
+    rde = v1read!(net, fde)
     @test rde.total == length(orig)
     @test all(a == b for (a, b) in zip(orig, net.measurements))
     writeMeasurementsCSV(net; file = f, format = "technical")
     @test readlines(f)[2] == "type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id"
-    readMeasurementsCSV!(net; file = f, replace = true)
+    v1read!(net, f)
     @test all(a == b for (a, b) in zip(orig, net.measurements))
-    # diagnostic columns behind id (the run artifact writes bad_data and
-    # status): written on request, ignored on read, so the annotated file
-    # is still the same measurement set, in either delimiter
+    # diagnostic columns behind id (bad_data and status of a run artifact
+    # before 0.50.0): written on request, ignored by the converter's parse,
+    # so the annotated file is still the same measurement set, in either
+    # delimiter
     for fmt in ("technical", "excel_de")
       fa = joinpath(dir, "annotated_$(fmt).csv")
       writeMeasurementsCSV(net; file = fa, format = fmt, extraHeader = ["bad_data", "status"], extraCells = (i, m) -> (m.id == "inactive_probe" ? "*" : "", m.typ == Sparlectra.ImagMeas ? "critical measurement" : ""))
@@ -1284,24 +1451,37 @@ function test_state_estimation_measurement_csv()::Bool
       @test endswith(lines_a[2], fmt == "excel_de" ? ";bad_data;status" : ",bad_data,status")
       @test any(l -> occursin("inactive_probe", l) && endswith(l, fmt == "excel_de" ? ";*;" : ",*,"), lines_a)
       @test any(l -> endswith(l, "critical measurement"), lines_a)
-      readMeasurementsCSV!(net; file = fa, replace = true)
+      v1read!(net, fa)
+      @test length(net.measurements) == length(orig)
       @test all(a == b for (a, b) in zip(orig, net.measurements))
     end
     @test_throws ErrorException writeMeasurementsCSV(net; file = joinpath(dir, "x.csv"), extraHeader = ["bad_data"])
 
-    # replace = false appends, and appending a set onto itself is exactly the
-    # corruption the reader warns about: every quantity is then measured twice
-    n0 = length(net.measurements)
-    @test_logs (:warn, r"repeat a quantity already measured") match_mode = :any readMeasurementsCSV!(net; file = f, replace = false)
-    @test length(net.measurements) == 2 * n0
-    empty!(net.measurements)
-    append!(net.measurements, orig)
+    # the removal: where a measurement file is read, a v1 file is refused
+    # with the converter named; the state stays
+    before_v1 = copy(net.measurements)
+    for call in (() -> Sparlectra._read_measurement_file!(net, f),)
+      err = try
+        call()
+        nothing
+      catch e
+        e
+      end
+      @test err isa ArgumentError && occursin("convertMeasurementsV1", err.msg) && occursin("0.50.0", err.msg)
+    end
+    @test net.measurements == before_v1
+    # a byte order mark before the version comment (Windows editors) is no
+    # reason to miss a v1 file: recognized, and the converter's parse reads it
+    fbom = joinpath(dir, "bom.csv")
+    write(fbom, "﻿" * read(f, String))
+    @test Sparlectra._is_measurement_csv_v1(fbom)
+    @test Sparlectra._read_measurements_csv_v1(net, fbom).measurements == Sparlectra._read_measurements_csv_v1(net, f).measurements
 
     # version guard: v0 and a missing comment reject the file
     bad = joinpath(dir, "bad.csv")
     open(io -> println(io, "# sparlectra-measurements v0"), bad, "w")
     errV = try
-      readMeasurementsCSV!(net; file = bad)
+      v1read!(net, bad)
       nothing
     catch e
       sprint(showerror, e)
@@ -1315,7 +1495,7 @@ function test_state_estimation_measurement_csv()::Bool
     open(io -> foreach(l -> println(io, l), lines), broken, "w")
     before = copy(net.measurements)
     errL = try
-      readMeasurementsCSV!(net; file = broken)
+      v1read!(net, broken)
       nothing
     catch e
       sprint(showerror, e)
@@ -1333,7 +1513,7 @@ function test_state_estimation_measurement_csv()::Bool
     broken2 = joinpath(dir, "broken2.csv")
     open(io -> foreach(l -> println(io, l), lines2), broken2, "w")
     errN = try
-      readMeasurementsCSV!(net; file = broken2)
+      v1read!(net, broken2)
       nothing
     catch e
       sprint(showerror, e)
@@ -1354,7 +1534,7 @@ function test_state_estimation_measurement_csv()::Bool
     porig = copy(pnet.measurements)
     fpar = joinpath(dir, "parallel.csv")
     writeMeasurementsCSV(pnet; file = fpar)
-    readMeasurementsCSV!(pnet; file = fpar, replace = true)
+    v1read!(pnet, fpar)
     @test [m.branchIdx for m in pnet.measurements] == [1, 2]
     @test all(a == b for (a, b) in zip(porig, pnet.measurements))
     # a branch_nr pointing at a branch with other endpoints is rejected
@@ -1368,7 +1548,7 @@ function test_state_estimation_measurement_csv()::Bool
     badnr = joinpath(dir, "badnr.csv")
     open(io -> foreach(l -> println(io, l), plines), badnr, "w")
     errB = try
-      readMeasurementsCSV!(pnet; file = badnr)
+      v1read!(pnet, badnr)
       nothing
     catch e
       sprint(showerror, e)
@@ -1390,7 +1570,7 @@ function test_state_estimation_measurement_csv()::Bool
         end
       end
     end
-    readMeasurementsCSV!(net; file = legacy, replace = true)
+    v1read!(net, legacy)
     @test length(net.measurements) == length(orig)
     @test all(a == b for (a, b) in zip(orig, net.measurements))
 
@@ -1432,7 +1612,7 @@ function test_state_estimation_measurement_csv()::Bool
     writeMeasurementsCSV(rnet; file = fcm, headerComments = ["transformer taps at generation:", "transformer branch 1 A-B tap_ratio=1.0"])
     lines_cm = readlines(fcm)
     @test startswith(lines_cm[2], "# transformer taps")
-    rcm = readMeasurementsCSV!(rnet; file = fcm, replace = true)
+    rcm = v1read!(rnet, fcm)
     @test rcm.total == length(a1)
     @test all(x == y for (x, y) in zip(a1, rnet.measurements))
 
@@ -1452,14 +1632,11 @@ function test_state_estimation_measurement_csv()::Bool
     fmr = joinpath(dir, "mrid.csv")
     writeMeasurementsCSV(rnet; file = fmr, busReference = :mrid)
     @test occursin("11111111-2222-3333-4444-555555555555", read(fmr, String))
-    readMeasurementsCSV!(rnet; file = fmr, replace = true)
+    v1read!(rnet, fmr)
     @test length(rnet.measurements) == length(a1)
     @test all(x == y for (x, y) in zip(a1, rnet.measurements))
     empty!(rnet.cgmes_ids)
-  end)() end
-  dep = [r for r in v1_log.logs if occursin("sparlectra-measurements v1", r.message)]
-  @test length(dep) == 1 && length(v1_log.logs) == 1
-  @test occursin("convertMeasurementsV1", only(dep).message) && occursin("removed in 0.60.0", only(dep).message)
+  end)()
   end
 
   return true
@@ -2200,6 +2377,18 @@ function _assert_minigrid_fallback_report(dd, log::AbstractString, diag::Abstrac
   @test !occursin("**Converged:** false", diag)
   @test isapprox(dd["metadata"]["se_objective"], parse(Float64, jm.captures[2]); atol = 1e-6)   # run.log rounds to six digits
   @test dd["metadata"]["se_dof"] == parse(Int, jm.captures[3])
+  # the verdict file counts what the run did: every row a diagnostics pass
+  # removed (the pass on the released taps and the repeat on the frozen
+  # ones) is eliminated, inactive only where the table says valid=false,
+  # and its suspicious and eliminated measurements are the counts of the
+  # metadata (until the fix the repeat's own trace replaced the first
+  # pass, which then showed as inactive, and se_suspicious counted the
+  # pass before the elimination)
+  vrows = [split(l, ",") for l in readlines(joinpath(dd["output_dir"], "measurements_verdict.csv"))[2:end]]
+  tab = Dict(r.line => r for r in Sparlectra.readMeasurementTable(joinpath(dd["output_dir"], "measurements.csv")))
+  @test all(v -> occursin("inactive", v[end]) == !tab[parse(Int, v[1])].valid, vrows)
+  @test length(unique(v[4] for v in vrows if v[9] == "true")) == dd["metadata"]["se_eliminations"]
+  @test length(unique(v[4] for v in vrows if occursin("suspicious", v[end]))) == dd["metadata"]["se_suspicious"]
   return
 end
 
@@ -2458,6 +2647,7 @@ end
       ("WLS", test_state_estimation_wls_first_version),
       ("Measurement add helpers", test_state_estimation_measurement_add_helpers),
       ("Passive bus zero injection helpers", test_state_estimation_passive_bus_zero_injection_helpers),
+      ("Zero injection as equality constraint", test_state_estimation_zero_injection_constraint),
       ("Bad-data diagnostics", test_state_estimation_bad_data_diagnostics),
       ("PMU angle measurements", test_state_estimation_pmu_va_measurements),
       ("Current-magnitude measurements (ImagMeas)", test_state_estimation_imag_measurements),

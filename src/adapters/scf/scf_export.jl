@@ -20,12 +20,16 @@
 #          Ids are assigned deterministically (component type, then name),
 #          so rebuilding the same net produces byte-identical output.
 
-# Format revision. Bumped whenever the written file changes shape, so a reader
-# can refuse a file it does not understand instead of misreading it. 1.1: an
-# ineffective voltage setpoint is no longer written, an unlimited reactive
-# limit is expressed by omission, and fields equal to their documented default
-# are left out (see the default catalog in docs/src/scf.md).
-const SCF_FORMAT_VERSION = "1.0"
+# Format revision. Bumped whenever the written file changes shape or meaning,
+# so a reader can refuse a file it does not understand instead of misreading
+# it. "1.1" was the pre-release name of 1.0 and is read as 1.0, so the next
+# revision is 1.2: the current sensors carry ampere (PGM's unit), and
+# measurements.rows follows the measurement table (one row per value, table
+# types and keys, kV/MW/MVAr/A/degrees; shunt-bay rows are rows of their
+# own). Revisions 1.0 and 1.1 wrote the current 1000 times too large and the
+# rows per sensor; the reader still accepts them (see _scf_current_divisor
+# and _scf_read_measurements_v10!).
+const SCF_FORMAT_VERSION = "1.2"
 
 # Configuration groups a case file may NOT carry: they describe the machine
 # and the session, not the network. Logging and result-table shape, benchmark
@@ -110,8 +114,10 @@ _scf_is_transformer(br::Branch)::Bool = br.ratio != 0.0
 
 The REFERENCE name of a bus: the `busDict` key. That is the name
 measurements, controllers, scenarios, and reports resolve against, and
-the name the reader has to restore; the internal component name ("Bus_1_110",
-"Aux_12_380") is kept separately in `extra.component_name` when it differs.
+the name the reader has to restore. Since 0.50.0 `addBus!` gives the node
+that name as its component name; a component name that differs (the
+schematic "Bus_1_110" read from an older file) is kept separately in
+`extra.component_name`.
 """
 function _scf_bus_name(net::Net, i::Int)::String
   for (name, idx) in net.busDict
@@ -616,9 +622,36 @@ function _scf_shunts(net::Net, ids::ScfIdMap)
 end
 
 ## --- measurements ----------------------------------------------------------
-## PGM sensors carry value and sigma; the Sparlectra row detail that PGM has
-## no slot for (id string, weight, active flag, unpaired P/Q rows) is listed
-## under sparlectra.measurements so the round trip stays lossless.
+## PGM sensors carry value and sigma in SI for a PGM reader. The Sparlectra
+## rows behind them are listed under sparlectra.measurements.rows with the
+## semantics of the measurement table (src/stateestimation/measurement_table.jl):
+## one entry per measured value in the order of the measurement vector,
+## table types (U, P, Q, I, Ia, Va), a node or terminal key, and value and
+## sigma in the units of the table (kV, MW, MVAr, A, degrees), no per-unit
+## base. The round trip stays lossless.
+
+# U (value or sigma, pu of the bus) as the kV number of the table: a Float64
+# where that divides back to `pu`, else the longer decimal of
+# _measurement_table_kv_text as ScfDecimalText, which the JSON writer
+# prints as it is and the reader divides from its text at 256 bits, as the
+# measurement table does. `vn` is the kV value the reader divides by,
+# u_rated / 1e3 of the file.
+function _scf_kv_number(pu::Float64, vn::Float64)
+  t = _measurement_table_kv_text(pu, vn)
+  _measurement_table_digits(t) <= 17 && return parse(Float64, t)
+  return ScfDecimalText(t, parse(Float64, t))
+end
+
+# The table type of a measurement row in the SCF block
+function _scf_table_type(m)::String
+  m.typ == VmMeas && return "U"
+  m.typ == VaMeas && return "Va"
+  (m.typ == PinjMeas || m.typ == PflowMeas) && return "P"
+  (m.typ == QinjMeas || m.typ == QflowMeas || m.typ == ShuntQMeas) && return "Q"
+  m.typ == ImagMeas && return "I"
+  m.typ == IaMeas && return "Ia"
+  throw(ArgumentError("SCF export: measurement type $(m.typ) has no table type"))
+end
 
 # what the reader reconstructs from the SI value of a sensor; used to decide
 # whether the exact internal value has to be recorded alongside it
@@ -633,7 +666,8 @@ function _scf_roundtrip_value(m, net::Net)::Float64
   elseif m.typ == VaMeas || m.typ == IaMeas
     return rad2deg(deg2rad(m.value))
   elseif m.typ == ImagMeas
-    return (m.value * 1.0e3) / 1.0e3
+    # ampere in the file and inside, written unchanged
+    return m.value
   else
     return (m.value * 1.0e6) / 1.0e6
   end
@@ -644,9 +678,8 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
   power = Vector{Any}()
   current = Vector{Any}()
   rows = Vector{Any}()
-  bay_rows = Vector{Any}()
   meas = net.measurements
-  isempty(meas) && return volt, power, current, rows, bay_rows
+  isempty(meas) && return volt, power, current, rows
   # The groups below hold POSITIONS in the measurement vector, not the rows:
   # the WLS objective sums in that order, so restoring it is what makes an SE
   # round trip bit-identical. A lookup by id gave two rows with the same
@@ -667,12 +700,14 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
   qflow = Dict{Tuple{Int,Symbol},Vector{Int}}()
   imag_ = Dict{Tuple{Int,Symbol},Vector{Int}}()
   iang = Dict{Tuple{Int,Symbol},Vector{Int}}()
-  other = Measurement[]
   add!(d, key, pos) = push!(get!(() -> Int[], d, key), pos)
   # readings at one location, in the order the measurement vector holds them
   nocc(d, key) = length(get(d, key, ()))
   at(d, key, i) = (v = get(d, key, nothing); v === nothing || i > length(v) ? nothing : v[i])
   row_at(pos) = pos === nothing ? nothing : meas[pos]
+  # position -> PGM sensor id, and position -> node of a shunt-bay row
+  sensor_of = Dict{Int,Int}()
+  bay_node = Dict{Int,Int}()
   for (pos, m) in enumerate(meas)
     if m.typ == VmMeas && m.busIdx !== nothing
       add!(vm, m.busIdx, pos)
@@ -691,44 +726,25 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     elseif m.typ == IaMeas && m.branchIdx !== nothing
       add!(iang, (m.branchIdx, m.direction), pos)
     elseif m.branchIdx === nothing && m.busIdx !== nothing && (m.typ == ShuntQMeas || m.typ == ImagMeas || m.typ == IaMeas)
-      # Shunt-bay rows (bus referenced). PGM has no current sensor on a
-      # shunt, and its shunt power sensor would need the bus mapped to one
-      # shunt object and a sign convention, so these rows travel in the
-      # namespaced block with their internal units (MVar, A, degrees).
+      # Shunt-bay rows (bus referenced: the shunt Q is the sum over the
+      # shunts of the bus). PGM has no current sensor on a shunt, and its
+      # shunt power sensor would need the bus mapped to one shunt object and
+      # a sign convention, so these rows have no PGM sensor; their row in
+      # the namespaced block carries the value.
       node = get(ids.node, m.busIdx, nothing)
-      if node === nothing
-        push!(other, m)
-        continue
-      end
-      entry = Dict{String,Any}("type" => m.typ == ShuntQMeas ? "ShuntQ" : (m.typ == ImagMeas ? "Imag" : "Ia"), "node" => node, "id" => m.id, "value" => m.value, "sigma" => m.sigma, "position" => pos)
-      m.active || (entry["active"] = false)
-      push!(bay_rows, entry)
-    else
-      push!(other, m)
+      node === nothing || (bay_node[pos] = node)
     end
+    # anything else (a link flow, a row without a location) gets no row and
+    # is named after the rows are built
   end
-  # Whatever is left (link flow rows, rows on a bus the file does not
-  # write) has no slot in the file. Name it instead of dropping it.
-  isempty(other) || @warn "SCF export: $(length(other)) measurement row(s) have no slot in the case file and are not written" types = sort!(unique(string.(getfield.(other, :typ)))) ids = first(String[m.id for m in other], 5)
-  # One PGM sensor can stand for two Sparlectra rows (P and Q, Vm and Va),
-  # and PGM carries ONE sigma per sensor in SI. The authoritative internal
-  # sigmas (per-unit for Vm, degrees for Va, MW/MVar for powers, kA for
-  # currents) therefore travel here, so a round trip is exact; the weight is
-  # derived from sigma and is never written.
+  # PGM carries ONE sigma per sensor in SI, which cannot hold two different
+  # row sigmas (P and Q) exactly; the row of each measurement carries its own
+  # sigma, so a round trip is exact. The weight is derived from sigma and is
+  # never written.
   rowrec(sensor_id, positions::Int...) = begin
-    ms = Measurement[meas[p] for p in positions]
-    entry = Dict{String,Any}("sensor" => sensor_id, "sparlectra_ids" => String[m.id for m in ms], "sigmas" => Float64[m.sigma for m in ms])
-    all(m -> m.active, ms) || (entry["active"] = Bool[m.active for m in ms])
-    # The PGM sensor stays the authority for the measured value. The SI
-    # conversion (MW to W, per-unit to V, degrees to radians) is not always
-    # bit-reversible, so a value is recorded here ONLY when reading it back
-    # would not reproduce the exact internal number; that keeps the round
-    # trip exact without duplicating values that convert cleanly.
-    vals = Float64[m.value for m in ms]
-    rts = Float64[_scf_roundtrip_value(m, net) for m in ms]
-    vals == rts || (entry["values"] = vals)
-    entry["positions"] = Int[positions...]
-    push!(rows, entry)
+    for p in positions
+      sensor_of[p] = sensor_id
+    end
     return nothing
   end
   # voltage sensors (Vm always, Va when the bus carries a PMU angle)
@@ -817,7 +833,8 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
       rowrec(sid, Int[x for x in (ppos, qpos) if x !== nothing]...)
     end
   end
-  # current sensors (magnitude in kA internally, angle in degrees)
+  # current sensors (magnitude in A, as PGM expects and as the estimator
+  # holds it; angle in degrees internally, radians in the file)
   for key in sort!(unique(vcat(collect(keys(imag_)), collect(keys(iang)))); by = k -> (k[1], String(k[2])))
     bidx, dir = key
     bid = get(ids.branch, bidx, nothing)
@@ -833,8 +850,8 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
         "measured_object" => bid,
         "measured_terminal_type" => dir == :to ? "branch_to" : "branch_from",
         "angle_measurement_type" => "global_angle",
-        "i_measured" => im_ === nothing ? nothing : im_.value * 1.0e3,
-        "i_sigma" => im_ === nothing ? nothing : im_.sigma * 1.0e3,
+        "i_measured" => im_ === nothing ? nothing : im_.value,
+        "i_sigma" => im_ === nothing ? nothing : im_.sigma,
       )
       if ia !== nothing
         row["i_angle_measured"] = deg2rad(ia.value)
@@ -847,8 +864,55 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
   for v in (volt, power, current)
     sort!(v; by = r -> r["id"])
   end
-  sort!(rows; by = r -> r["sensor"])
-  return volt, power, current, rows, bay_rows
+  # One row per measurement, in the order of the measurement vector: the
+  # WLS objective sums in that order, so the file order is part of the
+  # numerical identity of an SE run (the table keeps file order the same way).
+  for (pos, m) in enumerate(meas)
+    sensor = get(sensor_of, pos, nothing)
+    node = get(bay_node, pos, nothing)
+    sensor === nothing && node === nothing && continue
+    row = Dict{String,Any}("type" => _scf_table_type(m))
+    # the id only where it is not the default id of its location, which the
+    # reader restores (SCF writes no field equal to its documented default)
+    rdir = m.branchIdx === nothing ? :none : (m.direction == :to ? :to : :from)
+    m.id == _default_measurement_id(m.typ; busIdx = m.busIdx, branchIdx = m.branchIdx, direction = rdir) || (row["id"] = m.id)
+    if node !== nothing
+      row["terminal"] = Dict{String,Any}("shunt_bay" => node)
+    elseif m.branchIdx !== nothing
+      row["terminal"] = Dict{String,Any}("branch" => ids.branch[m.branchIdx], "side" => m.direction == :to ? "to" : "from")
+    else
+      row["node"] = ids.node[m.busIdx]
+    end
+    sensor === nothing || (row["sensor"] = sensor)
+    # U in kV on the u_rated of the file (the reader divides by the same
+    # number), everything else in the unit the estimator holds: MW, MVAr,
+    # A, degrees
+    vn = m.typ == VmMeas ? _scf_u_rated(getNodeVn(net.nodeVec[m.busIdx])) / 1.0e3 : 1.0
+    unit(x) = m.typ == VmMeas ? _scf_kv_number(x, vn) : x
+    row["sigma"] = unit(m.sigma)
+    # The PGM sensor is the authority for the measured value. The SI
+    # conversion (MW to W, per-unit to V, degrees to radians) is not always
+    # bit-reversible, so the row carries a value ONLY when reading the sensor
+    # back would not reproduce the exact internal number, and always for a
+    # shunt-bay row, which has no sensor.
+    (sensor === nothing || _scf_roundtrip_value(m, net) != m.value) && (row["value"] = unit(m.value))
+    m.active || (row["valid"] = false)
+    # a zero-injection row says so itself (the table has its source token;
+    # the id decides nothing), written only when true
+    m.zero_injection && (row["zero_injection"] = true)
+    push!(rows, row)
+  end
+  # Whatever is left has no slot in the file. A link flow is not_modelled as
+  # in the measurement table (a bus link is no branch of the model and the
+  # flow never enters the estimate); a row on a bus or branch the file does
+  # not write has no key. Name them instead of dropping them.
+  written = Set{Int}(union(keys(sensor_of), keys(bay_node)))
+  left = [m for (pos, m) in enumerate(meas) if !(pos in written)]
+  links = [m for m in left if m.linkIdx !== nothing]
+  isempty(links) || @warn "SCF export: $(length(links)) link flow row(s) are not_modelled and not written: a bus link is no branch of the model, the measurement table has no place for its flow either" ids = first(String[m.id for m in links], 5)
+  nokey = [m for m in left if m.linkIdx === nothing]
+  isempty(nokey) || @warn "SCF export: $(length(nokey)) measurement row(s) have no key in the case file and are not written" types = sort!(unique(string.(getfield.(nokey, :typ)))) ids = first(String[m.id for m in nokey], 5)
+  return volt, power, current, rows
 end
 
 ## --- sparlectra section ----------------------------------------------------
@@ -877,9 +941,8 @@ function _scf_roles(net::Net, ids::ScfIdMap)
     # listed explicitly so the reader restores every one of them
     roles["slack"] = Dict{String,Any}("mode" => "single", "nodes" => slack_nodes)
   end
-  # auxiliary nodes: the explicit AuxBus type plus the star points the
-  # three-winding equivalent creates (the CGMES importer names them
-  # AUX3WT_<transformer> and leaves their component type at busbar)
+  # auxiliary nodes: the AuxBus type every isAux build carries, plus a node
+  # named AUX3WT_<transformer> (the CGMES importer's star point name)
   aux = Int[ids.node[i] for i in eachindex(net.nodeVec) if _scf_is_aux_node(net, i)]
   isempty(aux) || (roles["aux_nodes"] = sort!(aux))
   iso = Int[ids.node[b] for b in net.isoNodes if haskey(ids.node, b)]
@@ -894,11 +957,10 @@ const _SCF_STAR_NODE_PREFIX = "AUX3WT_"
 const _SCF_DEFAULT_BRANCH_KIND = "BranchC"
 const _SCF_DEFAULT_TAP_EST_MODE = "none"
 
-# a node is auxiliary when it carries the AuxBus type or is a three-winding
-# star point (the importer's naming convention)
+# a node is auxiliary when it carries the AuxBus type (every isAux build,
+# _is_aux_node) or is named as a three-winding star point of the CGMES
+# importer, AUX3WT_<trafo>
 function _scf_is_aux_node(net::Net, i::Int)::Bool
-  # the AuxBus type or an isAux build ("Aux_" component name), then the
-  # importer's bus name of a three-winding star point, AUX3WT_<trafo>
   _is_aux_node(net.nodeVec[i]) && return true
   return startswith(_scf_bus_name(net, i), _SCF_STAR_NODE_PREFIX)
 end
@@ -1161,7 +1223,10 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     # a bus inherits the network's limits; only its own deviation is written
     (nd._vmin_pu === nothing || nd._vmin_pu == net.vmin_pu) || (d["vmin_pu"] = nd._vmin_pu)
     (nd._vmax_pu === nothing || nd._vmax_pu == net.vmax_pu) || (d["vmax_pu"] = nd._vmax_pu)
-    nd.comp.cTyp == AuxBus && (d["aux"] = true)
+    # the auxiliary role travels in roles.aux_nodes, the one channel the
+    # reader takes it from; no per-node flag here (it was written only for
+    # an explicit AuxBus type before every isAux build carried that type, and
+    # no reader looked at it)
     put(ids.node[i], d)
   end
   for i in eachindex(net.branchVec)
@@ -1295,7 +1360,7 @@ function net_to_scf(
   isempty(regs) || (data["voltage_regulator"] = regs)
   shunts = _scf_shunts(net, ids)
   isempty(shunts) || (data["shunt"] = shunts)
-  volt, power, current, meas_rows, bay_rows = _scf_sensors(net, ids, next_id)
+  volt, power, current, meas_rows = _scf_sensors(net, ids, next_id)
   isempty(volt) || (data["sym_voltage_sensor"] = volt)
   isempty(power) || (data["sym_power_sensor"] = power)
   isempty(current) || (data["sym_current_sensor"] = current)
@@ -1352,9 +1417,8 @@ function net_to_scf(
   isempty(split_block) || (spar["branch_shunt_split"] = split_block)
   model_block = _scf_tap_changer_models(net, ids)
   isempty(model_block) || (spar["tap_changer_models"] = model_block)
-  if !isempty(meas_rows) || !isempty(bay_rows)
+  if !isempty(meas_rows)
     block = Dict{String,Any}("rows" => meas_rows)
-    isempty(bay_rows) || (block["shunt_bay_rows"] = bay_rows)
     # where the values came from, and above all WHETHER THEY CARRY NOISE: a
     # noise-free set has J = 0 by construction, which reads like a perfect
     # estimate and is nothing of the sort. The case file says so instead of

@@ -1019,6 +1019,10 @@ function _webui_normalize_case_profile_form_value(field::AbstractString, value)
     !value && "off" in allowed && return "off"
     value && "on" in allowed && return "on"
   end
+  # the zero-injection box stands for state_estimation.zero_injection, whose
+  # third value constraint also means "rows present": the box shows checked
+  # (the generation handler writes constraint back while it stays checked)
+  String(field) == "gen_passive_as_zi" && lowercase(strip(string(value))) == "constraint" && return true
   normalized = if type === Bool
     _webui_form_bool(value)
   elseif type <: Integer
@@ -1150,7 +1154,8 @@ function _webui_case_voltage_levels(case_path::AbstractString, config_file::Abst
   hit = lock(() -> get(_WEBUI_CASE_VN_CACHE, path, nothing), _WEBUI_CASE_VN_CACHE_LOCK)
   (hit !== nothing && hit[1] == stamp) && return (hit[2], hit[3])
   levels, err = try
-    cfg = load_sparlectra_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file))
+    # the effective configuration the SE run imports the case with
+    cfg = resolve_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file), path).config
     net = import_case(path, cfg; run_kind = :state_estimation).net
     (sort!(unique(Float64[nd.comp.cVN for nd in net.nodeVec]); rev = true), "")
   catch err
@@ -1249,11 +1254,11 @@ function _webui_sigma_levels_from_form(form::AbstractDict)::Union{Nothing,Dict{S
   return out
 end
 
-# meta.f_nom of an SCF/PGM case file, or nothing (no such file, no
-# sparlectra block, no or an invalid statement: the import reports that).
-# A bare name not yet in the case directory is looked up in the bundled
-# sources the combobox offers, the way the run resolves it before staging.
-function _webui_case_file_frequency(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,Float64}
+# The SCF/PGM case file behind a case name, or nothing (no name, not a
+# .json file, no such file). A bare name not yet in the case directory is
+# looked up in the bundled sources the combobox offers, the way the run
+# resolves it before staging.
+function _webui_case_json_source(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,String}
   name = String(strip(String(casefile)))
   isempty(name) && return nothing
   path = isabspath(name) ? name : (case_directory === nothing ? name : joinpath(String(case_directory), name))
@@ -1262,6 +1267,14 @@ function _webui_case_file_frequency(casefile::AbstractString, case_directory; ap
     bundled === nothing || (path = bundled)
   end
   (lowercase(splitext(path)[2]) == ".json" && isfile(path)) || return nothing
+  return path
+end
+
+# meta.f_nom of an SCF/PGM case file, or nothing (no such file, no
+# sparlectra block, no or an invalid statement: the import reports that).
+function _webui_case_file_frequency(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,Float64}
+  path = _webui_case_json_source(casefile, case_directory; application_root)
+  path === nothing && return nothing
   root = try
     scf_json_parse(read(path, String))
   catch err
@@ -1774,7 +1787,7 @@ Convert browser form values into the dictionary accepted by
 [`start_powerflow_run`](@ref). Only keys from
 [`GUI_EDITABLE_CONFIG_KEYS`](@ref) are emitted as configuration overrides.
 
-Stage 4A precedence: a request-option field the run page no longer renders
+Precedence: a request-option field the run page no longer renders
 falls back to the case configuration file's `form` block before the spec
 default, so values saved on the Case and Settings pages keep reaching the
 run. A field present in the POST always wins (config-KEY fields need no such
@@ -1950,7 +1963,7 @@ function _webui_is_measurement_csv(path::AbstractString)::Bool
   catch
     return false
   end
-  return strip(line) == "# sparlectra-measurements v1"
+  return strip(chopprefix(line, "﻿")) == "# sparlectra-measurements v1"
 end
 
 ## a measurement file the SE page offers, shows and hands out: a measurement

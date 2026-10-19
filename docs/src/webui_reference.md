@@ -188,7 +188,12 @@ PowSyBl import options, [PowSyBl IIDM files](@ref webui_powsybl));
 labels/indices** takes one label or index at a time.
 
 The format-bound options of the Basic set render directly, the rest and
-the DTF diagnostics fold into **Advanced**. Deleting a case removes its
+the DTF diagnostics fold into **Advanced**. A page renders only the options
+the format of the selected case reads (MATPOWER import options for MATPOWER
+cases, the CGMES, PowSyBl and DTF options for their formats); a section that
+leaves options out says how many, and their saved values stay in the case
+configuration file. The system frequency is shown for every format and is
+greyed where the format does not read it. Deleting a case removes its
 companion files (configuration, weights, measurement CSVs). A collapsible
 MATPOWER acknowledgement names the citations the cases ask for.
 
@@ -288,7 +293,10 @@ test-configuration package once (about 22 MB) into the CGMES cache
 requested configuration with its boundary set into `cgmes_<alias>.zip` in
 the case directory. Aliases: `microgrid_be`, `microgrid_nl`,
 `microgrid_assembled`, `smallgrid`, `smallgrid_nb`, `fullgrid`,
-`fullgrid_nb`, `realgrid`. Repeated requests reuse the ZIP. If the download
+`fullgrid_nb`, `realgrid`. The alias alone works as well, in any case,
+with or without a `cgmes` prefix and `.zip` (`smallgrid`,
+`CGMES SmallGrid.zip`); a name that matches nothing gets a message with
+the accepted forms. Repeated requests reuse the ZIP. If the download
 fails, the message names the path where the package can be placed by hand.
 
 ### Import analysis on upload
@@ -369,8 +377,13 @@ The settings and run forms offer:
   `apply`) plus transformer ratio, phase shift, bus shunt, PV voltage source
   and comparison reference;
 - **Network model** (Case page, every format): the system frequency, 50 or
-  60 Hz (`model.nominal_frequency_hz`); an SCF file preselects its own
-  `f_nom` ([System frequency](@ref system_frequency));
+  60 Hz (`model.nominal_frequency_hz`). An SCF file that states `f_nom`
+  greys the field at that value, because the file wins over the key; the
+  field is editable only for an SCF or PGM case without `f_nom`. For
+  MATPOWER, DTF, CGMES and PowSyBl cases the field is greyed as well: it
+  shows the value in effect, which acts only as the `meta.f_nom` of an SCF
+  export ([System frequency](@ref system_frequency)). A greyed field is not
+  saved;
 - logfile output mode, performance timing and post-run diagnostics.
 
 Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted, and each run writes
@@ -549,9 +562,11 @@ generator, "add noise" and every set Sparlectra ships write the
 `# sparlectra-measurement-table v1` plus header); the run needs
 `state_estimation.measurement_table` on (the default). Uploaded `.csv`
 files are offered when they are a measurement table or carry the version
-comment of the measurement CSV v1; a CSV v1 set shows the deprecation
-notice at the file (removed in 0.60.0, convert it with
-`convertMeasurementsV1`). The text and value editors work on both.
+comment of the measurement CSV v1; a CSV v1 set shows a notice at the
+file: its reader was removed in 0.50.0, a run and "add noise" on it stop
+with an error naming `convertMeasurementsV1`, and the SCF export and
+**Save case as** leave it out and say so. The text and value editors work
+on both.
 
 The set list offers only the sets of the selected case: a set whose
 `# case:` line names the case (or the case an SCF file was exported from),
@@ -581,13 +596,22 @@ result page shows the per-transformer table and the fixation J drop. The
 form warns when `k_suppress < k_eliminate`, because suppressed rows then
 rarely reach the elimination.
 
-Artifacts (`measurements.csv`, `se_diagnostics.md`, `se_view.md`,
-`se_state.csv`, `shunt_estimates.csv`, `se_tap_estimates.csv`,
-`se_bad_data.csv`, `se_deltas.csv`) land in the run history with kind `se`.
-The result page offers **Run power flow from this estimate** and the
-topology hypothesis test behind a button (`topology_hypotheses.md`). The
+Artifacts (`measurements.csv`, `measurements_verdict.csv`,
+`se_diagnostics.md`, `se_view.md`, `se_state.csv`, `shunt_estimates.csv`,
+`se_tap_estimates.csv`, `se_deltas.csv`) land in the run history with kind
+`se`. `measurements.csv` is the estimated set as a measurement table and
+can be picked as the measurement set of a new run; the verdict per row
+(residual, normalized residual, eliminated, reason) is in
+`measurements_verdict.csv`, one click away on the result page (see
+[run artifacts](@ref se-measurement-files)). The result page offers
+**Run power flow from this estimate** and the topology hypothesis test
+behind a button (`topology_hypotheses.md`), which reads the run's
+`measurements.csv` without the rows `measurements_verdict.csv` marks as
+eliminated, so it starts from the `J` of the run. A run from before 0.50.0 still shows; its
+`measurements.csv` is a CSV v1, and the test asks for a new run. The
 summary shows `J`, `E[J] = dof` and the Wilson-Hilferty band verdict for
-the state after the elimination; suppressed rows stay in `J` and surface
+the state after the elimination, with the suspicious and eliminated
+counts of the verdict file; suppressed rows stay in `J` and surface
 as `J_active`.
 
 ## Running jobs

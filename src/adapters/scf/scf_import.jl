@@ -26,7 +26,8 @@ const _SCF_KNOWN_DATA_COMPONENTS = ("node", "line", "generic_branch", "link", "s
 const _SCF_KNOWN_ROOT_KEYS = ("version", "type", "is_batch", "attributes", "data", "sparlectra")
 const _SCF_KNOWN_SPARLECTRA_KEYS = ("format_version", "meta", "roles", "components", "extra", "measurements", "start_state", "contingencies", "short_circuit", "config", "transformer_types", "branch_shunt_split", "tap_changer_models", "scenarios")
 # what `sparlectra.measurements` may carry besides the rows; shunt_bay_rows
-# are the bus-referenced shunt-bay readings PGM has no sensor for
+# are the bus-referenced shunt-bay readings PGM has no sensor for (revision
+# 1.0 only; in 1.2 they are rows of `rows`)
 const _SCF_KNOWN_MEASUREMENT_KEYS = ("rows", "shunt_bay_rows", "provenance")
 const _SCF_SHUNT_BAY_TYPES = ("ShuntQ", "Imag", "Ia")
 const _SCF_KNOWN_COMPONENT_KINDS = ("tap_changer", "transformer3w", "sc_source", "controllers", "shunt_state", "matpower_dcline", "for001_contingency")
@@ -72,7 +73,7 @@ function _scf_control_limits(obj, key::AbstractString, lo_key::AbstractString, h
   return lo, hi
 end
 
-_scf_num(v, context::AbstractString)::Float64 = v isa Number ? Float64(v) : throw(ArgumentError("SCF: $(context) must be a number, got $(repr(v))."))
+_scf_num(v, context::AbstractString)::Float64 = v isa ScfDecimalText ? v.value : v isa Number ? Float64(v) : throw(ArgumentError("SCF: $(context) must be a number, got $(repr(v))."))
 
 # meta.f_nom: the system frequency the file states, or nothing when absent.
 # A value that is not a positive finite number is a named error: f_nom = 0
@@ -126,15 +127,29 @@ function _scf_require_current_revision(spar::AbstractDict)
   # "1.1" is the number this format carried before the release: 1.0 was never
   # published, so the two are the SAME structure under two names. Files
   # written in that window are read as 1.0 - rejecting them would cost users
-  # their exported cases over a renaming they never saw. Any other revision
-  # is refused as before.
-  if found == "1.1" && SCF_FORMAT_VERSION == "1.0"
-    @info "SCF: file states format revision 1.1, which is the pre-release name of 1.0 (same structure); reading it as $(SCF_FORMAT_VERSION). Re-export to update the file."
-  else
-    found == SCF_FORMAT_VERSION || throw(ArgumentError("SCF: format revision $(found) found, $(SCF_FORMAT_VERSION) expected. Backward compatibility across revisions is not promised; re-export the case with this version of Sparlectra."))
+  # their exported cases over a renaming they never saw. 1.0 differs from the
+  # current revision only in the unit of the current sensors, which the
+  # measurement reader undoes (_scf_current_divisor). Any other revision is
+  # refused as before.
+  if found == "1.1"
+    @info "SCF: file states format revision 1.1, which is the pre-release name of 1.0 (same structure); reading it as 1.0. Re-export to update the file."
+  elseif !(found in _SCF_READABLE_REVISIONS)
+    throw(ArgumentError("SCF: format revision $(found) found, $(SCF_FORMAT_VERSION) expected. Backward compatibility across revisions is not promised; re-export the case with this version of Sparlectra."))
   end
   return nothing
 end
+
+# Revisions the reader accepts: the current one and the older ones whose only
+# difference it knows how to undo.
+const _SCF_READABLE_REVISIONS = ("1.0", "1.1", SCF_FORMAT_VERSION)
+
+# Divisor from a file's sym_current_sensor numbers to ampere. Revisions 1.0
+# and 1.1 wrote the current as if the estimator held kA (value * 1000) while
+# it holds A, so their numbers are 1000 times too large; dividing by 1000,
+# as the old reader did, gives back bit for bit what it read. From 1.2 on
+# the file carries A, like PGM. A file without a sparlectra block (written
+# by power-grid-model) states no revision and is read as the current one.
+_scf_current_divisor(revision::AbstractString)::Float64 = revision in ("1.0", "1.1") ? 1.0e3 : 1.0
 
 function _scf_validate_schema(root::AbstractDict)
   for key in keys(root)
@@ -191,8 +206,11 @@ function _scf_validate_studies(root::AbstractDict)
   end
   meas_block = _scf_get(spar, "measurements", nothing)
   if meas_block isa AbstractDict
+    # shunt_bay_rows is a block of revision 1.0 only; from 1.2 on the
+    # shunt-bay readings are rows of measurements.rows
+    known = String(_scf_get(spar, "format_version", "")) in ("1.0", "1.1") ? _SCF_KNOWN_MEASUREMENT_KEYS : filter(!=("shunt_bay_rows"), _SCF_KNOWN_MEASUREMENT_KEYS)
     for key in keys(meas_block)
-      String(key) in _SCF_KNOWN_MEASUREMENT_KEYS || throw(ArgumentError("SCF: unknown key \"$(key)\" in sparlectra.measurements (known: $(join(_SCF_KNOWN_MEASUREMENT_KEYS, ", ")))."))
+      String(key) in known || throw(ArgumentError("SCF: unknown key \"$(key)\" in sparlectra.measurements (known: $(join(known, ", ")))."))
     end
   end
   sc = _scf_get(spar, "short_circuit", nothing)
@@ -1066,7 +1084,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   end
 
   # --- measurements ------------------------------------------------------
-  _scf_read_measurements!(net, case, bus_by_id, branch_index_by_id, u_rated_by_id, names)
+  _scf_read_measurements!(net, case, bus_by_id, branch_index_by_id, u_rated_by_id)
 
   # --- CGMES source identity ----------------------------------------------
   # the structural-key mRID registry travels in the namespaced meta; with
@@ -1188,12 +1206,32 @@ function _scf_apply_shunt_state!(sh::Shunt, row::SCFShuntStateRow)
   return sh
 end
 
-# PGM sensors back into Sparlectra measurement rows; measurements.rows
-# supplies the original row ids, weights, and active flags
-function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_index_by_id, u_rated_by_id, names)
+# The measurements of a case file into net.measurements. Revision 1.2 lists
+# one row per measured value with the semantics of the measurement table
+# (_scf_read_measurement_rows!); revisions 1.0 and 1.1 list the rows per PGM
+# sensor (_scf_read_measurements_v10!). A file without a sparlectra block
+# (written by power-grid-model) has sensors only and goes the 1.0 way, with
+# default ids and the sensor sigmas.
+function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_index_by_id, u_rated_by_id)
+  spar = case.sparlectra
+  if spar === nothing || spar.format_version in ("1.0", "1.1")
+    _scf_read_measurements_v10!(net, case, bus_by_id, branch_index_by_id, u_rated_by_id)
+  else
+    _scf_read_measurement_rows!(net, case, bus_by_id, branch_index_by_id, u_rated_by_id)
+  end
+  return nothing
+end
+
+# Revision 1.0 (and 1.1): PGM sensors back into Sparlectra measurement rows;
+# measurements.rows supplies per sensor the original row ids, sigmas, active
+# flags and positions, measurements.shunt_bay_rows the rows without a sensor.
+# The 1.2 reader calls this for the sensors its rows do not reference
+# (`skip` holds the consumed (sensor id, reading) pairs, `meta = false`
+# ignores the per-sensor rows of the 1.0 layout); those come after the rows.
+function _scf_read_measurements_v10!(net::Net, case::SCFCase, bus_by_id, branch_index_by_id, u_rated_by_id; skip::AbstractSet = Set{Tuple{Int,Int}}(), meta::Bool = true)
   data = case.data
   spar = case.sparlectra === nothing ? SCFSparlectra() : case.sparlectra
-  rows = _scf_get(spar.measurements, "rows", [])
+  rows = meta ? _scf_get(spar.measurements, "rows", []) : []
   meta_by_sensor = Dict{Int,Any}()
   for r in rows
     r isa AbstractDict && haskey(r, "sensor") || continue
@@ -1245,6 +1283,7 @@ function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_inde
     next_pos[] += 1
     return 1_000_000 + next_pos[]
   end
+  keep!(id, i, m) = (id, i) in skip || push!(collected, (pos_of(id, i), m))
   for row in data.sym_voltage_sensor
     id = row.id
     node = row.measured_object
@@ -1252,11 +1291,11 @@ function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_inde
     idx = net.busDict[bus_by_id[node]]
     i = 1
     if _scf_has(row.u_measured)
-      push!(collected, (pos_of(id, i), Measurement(typ = VmMeas, value = value_of(id, i, row.u_measured / ubase), sigma = sigma_of(id, i, (_scf_has(row.u_sigma) ? row.u_sigma : 0.01 * ubase) / ubase), active = active(id, i), busIdx = idx, id = sid(id, i, "Vm_$(node)"))))
+      keep!(id, i, Measurement(typ = VmMeas, value = value_of(id, i, row.u_measured / ubase), sigma = sigma_of(id, i, (_scf_has(row.u_sigma) ? row.u_sigma : 0.01 * ubase) / ubase), active = active(id, i), busIdx = idx, id = sid(id, i, "Vm_$(node)")))
       i += 1
     end
     if _scf_has(row.u_angle_measured)
-      push!(collected, (pos_of(id, i), Measurement(typ = VaMeas, value = value_of(id, i, rad2deg(row.u_angle_measured)), sigma = sigma_of(id, i, 0.02), active = active(id, i), busIdx = idx, id = sid(id, i, "Va_$(node)"))))
+      keep!(id, i, Measurement(typ = VaMeas, value = value_of(id, i, rad2deg(row.u_angle_measured)), sigma = sigma_of(id, i, 0.02), active = active(id, i), busIdx = idx, id = sid(id, i, "Va_$(node)")))
     end
   end
   for row in data.sym_power_sensor
@@ -1273,13 +1312,17 @@ function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_inde
       value = value_of(id, i, reading / 1.0e6)
       sigma = indiv === nothing ? sigma : indiv / 1.0e6
       if term == "node"
-        push!(collected, (pos_of(id, i), Measurement(typ = typ, value = value, sigma = sigma_of(id, i, sigma), active = active(id, i), busIdx = net.busDict[bus_by_id[obj]], id = sid(id, i, "$(typ)_$(obj)"))))
+        mid = sid(id, i, "$(typ)_$(obj)")
+        # the ZI id rule of formats without a source field holds for 1.0
+        # files only; sensors a 1.2 file names in no row carry default ids
+        keep!(id, i, Measurement(typ = typ, value = value, sigma = sigma_of(id, i, sigma), active = active(id, i), busIdx = net.busDict[bus_by_id[obj]], id = mid, zero_injection = meta && _zero_injection_written_row(typ, value, mid)))
       else
-        push!(collected, (pos_of(id, i), Measurement(typ = typ, value = value, sigma = sigma_of(id, i, sigma), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = term == "branch_to" ? :to : :from, id = sid(id, i, "$(typ)_$(obj)"))))
+        keep!(id, i, Measurement(typ = typ, value = value, sigma = sigma_of(id, i, sigma), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = term == "branch_to" ? :to : :from, id = sid(id, i, "$(typ)_$(obj)")))
       end
       i += 1
     end
   end
+  idiv = _scf_current_divisor(spar.format_version)
   for row in data.sym_current_sensor
     id = row.id
     obj = row.measured_object
@@ -1287,15 +1330,15 @@ function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_inde
     dir = term == "branch_to" ? :to : :from
     i = 1
     if _scf_has(row.i_measured)
-      push!(collected, (pos_of(id, i), Measurement(typ = ImagMeas, value = value_of(id, i, row.i_measured / 1.0e3), sigma = sigma_of(id, i, (_scf_has(row.i_sigma) ? row.i_sigma : 1.0e3) / 1.0e3), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = dir, id = sid(id, i, "Imag_$(obj)"))))
+      keep!(id, i, Measurement(typ = ImagMeas, value = value_of(id, i, row.i_measured / idiv), sigma = sigma_of(id, i, _scf_has(row.i_sigma) ? row.i_sigma / idiv : 1.0), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = dir, id = sid(id, i, "Imag_$(obj)")))
       i += 1
     end
     if _scf_has(row.i_angle_measured)
-      push!(collected, (pos_of(id, i), Measurement(typ = IaMeas, value = value_of(id, i, rad2deg(row.i_angle_measured)), sigma = sigma_of(id, i, rad2deg(_scf_has(row.i_angle_sigma) ? row.i_angle_sigma : deg2rad(0.05))), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = dir, id = sid(id, i, "Ia_$(obj)"))))
+      keep!(id, i, Measurement(typ = IaMeas, value = value_of(id, i, rad2deg(row.i_angle_measured)), sigma = sigma_of(id, i, rad2deg(_scf_has(row.i_angle_sigma) ? row.i_angle_sigma : deg2rad(0.05))), active = active(id, i), branchIdx = branch_index_by_id[obj], direction = dir, id = sid(id, i, "Ia_$(obj)")))
     end
   end
   # shunt-bay rows: internal units, no PGM sensor behind them
-  for r in _scf_get(spar.measurements, "shunt_bay_rows", [])
+  for r in (meta ? _scf_get(spar.measurements, "shunt_bay_rows", []) : [])
     r isa AbstractDict || throw(ArgumentError("SCF: measurements.shunt_bay_rows entries must be objects, got $(repr(r))."))
     tname = String(_scf_get(r, "type", ""))
     tname in _SCF_SHUNT_BAY_TYPES || throw(ArgumentError("SCF: measurements.shunt_bay_rows type $(repr(tname)) is not one of $(join(_SCF_SHUNT_BAY_TYPES, ", "))."))
@@ -1314,6 +1357,163 @@ function _scf_read_measurements!(net::Net, case::SCFCase, bus_by_id, branch_inde
   for (_, m) in collected
     push!(net.measurements, m)
   end
+  return nothing
+end
+
+# keys a row of measurements.rows may carry (revision 1.2)
+const _SCF_MEASUREMENT_ROW_KEYS = ("type", "id", "node", "terminal", "sensor", "value", "sigma", "valid", "zero_injection")
+
+# Revision 1.2: measurements.rows with the semantics of the measurement
+# table, one entry per measured value in the order of the measurement vector.
+#
+#   type      U, P, Q, Va at a node; P, Q, I, Ia at a terminal
+#   node      node id (U, Va, and P/Q as the bus balance)
+#   terminal  {"branch": id, "side": "from"|"to"} for a branch end, or
+#             {"shunt_bay": node id} for the shunt bay of a node (Q summed
+#             over its shunts, I and Ia of the bay)
+#   sensor    the PGM sensor that carries the reading for a PGM reader
+#   value     in kV (U), MW, MVAr, A or degrees; absent: read from the sensor
+#   sigma     in the same unit; absent: the sensor sigma
+#   valid     false for an inactive measurement; absent: true
+#   zero_injection  true for a zero-injection row (P or Q at a node);
+#             absent: false. The id decides nothing in 1.2 (the ZI id rule
+#             applies to 1.0 and 1.1 files only).
+#
+# U is divided by u_rated / 1e3 of the node; a number with more than 17
+# significant digits arrives as ScfDecimalText (the parser keeps the text of
+# exactly these cells) and is divided from its text at 256 bits and rounded
+# once, as the measurement table does. Sensors no row references
+# are read after the rows with default ids, as in a file without the block.
+function _scf_read_measurement_rows!(net::Net, case::SCFCase, bus_by_id, branch_index_by_id, u_rated_by_id)
+  data = case.data
+  rows = _scf_get(case.sparlectra.measurements, "rows", [])
+  rows isa AbstractVector || throw(ArgumentError("SCF: measurements.rows must be a list."))
+  volt = Dict(r.id => r for r in data.sym_voltage_sensor)
+  power = Dict(r.id => r for r in data.sym_power_sensor)
+  current = Dict(r.id => r for r in data.sym_current_sensor)
+  idiv = _scf_current_divisor(case.sparlectra.format_version)
+  consumed = Set{Tuple{Int,Int}}()
+  ctx(k) = "measurements.rows[$(k)]"
+  for (k, r) in enumerate(rows)
+    r isa AbstractDict || throw(ArgumentError("SCF: $(ctx(k)) must be an object, got $(repr(r))."))
+    for key in keys(r)
+      String(key) in _SCF_MEASUREMENT_ROW_KEYS || throw(ArgumentError("SCF: unknown key \"$(key)\" in $(ctx(k)) (known: $(join(_SCF_MEASUREMENT_ROW_KEYS, ", ")))."))
+    end
+    t = String(_scf_get(r, "type", ""))
+    (haskey(r, "node") == haskey(r, "terminal")) && throw(ArgumentError("SCF: $(ctx(k)) needs exactly one of node and terminal."))
+    # location: node, branch end or shunt bay
+    busIdx = nothing
+    branchIdx = nothing
+    dir = :none
+    node = nothing
+    bay = false
+    if haskey(r, "node")
+      node = _scf_int(r["node"], "$(ctx(k)).node")
+      haskey(bus_by_id, node) || throw(ArgumentError("SCF: $(ctx(k)) references node $(node), which the file does not define."))
+      busIdx = net.busDict[bus_by_id[node]]
+      typ = t == "U" ? VmMeas : t == "Va" ? VaMeas : t == "P" ? PinjMeas : t == "Q" ? QinjMeas : throw(ArgumentError("SCF: $(ctx(k)) type $(repr(t)) at a node; expected U, P, Q or Va."))
+    else
+      term = r["terminal"]
+      term isa AbstractDict || throw(ArgumentError("SCF: $(ctx(k)).terminal must be an object, got $(repr(term))."))
+      if haskey(term, "shunt_bay") && length(term) == 1
+        bay = true
+        node = _scf_int(term["shunt_bay"], "$(ctx(k)).terminal.shunt_bay")
+        haskey(bus_by_id, node) || throw(ArgumentError("SCF: $(ctx(k)) references node $(node), which the file does not define."))
+        busIdx = net.busDict[bus_by_id[node]]
+        typ = t == "Q" ? ShuntQMeas : t == "I" ? ImagMeas : t == "Ia" ? IaMeas : throw(ArgumentError("SCF: $(ctx(k)) type $(repr(t)) at a shunt bay; expected Q, I or Ia."))
+      elseif haskey(term, "branch") && haskey(term, "side") && length(term) == 2
+        bid = _scf_int(term["branch"], "$(ctx(k)).terminal.branch")
+        haskey(branch_index_by_id, bid) || throw(ArgumentError("SCF: $(ctx(k)) references branch $(bid), which the file does not define."))
+        side = String(term["side"])
+        side in ("from", "to") || throw(ArgumentError("SCF: $(ctx(k)).terminal.side must be from or to, got $(repr(side))."))
+        branchIdx = branch_index_by_id[bid]
+        dir = Symbol(side)
+        typ = t == "P" ? PflowMeas : t == "Q" ? QflowMeas : t == "I" ? ImagMeas : t == "Ia" ? IaMeas : throw(ArgumentError("SCF: $(ctx(k)) type $(repr(t)) at a branch end; expected P, Q, I or Ia."))
+      else
+        throw(ArgumentError("SCF: $(ctx(k)).terminal must be {\"branch\": id, \"side\": \"from\"|\"to\"} or {\"shunt_bay\": node id}, got $(repr(term))."))
+      end
+    end
+    # the reading of the PGM sensor behind the row, in the unit the
+    # estimator holds; its location has to be the row's
+    sv = nothing
+    ss = nothing
+    if haskey(r, "sensor")
+      bay && throw(ArgumentError("SCF: $(ctx(k)) is a shunt-bay row; PGM has no sensor for it."))
+      sid = _scf_int(r["sensor"], "$(ctx(k)).sensor")
+      mismatch = () -> throw(ArgumentError("SCF: $(ctx(k)) names sensor $(sid), which does not measure $(t) at the row's location."))
+      if typ == VmMeas || typ == VaMeas
+        s = get(volt, sid, nothing)
+        (s === nothing || s.measured_object != node) && mismatch()
+        ubase = u_rated_by_id[node]
+        if typ == VmMeas
+          _scf_has(s.u_measured) || mismatch()
+          i = 1
+          sv = s.u_measured / ubase
+          ss = (_scf_has(s.u_sigma) ? s.u_sigma : 0.01 * ubase) / ubase
+        else
+          _scf_has(s.u_angle_measured) || mismatch()
+          i = _scf_has(s.u_measured) ? 2 : 1
+          sv = rad2deg(s.u_angle_measured)
+          ss = 0.02
+        end
+      elseif typ in (PinjMeas, QinjMeas, PflowMeas, QflowMeas)
+        s = get(power, sid, nothing)
+        s === nothing && mismatch()
+        sterm = _scf_has(s.measured_terminal_type) ? s.measured_terminal_type : "node"
+        want = branchIdx === nothing ? "node" : (dir == :to ? "branch_to" : "branch_from")
+        (sterm == want && s.measured_object == (branchIdx === nothing ? node : _scf_int(r["terminal"]["branch"], "$(ctx(k)).terminal.branch"))) || mismatch()
+        isp = typ == PinjMeas || typ == PflowMeas
+        reading = isp ? s.p_measured : s.q_measured
+        _scf_has(reading) || mismatch()
+        i = (!isp && _scf_has(s.p_measured)) ? 2 : 1
+        indiv = isp ? s.p_sigma : s.q_sigma
+        sv = reading / 1.0e6
+        ss = (_scf_has(indiv) ? indiv : (_scf_has(s.power_sigma) ? s.power_sigma : 1.0e6)) / 1.0e6
+      else
+        s = get(current, sid, nothing)
+        s === nothing && mismatch()
+        sterm = _scf_has(s.measured_terminal_type) ? s.measured_terminal_type : "branch_from"
+        (sterm == (dir == :to ? "branch_to" : "branch_from") && s.measured_object == _scf_int(r["terminal"]["branch"], "$(ctx(k)).terminal.branch")) || mismatch()
+        if typ == ImagMeas
+          _scf_has(s.i_measured) || mismatch()
+          i = 1
+          sv = s.i_measured / idiv
+          ss = _scf_has(s.i_sigma) ? s.i_sigma / idiv : 1.0
+        else
+          _scf_has(s.i_angle_measured) || mismatch()
+          i = _scf_has(s.i_measured) ? 2 : 1
+          sv = rad2deg(s.i_angle_measured)
+          ss = rad2deg(_scf_has(s.i_angle_sigma) ? s.i_angle_sigma : deg2rad(0.05))
+        end
+      end
+      (sid, i) in consumed && throw(ArgumentError("SCF: $(ctx(k)) takes the $(t) reading of sensor $(sid), which an earlier row already took."))
+      push!(consumed, (sid, i))
+    end
+    # a number of the row in the unit of the table, into the estimator's unit
+    vn = typ == VmMeas ? u_rated_by_id[node] / 1.0e3 : 1.0
+    own = key -> begin
+      x = r[key]
+      # a long literal arrives with its text (ScfDecimalText); U divides
+      # the text like a table cell, everything else takes its Float64
+      x isa ScfDecimalText && return typ == VmMeas ? _measurement_table_pu(x.text, x.value, vn) : x.value
+      x isa Number || throw(ArgumentError("SCF: $(ctx(k)).$(key) must be a number, got $(repr(x))."))
+      typ == VmMeas || return Float64(x)
+      return Float64(x) / vn
+    end
+    value = haskey(r, "value") ? own("value") : (sv === nothing ? throw(ArgumentError("SCF: $(ctx(k)) has neither a value nor a sensor.")) : sv)
+    sigma = haskey(r, "sigma") ? own("sigma") : (ss === nothing ? throw(ArgumentError("SCF: $(ctx(k)) has neither a sigma nor a sensor.")) : ss)
+    sigma > 0.0 || throw(ArgumentError("SCF: $(ctx(k)).sigma must be positive, got $(sigma)."))
+    valid = _scf_get(r, "valid", true)
+    valid isa Bool || throw(ArgumentError("SCF: $(ctx(k)).valid must be true or false, got $(repr(valid))."))
+    zi = _scf_get(r, "zero_injection", false)
+    zi isa Bool || throw(ArgumentError("SCF: $(ctx(k)).zero_injection must be true or false, got $(repr(zi))."))
+    (zi && !(typ == PinjMeas || typ == QinjMeas)) && throw(ArgumentError("SCF: $(ctx(k)).zero_injection is set on a $(t) row that is no bus balance; only P and Q at a node can be a zero injection."))
+    id = haskey(r, "id") ? String(r["id"]) : _default_measurement_id(typ; busIdx = busIdx, branchIdx = branchIdx, direction = dir)
+    push!(net.measurements, Measurement(typ = typ, value = value, sigma = sigma, active = valid, busIdx = busIdx, branchIdx = branchIdx, direction = dir, id = id, zero_injection = zi))
+  end
+  # sensors no row took (added by hand or by another tool) come after the
+  # rows, read as in a file without the block
+  _scf_read_measurements_v10!(net, case, bus_by_id, branch_index_by_id, u_rated_by_id; skip = consumed, meta = false)
   return nothing
 end
 

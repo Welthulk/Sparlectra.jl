@@ -301,7 +301,7 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.gen` | Generators: `PG`, `VG` setpoint, `QMAX`/`QMIN` for Q-limit handling, status | `PG`, `VG`, `QMAX` and `QMIN` are the values to inspect first. |
 | `mpc.branch` | Lines and transformers: `BR_R`/`BR_X`, charging, ratings, `TAP`, `SHIFT`, status | A non-zero tap ratio or phase shift marks a transformer; `TAP = 0` is treated as ratio `1`. `TAP` (column 9) and `SHIFT` (column 10) are the ratio and shift in effect; Sparlectra exports write them that way since 0.50.0. |
 | `mpc.gencost` | Optimal power flow | Kept per generator ([`GenCost`](@ref)) and written back unchanged on export; no calculation reads it. |
-| `mpc.bus_name` | Readable bus names | `matpower_import.apply_bus_names: true`; the original `BUS_I` values stay in `busOrigIdxDict`. |
+| `mpc.bus_name` | Readable bus names | `matpower_import.apply_bus_names: true`; the original `BUS_I` values stay in `busOrigIdxDict`. In a file without `mpc.sparlectra.aux_buses` (written before 0.50.0) a name starting with `Aux_` marks an auxiliary bus (three-winding star point), with or without that switch. |
 | `mpc.branch_name` | Readable branch/source names, outage mapping | `matpower_import.apply_branch_names = true`; lands in `net.matpower_branch_metadata`. |
 | `mpc.branch_kind` | Line/transformer classification override | `matpower_import.apply_branch_kind = true`; `L`, `LINE`, `ACL` force a line, `T`, `TRAFO`, `TRANSFORMER`, `2WT` a transformer. Missing or length-mismatched metadata falls back to the electrical heuristic. |
 | `mpc.for001_contingencies` | FOR001-derived contingency names for validation workflows | `matpower_import.import_for001_contingencies = true`; lands in `net.for001Contingencies`. |
@@ -310,6 +310,7 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.sparlectra.transformer_losses` | Transformer no-load conductance from FOR/DTF sources | One entry per transformer branch: MATPOWER branch row, original FOR/DTF identifier, terminal bus names, raw `R/X/G/B` values where available, converted per-unit values, tap/phase-shift data, source marker and allocation convention. |
 | `mpc.sparlectra.links` | Busbar couplers, one `fbus tbus status` row per impedance-less coupler (`1` = closed) | Each row becomes a `BusLink`: a closed link merges its two buses into one electrical node (the same contraction CGMES switch imports use), an open link keeps them separate. Exports write the block from `net.linkVec`. Unknown bus numbers or a wrong column count are rejected. |
 | `mpc.sparlectra.tap_changers` | Tap-changer nameplates, one row per transformer branch | Columns `branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step` plus optional `psi_deg`, `phase_du_step`, `ratio_grid` and the pair `neutral_ratio`, `neutral_shift_deg`; see below. |
+| `mpc.sparlectra.aux_buses` | Auxiliary buses (three-winding star points, internal nodes), one `BUS_I` per row | The solver's flat start puts such a bus at the ratio of its stiffest winding instead of 1.0 pu. Exports write the block from the auxiliary role of the buses. Unknown bus numbers are rejected. |
 | `mpc.sparlectra.tap_changer_model` | Roundtrip marker `'impedance_correction'` | See [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport). |
 | `mpc.sparlectra.solution_written` | Marker `1` that columns 8/9 and 14-17 are a solution | Written by `writeMatpowerCasefile` with `write_solution = true`. |
 
@@ -410,7 +411,7 @@ writeMatpowerCasefile(net, filepath)                          # configuration de
 | `write_solution` | Export |
 |---|---|
 | `true` (default) | `mpc.bus` `VM`/`VA` carry the solved node state and `mpc.branch` gains the standard MATPOWER result columns 14-17 (`PF`, `QF`, `PT`, `QT`, flow into the branch at each end) from the branch-flow report; the exporter does not recompute flows. `mpc.sparlectra.solution_written = 1` marks columns 8/9 and 14-17 as a solution. An unsolved network (no branch flows) warns and falls back to the 13-column model-only export. |
-| `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). |
+| `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). An auxiliary bus (three-winding star point) gets the value of the solver's flat start instead, the voltage at which its stiffest winding carries no current; read back, a bus listed in `mpc.sparlectra.aux_buses` stays auxiliary. |
 
 A unit without an active-power limit is written with `Pmax = 9999` and
 `Pmin = -9999`, the MATPOWER convention for an unlimited unit. The reactive

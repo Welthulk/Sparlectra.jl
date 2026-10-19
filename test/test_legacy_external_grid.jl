@@ -98,7 +98,7 @@ function run_legacy_external_grid_tests()
       stiff = build(internal = true, sk = 1.0e10)
       @test length(stiff.nodeVec) == 3
       @test stiff.slackVec == [3]                       # slack moved to the internal bus
-      @test startswith(getCompName(stiff.nodeVec[3].comp), "Aux_")
+      @test Sparlectra._is_aux_node(stiff.nodeVec[3])           # the internal bus is auxiliary
       _, erg_s = runpf!(stiff, 30, 1e-8, 0)
       @test erg_s == 0
       @test abs(getNodeVm(stiff.nodeVec[1]) - vm_ideal) < 1e-8

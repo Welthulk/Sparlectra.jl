@@ -6,8 +6,9 @@ measurement set per timestamp. It is addressed by CGMES mRID for a CGMES
 case and by element name for every other case format. It is the
 measurement format of Sparlectra: the Web UI generator writes it and the
 shipped sets use it. The [measurement CSV v1](@ref se_measurement_csv_v1)
-is deprecated and removed in 0.60.0; the two formats are told apart by
-their first line (see [Migrating from the v1 CSV](@ref se_table_migration)).
+is no longer read since 0.50.0; the two formats are told apart by their
+first line, and a v1 file is converted once (see
+[Migrating from the v1 CSV](@ref se_table_migration)).
 
 The format is new and may change before 1.0.
 
@@ -52,7 +53,7 @@ The format is new and may change before 1.0.
 | `type` | see above | `P`, `Q`, `I`, `Ia` (current angle), `U`, `Va` (voltage angle) |
 | `value` | yes | the reading in the unit of the type (see Units) |
 | `sigma` | no | standard deviation in the same unit, positive. Empty: the sigma of the voltage level of the measuring bus when `state_estimation.sigma_by_voltage_level` has one (see [Measurement sigma by voltage level](@ref se-sigma-by-level)), else the default of the measurement type (`measurementStdDevs`). Below `ZERO_INJECTION_SIGMA` (1e-3 in the unit of the estimator, pu for `U`) it is read at that value and counted as `sigma_lifted`, as in the measurement CSV v1. |
-| `source` | no | free text. The generators write `synthetic` or `synthetic;bad_data`, the pseudo generator `pseudo;ssh`, the converter `converted;v1`. One token is evaluated: `zero_injection` (tokens separated by `;`) on a bus balance row marks a zero-injection constraint (see Signs and mapping). |
+| `source` | no | free text. The generators write `synthetic` or `synthetic;bad_data`, the pseudo generator `pseudo;ssh`, the converter `converted;v1`; the `measurements.csv` artifact of an SE run adds `se_run`, `case_file`, `sigma_level` and `sigma_default` (see [run artifacts](@ref se-measurement-files)). One token is evaluated: `zero_injection` (tokens separated by `;`) on a bus balance row marks a zero-injection constraint (see Signs and mapping). |
 | `valid` | yes | `true` or `false`. A row with `false` becomes an inactive measurement (in a bus sum see Group sums). |
 
 Exactly one of the three key columns is set per row.
@@ -424,6 +425,7 @@ in a checkout; both key the table like the SE service.
   reports it as `not_modelled`, as the SE service left such a v1 row out.
 
 The estimate on the converted table equals the one on the v1 file: the
-same J, state and eliminations on every set shipped with Sparlectra.
-`readMeasurementsCSV!` warns once per session that the CSV v1 is
-deprecated, names the converter and the removal in 0.60.0.
+same J, state and eliminations on every set shipped with Sparlectra (shown
+in 0.50.0, when both readers existed). The v1 reader `readMeasurementsCSV!`
+was removed in 0.50.0; the SE service and the Web UI refuse a v1 file with
+an error that names the converter.

@@ -26,8 +26,8 @@
 const MEASUREMENT_TABLE_HEADER = ["timestamp", "measurement_mrid", "terminal_mrid", "node_mrid", "type", "value", "sigma", "source", "valid"]
 
 # the version line every table carries before its header. The measurement
-# CSV v1 of readMeasurementsCSV! has its own line (# sparlectra-measurements
-# v1); the two never match each other.
+# CSV v1 has its own line (# sparlectra-measurements v1); the two never
+# match each other.
 const MEASUREMENT_TABLE_VERSION_LINE = "# sparlectra-measurement-table v1"
 # any version of the line: group 1 is everything after the name (the
 # version token, and text after it that the reader refuses by name)
@@ -775,7 +775,7 @@ function _apply_sigma_levels_to_generated(net::Net, meas::Vector{Measurement}, t
     s === nothing && continue
     σ = typ == "U" ? s / vn : s
     z = t.value + (m.value - t.value) * (σ / m.sigma)
-    out[k] = Measurement(typ = m.typ, value = z, sigma = σ, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
+    out[k] = Measurement(typ = m.typ, value = z, sigma = σ, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
     push!(changed, k)
   end
   return (out, changed)
@@ -806,7 +806,7 @@ function _sigma_level_summary(net::Net, measurements::AbstractVector; origins::A
   counts = Dict{Float64,Vector{Int}}(v => [0, 0, 0, 0] for v in vns)
   unlocated = 0
   for m in measurements
-    startswith(m.id, "ZI") && continue
+    m.zero_injection && continue
     bus = _sigma_level_bus(net, m)
     if !(1 <= bus <= length(net.nodeVec))
       unlocated += 1
@@ -1214,6 +1214,17 @@ that does not become a measurement is counted by reason: `:unknown_key`,
 the format problems of `readMeasurementTable`. Nothing is dropped silently.
 """
 function importMeasurementTable(rows::Vector{MeasurementRow}, index::MeasurementKeyIndex; default_sigmas::Dict = measurementStdDevs(), sigma_by_voltage_level = state_estimation_config().sigma_by_voltage_level)::MeasurementTableImport
+  return _import_measurement_table(rows, index; default_sigmas = default_sigmas, sigma_by_voltage_level = sigma_by_voltage_level)
+end
+
+# importMeasurementTable with one addition for the run artifact of the SE
+# service: `filled_sigmas`, when given, receives for every row without a
+# sigma cell the sigma the import gave it, as the text of a sigma cell in
+# the unit of the table (U in kV), with its origin (:level or :default).
+# A row written with that text imports to the same sigma, so the artifact
+# carries the sigma of every row and reads back the same under any
+# configuration.
+function _import_measurement_table(rows::Vector{MeasurementRow}, index::MeasurementKeyIndex; default_sigmas::Dict = measurementStdDevs(), sigma_by_voltage_level = state_estimation_config().sigma_by_voltage_level, filled_sigmas::Union{Nothing,Dict{Int,Tuple{String,Symbol}}} = nothing)::MeasurementTableImport
   levels = _sigma_levels(sigma_by_voltage_level)
   Problem = NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}
   rejected = Problem[]
@@ -1232,11 +1243,11 @@ function importMeasurementTable(rows::Vector{MeasurementRow}, index::Measurement
   # the energized buses: every bus a node key resolves to (a node that is
   # not energized resolves to 0)
   energized = Set{Int}(b for b in values(index.nodes) if b > 0)
-  sets = MeasurementSet[_measurement_set(ts, by_ts[ts], index, default_sigmas, energized, levels) for ts in order]
+  sets = MeasurementSet[_measurement_set(ts, by_ts[ts], index, default_sigmas, energized, levels; filled_sigmas = filled_sigmas) for ts in order]
   return MeasurementTableImport(sets, rejected)
 end
 
-function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::MeasurementKeyIndex, default_sigmas::Dict, energized::Set{Int}, levels::Vector{SESigmaLevel})::MeasurementSet
+function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::MeasurementKeyIndex, default_sigmas::Dict, energized::Set{Int}, levels::Vector{SESigmaLevel}; filled_sigmas::Union{Nothing,Dict{Int,Tuple{String,Symbol}}} = nothing)::MeasurementSet
   meas = Measurement[]
   sources = Dict{String,Vector{Int}}()
   origins = Dict{String,Symbol}()
@@ -1251,8 +1262,8 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
   # (kind, bus, type) -> the member rows of a group sum with their terminal
   group_rows = Dict{Tuple{Symbol,Int,String},Vector{Tuple{MeasurementRow,String,Float64,Symbol}}}()
 
-  function add!(r::MeasurementRow, typ::MeasurementType, value::Float64, sigma::Float64, origin::Symbol; busIdx = nothing, branchIdx = nothing, direction = :none, id::String)
-    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = id))
+  function add!(r::MeasurementRow, typ::MeasurementType, value::Float64, sigma::Float64, origin::Symbol; busIdx = nothing, branchIdx = nothing, direction = :none, id::String, zero_injection::Bool = false)
+    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = id, zero_injection = zero_injection))
     sources[id] = [r.line]
     origins[id] = origin
     bump!(r.valid ? :active : :inactive)
@@ -1272,6 +1283,9 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
     lv = (bus >= 1 && bus <= length(index.bus_kV)) ? _sigma_from_level(levels, index.bus_kV[bus], typ, r.value) : nothing
     return lv === nothing ? (nothing, :default) : (lv, :level)
   end
+  # the sigma a row without a sigma cell got, as cell text (see
+  # _import_measurement_table); a row with its own sigma is not recorded
+  filled!(r::MeasurementRow, text::String, origin::Symbol) = (filled_sigmas === nothing || r.sigma !== nothing) || (filled_sigmas[r.line] = (text, origin))
 
   for r in rows
     if r.problem !== :none
@@ -1347,10 +1361,12 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
         s_kv, origin = row_sigma(r, "U", bus)
         # the row's own sigma from its text, a level sigma as a number
         sigma = s_kv === nothing ? default_sigma(VmMeas) : lift(origin === :row ? _measurement_table_pu(r.sigma_text, s_kv, vn) : s_kv / vn)
+        filled!(r, s_kv === nothing ? _measurement_table_kv_text(sigma, vn) : string(s_kv), origin)
         add!(r, VmMeas, _measurement_table_pu(r.value_text, r.value, vn), sigma, origin; busIdx = bus, id = id)
       elseif typ == "Va"
         s_row, origin = row_sigma(r, typ, bus)
         add!(r, VaMeas, r.value, s_row === nothing ? default_sigma(VaMeas) : lift(s_row), origin; busIdx = bus, id = id)
+        filled!(r, string(something(s_row, default_sigma(VaMeas))), origin)
       else
         # the bus balance: injection positive, the value of PinjMeas as it
         # is. A row marked zero_injection in `source` is the constraint the
@@ -1358,7 +1374,8 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
         # addZeroInjectionMeasurements!, which keeps it out of bad-data
         # elimination and gross errors
         mt = typ == "P" ? PinjMeas : QinjMeas
-        if _measurement_table_zero_injection(r.source)
+        zi = _measurement_table_zero_injection(r.source)
+        if zi
           zid = string(typ == "P" ? "ZI_PINJ_bus_" : "ZI_QINJ_bus_", bus)
           if zid in seen_ids
             problem!(r, :duplicate, "zero-injection row $(zid) appears twice in the set")
@@ -1368,7 +1385,8 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
           id = zid
         end
         s_row, origin = row_sigma(r, typ, bus)
-        add!(r, mt, r.value, s_row === nothing ? default_sigma(mt) : lift(s_row), origin; busIdx = bus, id = id)
+        add!(r, mt, r.value, s_row === nothing ? default_sigma(mt) : lift(s_row), origin; busIdx = bus, id = id, zero_injection = zi)
+        filled!(r, string(something(s_row, default_sigma(mt))), origin)
       end
       continue
     end
@@ -1389,6 +1407,7 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
       s_row, origin = row_sigma(r, typ, t.busIdx)
       sigma = s_row === nothing ? default_sigma(mt) : lift(s_row)
       add!(r, mt, r.value, sigma, origin; branchIdx = t.branchIdx, direction = t.direction, id = id)
+      filled!(r, string(something(s_row, default_sigma(mt))), origin)
       continue
     end
     # injection or shunt member: collect for the group sum at the bus. A
@@ -1401,6 +1420,7 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
     mt = _measurement_table_group_type(t.kind, typ)
     s_row, origin = row_sigma(r, typ, t.busIdx)
     push!(get!(Vector{Tuple{MeasurementRow,String,Float64,Symbol}}, group_rows, (t.kind, t.busIdx, typ)), (r, loc, s_row === nothing ? default_sigma(mt) : lift(s_row), origin))
+    filled!(r, string(something(s_row, default_sigma(mt))), origin)
   end
 
   # group sums. Every modelled member needs a value: all members valid gives
@@ -1472,13 +1492,13 @@ function _merge_group_parts(ps::Vector{_GroupPart})::_GroupPart
 end
 
 """
-    applyMeasurementSet!(net, set; replace = true, zero_injection = <state_estimation.zero_injection is on>) -> Net
+    applyMeasurementSet!(net, set; replace = true, zero_injection = <state_estimation.zero_injection is not off>) -> Net
 
 Put the measurements of `set` into `net.measurements` (replacing them by
 default), ready for `runse!(net)`.
 
-With `zero_injection` (default: the active `state_estimation.zero_injection`,
-`on` unless configured otherwise) every passive bus (no generation, load
+With `zero_injection` (default: the active `state_estimation.zero_injection`
+is `on` or `constraint`) every passive bus (no generation, load
 or shunt, not the slack, not isolated) that has no injection measurement
 in `net.measurements` afterwards gets a zero-injection pair `ZI_PINJ_bus_<k>`
 / `ZI_QINJ_bus_<k>` at `ZERO_INJECTION_SIGMA`, the rows the measurement
@@ -1487,7 +1507,7 @@ generator writes for passive buses. The number of rows added is stored in
 With `zero_injection = false` no row is added. `set.measurements` itself
 is not changed.
 """
-function applyMeasurementSet!(net::Net, set::MeasurementSet; replace::Bool = true, zero_injection::Bool = state_estimation_config().zero_injection === :on)
+function applyMeasurementSet!(net::Net, set::MeasurementSet; replace::Bool = true, zero_injection::Bool = state_estimation_config().zero_injection !== :off)
   target = _net_measurements(net)
   replace && empty!(target)
   append!(target, set.measurements)
@@ -1496,10 +1516,9 @@ function applyMeasurementSet!(net::Net, set::MeasurementSet; replace::Bool = tru
 end
 
 """
-    readMeasurementTable!(net; file, index = nameMeasurementKeys(net), timestamp = nothing, replace = true, zero_injection = <state_estimation.zero_injection is on>) -> MeasurementSet
+    readMeasurementTable!(net; file, index = nameMeasurementKeys(net), timestamp = nothing, replace = true, zero_injection = <state_estimation.zero_injection is not off>) -> MeasurementSet
 
-Read a measurement table into `net.measurements`, the counterpart of
-`readMeasurementsCSV!` for the table: `readMeasurementTable`, then
+Read a measurement table into `net.measurements`: `readMeasurementTable`, then
 `importMeasurementTable` with `index` (element names by default; for a
 CGMES case `cgmesMeasurementKeys(result)`), then `applyMeasurementSet!` of
 the set with `timestamp` (the first set when `nothing`). Returns that set;
@@ -1508,7 +1527,7 @@ rows that did not become a measurement are in its `problems` and in
 table the reader accepts, when no row can be assigned to a set, or when the
 table has no set with `timestamp`.
 """
-function readMeasurementTable!(net::Net; file::AbstractString, index::MeasurementKeyIndex = nameMeasurementKeys(net), timestamp::Union{Nothing,AbstractString} = nothing, replace::Bool = true, zero_injection::Bool = state_estimation_config().zero_injection === :on)::MeasurementSet
+function readMeasurementTable!(net::Net; file::AbstractString, index::MeasurementKeyIndex = nameMeasurementKeys(net), timestamp::Union{Nothing,AbstractString} = nothing, replace::Bool = true, zero_injection::Bool = state_estimation_config().zero_injection !== :off)::MeasurementSet
   imp = importMeasurementTable(readMeasurementTable(file), index)
   isempty(imp.sets) && throw(ArgumentError("$(file): no row of the table can be assigned to a measurement set\n$(measurementImportReport(imp))"))
   set = if timestamp === nothing

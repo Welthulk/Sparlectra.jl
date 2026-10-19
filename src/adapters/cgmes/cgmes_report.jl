@@ -221,9 +221,11 @@ function _svBusState(net)
   return V, S, fed
 end
 
-# an EnergySource is a unit only when mapped (cgmes_import.map_energy_source);
-# unmapped ones are in skipped_equipment and never reach the class test
-const _UNIT_CLASSES = (:SynchronousMachine, :ExternalNetworkInjection, :EquivalentInjection, :EnergySource)
+# an EnergySource (cgmes_import.map_energy_source) and a CGMES 3.0
+# PowerElectronicsConnection (cgmes_import.map_power_electronics) are units
+# only when mapped; unmapped ones are in skipped_equipment and never reach
+# the class test
+const _UNIT_CLASSES = (:SynchronousMachine, :ExternalNetworkInjection, :EquivalentInjection, :EnergySource, :PowerElectronicsConnection)
 const _LOAD_CLASSES = (:EnergyConsumer, :ConformLoad, :NonConformLoad, :StationSupply)
 
 function _compareFlowsWithSV(result::CGMESImportResult)
@@ -458,6 +460,7 @@ function shortCircuitCoverage(sc::CGMESShortCircuitData)::Vector{NamedTuple}
     ("PowerTransformerEnd", sc.transformer_ends),
     ("EquivalentInjection", sc.equivalent_injections),
     ("AsynchronousMachine", sc.asynchronous_machines),
+    ("PowerElectronicsConnection", sc.power_electronics_connections),
   )
     n = length(records)
     attrs = NamedTuple[]

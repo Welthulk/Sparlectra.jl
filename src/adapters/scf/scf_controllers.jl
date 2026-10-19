@@ -29,6 +29,9 @@ function _scf_controllers(net::Net)
     entry = _scf_controller_entry(ctrl)
     entry === nothing && continue
     name, payload = entry
+    # the rank is written only when set, so files without ranks keep their bytes
+    prio = control_priority(ctrl)
+    prio == 0 || (payload["priority"] = prio)
     # The controller's own shunt has no shunt row (scf_id_map), so its
     # state (in service, model, estimated) travels here, in the key names
     # of a components.shunt_state row; the reader applies it after the
@@ -68,6 +71,9 @@ function _scf_controller_entry(ctrl)
     d["voltage_error_metric"] = String(ctrl.voltage_error_metric)
     d["max_outer_iters"] = ctrl.max_outer_iters
     d["enabled"] = ctrl.enabled
+    # the control range only when set, so files without one keep their bytes
+    ctrl.tap_min === nothing || (d["tap_min"] = ctrl.tap_min)
+    ctrl.tap_max === nothing || (d["tap_max"] = ctrl.tap_max)
     return (string("tap_", ctrl.trafo), d)
   elseif ctrl isa MachineVoltageControl
     d = Dict{String,Any}("type" => "machine_voltage", "bus" => ctrl.bus, "target_bus" => ctrl.target_bus, "target_vm_pu" => ctrl.target_vm_pu, "deadband_vm_pu" => ctrl.deadband_vm_pu, "max_outer_iters" => ctrl.max_outer_iters, "enabled" => ctrl.enabled, "name" => ctrl.name)

@@ -1030,6 +1030,16 @@ power_flow:
       discovered = collect_sparlectra_api_artifacts(output_dir)
       @test :csv in Set(artifact.kind for artifact in discovered)
       @test :report in Set(artifact.kind for artifact in discovered)
+      # artifact names join the parts with "/" on every OS: a chart in a
+      # subdirectory is named the way a result page links it, and the
+      # Windows form of relpath (backslash) maps to the same name
+      mkpath(joinpath(output_dir, "plots"))
+      write(joinpath(output_dir, "plots", "branch_26.svg"), "<svg/>")
+      sub_names = [artifact.name for artifact in collect_sparlectra_api_artifacts(output_dir)]
+      @test "plots/branch_26.svg" in sub_names
+      @test !any(n -> occursin('\\', n), sub_names)
+      @test SparlectraApp._artifact_name_from_relpath(raw"plots\branch_26.svg", "\\") == "plots/branch_26.svg"
+      @test SparlectraApp._artifact_name_from_relpath(joinpath("plots", "branch_26.svg")) == "plots/branch_26.svg"
 
       missing = run_sparlectra_api(casefile = joinpath(tmpdir, "missing.m"), config_file = template, output_dir = joinpath(tmpdir, "missing"))
       @test !missing.success
@@ -1674,7 +1684,12 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
       @test occursin("Last known phase: <code>writing_artifacts</code>", stale_status_html)
       @test occursin("No live solver task is attached anymore.", stale_status_html)
 
-      for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt")
+      # a name with a subdirectory resolves with "/" only; the backslash
+      # form and a ".." part stay rejected
+      mkpath(joinpath(started["output_dir"], "plots"))
+      write(joinpath(started["output_dir"], "plots", "branch_26.svg"), "<svg/>")
+      @test resolve_powerflow_artifact(started["run_id"], "plots/branch_26.svg").path == joinpath(started["output_dir"], "plots", "branch_26.svg")
+      for unsafe_name in ("../result.json", "../../Project.toml", "/etc/passwd", raw"C:\Users\x\file.txt", raw"plots\branch_26.svg", "plots/../result.json")
         rejected = resolve_powerflow_artifact(started["run_id"], unsafe_name)
         @test rejected["success"] === false
         @test rejected["reason"] == "unsafe_artifact_name"

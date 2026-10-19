@@ -99,3 +99,6 @@ apslf_vs_*.svg
 !docs/src/assets/apslf_vs_nr_timing.csv
 !docs/src/assets/apslf_vs_nr_timing.svg
 __pycache__/
+docs/dev/ignore_this.jl
+ignor*.*
+hwcheck*.txt

@@ -90,23 +90,33 @@ function main()
     on_sysimage || SparlectraApp._webui_open_browser("http://127.0.0.1:8080/powerflow")
     return nothing
   end
-  if !on_sysimage
-    # the request line split into SubStrings like the server reads it, so the
-    # call meets the code the package image compiled for a real GET
-    warm_webui_page(() -> SparlectraApp.route_sparlectra_webui(split("GET /powerflow")..., Dict{String,String}(); output_root = abspath(SparlectraApp.default_webui_output_root()), runtime = server.runtime).status == 200)
-    SparlectraApp._webui_open_browser(server.url)
+  # A script run ends the process on SIGINT by default: Julia prints the
+  # signal and a native backtrace, and no handler below ever runs. With this
+  # switch Ctrl+C arrives as an InterruptException in this task, and the
+  # server stops through the same path as Stop Web UI (reason :ctrl_c).
+  Base.exit_on_sigint(false)
+  try
+    if !on_sysimage
+      # the request line split into SubStrings like the server reads it, so
+      # the call meets the code the package image compiled for a real GET
+      warm_webui_page(() -> SparlectraApp.route_sparlectra_webui(split("GET /powerflow")..., Dict{String,String}(); output_root = abspath(SparlectraApp.default_webui_output_root()), runtime = server.runtime).status == 200)
+      SparlectraApp._webui_open_browser(server.url)
+    end
+    SparlectraApp._wait_sparlectra_webui(server)
+  catch err
+    # Ctrl+C during the warmup or the browser start, before the wait
+    err isa InterruptException || rethrow()
+    SparlectraApp._webui_request_shutdown!(server.runtime; reason = :ctrl_c)
   end
-
+  # The accept loop aborts running jobs and prints "Sparlectra Web UI
+  # stopped by Ctrl+C." when it ends; the process waits for that line. A
+  # second Ctrl+C while running jobs are aborted ends the wait at once.
   try
     wait(server.task)
   catch err
-    if err isa InterruptException
-      @info "Ctrl+C received; closing Sparlectra Web UI."
-      close(server)
-      return nothing
-    end
-    rethrow()
+    err isa InterruptException || rethrow()
   end
+  return nothing
 end
 
 # VS Code's inline eval runs the whole file as one world age. Since Julia

@@ -246,6 +246,33 @@ function _matpower_sparlectra_tap_changers(mpc)::Union{Nothing,Matrix{Float64}}
   return getproperty(sp, :tap_changers)
 end
 
+# BUS_I numbers of the auxiliary buses (three-winding star points, internal
+# nodes) of a MATPOWER case, for both readers (direct import and SCF
+# converter). A file of 0.50.0 or later lists them in
+# mpc.sparlectra.aux_buses; a bus there keeps its own name. A file without
+# that list marks them by a bus_name starting with "Aux_", the schematic
+# name an auxiliary bus carried before 0.50.0 (Aux_<idx>_<kV>).
+function _matpower_aux_bus_numbers(mpc, busData, BUS_I::Int)::Set{Int}
+  out = Set{Int}()
+  sp = hasproperty(mpc, :sparlectra) ? getproperty(mpc, :sparlectra) : nothing
+  listed = sp === nothing || !hasproperty(sp, :aux_buses) ? nothing : getproperty(sp, :aux_buses)
+  if listed !== nothing
+    known = Set{Int}(Int(b) for b in view(busData, :, BUS_I))
+    for b in listed
+      k = Int(b)
+      k in known || throw(ArgumentError("mpc.sparlectra.aux_buses references unknown bus $(k)."))
+      push!(out, k)
+    end
+    return out
+  end
+  names = _matpower_metadata_vector(mpc, :bus_name)
+  (names === nothing || length(names) != size(busData, 1)) && return out
+  for (r, name) in enumerate(names)
+    startswith(name, "Aux_") && push!(out, Int(busData[r, BUS_I]))
+  end
+  return out
+end
+
 # Branch matrix with TAP/SHIFT at the NEUTRAL position of every transformer
 # with a mpc.sparlectra.tap_changers row (#513). Since 0.50.0 the exporter
 # writes the ratio and shift in effect into TAP/SHIFT, so that a plain
@@ -419,6 +446,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections, :paired_control) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections, :paired_control."))
   matpower_dcline_mode in (:pf_injections, :paired_control) || MatpowerIO.assert_no_active_dcline(mpc)
   bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = apply_bus_names)
+  aux_buses = _matpower_aux_bus_numbers(mpc, busData, BUS_I)
   bus_original_name_by_orig = Dict{Int,String}()
   raw_bus_names = _matpower_metadata_vector(mpc, :bus_name)
   if raw_bus_names !== nothing && length(raw_bus_names) == nbus
@@ -511,7 +539,11 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       va_deg = va_deg,
       vmin_pu = vmin,
       vmax_pu = vmax,
-      isAux = false,
+      # an auxiliary bus keeps its role through the round trip
+      # (_matpower_aux_bus_numbers). The flat start of the solver starts such
+      # a star point at the ratio of its stiffest winding; read back as a
+      # plain bus it started at 1.0 pu and the CGMES MiniGrid did not converge.
+      isAux = kIdx in aux_buses,
       oBusIdx = kIdx,
       zone = zone,
       area = area,

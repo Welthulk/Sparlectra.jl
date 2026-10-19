@@ -431,8 +431,11 @@ state_estimation:
   # Zero-injection rows (ZI, sigma ZERO_INJECTION_SIGMA) at passive buses
   # (no generation, load or shunt) that carry no injection measurement:
   # on adds them in every SE path (generator, measurement CSV, case file,
-  # measurement table), off in none. The Web UI generator checkbox
-  # "passive as zero-injection constraint" sets this key for the case.
+  # measurement table) as weighted rows, constraint adds the same rows and
+  # solves every ZI row as an equality constraint (exact, no sigma), off
+  # adds none. The Web UI generator checkbox "passive as zero-injection
+  # constraint" sets this key for the case (on or off; a case on
+  # constraint stays on constraint while the box is checked).
   zero_injection: on
   # Measurement sigmas per voltage level in physical units, for rows that
   # carry no sigma of their own (an empty sigma cell of a measurement
@@ -581,6 +584,17 @@ cgmes_import:
   # left out and counted in one import notice. Turn it on for deliveries that
   # carry generation as EnergySource.
   map_energy_source: false
+  # Map CGMES 3.0 PowerElectronicsConnection objects (wind and solar parks,
+  # batteries behind a converter) as injections: P and Q from the SSH, sign
+  # inverted from the CGMES load convention; PV with an enabled voltage
+  # RegulatingControl, else PQ; never the import's slack. Off by default: they
+  # are left out and counted in one import notice.
+  map_power_electronics: false
+  # Attach a switched-bank voltage controller to every LinearShuntCompensator
+  # whose controlEnabled and voltage RegulatingControl are set and regulate
+  # its own bus (sections of bPerSection between 0 and maximumSections). Off
+  # by default: the banks stay at their SSH sections.
+  shunt_control: false
   # Plausibility band for a voltage RegulatingControl target, in p.u. of the
   # regulated bus's nominal voltage. Outside the band the target is treated as a
   # placeholder: ignored, unit held PV at the bus voltage derived from the
@@ -633,6 +647,13 @@ short_circuit:
   # value (0.5..1.2) replaces the table for every bus — for expert or
   # verification runs where a worked example prescribes the factor.
   c_factor: 0.0
+  # Fault current of a converter-connected unit (PowerElectronicsConnection
+  # without maxIFault, synchronous machine on a wind or solar unit), as a
+  # multiple of its rated current ratedS/(sqrt(3)*ratedU). 0 = off: such a
+  # unit feeds nothing and its island is flagged as a lower bound. A stated
+  # maxIFault always wins. A manufacturer figure, to be set per case; about
+  # 1.0 to 1.5 is the usual range, as orientation only.
+  converter_current_factor: 0.0
   # Allowed values: auto, solves, takahashi
   # All-bus Thevenin sweep strategy. auto picks the Takahashi selected
   # inverse for islands with at least takahashi_min_buses buses (measured
@@ -940,7 +961,8 @@ control:
   # controller (block style; the minimal YAML reader has no "- item"
   # sequences). The name becomes the controller name where the type
   # supports one. Types and keys mirror the add* functions:
-  #   power_transformer -> addPowerTransformerControl! (trafo, mode, ...)
+  #   power_transformer -> addPowerTransformerControl! (trafo, mode, ...; tap_min/tap_max
+  #                        give a control range inside the physical tap range)
   #   machine_voltage   -> addMachineVoltageControl!   (bus, target_bus, target_vm_pu, ...)
   #   shunt_voltage     -> addShuntVoltageControl!     (bus, target_vm_pu, bs_min_mvar, bs_max_mvar, ...)
   #   series_reactance  -> addSeriesReactanceControl!  (from_bus, to_bus, p_target_mw, x_min_pu, x_max_pu, ...)

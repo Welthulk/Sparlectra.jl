@@ -176,9 +176,11 @@ knowledge: its injections are zero. Sparlectra models that as tightly
 weighted zero-injection pseudo-measurements, which raise observability
 and redundancy around the bus; they are protected from elimination and
 robust down-weighting, because removing exact knowledge is never the
-right reaction to a residual. The weight is finite (a hard-constraint
-solver block is not implemented, see the feature matrix), so extreme
-weights trade against conditioning.
+right reaction to a residual. The weight is finite, so extreme weights
+trade against conditioning. With `state_estimation.zero_injection =
+constraint` they are exact equality constraints instead; for observability
+nothing changes, they stay rows of H (see
+[State Estimation](state_estimation.md)).
 
 ## Reading the diagnostics table
 

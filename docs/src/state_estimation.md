@@ -193,22 +193,145 @@ elimination like `ZI` rows.
 
 ### Passive / transit buses
 
-Buses without load, generation or shunt get no hard equality-constraint
-block in the WLS solver. Model them as zero-injection pseudo-measurements
-`Pinj = 0` and `Qinj = 0` of very small variance: `findPassiveBuses(net)`
-finds the buses, `addZeroInjectionMeasurements!(meas; net, sigma=...)`
-appends the rows (id prefix `ZI`); see
+Buses without load, generation or shunt inject nothing. By default they
+enter as zero-injection pseudo-measurements `Pinj = 0` and `Qinj = 0` of
+small variance: `findPassiveBuses(net)` finds the buses,
+`addZeroInjectionMeasurements!(meas; net, sigma=...)` appends the rows (id
+prefix `ZI`); see
 [Observability](observability.md#How-zero-injection-buses-enter).
 
 `state_estimation.zero_injection` (default `on`) does this in every SE
-path that builds a set: the measurement generator, the SE service on a
-measurement CSV v1, on the measurements of a case file and on a
-measurement table, and `applyMeasurementSet!` for a table in a script. A
+path that builds a set: the measurement generator, the SE service on the
+measurements of a case file and on a measurement table, and `applyMeasurementSet!` for a table in a script. A
 passive bus gets the pair only when the set has no injection row for it,
 so a generated set, which already covers every passive bus, is estimated
 as before. `off` adds no such rows anywhere. The run log and the result
 metadata (`se_zero_injection_rows`) give the number of rows added. See
 [State-Estimation Configuration](state_estimation_configuration.md).
+
+### [Zero injection as equality constraint](@id se_zero_injection_constraint)
+
+With `state_estimation.zero_injection = constraint` the zero-injection rows
+are equality constraints instead of weighted rows. The rows split into
+$m_M$ measurement rows and $p$ constraint rows $c(x) = 0$, the injections
+$P_k(x)$ and $Q_k(x)$ of the passive buses $k$. The estimator solves
+
+```math
+\min_x \; J(x) = r_M^T W r_M, \quad r_M = z_M - h_M(x),
+\qquad \text{subject to} \quad c(x) = 0 .
+```
+
+The Lagrange function with the multipliers $\lambda$ is
+
+```math
+L(x, \lambda) = \tfrac{1}{2}\, r_M^T W r_M + \lambda^T c(x).
+```
+
+At the current state the rows are linearized,
+$h_M(x + \Delta x) \approx h_M(x) + H_M \Delta x$ and
+$c(x + \Delta x) \approx c(x) + C \Delta x$, with
+$H_M = \partial h_M / \partial x$ and $C = \partial c / \partial x$ (both by
+finite differences, see above). The derivatives of $L$ by $\Delta x$ and
+$\lambda$ set to zero give
+
+```math
+H_M^T W H_M \, \Delta x + C^T \lambda = H_M^T W r_M,
+\qquad
+C \, \Delta x = r_C = -c(x),
+```
+
+so every Gauss-Newton step solves the KKT system
+
+```math
+\begin{bmatrix} G & C^T \\ C & 0 \end{bmatrix}
+\begin{bmatrix} \Delta x \\ \lambda \end{bmatrix} =
+\begin{bmatrix} H_M^T W r_M \\ r_C \end{bmatrix},
+\qquad G = H_M^T W H_M .
+```
+
+$G$ holds the measurement rows only; the constraint rows enter with weight
+zero, also in the robust modes. The matrix is symmetric and indefinite
+($p$ zeros on the diagonal), so it is factorized by LU, not by Cholesky.
+
+**Scaling.** The entries of $C$ are of order one, those of $G$ of order
+$1/\sigma^2$. The solver substitutes $\lambda = a \mu$ and multiplies the
+constraint rows by $a$:
+
+```math
+\begin{bmatrix} G & a C^T \\ a C & 0 \end{bmatrix}
+\begin{bmatrix} \Delta x \\ \mu \end{bmatrix} =
+\begin{bmatrix} H_M^T W r_M \\ a \, r_C \end{bmatrix},
+\qquad
+a = \frac{\max_k G_{kk}}{\max_{ij} |C_{ij}|} .
+```
+
+$\Delta x$ is the same for every $a > 0$, only the condition number
+changes: with this $a$ the KKT matrix is conditioned like $G$ alone.
+
+**Against weighted rows.** With `on` the same rows enter $G$ with the
+weight $w_C = 1/\sigma_C^2$:
+
+```math
+\left( G + w_C \, C^T C \right) \Delta x = H_M^T W r_M + w_C \, C^T r_C .
+```
+
+For $\sigma_C \to 0$ this step tends to the constrained one, but the
+condition number grows with $w_C$. Measured with weighted rows at 1 kW
+against the scaled KKT matrix: higher by half a decade (`sp_case60`) to
+three and a half decades (`sp_case14`), and by four decades on the
+SmallGrid fixture.
+
+**Objective and redundancy.** A constraint has no statistical residual,
+so $J$ sums the measurement rows only:
+
+```math
+J = \sum_{i \in M} w_i \, r_i^2,
+\qquad
+\nu = m_M - (n - p) = (m_M + p) - n .
+```
+
+The $p$ constraints fix $p$ directions of the $n$ states, the measurements
+determine the remaining $n - p$. $\nu$ is the $m - n$ of the weighted form
+with $m = m_M + p$, so the dof and the band test stay as with `on`. A
+constraint holds to the solver tolerance; its sigma is not used.
+
+**Diagnostics.** The residual covariance keeps the form of the weighted
+estimator,
+
+```math
+\Omega = W_d^{-1} - H \left( H^T W_d H \right)^{-1} H^T,
+\qquad
+r_{n,i} = \frac{r_i}{\sqrt{\Omega_{ii}}},
+```
+
+with $W_d$ the measurement weights and every constraint row at
+$\max(w_i, 1/\sigma_{ZI}^2)$, $\sigma_{ZI}$ = `ZERO_INJECTION_SIGMA`
+($10^{-3}$ pu). That is the limit the constraint stands for, with an error
+of the order $w_i / w_{ZI}$ on $\Omega$, and the dense, Takahashi and
+blockwise paths work unchanged. A constraint row gets $r_{n,i} = 0$: it
+sorts last in the ranking, is marked as a constraint, is never suspicious
+and never eliminated.
+
+**A wrong constraint.** A "passive" bus that does inject cannot give way:
+the error moves into the neighbouring measurements, and convergence can
+take as many iterations as a very small sigma would.
+
+**Which rows.** Which rows are zero injections is decided by their origin,
+the `zero_injection` field of `Measurement` (set by
+`addZeroInjectionMeasurements!`, by the `zero_injection` source token of a
+measurement table, by the `zero_injection` key of an SCF 1.2 measurement
+row, and for the formats without such a field (the measurement CSV v1 in
+the converter, SCF 1.0 files) on the exact rows
+`addZeroInjectionMeasurements!` writes), never by the id alone.
+
+**Singular KKT matrix.** If the KKT matrix is singular, the step falls
+back to sparse least squares and the run warns with the reason: either
+the constraint rows are dependent (two rows state the same balance; the
+warning gives how many of the $p$ rows, from the rank of $C^T$), or the
+measurements and the constraints do not fix every state (an unobservable
+part, such as an island only zero injections touch).
+
+Example: `examples/state_estimation/state_estimation_zero_injection_constraint.jl`.
 
 ## Observability
 
@@ -523,5 +646,5 @@ NASPI TR-006, *Phase Angle Calculations: Considerations and Use Cases*.
 * 7-bus tutorial: [advanced workshop tour](generated/workshop_tour_advanced.md), [state-estimation notebook](generated/workshop_state_estimation.md)
 * Bad-data localization, elimination, robust estimation, shunt estimation: the [SE diagnostics notebook](generated/workshop_se_diagnostics.md)
 * Tap estimation, current measurements, PMU phasors, topology advisory, islands, $J$ versus $J_{active}$: the [taps, phasors and topology notebook](generated/workshop_se_taps.md)
-* Scripts in `examples/state_estimation/`: `state_estimation_wls.jl`, `state_estimation_pmu_angles.jl`, `state_estimation_observability.jl`, `state_estimation_passive_bus_zib_comparison.jl`, `h_matrix_observability_demo.jl`
+* Scripts in `examples/state_estimation/`: `state_estimation_wls.jl`, `state_estimation_pmu_angles.jl`, `state_estimation_observability.jl`, `state_estimation_passive_bus_zib_comparison.jl`, `state_estimation_zero_injection_constraint.jl`, `h_matrix_observability_demo.jl`
 * A [Sparlectra Case Format](scf.md) case carries its own measurement set, see [Case files carry their own measurements](@ref se-case-file-measurements)

@@ -42,22 +42,29 @@ object to the element it became (kind and index).
 | `PowerTransformer` (2 and 3 windings) | π-model transformers; 3-winding as star equivalent with an AUX bus. A tap changer acts at the terminal of its own end, the series impedance lies on the inner side: a 3-winding leg with a tap changer runs from its bus to the star point, a 2-winding transformer with tap changers only on end 2 runs from end 2 to end 1 |
 | `RatioTapChanger`, phase tap changers | fixed tap positions, or outer-loop controllers with `tap_control = true`; a `RatioTapChanger` with a `RatioTapChangerTable` takes the ratio of the table point at the tap position, and its controller steps from table point to table point; without a table the linear step formula applies; `PhaseTapChangerTabular` resolves its `PhaseTapChangerTable` row (ratio and angle) at the tap position. The `r`, `x`, `g`, `b` of a `RatioTapChangerTable` or `PhaseTapChangerTable` row are deviations in percent: the row of the step scales the series impedance and the magnetizing admittance (of a 3-winding leg, that leg's). With `tap_control = true` the import starts at the SSH step, and a controller that moves the tap sets the impedance of the step it reaches. The ENTSO-E `ExplicitLoadFlowCalculation` conformity set gives its phase tap table an `x` of 13.4036 at every step, the neutral step included; its SV does not apply that deviation, so the import differs from it by about 1.2 MW on the transformer. An end-2 (to-side) tap angle enters negated (`θ_eff = θ1 − θ2`), matching RealGrid's SV state; the ENTSO-E PSEI `PTE2` conformity sets expect the unflipped angle and deviate by about 0.3° |
 | retained `Switch`/`Breaker`/… | zero-impedance bus links |
-| `LinearShuntCompensator`, `NonlinearShuntCompensator` | shunts; the nonlinear characteristic sums its per-section points up to the active `sections` count (each point read as one switched group) |
+| `LinearShuntCompensator`, `NonlinearShuntCompensator` | shunts; the nonlinear characteristic sums its per-section points up to the active `sections` count (each point read as one switched group); with `shunt_control = true` a linear bank with a voltage `RegulatingControl` gets a bank regulator ([Bank regulators](@ref cgmes_shunt_control)) |
 | `EnergyConsumer`, `ConformLoad`, `NonConformLoad`, `StationSupply` | loads (SSH values) |
 | `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active; a `SynchronousMachine` or `ExternalNetworkInjection` with SSH `controlEnabled = false` does not regulate and is a PQ injection at its SSH `p`/`q` (absent counts as `true`), it stays a slack candidate by `referencePriority` or SV angle reference and as slack holds its bus at the start voltage (the SV value where present); an `EquivalentInjection` has no `controlEnabled` and regulates only with EQ `regulationCapability = true`, SSH `regulationStatus = true` and a positive `regulationTarget` (absent counts as `false`, one notice counts the capable units without a status); a machine whose voltage `RegulatingControl` points at a *different* bus is held PV at its own bus by default, or becomes an outer-loop remote voltage controller with `machine_control = true`; Q limits from the `ReactiveCapabilityCurve` (evaluated at the scheduled P) where one exists, else the scalar `minQ`/`maxQ` hull; the `minP`/`maxP` of an `ExternalNetworkInjection` or `EquivalentInjection` are read as delivered, in generator sign (a pair 0/0 or with `maxP` below `minP` gives none); a P limit of 9999 MW and above in magnitude (also `GeneratingUnit.minOperatingP`/`maxOperatingP`) is a placeholder and arrives as no limit, so it ranks no unit in the slack choice and weights none in the distributed slack (one notice counts these units per class; Q limits keep their delivered values); a positive `GeneratingUnit.normalPF` arrives as `ProSumer.participationFactor` for the [distributed slack](powerflow_configuration.md) (`p_mode: imported`), zero/absent maps to unknown |
 | `StaticVarCompensator` | P = 0 reactive injection, Q limits from the Ω ratings; PQ at its SSH `q` with `controlEnabled = false` |
 | `AsynchronousMachine` | fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention: a motor consumes with `p > 0`); no voltage regulation, no slack candidacy |
 | `EnergySource` | only with `map_energy_source = true`: fixed PQ injection from the SSH `activePower`/`reactivePower`; no voltage regulation, a slack only in an island without other reference ([EnergySource](@ref cgmes_energy_source)) |
+| `EnergySource` | only with `map_energy_source = true`: fixed PQ injection from the SSH `activePower`/`reactivePower`; no voltage regulation, never the import's slack ([EnergySource](@ref cgmes_energy_source)) |
+| `PowerElectronicsConnection` (CGMES 3.0) | only with `map_power_electronics = true`: injection from the SSH `p`/`q`; PV with an enabled voltage `RegulatingControl`, else fixed PQ; a slack only in an island without other reference ([PowerElectronicsConnection](@ref cgmes_power_electronics)) |
 | `SvVoltage`, `SvPowerFlow`, `SvTapStep` | start values and validation reference |
 
 Everything else is counted in the coverage report; `summarizeCGMES` shows
 the full class histogram. Short-circuit source data is harvested on every
 import (read, not evaluated); `shortCircuitCoverage` reports its
 per-attribute completeness, printed in `cgmes.log`
-([Short-Circuit Compendium](short_circuit.md)). A class with terminals
+([Short-Circuit Compendium](short_circuit.md)). The record of a
+`SynchronousMachine` on a `WindGeneratingUnit` or `SolarGeneratingUnit`
+names that class (`converter_unit`) and carries
+`GeneratingUnit.maxOperatingP`: the short circuit takes such a machine as a
+converter current source, `short_circuit.converter_current_factor` times
+the rated current from `ratedS`, else from `maxOperatingP`. A class with terminals
 or with SSH active power of which no object reached the network (for
 example `EnergySource` with `map_energy_source` off, or
-`PowerElectronicsConnection`) gets one
+`PowerElectronicsConnection` with `map_power_electronics` off) gets one
 `class not mapped:` row in the import messages and in `cgmes.log`, with its
 object count and its SSH P sum; a class without SSH active power has no P
 sum. One header line above the rows states the sign convention: load sign,
@@ -76,7 +83,7 @@ of a class the importer maps are skipped on purpose and do not count.
 
 | Convention | Sparlectra behaviour |
 |---|---|
-| Sign convention | CGMES uses the load convention (a machine with `p < 0` injects). Machine, external-injection, equivalent-injection and energy-source values are inverted; a load with negative `p` passes through unchanged. |
+| Sign convention | CGMES uses the load convention (a machine with `p < 0` injects). Machine, external-injection, equivalent-injection, energy-source and power-electronics-connection values are inverted; a load with negative `p` passes through unchanged. |
 | `Terminal.connected`, both ends open | Branch out of service. |
 | `Terminal.connected`, exactly one end open | No longitudinal current; the charging arm of the closed terminal stays as a shunt at the closed bus. |
 | `Terminal.connected`, both ends closed | Normal branch. |
@@ -87,7 +94,7 @@ of a class the importer maps are skipped on purpose and do not count.
 | Unresolved `TopologicalNode.BaseVoltage` | Cannot be repaired with `require_boundary = false`: real ENTSO-E deliveries keep their base-voltage catalog in the boundary EQ file (see `infer_base_voltages`). |
 | Slack selection | In order: `referencePriority ≥ 1` (a notice on ties), a single `ExternalNetworkInjection`, the largest external injection (by `maxP`, else by `|p|`), the largest synchronous machine by `ratedS` (a rating of 9999 MVA and above is a placeholder and ranks as none; the rating also breaks ties). The `referencePriority` of every machine and network injection also stays on its unit (`ProSumer.referencePriority`) for island references and N-1 ([Reference priority](slack_vs_source.md#Reference-priority)). |
 | Sourceless parts | Components without a source are de-energized (injections zeroed, branches out of service, buses isolated at voltage 0) with one message each and one notice with their number, their buses and the load left unsupplied, instead of aborting the power flow. A source is a generator-type unit with P > 0 (generator sign) or with voltage regulation, also of a remote bus in its island with `machine_control = true` (see Machine remote voltage control below); a unit without regulation that has P = 0 or draws power is none, so an island whose units only draw power is de-energized. A load is never a source, also not one that feeds power in. The unsupplied load includes the power the drawing units drew; the power that loads fed in is reported separately as dropped load infeed. |
-| Islands without a reference | With `multi_slack = true` (default), an energized electrical island with infeed (a unit with P > 0 in generator sign) but without slack and without a voltage-regulating unit gets a slack from the importer. Slack candidates are only units with infeed, `EnergySource` included, which the slack choice above passes over; a unit with P = 0 or drawing power is never one, also not by `referencePriority`. Among them: the strongest `referencePriority`, else the largest active power reserve (`maxP` minus P) on a bus of degree greater than 1, else the largest infeed on a bus of degree greater than 1, and only when no such bus carries infeed, the largest infeed on a bus of degree 1 (both buses of a two-bus island have degree 1). Its voltage setpoint is the start (SV) voltage of its bus. Each choice is a `warning:` in the import messages, one notice counts them. Without a slack the island-wise solve would hold a promoted unit at its start voltage, and the result there would depend on the start value only. |
+| Islands without a reference | With `multi_slack = true` (default), an energized electrical island with infeed (a unit with P > 0 in generator sign) but without slack and without a voltage-regulating unit gets a slack from the importer. Slack candidates are only units with infeed, `EnergySource` and `PowerElectronicsConnection` included, which the slack choice above passes over; a unit with P = 0 or drawing power is never one, also not by `referencePriority`. Among them: the strongest `referencePriority`, else the largest active power reserve (`maxP` minus P) on a bus of degree greater than 1, else the largest infeed on a bus of degree greater than 1, and only when no such bus carries infeed, the largest infeed on a bus of degree 1 (both buses of a two-bus island have degree 1). Its voltage setpoint is the start (SV) voltage of its bus. Each choice is a `warning:` in the import messages, one notice counts them; for a `PowerElectronicsConnection` the warning adds that its unit type is unknown and that it is assumed grid-following, because a converter that only follows the grid cannot hold an island. Without a slack the island-wise solve would hold a promoted unit at its start voltage, and the result there would depend on the start value only. |
 | Bus on a closed switch only | A bus without an in-service branch is marked isolated, also when a closed switch joins it to a bus with one. The solver still merges such a bus with that bus and solves it, and the SV comparison compares it at the voltage of its switch group. The import message counts these buses apart. |
 
 ## [Asymmetric EquivalentBranch](@id cgmes_eb_phase_stamp)
@@ -190,6 +197,8 @@ The keys that steer a CGMES import: where the delivery is, the system base, whet
 | `cgmes_import.machine_control` | `false` | Attach outer-loop remote voltage controllers (`MachineVoltageControl`) for machines whose voltage `RegulatingControl` points at a different bus, instead of holding those machines PV at their own bus. Allowed values: `true`, `false`. |
 | `cgmes_import.ignore_connected` | `false` | Diagnostic override treating every terminal as connected, for snapshots whose SSH flags contradict their own SV state; also revives out-of-service equipment. Allowed values: `true`, `false`. |
 | `cgmes_import.map_energy_source` | `false` | Map `EnergySource` objects as fixed PQ injections ([EnergySource](@ref cgmes_energy_source)). Allowed values: `true`, `false`. |
+| `cgmes_import.map_power_electronics` | `false` | Map CGMES 3.0 `PowerElectronicsConnection` objects as PQ or voltage-regulating injections ([PowerElectronicsConnection](@ref cgmes_power_electronics)). Allowed values: `true`, `false`. |
+| `cgmes_import.shunt_control` | `false` | Attach a switched-bank voltage controller to every `LinearShuntCompensator` with `controlEnabled` and a voltage `RegulatingControl` at its own bus ([Bank regulators](@ref cgmes_shunt_control)). Allowed values: `true`, `false`. |
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
 | `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island), and a slack to every island with infeed but without reference (see Islands without a reference above). Required for multi-island deliveries; `false` forces the single-reference behavior. Allowed values: `true`, `false`. |
@@ -276,6 +285,55 @@ counts the mapped and skipped
 objects with the P and Q sums. A delivery whose generation sits in
 `EnergySource` objects reproduces its SV state only with the key on.
 
+### [PowerElectronicsConnection](@id cgmes_power_electronics)
+
+CGMES 3.0 models wind and solar parks and batteries behind a converter as
+`PowerElectronicsConnection`, with `PowerElectronicsUnit`s (`BatteryUnit`,
+`PhotoVoltaicUnit`, `PowerElectronicsWindUnit`) behind it. With
+`cgmes_import.map_power_electronics: true` every connection that is in
+service, has a connected terminal and sits on a TopologicalNode is mapped.
+The injection is `p = -p` and `q = -q` from the SSH, which uses the load
+sign like `EnergySource`.
+
+- With `controlEnabled` and a voltage `RegulatingControl` that is enabled
+  and has a target above zero, the connection regulates like a
+  `SynchronousMachine`: PV at its bus on the target. A target outside
+  `vset_min_pu`/`vset_max_pu` holds it PV at its bus voltage with a
+  warning. A target at another bus holds it PV at its own bus, or with
+  `machine_control = true` gives it an outer-loop controller.
+- No target, a target of zero or below, `controlEnabled = false`, a
+  disabled control or a control in another mode leave a fixed PQ
+  injection.
+- Q limits come from the `minQ`/`maxQ` hull of the machines. A regulating
+  connection without them gets ±max(`ratedS`, `baseMVA`) with a notice.
+- P limits are the sums of `minP` and `maxP` over its units.
+- It is addressed as `:generator` in `element_by_mrid`, and
+  `compareWithSV` counts it with the units of its bus. The importer's
+  slack choice passes it over. An island whose only infeed are such PQ
+  injections is treated like an `EnergySource` island: the largest one
+  becomes its slack, with `multi_slack: false` the island gets the same
+  notice.
+- In the short circuit the connection is a current source of `maxIFault`
+  (per unit of the rated current) times `ratedS/(√3·ratedU)`, in the
+  maximum case only. Without `maxIFault` or `ratedS` it feeds nothing and
+  flags its island, so `Ik''max` there is a lower bound (see
+  [Short Circuit](short_circuit.md)). `maxIFault` is a CIM17 attribute
+  that no CGMES 3.0 profile defines, so a conforming delivery has none and
+  its connections take the flag, unless
+  `short_circuit.converter_current_factor` sets a multiple of the rated
+  current for them.
+- The CGMES export (2.4.15) writes it as an `EquivalentInjection` with its
+  regulation and `IdentifiedObject.description` =
+  `PowerElectronicsConnection`; an `EquivalentInjection` with that
+  description imports with the converter type again, so the short circuit
+  flags its island (see [CGMES Export](cgmes_export.md)).
+
+The key is off by default, like `map_energy_source`. Off, the connections
+stay out of the network and are listed in `skipped_equipment`; one notice
+names the key that maps them, and their count and P sum stand in the table
+of classes not mapped. On, one notice counts the mapped, regulating and
+skipped connections with their P and Q sums.
+
 ### Out-of-service equipment (`Equipment.inService`)
 
 CGMES 3.0 carries the operational status on the equipment itself in the
@@ -334,6 +392,30 @@ and the impedance per step. A controller added later through the
 `control` section then steps on the delivered table; the solve itself
 uses the imported tap position.
 
+## [Bank regulators](@id cgmes_shunt_control)
+
+With `shunt_control = true` every mapped `LinearShuntCompensator` with SSH
+`controlEnabled = true` and an enabled voltage `RegulatingControl` at its
+own bus becomes a switched bank: a
+[`ShuntVoltageControl`](remote_voltage_control.md) in discrete mode that
+takes over the imported shunt (`addShuntVoltageControl!` with `shunt_idx`).
+
+| Controller | From |
+|---|---|
+| block (`step_mvar`) | `bPerSection` at the nominal voltage |
+| range | 0 to `maximumSections` blocks |
+| start | the SSH `sections` |
+| target | `targetValue` in pu of the regulated bus |
+| deadband | half of `targetDeadband`, at least 0.001 pu |
+
+A bank stays a fixed shunt, with a notice, when its target lies at another
+bus, its target lies outside the `vset_min_pu`/`vset_max_pu` band, it has a
+conductance per section, its bus is held by a generator, or the bus has a
+bank regulator already. A `NonlinearShuntCompensator` with a regulating
+control stays fixed too, as its blocks are not uniform. One notice counts
+the regulators and the banks kept fixed. With the default `false` every
+bank stays at its SSH sections.
+
 ## Machine remote voltage control
 
 With `machine_control = true` a machine whose voltage `RegulatingControl`
@@ -386,7 +468,9 @@ sweeps every cached or fetchable test set.
 
 - CGMES 3.0 deliveries are read (`dcat:Dataset` headers, per-border
   boundary files, SSH `Equipment.inService`), validated against the
-  ReliCapGrid/Svedala 3.0 sets only.
+  ReliCapGrid/Svedala 3.0 sets only. These sets carry no
+  `PowerElectronicsConnection`; its mapping is tested on connections added
+  in memory.
 - Node-breaker deliveries are imported at bus-branch granularity (shipped
   TP, or [the topology processor](@ref topology_processor)); switches do
   not become model elements (retained ones become bus links).

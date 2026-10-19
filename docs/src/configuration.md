@@ -81,7 +81,7 @@ typed section.
 | `matpower_import` | `MatpowerImportConfig` | Import conventions, the metadata keys `matpower_import.apply_bus_names`, `apply_branch_names`, `apply_branch_kind`, `import_for001_contingencies` and `matpower_import.matpower_dcline_mode`: [Option reference](@ref matpower-options). |
 | `cgmes_import` | `CGMESImportConfig` | [CGMES Import](cgmes_import.md). |
 | `powsybl_import` | `PowsyblImportConfig` | [PowSyBl Import](powsybl_import.md). |
-| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short circuit: `short_circuit.c_factor`, `short_circuit.sweep_method` (`auto`, `solves`, `takahashi`), `short_circuit.takahashi_min_buses`; [Short-Circuit Analysis](short_circuit.md). |
+| `short_circuit` | `ShortCircuitConfig` | IEC 60909 short circuit: `short_circuit.c_factor`, `short_circuit.sweep_method` (`auto`, `solves`, `takahashi`), `short_circuit.takahashi_min_buses`, `short_circuit.converter_current_factor` (converter fault current without `maxIFault` as a multiple of the rated current, default 0 = off; a manufacturer figure to be set per case, about 1.0 to 1.5 as orientation); [Short-Circuit Analysis](short_circuit.md). |
 | `model` | `ModelConfig` | Model construction for every importer: bus shunt model, tap-changer model (below), auto profile, net cache, preallocation, system frequency (below). |
 | `state_estimation` | `StateEstimationConfig` | [State-Estimation Configuration](state_estimation_configuration.md). |
 | `output` | `OutputConfig` | Console and logfile output, result tables (keys below and in [Output configuration](@ref perf-output)); `output.startup_latency_hint: false` silences the one-per-process JIT warm-up note of runs without a sysimage or executable. |
@@ -388,11 +388,29 @@ control:
 | `hvdc_pair` | `addHvdcPairControl!` | |
 | `upfc` | `addUpfcControl!` | `model: quadrature` registers the SSSC+STATCOM pair, `model: full` the DC-link-coupled independent-P/Q model, see [FACTS Devices](facts.md) |
 
+Every type takes `priority` (integer, default 0), the rank of the
+controller in the outer loop: 0 acts first, a controller with a larger
+number waits while one with a smaller number still moves
+([Controller priority](@ref controller_priority_ranks)).
+
+A `power_transformer` entry takes `tap_min` and `tap_max` (ratios, default
+the physical range of the transformer): the controller moves the ratio only
+inside this control range and stands at its limit at either end. A ratio
+outside the range, such as the case ratio when the range leaves it out,
+goes onto the nearer end of the range in the first pass, whatever the
+voltage error, and the run logs a warning naming the transformer, its
+start ratio and step and the limit, once per controller and run. Both
+values must lie inside the physical range, otherwise applying the entry
+fails with an `ArgumentError` naming it.
+
 Unknown types, unknown keys and missing required keys fail at configuration
 load; unresolvable references and invalid limits fail at apply time, naming
 the entry. An element that already carries a controller of the same type
-is skipped. `applyConfiguredControllers!` applies the block to a
-programmatically built net.
+is skipped; only `tap_min`/`tap_max` of a `power_transformer` entry still
+reach the tap controller already on that transformer, so a configuration
+can narrow the range of a controller from the case file.
+`applyConfiguredControllers!` applies the block to a programmatically
+built net.
 
 ## [Contingency keys](@id config_contingency_keys)
 

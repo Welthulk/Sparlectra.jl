@@ -65,8 +65,8 @@ remains the answer. Theory in [FACTS Devices](@ref facts_devices).
   `shunt_bus`.
 - `name`: composite name, default `UPFC_<fromBus>_<toBus>`; the two
   controllers are named `<name>_series` and `<name>_shunt`.
-- `max_outer_iters::Int = 20`, `enabled::Bool = true`: forwarded to both
-  sides.
+- `max_outer_iters::Int = 20`, `enabled::Bool = true`, `priority::Int = 0`:
+  forwarded to both sides.
 
 # Behavior
 Registration is all-or-nothing: composite-level validation runs before
@@ -102,6 +102,7 @@ function addUpfcControl!(
   name::Union{Nothing,String} = nothing,
   max_outer_iters::Int = 20,
   enabled::Bool = true,
+  priority::Int = 0,
 )
   model in (:quadrature, :full) || error("UpfcControl: model must be :quadrature (default, #325 SSSC+STATCOM composite) or :full (#326 DC-link-coupled model), got $(model).")
   # the full model owns an independent Q DOF; the quadrature composite has
@@ -130,6 +131,7 @@ function addUpfcControl!(
       name = cname,
       max_outer_iters = max_outer_iters,
       enabled = enabled,
+      priority = priority,
     )
     upfc.upfc_group = cname
     return (name = cname, upfc = upfc)
@@ -167,6 +169,7 @@ function addUpfcControl!(
     max_outer_iters = max_outer_iters,
     enabled = enabled,
     name = string(cname, "_series"),
+    priority = priority,
   )
   # shunt converter second; on failure remove the series controller again so
   # the all-or-nothing rule holds
@@ -184,6 +187,7 @@ function addUpfcControl!(
       max_outer_iters = max_outer_iters,
       enabled = enabled,
       name = string(cname, "_shunt"),
+      priority = priority,
     )
     shunt = last(net.machineControls)
   catch

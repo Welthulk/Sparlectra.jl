@@ -48,24 +48,39 @@ function run_ref_api_smoke_tests()
         se = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5))
         @test se["status"] == "succeeded"
         @test se["metadata"]["run_mode"] == "se"
-        # the measurements.csv artifact of an SE run follows the run's CSV
-        # format like the other artifacts, and the measurement table given
-        # as input reads under that setting as before
+        # the measurements.csv artifact of an SE run is a measurement table
+        # (its fixed layout, whatever output.csv_format says) and reads back
+        # with readMeasurementTable! to the rows of the input table; the
+        # verdict next to it follows the run's CSV format, one line per row
         se_de = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => meas5, "config_overrides" => Dict{String,Any}("output.csv_format" => "excel_de")))
         @test se_de["status"] == "succeeded"
-        meas_de = readlines(joinpath(se_de["output_dir"], "measurements.csv"))
-        @test meas_de[1] == "# sparlectra-measurements v1"
-        header_at = findfirst(l -> startswith(l, "type"), meas_de)
-        @test header_at !== nothing && startswith(meas_de[header_at], "type;bus;")
-        # the artifact carries the per-row verdict behind id; a clean set has
-        # no flagged row and no critical one on this case
-        @test endswith(meas_de[header_at], ";bad_data;status")
-        @test all(l -> endswith(l, ";;"), filter(l -> !startswith(l, "#") && !startswith(l, "type"), meas_de))
-        @test any(l -> occursin(r";\d+,\d+;", l), meas_de)
-        # the artifact still reads back as a measurement set
+        art = joinpath(se_de["output_dir"], "measurements.csv")
+        @test isMeasurementTable(art)
         probe = importSCF(scf5)
-        empty!(probe.measurements)
-        @test Sparlectra._take_measurements_csv_v1!(probe; file = joinpath(se_de["output_dir"], "measurements.csv")).total == length(readlines(meas5)) - count(l -> startswith(l, "#") || startswith(l, "timestamp"), readlines(meas5))
+        n_rows = length(readlines(meas5)) - count(l -> startswith(l, "#") || startswith(l, "timestamp"), readlines(meas5))
+        @test length(readMeasurementTable(art)) == n_rows
+        @test isempty(readMeasurementTable!(probe; file = art, zero_injection = false).problems)
+        verdict = readlines(joinpath(se_de["output_dir"], "measurements_verdict.csv"))
+        @test verdict[1] == "line;key;type;measurement_id;residual;normalized_residual;wii;localizable;eliminated;constraint;reason"
+        @test length(verdict) == n_rows + 1
+        @test any(l -> occursin(r";-?\d+,\d+;", l), verdict)
+        # a gross error (the one row of the shipped bad-data set whose value
+        # differs from the clean set, scaled by 10): the verdict names that
+        # row as the one eliminated, with the normalized residual it was
+        # eliminated at
+        bad5 = joinpath(dirname(meas5), "sp_case5.measurements.baddata.csv")
+        se_bad = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => bad5))
+        @test se_bad["status"] == "succeeded"
+        vbad = [split(l, ",") for l in readlines(joinpath(se_bad["output_dir"], "measurements_verdict.csv"))[2:end]]
+        elim = filter(v -> v[9] == "true", vbad)
+        @test length(elim) == se_bad["metadata"]["se_eliminations"] == 1
+        art_bad = readlines(joinpath(se_bad["output_dir"], "measurements.csv"))
+        gross = findall(((a, b),) -> a.value != b.value, collect(zip(readMeasurementTable(meas5), readMeasurementTable(bad5))))
+        @test length(gross) == 1
+        @test parse(Int, elim[1][1]) == findfirst(l -> startswith(l, "timestamp"), art_bad) + only(gross)
+        @test abs(parse(Float64, elim[1][6])) >= se_bad["metadata"]["se_k_eliminate"]
+        @test elim[1][11] == "eliminated"
+        @test occursin(elim[1][4], read(joinpath(se_bad["output_dir"], "se_diagnostics.md"), String))
       end
     end)() end
   return true

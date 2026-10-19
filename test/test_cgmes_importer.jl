@@ -1674,6 +1674,9 @@ function run_cgmes_importer_tests()
           CI.CGMESMultiRefs(),
         )
         @test CI._unmappedClasses(pec_store, Dict{String,Tuple{Symbol,Int}}()) == [(class = :PowerElectronicsConnection, count = 2, p_mw = -10.0, no_p = 1)]
+        # with map_power_electronics on the class is one the importer maps:
+        # objects without a connected terminal are skipped on purpose, no row
+        @test isempty(CI._unmappedClasses(pec_store, Dict{String,Tuple{Symbol,Int}}(); map_power_electronics = true))
         # every class with terminals counts, also without SSH active power: a
         # Ground (no SSH value, the importer does not map the class) on the
         # node of a load gets a row without P sum. A StationSupply out of
@@ -1735,6 +1738,205 @@ function run_cgmes_importer_tests()
         @test Sparlectra.CGMESImportConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("map_energy_source" => true))).map_energy_source
       end)() end
 
+      # PowerElectronicsConnection (CGMES 3.0) behind
+      # cgmes_import.map_power_electronics. No shipped delivery carries one
+      # (SmallGrid is 2.4.15, the cgmes_demo exports have none), so
+      # connections are added to a copy of the store on load buses the plain
+      # import leaves PQ, each with a connected terminal, SSH p and q in load
+      # sign and an SvPowerFlow equal to them; some with a voltage
+      # RegulatingControl at a load terminal.
+      @testset "PowerElectronicsConnection behind cgmes_import.map_power_electronics" begin (function ()
+        local pe_store = deepcopy(loaded)
+        local add!(s, mrid, class, attrs, refs) = (s.objects[mrid] = CI.CIMObject(mrid, class, attrs, refs, "pec_test"); push!(get!(Vector{String}, s.byclass, class), mrid))
+        local ce_terms = Dict{String,Vector{CI.CIMObject}}()
+        for t in objectsOf(pe_store, :Terminal)
+          push!(get!(Vector{CI.CIMObject}, ce_terms, get(t.refs, :ConductingEquipment, "")), t)
+        end
+        # one load terminal per PQ bus of the plain import
+        local pq_terms = CI.CIMObject[]
+        for ec in objectsOf(pe_store, :EnergyConsumer)
+          local t = only(ce_terms[ec.mrid])
+          local tn = t.refs[:TopologicalNode]
+          (any(u -> u.refs[:TopologicalNode] == tn, pq_terms) || net.nodeVec[net.busDict[topo.bus_name[tn]]]._nodeType != Sparlectra.PQ) && continue
+          push!(pq_terms, t)
+        end
+        local tn_of(t) = t.refs[:TopologicalNode]
+        local kv(t, vm) = string(vm * topo.vn_kV[tn_of(t)])
+        local function pec!(s, mrid, nm, host, p, q; extra = Dict{Symbol,String}(), rc = nothing)
+          local refs = Dict{Symbol,String}()
+          if rc !== nothing
+            add!(s, string(mrid, "_rc"), :RegulatingControl, merge(Dict{Symbol,String}(:mode => "RegulatingControlModeKind.voltage"), rc.attrs), Dict{Symbol,String}(:Terminal => rc.terminal.mrid))
+            refs[:RegulatingControl] = string(mrid, "_rc")
+          end
+          add!(s, mrid, :PowerElectronicsConnection, merge(Dict{Symbol,String}(:name => nm, :p => string(p), :q => string(q)), extra), refs)
+          local trefs = Dict{Symbol,String}(:ConductingEquipment => mrid, :TopologicalNode => tn_of(host))
+          haskey(host.refs, :ConnectivityNode) && (trefs[:ConnectivityNode] = host.refs[:ConnectivityNode])
+          add!(s, string(mrid, "_t"), :Terminal, Dict{Symbol,String}(:sequenceNumber => "1", :connected => "true"), trefs)
+          add!(s, string(mrid, "_sv"), :SvPowerFlow, Dict{Symbol,String}(:p => string(p), :q => string(q)), Dict{Symbol,String}(:Terminal => string(mrid, "_t")))
+          return nothing
+        end
+        # PQ, with Q limits and two units (P limits -5 + 0, 5 + 10)
+        pec!(pe_store, "_pec_pq", "PEC_PQ", pq_terms[1], -12.5, -3.0; extra = Dict{Symbol,String}(:minQ => "-8", :maxQ => "6", :ratedS => "15"))
+        add!(pe_store, "_pec_pq_pv", :PhotoVoltaicUnit, Dict{Symbol,String}(:minP => "0", :maxP => "10"), Dict{Symbol,String}(:PowerElectronicsConnection => "_pec_pq"))
+        add!(pe_store, "_pec_pq_bat", :BatteryUnit, Dict{Symbol,String}(:minP => "-5", :maxP => "5"), Dict{Symbol,String}(:PowerElectronicsConnection => "_pec_pq"))
+        # local voltage control at 1.02 pu, no minQ/maxQ
+        pec!(pe_store, "_pec_pv", "PEC_PV", pq_terms[2], -20.0, -1.0; extra = Dict{Symbol,String}(:ratedS => "30", :controlEnabled => "true"), rc = (terminal = pq_terms[2], attrs = Dict{Symbol,String}(:enabled => "true", :targetValue => kv(pq_terms[2], 1.02))))
+        # the same control, switched off at the connection or at the control
+        pec!(pe_store, "_pec_ctrl_off", "PEC_CTRL_OFF", pq_terms[3], -4.0, 0.0; extra = Dict{Symbol,String}(:controlEnabled => "false"), rc = (terminal = pq_terms[3], attrs = Dict{Symbol,String}(:enabled => "true", :targetValue => kv(pq_terms[3], 1.02))))
+        pec!(pe_store, "_pec_rc_off", "PEC_RC_OFF", pq_terms[4], -3.0, 0.0; extra = Dict{Symbol,String}(:controlEnabled => "true"), rc = (terminal = pq_terms[4], attrs = Dict{Symbol,String}(:enabled => "false", :targetValue => kv(pq_terms[4], 1.02))))
+        # voltage control of another load bus, at its SV voltage
+        local remote_vm = net.nodeVec[net.busDict[topo.bus_name[tn_of(pq_terms[6])]]]._vm_pu
+        pec!(pe_store, "_pec_remote", "PEC_REMOTE", pq_terms[5], -6.0, 0.0; extra = Dict{Symbol,String}(:controlEnabled => "true", :minQ => "-10", :maxQ => "10"), rc = (terminal = pq_terms[6], attrs = Dict{Symbol,String}(:enabled => "true", :targetValue => kv(pq_terms[6], remote_vm))))
+        pec!(pe_store, "_pec_oos", "PEC_OOS", pq_terms[1], -1.0, 0.0; extra = Dict{Symbol,String}(:inService => "false"))
+        local pec_mrids = ("_pec_pq", "_pec_pv", "_pec_ctrl_off", "_pec_rc_off", "_pec_remote", "_pec_oos")
+
+        # off (the default): no prosumer, every connection listed as not
+        # mapped, one notice that names the switch, and the row in the table
+        # of classes not mapped with all six objects and their SSH P sum
+        local pe_off = importCGMES(path = pe_store, name = "sg_pec_off")
+        @test length(pe_off.net.prosumpsVec) == length(net.prosumpsVec)
+        @test all(m -> !haskey(pe_off.element_by_mrid, m) && m in pe_off.skipped_equipment, pec_mrids)
+        @test count(m -> occursin("PowerElectronicsConnection", m), pe_off.messages) == 2
+        @test "notice: PowerElectronicsConnection not mapped, switch cgmes_import.map_power_electronics (count and SSH P sum in the table of classes not mapped)" in pe_off.messages
+        @test "notice: class not mapped: PowerElectronicsConnection, 6 object(s), P sum -46.5 MW" in pe_off.messages
+        @test !any(r -> r.kind == :units && occursin("PEC_", r.name), compareWithSV(pe_off).flows.rows)
+        @test CI.cgmesMeasurementKeys(pe_off).terminals[Sparlectra._measurement_key("_pec_pq_t")].kind == :not_modelled
+        @test pe_off.slack_bus == res.slack_bus
+
+        # on: the mapping
+        local pe = importCGMES(path = pe_store, name = "sg_pec", map_power_electronics = true)
+        local ps_of(m) = pe.net.prosumpsVec[last(pe.element_by_mrid[m])]
+        local node_of(m) = pe.net.nodeVec[Sparlectra.getPosumerBusIndex(ps_of(m))]
+        @test length(pe.net.prosumpsVec) == length(net.prosumpsVec) + 5
+        @test all(m -> first(pe.element_by_mrid[m]) == :generator, ("_pec_pq", "_pec_pv", "_pec_ctrl_off", "_pec_rc_off", "_pec_remote"))
+        # PQ: the negated SSH values on the host's bus, the minQ/maxQ hull and
+        # the summed unit limits
+        local pq = ps_of("_pec_pq")
+        @test (pq.pVal, pq.qVal) == (-num(pe_store.objects["_pec_pq_sv"], :p), -num(pe_store.objects["_pec_pq_sv"], :q)) == (12.5, 3.0)
+        @test Sparlectra._bus_name_by_idx(pe.net)[Sparlectra.getPosumerBusIndex(pq)] == pe.topo.bus_name[tn_of(pq_terms[1])]
+        @test Sparlectra.isGenerator(pq) && !Sparlectra.isRegulating(pq) && !Sparlectra.isSlack(pq)
+        @test (pq.minQ, pq.maxQ, pq.minP, pq.maxP) == (-8.0, 8.0, -5.0, 15.0)
+        @test node_of("_pec_pq")._nodeType == Sparlectra.PQ
+        # an enabled voltage control at its own bus: PV at the target, the wide
+        # Q limits max(ratedS, baseMVA), and a notice
+        local pv = ps_of("_pec_pv")
+        @test Sparlectra.isRegulating(pv) && !Sparlectra.isSlack(pv)
+        @test node_of("_pec_pv")._nodeType == Sparlectra.PV
+        @test pv.vm_pu ≈ 1.02
+        @test (pv.minQ, pv.maxQ) == (-100.0, 100.0)
+        @test any(m -> startswith(m, "notice: PowerElectronicsConnection PEC_PV regulates voltage and has no usable minQ/maxQ"), pe.messages)
+        # controlEnabled = false or RegulatingControl.enabled = false: PQ
+        for m in ("_pec_ctrl_off", "_pec_rc_off")
+          @test !Sparlectra.isRegulating(ps_of(m))
+          @test node_of(m)._nodeType == Sparlectra.PQ
+        end
+        @test (ps_of("_pec_ctrl_off").pVal, ps_of("_pec_rc_off").pVal) == (4.0, 3.0)
+        # a PQ connection without minQ/maxQ keeps no Q limits (only a
+        # regulating one gets the wide fallback)
+        @test all(m -> (ps_of(m).minQ, ps_of(m).maxQ) == (nothing, nothing), ("_pec_ctrl_off", "_pec_rc_off"))
+        # a remote target: held PV at its own bus without machine_control
+        @test node_of("_pec_remote")._nodeType == Sparlectra.PV
+        @test any(m -> occursin("PEC_REMOTE has a remote voltage RegulatingControl", m), pe.messages)
+        # inService = false: skipped and counted
+        @test !haskey(pe.element_by_mrid, "_pec_oos") && "_pec_oos" in pe.skipped_equipment
+        # the short-circuit harvest keeps the mapped connections only, on the
+        # result and on the network; off, it keeps none
+        @test sort!([r.mrid for r in pe.shortcircuit.power_electronics_connections]) == sort!(["_pec_pq", "_pec_pv", "_pec_ctrl_off", "_pec_rc_off", "_pec_remote"])
+        @test pe.net.sc_sources.power_electronics_connections == pe.shortcircuit.power_electronics_connections
+        @test isempty(pe_off.shortcircuit.power_electronics_connections)
+        @test "notice: 5 PowerElectronicsConnection object(s) mapped (2 voltage-regulating, 3 PQ; P = 45.5 MW, Q = 4.0 MVAr injected), 1 skipped" in pe.messages
+        @test pe.slack_bus == res.slack_bus
+        # the class reached the network, so the report has no line for it
+        @test isempty(CI._unmappedClasses(pe.store, pe.element_by_mrid))
+        @test !any(m -> startswith(m, "notice: class not mapped:"), pe.messages)
+        @test any(r -> r.kind == :units && occursin("PEC_PQ", r.name), compareWithSV(pe).flows.rows)
+        @test CI.cgmesMeasurementKeys(pe).terminals[Sparlectra._measurement_key("_pec_pq_t")].kind == :injection
+        @test last(runpf!(pe.net, 30, 1e-8, 0)) == 0
+        @test abs(node_of("_pec_pv")._vm_pu - 1.02) < 1e-9
+
+        # with machine_control the remote target gets an outer-loop controller
+        local pe_mc = importCGMES(path = pe_store, name = "sg_pec_mc", machine_control = true, map_power_electronics = true)
+        @test any(m -> startswith(m, "machine control: PEC_REMOTE → voltage"), pe_mc.messages)
+        @test pe_mc.net.nodeVec[Sparlectra.getPosumerBusIndex(pe_mc.net.prosumpsVec[last(pe_mc.element_by_mrid["_pec_remote"])])]._nodeType == Sparlectra.PQ
+
+        # an island whose only source is a PQ connection is treated like an
+        # EnergySource island: the import makes the connection the island's
+        # slack (largest infeed, both buses of degree 1) with a warning, and
+        # with multi_slack = false gives the island no slack and the notice.
+        # The warning also shows that the SV angle reference below did not
+        # make it the slack: that island would have had a reference already
+        local isl_store = deepcopy(loaded)
+        local isl_bv = isl_store.objects[tn_of(pq_terms[1])].refs[:BaseVoltage]
+        local isl_term!(mrid, eq, tn, seq) = add!(isl_store, mrid, :Terminal, Dict{Symbol,String}(:sequenceNumber => string(seq), :connected => "true"), Dict{Symbol,String}(:ConductingEquipment => eq, :TopologicalNode => tn))
+        for tn in ("_pisl_tn_1", "_pisl_tn_2")
+          add!(isl_store, tn, :TopologicalNode, Dict{Symbol,String}(:name => uppercase(tn)), Dict{Symbol,String}(:BaseVoltage => isl_bv))
+        end
+        add!(isl_store, "_pisl_line", :ACLineSegment, Dict{Symbol,String}(:name => "PISL_LINE", :r => "1.0", :x => "5.0", :bch => "0"), Dict{Symbol,String}(:BaseVoltage => isl_bv))
+        isl_term!("_pisl_line_t1", "_pisl_line", "_pisl_tn_1", 1)
+        isl_term!("_pisl_line_t2", "_pisl_line", "_pisl_tn_2", 2)
+        add!(isl_store, "_pisl_pec", :PowerElectronicsConnection, Dict{Symbol,String}(:name => "PEC_ISL", :p => "-5", :q => "-1"), Dict{Symbol,String}())
+        isl_term!("_pisl_pec_t", "_pisl_pec", "_pisl_tn_1", 1)
+        add!(isl_store, "_pisl_load", :EnergyConsumer, Dict{Symbol,String}(:name => "PISL_LOAD", :p => "4", :q => "1"), Dict{Symbol,String}())
+        isl_term!("_pisl_load_t", "_pisl_load", "_pisl_tn_2", 1)
+        # the SV angle reference of the island is the connection's node, the
+        # one place where the importer would give a unit the slack role
+        add!(isl_store, "_pisl_island", :TopologicalIsland, Dict{Symbol,String}(:name => "PISL_ISLAND"), Dict{Symbol,String}(:AngleRefTopologicalNode => "_pisl_tn_1"))
+        local pe_isl_slack = @test_logs (:warn, r"^CGMES import: 1 data defect") importCGMES(path = isl_store, name = "sg_pec_island_slack", map_power_electronics = true)
+        @test Sparlectra.isSlack(pe_isl_slack.net.prosumpsVec[last(pe_isl_slack.element_by_mrid["_pisl_pec"])])
+        @test count(m -> startswith(m, "warning: electrical island of 2 bus(es) around ") && occursin("PEC_ISL at ", m) && occursin("(largest infeed, P = 5.0 MW, only degree-1 buses carry infeed)", m) && endswith(m, "its unit type is unknown and assumed grid-following, an island of grid-following units only cannot stand in operation"), pe_isl_slack.messages) == 1
+        @test !any(m -> startswith(m, "notice: electrical island"), pe_isl_slack.messages)
+        local pe_isl = importCGMES(path = isl_store, name = "sg_pec_island", map_power_electronics = true, multi_slack = false)
+        @test count(m -> startswith(m, "notice: electrical island"), pe_isl.messages) == 1
+        @test any(m -> startswith(m, "notice: electrical island of 2 bus(es) around ") && occursin("no source but PowerElectronicsConnection (PEC_ISL); the island-wise solve makes it the island reference", m), pe_isl.messages)
+        local pisl = pe_isl.net.prosumpsVec[last(pe_isl.element_by_mrid["_pisl_pec"])]
+        @test !Sparlectra.isSlack(pisl)
+        @test pe_isl.net.nodeVec[Sparlectra.getPosumerBusIndex(pisl)]._nodeType == Sparlectra.PQ
+
+        # short circuit: a connection is no synchronous source. On the bus of
+        # a machine without ratedS and maxOperatingP the maxP of the
+        # connection's unit is not taken as the machine's size (Ik'' and the
+        # machine's reason as without the connection), and the connection
+        # flags its island as a lower bound; with the switch off it is no
+        # network element and flags nothing
+        local sc_base = deepcopy(loaded)
+        local sm = first(objectsOf(sc_base, :SynchronousMachine))
+        delete!(sm.attrs, :ratedS)
+        local gu = get(sm.refs, :GeneratingUnit, nothing)
+        gu === nothing || delete!(sc_base.objects[gu].attrs, :maxOperatingP)
+        local sm_t = only(ce_terms[sm.mrid])
+        local sc_pec = deepcopy(sc_base)
+        pec!(sc_pec, "_pec_sc", "PEC_SC", sm_t, -10.0, 0.0)
+        add!(sc_pec, "_pec_sc_pv", :PhotoVoltaicUnit, Dict{Symbol,String}(:minP => "0", :maxP => "35"), Dict{Symbol,String}(:PowerElectronicsConnection => "_pec_sc"))
+        local sc_bus = topo.bus_name[tn_of(sm_t)]
+        local sc_row(store, on) = only(run_with_expected_warnings(() -> runShortCircuit!(importCGMES(path = store, name = "sg_pec_sc", map_power_electronics = on); buses = [sc_bus], case = :max), ["short-circuit: "]).rows)
+        local row_without, row_with, row_off = sc_row(sc_base, true), sc_row(sc_pec, true), sc_row(sc_pec, false)
+        @test row_with.ik_kA == row_without.ik_kA
+        @test any(r -> occursin("SynchronousMachine $(str(sm, :name)) has neither x''_d nor ratedS nor a usable maximum active power", r), row_with.reasons)
+        @test "short-circuit: PowerElectronicsConnection at bus $(sc_bus): no converter short-circuit model, contribution skipped; Ik''max in its island is a lower bound" in row_with.reasons
+        @test !any(r -> occursin("PowerElectronicsConnection", r), row_without.reasons)
+        @test (row_off.ik_kA, row_off.reasons) == (row_without.ik_kA, row_without.reasons)
+        # with maxIFault, ratedS and ratedU the connection is a current
+        # source: at its own bus all of I_sk = maxIFault·ratedS/(√3·ratedU)
+        # flows into the fault, its flag is gone, the machine's stays
+        local sc_vn = topo.vn_kV[tn_of(sm_t)]
+        local sc_ifault = deepcopy(sc_base)
+        pec!(sc_ifault, "_pec_sc", "PEC_SC", sm_t, -10.0, 0.0; extra = Dict{Symbol,String}(:maxIFault => "1.1", :ratedS => "30", :ratedU => string(sc_vn)))
+        local row_ifault = sc_row(sc_ifault, true)
+        @test isapprox(row_ifault.ik_kA - row_without.ik_kA, 1.1 * 30.0 / (sqrt(3.0) * sc_vn); rtol = 1e-9)
+        @test !any(r -> occursin("PowerElectronicsConnection", r), row_ifault.reasons)
+        @test row_ifault.reasons == row_without.reasons
+        @test (row_ifault.zk_ohm, row_ifault.kappa) == (row_without.zk_ohm, row_without.kappa)
+        @test (sc_row(sc_ifault, false).ik_kA) == row_without.ik_kA
+
+        # the configured import forwards the switch, and the YAML loader reads it
+        @test !SparlectraConfig().cgmes.map_power_electronics
+        local pe_cfg = SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(map_power_electronics = true))
+        @test first(importCGMES(pe_cfg; path = pe_store, name = "sg_pec_cfg").element_by_mrid["_pec_pq"]) == :generator
+        local yaml_path = joinpath(mktempdir(), "pec.yaml")
+        write(yaml_path, "cgmes_import:\n  map_power_electronics: true\n")
+        @test Sparlectra.CGMESImportConfig(Sparlectra.load_yaml_dict(yaml_path)).map_power_electronics
+      end)() end
+
       # The short-circuit harvest keeps the sources the import mapped. A
       # machine of SmallGrid without ratedS and maxOperatingP is the live
       # source at its bus (its row rests on defaults). A machine with a
@@ -1766,9 +1968,155 @@ function run_cgmes_importer_tests()
         local row_skip = only(run_with_expected_warnings(() -> runShortCircuit!(skip_res; buses = [sc_bus], case = :max), ["short-circuit: "]).rows)
         @test (row_skip.ik_kA, row_skip.reasons) == (row_without.ik_kA, row_without.reasons)
         local all_recs = CI.collectShortCircuitData(sc_skip, skip_res.topo)
-        local sc_back = CI.CGMESShortCircuitData(all_recs.external_network_injections, all_recs.synchronous_machines, skip_res.shortcircuit.ac_line_segments, skip_res.shortcircuit.transformer_ends, skip_res.shortcircuit.equivalent_injections, skip_res.shortcircuit.asynchronous_machines)
+        local sc_back = CI.CGMESShortCircuitData(all_recs.external_network_injections, all_recs.synchronous_machines, skip_res.shortcircuit.ac_line_segments, skip_res.shortcircuit.transformer_ends, skip_res.shortcircuit.equivalent_injections, skip_res.shortcircuit.asynchronous_machines, skip_res.shortcircuit.power_electronics_connections)
         @test any(r -> r.mrid == "_sm_off" && r.bus == sc_bus, sc_back.synchronous_machines)
         @test only(run_with_expected_warnings(() -> runShortCircuit!(skip_res.net, sc_back; buses = [sc_bus], case = :max), ["short-circuit: "]).rows).ik_kA > row_without.ik_kA + 1.0
+      end)() end
+
+      # A SynchronousMachine on a WindGeneratingUnit or SolarGeneratingUnit
+      # is a converter unit: in the short
+      # circuit a current source like a PowerElectronicsConnection,
+      # short_circuit.converter_current_factor times the rated current from
+      # ratedS, else from GeneratingUnit.maxOperatingP, else no contribution
+      # and a lower bound. SmallGrid's units are ThermalGeneratingUnits; in a
+      # copy of the store the unit of one machine changes its class.
+      @testset "SynchronousMachine on a wind or solar unit is a converter current source" begin (function ()
+        local sm = first(objectsOf(loaded, :SynchronousMachine))
+        local gu_mrid = sm.refs[:GeneratingUnit]
+        local sm_bus = CI.busOfEquipment(topo, sm, 1).bus
+        local function variant(class; ratedS = :keep, maxP = :keep)
+          local s = deepcopy(loaded)
+          local g = s.objects[gu_mrid]
+          local attrs = copy(g.attrs)
+          maxP === :keep || (maxP === nothing ? delete!(attrs, :maxOperatingP) : (attrs[:maxOperatingP] = string(maxP)))
+          s.objects[gu_mrid] = CI.CIMObject(gu_mrid, class, attrs, copy(g.refs), g.source)
+          filter!(!=(gu_mrid), s.byclass[g.class])
+          push!(get!(Vector{String}, s.byclass, class), gu_mrid)
+          local m = s.objects[sm.mrid]
+          ratedS === :keep || (ratedS === nothing ? delete!(m.attrs, :ratedS) : (m.attrs[:ratedS] = string(ratedS)))
+          return s
+        end
+        local imported(s) = importCGMES(path = s, name = "sg_wind")
+        local row(res, k) = only(run_with_expected_warnings(() -> runShortCircuit!(res; buses = [sm_bus], case = :max, converter_current_factor = k), ["short-circuit: "]).rows)
+        local wind = imported(variant(:WindGeneratingUnit; ratedS = 40.0))
+        local rec = only(r for r in wind.shortcircuit.synchronous_machines if r.mrid == sm.mrid)
+        @test rec.converter_unit == "WindGeneratingUnit"
+        # the rated current refers to ratedU, else to the bus voltage
+        local urated = something(rec.ratedU_kV, topo.vn_kV[CI.tnOfTerminal(only(t for t in objectsOf(loaded, :Terminal) if get(t.refs, :ConductingEquipment, "") == sm.mrid))])
+        local label = "SynchronousMachine $(str(sm, :name)) on a WindGeneratingUnit"
+        # factor off: no converter model, no contribution, a lower bound
+        local off = row(wind, 0.0)
+        @test off.lower_bound
+        @test "short-circuit: $(label) is a converter unit without a converter short-circuit model (short_circuit.converter_current_factor off): contribution skipped; Ik''max in its island is a lower bound" in off.reasons
+        # ratedS: k times the rated current, all of it into a fault at its bus
+        local with_rated = row(wind, 1.2)
+        @test isapprox(with_rated.ik_kA - off.ik_kA, 1.2 * 40.0 / (sqrt(3.0) * urated); rtol = 1e-9)
+        @test !with_rated.lower_bound && with_rated.contains_defaulted_data
+        @test "short-circuit: $(label) is a converter unit: short_circuit.converter_current_factor 1.2 times the rated current from its ratedS 40.0 MVA substituted" in with_rated.reasons
+        @test (with_rated.zk_ohm, with_rated.kappa) == (off.zk_ohm, off.kappa)
+        # a converter unit never enters the minimum case
+        @test !any(r -> occursin(label, r), only(run_with_expected_warnings(() -> runShortCircuit!(wind; buses = [sm_bus], case = :min, converter_current_factor = 1.2), ["short-circuit: "]).rows).reasons)
+        # no ratedS: the maximum active power of the unit (solar the same)
+        local solar = imported(variant(:SolarGeneratingUnit; ratedS = nothing, maxP = 25.0))
+        @test only(r for r in solar.shortcircuit.synchronous_machines if r.mrid == sm.mrid).pmax_MW == 25.0
+        local from_p = row(solar, 1.2)
+        @test isapprox(from_p.ik_kA - off.ik_kA, 1.2 * 25.0 / (sqrt(3.0) * urated); rtol = 1e-9)
+        @test "short-circuit: SynchronousMachine $(str(sm, :name)) on a SolarGeneratingUnit is a converter unit: short_circuit.converter_current_factor 1.2 times the rated current from its maximum active power 25.0 MW substituted" in from_p.reasons
+        # placeholders in both (the values of a delivery with +-99999.9 MW
+        # limits): no size, no contribution, a lower bound
+        local ph = row(imported(variant(:WindGeneratingUnit; ratedS = sqrt(2.0) * 99999.9, maxP = 99999.9)), 1.2)
+        @test ph.ik_kA == off.ik_kA && ph.lower_bound
+        @test any(r -> startswith(r, "short-circuit: $(label) is a converter unit without a usable ratedS or maximum active power (ratedS ") && endswith(r, " MVA is a placeholder), so its rated current is unknown: contribution skipped; Ik''max in its island is a lower bound"), ph.reasons)
+        # a thermal machine is unchanged: no converter mark, no maximum in
+        # the record, and the factor changes no row of the plain import
+        local plain = imported(deepcopy(loaded))
+        @test all(r -> r.converter_unit === nothing && r.pmax_MW === nothing, plain.shortcircuit.synchronous_machines)
+        local all_rows(k) = run_with_expected_warnings(() -> runShortCircuit!(plain; case = :max, converter_current_factor = k), ["short-circuit: "]).rows
+        local thermal = all_rows(0.0)
+        @test isequal(thermal, all_rows(1.2))
+        @test only(r for r in thermal if r.bus == sm_bus).ik_kA > with_rated.ik_kA
+        # the SCF file carries the mark in its source row: the same Ik'' after
+        # export and import
+        local scf_file = joinpath(mktempdir(), "sg_wind.scf.json")
+        exportSCF(wind.net; file = scf_file)
+        local back = importSCF(scf_file)
+        @test only(r for r in back.sc_sources.synchronous_machines if r.mrid == sm.mrid).converter_unit == "WindGeneratingUnit"
+        local back_row = only(run_with_expected_warnings(() -> runShortCircuit!(back; buses = [sm_bus], case = :max, converter_current_factor = 1.2), ["short-circuit: "]).rows)
+        @test back_row.ik_kA ≈ with_rated.ik_kA rtol = 1e-9
+        # the CGMES export keeps the class as delivered:
+        # one machine on an offshore WindGeneratingUnit, another
+        # on a SolarGeneratingUnit come back with the same class, the same
+        # unit mRID and windGenUnitType, and as current sources again
+        local sm2 = collect(objectsOf(loaded, :SynchronousMachine))[2]
+        local gu2_mrid = sm2.refs[:GeneratingUnit]
+        local both = variant(:WindGeneratingUnit; ratedS = 40.0)
+        both.objects[gu_mrid].attrs[:windGenUnitType] = "WindGenUnitKind.offshore"
+        local g2 = both.objects[gu2_mrid]
+        both.objects[gu2_mrid] = CI.CIMObject(gu2_mrid, :SolarGeneratingUnit, copy(g2.attrs), copy(g2.refs), g2.source)
+        filter!(!=(gu2_mrid), both.byclass[g2.class])
+        push!(get!(Vector{String}, both.byclass, :SolarGeneratingUnit), gu2_mrid)
+        local first_import = imported(both)
+        local cgmes_dir = mktempdir()
+        writeCGMESFiles(first_import.net; path = cgmes_dir, notices = String[])
+        local reread = loadCGMES(cgmes_dir)
+        local unit_of(m) = reread.objects[reread.objects[m].refs[:GeneratingUnit]]
+        @test (unit_of(sm.mrid).mrid, unit_of(sm.mrid).class) == (gu_mrid, :WindGeneratingUnit)
+        @test str(unit_of(sm.mrid), :windGenUnitType) == "WindGenUnitKind.offshore"
+        @test (unit_of(sm2.mrid).mrid, unit_of(sm2.mrid).class) == (gu2_mrid, :SolarGeneratingUnit)
+        local cgmes_back = importCGMES(path = reread, name = "sg_wind_back")
+        @test Dict(r.mrid => r.converter_unit for r in cgmes_back.shortcircuit.synchronous_machines if r.converter_unit !== nothing) == Dict(sm.mrid => "WindGeneratingUnit", sm2.mrid => "SolarGeneratingUnit")
+        local cgmes_row = only(run_with_expected_warnings(() -> runShortCircuit!(cgmes_back; buses = [sm_bus], case = :max, converter_current_factor = 1.2), ["short-circuit: "]).rows)
+        # the export names the machine after its network element, so the
+        # reason is matched without the name
+        @test any(r -> endswith(r, " on a WindGeneratingUnit is a converter unit: short_circuit.converter_current_factor 1.2 times the rated current from its ratedS 40.0 MVA substituted"), cgmes_row.reasons)
+        @test cgmes_row.ik_kA ≈ row(first_import, 1.2).ik_kA rtol = 1e-6
+      end)() end
+
+      # bank regulators behind cgmes_import.shunt_control:
+      # the SmallGrid carries 14 LinearShuntCompensators, each with SSH
+      # controlEnabled and an enabled voltage RegulatingControl at its own
+      # terminal; W.Lancst SC sits on a bus a machine holds PV
+      @testset "bank regulators behind cgmes_import.shunt_control" begin (function ()
+        local plain = importCGMES(path = loaded, name = "sg_banks_off")
+        @test isempty(Sparlectra._shunt_controllers(plain.net)) && !any(m -> occursin("shunt control", m), plain.messages)
+        local on = importCGMES(path = loaded, name = "sg_banks", shunt_control = true)
+        local banks = Sparlectra._shunt_controllers(on.net)
+        # the regulators take over the imported shunts, none is added
+        @test length(banks) == 13 && length(on.net.shuntVec) == length(plain.net.shuntVec) == 14
+        @test sort!([b.shunt_idx for b in banks]) == setdiff(1:14, [5])
+        @test "notice: shunt control: W.Lancst SC stays a fixed shunt, bus W.Lancst is PV, its voltage is held otherwise" in on.messages
+        @test "notice: cgmes_import.shunt_control = true: 13 bank regulator(s) attached, 1 controlled bank(s) kept as fixed shunts" in on.messages
+        # Sprigg SC: bPerSection 1.148e-4 S at 132 kV, 10 sections, 5 in, target
+        # 129.935 kV, deadband 1 kV
+        local sprigg = only(b for b in banks if b.name == "Sprigg SC")
+        local blk = 1.148e-4 * 132.0^2
+        @test (sprigg.bus, sprigg.step_mvar, sprigg.bs_min_mvar, sprigg.bs_max_mvar) == ("Sprigg", blk, 0.0, 10.0 * blk)
+        @test sprigg.bs_mvar ≈ 5.0 * blk && sprigg.target_vm_pu == 129.935 / 132.0 && sprigg.deadband_vm_pu == 1.0 / 132.0 / 2.0
+        # the taken-over shunt keeps its admittance
+        @test on.net.shuntVec[sprigg.shunt_idx].y_pu_shunt == plain.net.shuntVec[sprigg.shunt_idx].y_pu_shunt
+        # the run with the controllers converges, every bank inside its band
+        local res = redirect_stdout(() -> run_sparlectra(net = on.net, config = SparlectraConfig()), devnull)
+        @test res.final_converged && latest_control_result(on.net).status === :converged
+        @test all(b -> abs(get_bus_vm_pu(on.net, b.bus) - b.target_vm_pu) <= b.deadband_vm_pu, banks)
+        # the configured import forwards the switch, the YAML loader reads it
+        @test !SparlectraConfig().cgmes.shunt_control
+        @test length(Sparlectra._shunt_controllers(importCGMES(SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(shunt_control = true)); path = loaded, name = "sg_banks_cfg").net)) == 13
+        @test Sparlectra.CGMESImportConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("shunt_control" => true))).shunt_control
+        @test Sparlectra.cgmes_adapter_options(SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(shunt_control = true))).shunt_control
+        # addShuntVoltageControl! with shunt_idx refuses a shunt it cannot take over
+        local net = deepcopy(plain.net)
+        local olive = net.shuntVec[3]
+        local olive_bus = only(k for (k, v) in net.busDict if v == olive.busIdx)
+        local other = only(k for (k, v) in net.busDict if v == net.shuntVec[1].busIdx)
+        local add(; kw...) = Sparlectra.addShuntVoltageControl!(net; target_vm_pu = 1.0, bs_min_mvar = 0.0, bs_max_mvar = 80.0, step_mvar = 8.0, kw...)
+        @test_throws "shunt_idx 99 out of range" add(bus = olive_bus, shunt_idx = 99)
+        @test_throws "is not connected to bus" add(bus = other, shunt_idx = 3)
+        net.shuntVec[3].y_pu_shunt = ComplexF64(0.01, imag(olive.y_pu_shunt))
+        @test_throws "has a conductance" add(bus = olive_bus, shunt_idx = 3)
+        net.shuntVec[3].y_pu_shunt = ComplexF64(0.0, imag(olive.y_pu_shunt))
+        # a start between two blocks is snapped and written to the shunt
+        local c = add(bus = olive_bus, shunt_idx = 3)
+        @test c.shunt_idx == 3 && c.bs_mvar == 40.0 && imag(net.shuntVec[3].y_pu_shunt) == 40.0 / net.baseMVA && length(net.shuntVec) == 14
       end)() end
 
       # islands without a slack, on new nodes next to SmallGrid

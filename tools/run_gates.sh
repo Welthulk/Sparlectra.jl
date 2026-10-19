@@ -324,6 +324,40 @@ then
   echo "run_gates: the $gate gate runs on commit $(git -C "$repo_root" rev-parse --short HEAD) in $run_root (tracked files only)"
 fi
 
+# --- one library image per source state, not one per environment ----------
+# The gate loads the library from the root environment (the probe below,
+# test child processes started with --project=<root>) and from app/ (the
+# application probe and the test process, which stacks app/ first); the
+# docs build adds docs/. The manifests are not tracked and are resolved one
+# by one, so they drift apart. A package in two of them at different
+# versions gives the library two compile caches, and every src commit then
+# builds the library image twice (194 s
+# instead of 131 s for the images of one src commit).
+# Compared by git-tree-sha1, so
+# standard libraries (no hash in the manifest) and the path entries of the
+# two packages are left out. A warning, not a refusal: the run is correct,
+# only slower.
+manifest_hashes() {
+  awk '/^\[\[deps\./ { n = $0; gsub(/^\[\[deps\.|\]\]$/, "", n) } /^git-tree-sha1 = / { print n, $3 }' "$1" | sort
+}
+drift_envs="app"
+[ "$gate" = "docs" ] && drift_envs="app docs"
+for other in $drift_envs
+do
+  if [ -f "$run_root/Manifest.toml" ] && [ -f "$run_root/$other/Manifest.toml" ]
+  then
+    # the two lists go into the lock directory, which the exit trap removes
+    manifest_hashes "$run_root/Manifest.toml" > "$lockdir/manifest_root"
+    manifest_hashes "$run_root/$other/Manifest.toml" > "$lockdir/manifest_other"
+    drift=$(join "$lockdir/manifest_root" "$lockdir/manifest_other" | awk '$2 != $3 { printf "%s ", $1 }')
+    drift=${drift% }
+    if [ -n "$drift" ]
+    then
+      echo "run_gates: WARNING: Manifest.toml and $other/Manifest.toml resolve different versions of: ${drift}; every src commit builds the library image once per environment. Bring both onto the same versions (for example Pkg.update() in both) in the checkout the worktrees copy their manifests from."
+    fi
+  fi
+done
+
 # --- gates run on package images with the full precompile workload ---------
 # Measured (webui test group, same commit, same machine): 185 s
 # on the default image (workload off, 14 MB), 69 s on the full image

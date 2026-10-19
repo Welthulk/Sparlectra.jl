@@ -43,6 +43,10 @@ and load kinds), shared by every importer.
   BranchC
   LinkC
   SymmetricalPhaseShifterC
+  # converter-connected unit (CGMES 3.0 PowerElectronicsConnection: wind,
+  # solar, battery); an injection like Generator, but no synchronous
+  # short-circuit source, so the short-circuit engine tells them apart
+  PowerElectronicsConnection
 end
 
 """
@@ -228,6 +232,8 @@ function toComponentTyp(o::String)::ComponentTyp
     return LinkC
   elseif val == "SYMMETRICALPHASESHIFTER"
     return SymmetricalPhaseShifterC
+  elseif val == "POWERELECTRONICSCONNECTION"
+    return PowerElectronicsConnection
   else
     return UnknownC
   end

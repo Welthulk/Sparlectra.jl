@@ -553,6 +553,12 @@ function _powsybl_sc_machine!(ctx::_PowsyblBuildContext, i::Int, bus::String, vn
   xdpp_ohm = column(:direct_subtrans_x)
   step_up = column(:step_up_transformer_x)
   (_powsybl_finite(xdpp_ohm) && xdpp_ohm > 0.0 && _powsybl_finite(step_up) && step_up > 0.0) && (xdpp_ohm += step_up)
+  # a wind or solar generator is a converter unit: the engine takes it as a
+  # current source, as a CGMES machine on a WindGeneratingUnit or
+  # SolarGeneratingUnit (the classes pypowsybl maps energySource WIND and
+  # SOLAR from), rated current from ratedS, else from maxP
+  source = haskey(g, :energy_source) ? uppercase(String(g.energy_source[i])) : ""
+  converter_unit = source == "WIND" ? "WindGeneratingUnit" : source == "SOLAR" ? "SolarGeneratingUnit" : nothing
   push!(ctx.net.sc_sources.synchronous_machines, (
     mrid = String(g.id[i]),
     name = isempty(g.name[i]) ? String(g.id[i]) : String(g.name[i]),
@@ -569,6 +575,7 @@ function _powsybl_sc_machine!(ctx::_PowsyblBuildContext, i::Int, bus::String, vn
     # the size a default reactance refers to when the file states no rated
     # power; the units of the network carry no name to find it by
     pmax_MW = (_powsybl_finite(g.max_p[i]) && g.max_p[i] > 0.0) ? Float64(g.max_p[i]) : nothing,
+    converter_unit = converter_unit,
   ))
   return nothing
 end

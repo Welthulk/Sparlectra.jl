@@ -724,7 +724,7 @@ Map a component type (Generator, EnergyConsumer, ...) onto the coarse
 Injection/Consumption class.
 """
 function toProSumptionType(o::ComponentTyp)::ProSumptionType
-  if o == Generator || o == ExternalNetworkInjection || o == SynchronousMachine || o == StaticVarCompensator
+  if o == Generator || o == ExternalNetworkInjection || o == SynchronousMachine || o == StaticVarCompensator || o == PowerElectronicsConnection
     return Injection
   elseif o == AsynchronousMachine || o == Load || o == EnergyConsumer
     return Consumption
@@ -735,7 +735,7 @@ end
 
 function toProSumptionType(o::String)::ProSumptionType
   val = uppercase(o)
-  if val == "GENERATOR" || val == "EXTERNALNETWORKINJECTION" || val == "SYNCHRONOUSMACHINE" || val == "STATICVARCOMPENSATOR"
+  if val == "GENERATOR" || val == "EXTERNALNETWORKINJECTION" || val == "SYNCHRONOUSMACHINE" || val == "STATICVARCOMPENSATOR" || val == "POWERELECTRONICSCONNECTION"
     return Injection
   elseif val == "ASYNCHRONOUSMACHINE" || val == "LOAD" || val == "ENERGYCONSUMER"
     return Consumption

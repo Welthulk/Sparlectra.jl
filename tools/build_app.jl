@@ -490,9 +490,12 @@ function main()
   # resolve the app's dependencies against THIS checkout/installation; the
   # APSLF solver arrives with Sparlectra (required dependency), so the app
   # itself declares nothing extra
+  # one develop call for both packages, as in tools/build_sysimage.jl: this
+  # fresh environment cannot hold an older checkout, but two calls are the
+  # pattern that fails in a reused one
   Base.invokelatest(pkgm.activate, appdir)
-  Base.invokelatest(pkgm.develop; path = _REPO_ROOT)
-  Base.invokelatest(pkgm.develop; path = joinpath(_REPO_ROOT, "app"))
+  specs = [Base.invokelatest(pkgm.PackageSpec; path = _REPO_ROOT), Base.invokelatest(pkgm.PackageSpec; path = joinpath(_REPO_ROOT, "app"))]
+  Base.invokelatest(pkgm.develop, specs)
   Base.invokelatest(pkgm.instantiate)
 
   workload = flavor == :runtime ? joinpath(@__DIR__, "app_workload_runtime.jl") : joinpath(@__DIR__, "sysimage_workload.jl")

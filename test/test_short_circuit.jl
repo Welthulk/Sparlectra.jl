@@ -17,8 +17,9 @@
 #          (analytic derivations in the comments, computed independently of
 #          the implementation), the safety-flag contract (default + warning
 #          + result flag), asynchronous-machine lower-bound flagging, and
-#          short_circuit.c_factor config coverage, and the contraction of
-#          closed-link groups. This file needs no CGMES
+#          short_circuit.c_factor and converter_current_factor config
+#          coverage, and the contraction of closed-link groups. This file
+#          needs no CGMES
 #          fixtures; the plausibility sweep on a real delivery returns with
 #          self-built CGMES deliveries in test_cgmes_importer.jl.
 
@@ -36,7 +37,10 @@ _sc_machine(; bus, xdpp = nothing, ratedS = nothing, ratedU = nothing, name = "G
 _sc_asm(; bus, ilr = nothing, rx = nothing, ratedS = nothing, ratedU = nothing, p_mech = nothing, efficiency = nothing, cosphi = nothing, pole_pairs = nothing, name = "M1") =
   (mrid = name, name = name, bus = bus, iaIrRatio = ilr, rxLockedRotorRatio = rx, efficiency_percent = efficiency, ratedMechanicalPower_MW = p_mech, polePairNumber = pole_pairs, ratedS_MVA = ratedS, ratedU_kV = ratedU, ratedPowerFactor = cosphi)
 
-_sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[]) = _SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms)
+_sc_pec(; bus, maxIFault = nothing, ratedS = nothing, ratedU = nothing, name = "PEC1") =
+  (mrid = name, name = name, bus = bus, maxIFault_pu = maxIFault, ratedS_MVA = ratedS, ratedU_kV = ratedU)
+
+_sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[], pecs = NamedTuple[]) = _SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms, pecs)
 
 # Single 110 kV bus fed by one network feeder.
 function _sc_single_bus_net()
@@ -272,6 +276,9 @@ function run_short_circuit_tests()
       # a source without any data, one with a real rating as defaultable
       @test SparlectraApp._sc_source_data_state(_sc_data(machines = [sized((ratedS_MVA = 141421.2,))])).refused
       @test !SparlectraApp._sc_source_data_state(_sc_data(machines = [sized((ratedS_MVA = 50.0,))])).refused
+      # a machine on a wind or solar unit is a current source, not counted
+      # as a machine, as a PowerElectronicsConnection is not
+      @test SparlectraApp._sc_source_data_state(_sc_data(machines = [sized((ratedS_MVA = 141421.2, converter_unit = "WindGeneratingUnit"))])).total == 0
     end)() end
 
     @testset "asynchronous machine per hand-derived IEC §6.7 motor impedance" begin (function ()
@@ -346,6 +353,106 @@ function run_short_circuit_tests()
       @test !any(row.lower_bound for row in rmin.rows)
     end)() end
 
+    @testset "converter current source per hand-derived superposition" begin (function ()
+      # Hand derivation on a 110 kV chain B1 - B2 - B3, feeder at B1 (10 kA,
+      # R/X 0.1), both lines (0.05 + j0.5)·121 Ω (R/X 0.1 as well, so every
+      # impedance has one angle and the magnitudes add like the phasors).
+      # Converter at B2: I_sk = maxIFault·ratedS/(√3·ratedU)
+      #   = 1.2·20/(√3·110) kA. With the feeder short-circuited it sees
+      # Z_Q + Z_L towards B1 and Z_L + fault towards B3:
+      #   fault at B1 or B2: all of I_sk flows into the fault;
+      #   fault at B3: |Z_32|/|Z_33| = |Z_Q + Z_L|/|Z_Q + 2·Z_L| of it.
+      net = Net(name = "sc_pec", baseMVA = 100.0)
+      for b in ("B1", "B2", "B3")
+        addBus!(net = net, busName = b, vn_kV = 110.0)
+      end
+      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
+      feeder = _sc_feeder(bus = "B1", ikmax_A = 10_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1)
+      base = runShortCircuit!(net, _sc_data(enis = [feeder]); case = :max)
+      with = runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)]); case = :max)
+      isk = 1.2 * 20.0 / (sqrt(3.0) * 110.0)
+      zq = 1.10 * 110_000.0 / (sqrt(3.0) * 10_000.0)
+      xq = zq / sqrt(1.0 + 0.1^2)
+      zqc = 0.1 * xq + im * xq
+      zl = (0.05 + 0.5im) * 121.0
+      share = Dict("B1" => 1.0, "B2" => 1.0, "B3" => abs(zqc + zl) / abs(zqc + 2 * zl))
+      for (b0, b1) in zip(base.rows, with.rows)
+        @test b1.status === :ok && !b1.contains_defaulted_data
+        @test isapprox(b1.ik_kA - b0.ik_kA, share[b1.bus] * isk; rtol = 1e-9)
+        @test isapprox(b1.sk_MVA, sqrt(3.0) * 110.0 * b1.ik_kA; rtol = 1e-12)
+        # Z_k, R/X and kappa stay those of the voltage source; the converter
+        # part enters the peak without kappa
+        @test (b1.zk_ohm, b1.rx_ratio, b1.kappa) == (b0.zk_ohm, b0.rx_ratio, b0.kappa)
+        @test isapprox(b1.ip_kA, b0.ip_kA + sqrt(2.0) * share[b1.bus] * isk; rtol = 1e-9)
+      end
+      # the all-bus Takahashi sweep agrees to machine precision; the threaded
+      # sweep only reads the converter sums formed before the spawn and gives
+      # the serial rows bitwise, over repeated runs
+      pec_data = _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)])
+      serial = runShortCircuit!(net, pec_data; case = :max, parallel_enabled = false)
+      tak = runShortCircuit!(net, pec_data; case = :max, sweep_method = :takahashi, parallel_enabled = false)
+      @test all(isapprox(a.ik_kA, b.ik_kA; rtol = 1e-10) for (a, b) in zip(serial.rows, tak.rows))
+      for _ in 1:5
+        par = runShortCircuit!(net, pec_data; case = :max, parallel_enabled = true, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 2)
+        @test isequal(par.rows, serial.rows)
+      end
+      if Threads.nthreads() > 1
+        println("sc converter sweep: RAN parallel with ", Threads.nthreads(), " threads, 5 repeats")
+      else
+        println("sc converter sweep: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
+      end
+      # the rated current comes from ratedU of the unit; without it the bus
+      # nominal voltage stands in, and the row says so
+      for (ru, flagged) in ((115.0, false), (nothing, true))
+        r = run_with_expected_warnings(() -> runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = ru)]); buses = ["B2"], case = :max), ["PowerElectronicsConnection PEC1 has no usable ratedU"])
+        @test isapprox(r.rows[1].ik_kA - base.rows[2].ik_kA, 1.2 * 20.0 / (sqrt(3.0) * something(ru, 110.0)); rtol = 1e-9)
+        @test r.rows[1].contains_defaulted_data == flagged
+      end
+      # the minimum case: no converter share and no flag
+      bmin = runShortCircuit!(net, _sc_data(enis = [feeder]); case = :min)
+      wmin = runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)]); case = :min)
+      @test isequal(bmin.rows, wmin.rows)
+      # without maxIFault the configured factor stands in: k times the rated
+      # current with the same shares, each row naming the substitute and none
+      # the lower bound; a stated maxIFault wins over the factor
+      k = 1.5
+      fac = run_with_expected_warnings(() -> runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", ratedS = 20.0, ratedU = 110.0)]); case = :max, converter_current_factor = k), ["PowerElectronicsConnection PEC1 has no maxIFault: short_circuit.converter_current_factor 1.5 times the rated current substituted"])
+      for (b0, b1) in zip(base.rows, fac.rows)
+        @test isapprox(b1.ik_kA - b0.ik_kA, share[b1.bus] * k * 20.0 / (sqrt(3.0) * 110.0); rtol = 1e-9)
+        @test b1.contains_defaulted_data && any(why -> occursin("converter_current_factor 1.5 times the rated current substituted", why), b1.reasons)
+        @test !any(why -> occursin("lower bound", why), b1.reasons)
+      end
+      @test isequal(runShortCircuit!(net, pec_data; case = :max, converter_current_factor = k).rows, with.rows)
+      # only an absent maxIFault takes the factor; a stated one that is no
+      # positive current feeds nothing and flags the island with its value
+      zero = run_with_expected_warnings(() -> runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 0.0, ratedS = 20.0, ratedU = 110.0)]); case = :max, converter_current_factor = k), ["PowerElectronicsConnection PEC1 has maxIFault 0.0, not a usable current"])
+      @test [r.ik_kA for r in zero.rows] == [r.ik_kA for r in base.rows]
+      @test all(any(why -> occursin("PEC1 has maxIFault 0.0, not a usable current: contribution skipped; Ik''max in its island is a lower bound", why), r.reasons) for r in zero.rows)
+      # the service outcome: rows on the substitute are no lower bound
+      ok_state = (total = 1, with_data = 1, without_any = 0, refused = false, defaults_only = false, partial = false, warning = false)
+      @test SparlectraApp._sc_outcome(ok_state, fac, "t.csv").reason == "short_circuit_flagged_defaults"
+      @test SparlectraApp._sc_outcome(ok_state, zero, "t.csv").reason == "short_circuit_flagged_lower_bound"
+      @test_throws ArgumentError runShortCircuit!(net, pec_data; converter_current_factor = -1.0)
+      # without maxIFault, without ratedS, and a converter prosumer without
+      # a record: no share, the island flagged as a lower bound
+      addProsumer!(net = net, busName = "B3", type = "GENERATOR", p = 5.0, q = 0.0)
+      net.prosumpsVec[end].comp.cTyp = Sparlectra.PowerElectronicsConnection
+      for (label, pecs, reason) in [
+        ("no maxIFault", [_sc_pec(bus = "B2", ratedS = 20.0, ratedU = 110.0), _sc_pec(bus = "B3", maxIFault = 1.0, ratedS = 5.0, ratedU = 110.0, name = "PEC3")], "PowerElectronicsConnection at bus B2: no converter short-circuit model, contribution skipped; Ik''max in its island is a lower bound"),
+        ("no ratedS", [_sc_pec(bus = "B2", maxIFault = 1.2, ratedU = 110.0), _sc_pec(bus = "B3", maxIFault = 1.0, ratedS = 5.0, ratedU = 110.0, name = "PEC3")], "PowerElectronicsConnection PEC1 has maxIFault but no usable ratedS"),
+        ("prosumer without a record", NamedTuple[], "PowerElectronicsConnection at bus B3: no converter short-circuit model"),
+      ]
+        r = run_with_expected_warnings(() -> runShortCircuit!(net, _sc_data(enis = [feeder], pecs = pecs); case = :max), ["short-circuit: PowerElectronicsConnection"])
+        @testset "$(label)" begin
+          @test all(row.contains_defaulted_data && any(why -> occursin(reason, why), row.reasons) for row in r.rows)
+          # only the recorded, usable converter at B3 adds its current
+          b3 = isempty(pecs) ? 0.0 : 5.0 / (sqrt(3.0) * 110.0)
+          @test isapprox(r.rows[3].ik_kA - base.rows[3].ik_kA, b3; rtol = 1e-9)
+        end
+      end
+    end)() end
+
     @testset "island without a source reports :no_source, isolated buses :isolated" begin (function ()
       net = Net(name = "sc_islands", baseMVA = 100.0)
       addBus!(net = net, busName = "A1", vn_kV = 110.0)
@@ -361,6 +468,29 @@ function run_short_circuit_tests()
       @test isnan(by_bus["C1"].ik_kA)
       @test by_bus["C1"].contains_defaulted_data == true
       @test any(occursin("no short-circuit source", reason) for reason in by_bus["C1"].reasons)
+      # an island of converter units alone:
+      # a PowerElectronicsConnection without maxIFault at C1 (20 MVA) and a
+      # machine on a wind unit at C2 (30 MVA), both 110 kV, k = 1.2. No
+      # voltage source, so every bus gets the arithmetic sum of the
+      # converter currents, Ik'' = k (S1 + S2) / (sqrt(3) 110 kV)
+      # = 1.2 * 50 / 190.526 = 0.31492 kA, ip = sqrt(2) Ik'' without kappa,
+      # flagged, no lower bound; with the factor off nothing feeds and the
+      # island stays :no_source
+      addBus!(net = net, busName = "C2", vn_kV = 110.0)
+      addPIModelACLine!(net = net, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+      conv = _sc_data(enis = [_sc_feeder(bus = "A1", ikmax_A = 5_000.0, rx_max = 0.1)], pecs = [_sc_pec(bus = "C1", ratedS = 20.0, ratedU = 110.0)], machines = [merge(_sc_machine(bus = "C2", ratedS = 30.0, ratedU = 110.0, name = "W1"), (converter_unit = "WindGeneratingUnit",))])
+      ik_hand = 1.2 * (20.0 + 30.0) / (sqrt(3.0) * 110.0)
+      on = Dict(row.bus => row for row in run_with_expected_warnings(() -> runShortCircuit!(net, conv; case = :max, converter_current_factor = 1.2), ["short-circuit: "]).rows)
+      for b in ("C1", "C2")
+        @test on[b].status === :ok
+        @test isapprox(on[b].ik_kA, ik_hand; rtol = 1e-12)
+        @test isapprox(on[b].ip_kA, sqrt(2.0) * ik_hand; rtol = 1e-12)
+        @test on[b].contains_defaulted_data && !on[b].lower_bound
+        @test "short-circuit: converter-only island, arithmetic sum, no voltage source" in on[b].reasons
+      end
+      @test on["A1"].ik_kA == by_bus["A1"].ik_kA
+      off = Dict(row.bus => row for row in run_with_expected_warnings(() -> runShortCircuit!(net, conv; case = :max), ["short-circuit: "]).rows)
+      @test all(off[b].status === :no_source && off[b].lower_bound for b in ("C1", "C2"))
     end)() end
 
     @testset "closed-link groups are one node, as in the power flow" begin (function ()
@@ -480,6 +610,20 @@ function run_short_circuit_tests()
       end
       @test err isa ArgumentError
       @test occursin("short_circuit.c_factor", sprint(showerror, err))
+      # converter current factor: off by default, a positive multiple
+      # accepted, a negative one rejected with the key named
+      @test Sparlectra.ShortCircuitConfig().converter_current_factor == 0.0
+      write(ok_yaml, "config_version: 1\nshort_circuit:\n  converter_current_factor: 1.2\n")
+      @test Sparlectra.load_sparlectra_config(ok_yaml; reload = true).shortcircuit.converter_current_factor == 1.2
+      write(bad_yaml, "config_version: 1\nshort_circuit:\n  converter_current_factor: -0.5\n")
+      bad = @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_yaml; reload = true)
+      @test occursin("short_circuit.converter_current_factor", sprint(showerror, bad.value))
+      # a case key: the case configuration file and an API override carry it
+      case_m = test_scratch_path(".m")
+      write(Sparlectra.case_config_path(case_m), "config_version: 1\nscope: case\ncase: $(basename(case_m))\nshort_circuit:\n  converter_current_factor: 1.5\n")
+      @test Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case_m).config.shortcircuit.converter_current_factor == 1.5
+      @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("short_circuit.converter_current_factor" => 1.5)) == Dict{String,Any}("short_circuit" => Dict{String,Any}("converter_current_factor" => 1.5))
+      @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("short_circuit.converter_current_factor" => -1.0))
     end)() end
 
     run_short_circuit_parallel_tests()

@@ -77,6 +77,7 @@ mutable struct SeriesReactanceControl <: AbstractOuterController
   deadband_p_mw::Float64
   max_outer_iters::Int
   enabled::Bool
+  priority::Int               # rank in the outer loop, 0 acts first (control_priority)
   status::Symbol
   converged::Bool
   at_limit::Bool
@@ -162,6 +163,7 @@ reactance `x_pu` within `[x_min_pu, x_max_pu]` until the branch carries
 - `deadband_p_mw::Float64 = 0.5`: convergence band around the target.
 - `max_outer_iters::Int = 20`, `enabled::Bool = true`: outer-loop
   budget and switch.
+- `priority::Int = 0`: rank in the outer loop (`control_priority`).
 - `name`: optional controller name (defaults to `TCSC_<from>_<to>`, or
   `SSSC_<from>_<to>` in injected-voltage mode).
 
@@ -184,7 +186,9 @@ function addSeriesReactanceControl!(
   max_outer_iters::Int = 20,
   enabled::Bool = true,
   name::Union{Nothing,String} = nothing,
+  priority::Int = 0,
 )
+  _check_control_priority(priority, "SeriesReactanceControl")
   br = getNetBranch(net = net, fromBus = fromBus, toBus = toBus)
   if br === nothing
     # the flow measurement resolves the branch in the registered orientation,
@@ -238,6 +242,7 @@ function addSeriesReactanceControl!(
     deadband_p_mw,
     max_outer_iters,
     enabled,
+    priority,
     :idle,
     false,
     false,

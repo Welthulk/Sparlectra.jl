@@ -287,7 +287,8 @@ function run_legacy_webui_tests()
             @test tbl_state.set_counts == [("P", 1), ("Q", 1), ("U", 1)]
             # a table opens in the text editor and the value editor as well
             @test length(tbl_state.set_rows) == 3 && startswith(tbl_state.set_text, "# sparlectra-measurement-table v1")
-            # the deprecated CSV v1 carries its notice at the file, a table not
+            # a CSV v1 (reader removed in 0.50.0) carries the removal notice
+            # naming the converter at the file, a table not
             v1_state = SparlectraApp._webui_se_form_state(Dict{String,Any}("case" => "warmup_casePST.m", "measurement_file" => "meas_v1.csv"); output_root=root, case_directory=cases)
             @test v1_state.set_v1 && !tbl_state.set_v1
             v1_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=warmup_casePST.m&measurement_file=meas_v1.csv", Dict{String,String}(); output_root=root, runtime=rt).body)
@@ -795,7 +796,7 @@ function run_legacy_webui_tests()
             r1 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test r1["status"] == "succeeded"
             id1 = r1["run_id"]
-            for artifact in ("se_state.csv", "se_diagnostics.md", "se_view.md", "measurements.csv")
+            for artifact in ("se_state.csv", "se_diagnostics.md", "se_view.md", "measurements.csv", "measurements_verdict.csv")
                 @test isfile(joinpath(root, id1, artifact))
             end
             # the bus/branch CSV checkbox on Web UI jobs: an SE run writes no
@@ -838,6 +839,30 @@ function run_legacy_webui_tests()
             @test occursin("topology hypothesis test:", read(joinpath(root, id1, "run.log"), String))
             resPage2 = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(id1)", Dict{String,String}(); output_root=root, runtime=rt).body)
             @test occursin("Topology validation (advisory)", resPage2)
+            # the hypothesis test judges with the settings of the run it tests:
+            # with a case configuration file its case-scope SE keys hold, not
+            # the general file (k_eliminate also recorded by the run, and
+            # zero_injection, which only the configuration carries)
+            case_cfg = case_path * ".config.yaml"
+            write(case_cfg, "config_version: 1\nscope: case\ncase: warmup_casePST.m\nstate_estimation:\n  k_eliminate: 5.5\n  zero_injection: off\n")
+            rcc = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+            @test rcc["status"] == "succeeded"
+            idc = rcc["run_id"]
+            @test get(get_powerflow_result(idc)["metadata"], "se_k_eliminate", nothing) == 5.5
+            SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/topology-hypotheses", Dict{String,Any}("run_id" => idc); output_root=root, runtime=rt)
+            hyp_md = read(joinpath(root, idc, "topology_hypotheses.md"), String)
+            @test occursin("k_eliminate 5.5,", hyp_md) && occursin("zero_injection off.", hyp_md)
+            rm(case_cfg)
+            # a run directory from before 0.50.0 keeps its artifact in the
+            # measurement CSV v1 layout: the page still renders, and the test
+            # answers with a note instead of an error
+            art1 = joinpath(root, id1, "measurements.csv")
+            art1_table = read(art1, String)
+            write(art1, "# sparlectra-measurements v1\ntype,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id,bad_data,status\nVmMeas,1,,,,,,1.0,0.01,true,v1,,\n")
+            rold = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/topology-hypotheses", Dict{String,Any}("run_id" => id1); output_root=root, runtime=rt)
+            @test rold.status == 303 && occursin("before%200.50.0", Dict(rold.headers)["Location"])
+            @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(id1)", Dict{String,String}(); output_root=root, runtime=rt).status == 200
+            write(art1, art1_table)
 
             # tap-estimation SE run: a set generated with a tap deviation
             # disagrees with the model around one transformer; releasing the taps
@@ -870,14 +895,10 @@ function run_legacy_webui_tests()
             @test all(i -> i !== nothing, step_cols)
             @test any(l -> (f=split(l, ","); any(parse(Int, f[i]) != 0 for i in step_cols)), taplines[2:end])
             # the injected deviation is a CHANGE against the model position:
-            # the tap CSV and the measurement artifact's taps block say so,
-            # the result table marks the row as corrected
+            # the tap CSV says so, the result table marks the row as corrected
             change_col = findfirst(==("change"), header_cols)
             @test change_col !== nothing
             @test any(l -> (f=split(l, ","); f[change_col] != "" && f[change_col] != "0"), taplines[2:end])
-            tapmeas = readlines(joinpath(root, idtap, "measurements.csv"))
-            @test any(l -> startswith(l, "# sparlectra-taps-estimated v1"), tapmeas)
-            @test any(l -> startswith(l, "#") && endswith(l, ",corrected"), tapmeas)
             tapPage = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(idtap)", Dict{String,String}(); output_root=root, runtime=rt).body)
             @test occursin("Transformer tap estimates", tapPage)
             @test occursin("fixed (corrected)", tapPage)
@@ -896,22 +917,42 @@ function run_legacy_webui_tests()
             @test occursin("released automatically", rhint["message"])
             @test occursin("tap estimation released automatically", read(joinpath(root, rhint["run_id"], "run.log"), String))
 
-            # bad data lands findable: gross error in the set -> se_bad_data.csv
-            # with the measurement, its location, and the eliminated flag
+            # bad data lands findable: gross error in the set -> the verdict
+            # file flags the corrupted row of measurements.csv as eliminated,
+            # joined by its line number; the row is the one whose value is
+            # 10 sigma off its truth value (truth_value comment of the set)
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gross_error_k" => "10"))
             rbd = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rbd["status"] == "succeeded"
-            bdcsv = joinpath(root, rbd["run_id"], "se_bad_data.csv")
-            @test isfile(bdcsv)
-            bdtxt = read(bdcsv, String)
-            @test startswith(bdtxt, "measurement_index,id,type,bus,from_bus,to_bus,normalized_residual,wii,localizable,eliminated,suppressed,downweighted")
-            @test occursin(r"(Pflow|Qflow|Pinj|Qinj)Meas", bdtxt) # the corrupted power row is listed (P or Q, the seed decides)
-            @test occursin("true", bdtxt)            # localizable/eliminated flags present
-            @test occursin("se_bad_data.csv", read(joinpath(root, rbd["run_id"], "run.log"), String))
+            vrows = [split(l, ",") for l in readlines(joinpath(root, rbd["run_id"], "measurements_verdict.csv"))[2:end]]
+            art_by_line = Dict(r.line => r for r in readMeasurementTable(joinpath(root, rbd["run_id"], "measurements.csv")))
+            elim_rows = filter(v -> v[9] == "true", vrows)
+            @test length(unique(v[4] for v in elim_rows)) == rbd["metadata"]["se_eliminations"] >= 1
+            @test all(v -> v[3] in ("P", "Q"), elim_rows)
+            truth_bd = Dict{String,Float64}()
+            for l in readlines(joinpath(root, rbd["run_id"], "measurements.csv"))
+                startswith(l, "# truth_value,") || continue
+                p = split(chopprefix(l, "# truth_value,"), ",")
+                truth_bd[join(p[1:(end-1)], ",")] = parse(Float64, p[end])
+            end
+            @test all(v -> (r = art_by_line[parse(Int, v[1])]; abs(r.value - truth_bd[v[4]]) > 5 * r.sigma), elim_rows)
+            @test occursin("measurements_verdict.csv", read(joinpath(root, rbd["run_id"], "run.log"), String))
+            # the topology hypothesis test starts from the set the run ended
+            # with: measurements.csv keeps the eliminated row valid, the
+            # verdict file names it, and the base J of the test is the J of
+            # the run (with the row back in, it carried the gross error)
+            rhbd = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/topology-hypotheses", Dict{String,Any}("run_id" => rbd["run_id"]); output_root=root, runtime=rt)
+            @test rhbd.status == 303
+            mbase = match(r"Base run: J = ([0-9.eE+-]+) \(dof (\d+),", read(joinpath(root, rbd["run_id"], "topology_hypotheses.md"), String))
+            @test mbase !== nothing
+            # the set is noise-free apart from the gross error: J of the run
+            # is round-off (about 1e-18), with the row back in it was 84 at
+            # dof 42 instead of 41; the file prints four digits
+            @test isapprox(parse(Float64, mbase.captures[1]), rbd["metadata"]["se_objective"]; rtol=1e-3, atol=1e-6)
+            @test parse(Int, mbase.captures[2]) == rbd["metadata"]["se_dof"]
             # bad data is one click away on the result page (the direct download)
             bdPage = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(rbd["run_id"])", Dict{String,String}(); output_root=root, runtime=rt).body)
-            @test occursin("Bad data (se_bad_data.csv)", bdPage)
-            @test occursin("/powerflow/artifact/$(rbd["run_id"])/se_bad_data.csv", bdPage)
+            @test occursin("/powerflow/artifact/$(rbd["run_id"])/measurements_verdict.csv", bdPage)
 
             # restore the clean default set for anything below
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m"))
@@ -984,6 +1025,18 @@ function run_legacy_webui_tests()
             rzi = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rzi["status"] == "succeeded"
             @test rzi["metadata"]["se_eliminations"] == 0
+            # a case on constraint (equality-constrained zero injection): the
+            # box shows checked, a generation with the box checked keeps
+            # constraint, unchecked writes off; checked again it is on
+            @test [SparlectraApp._webui_normalize_case_profile_form_value("gen_passive_as_zi", v) for v in ("constraint", "off", "on")] == [true, false, true]
+            SparlectraApp._webui_merge_case_settings!(root, case_path, Dict{String,Any}("gen_passive_as_zi" => "constraint"); case_directory=cases)
+            @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :constraint
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "true"))
+            @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :constraint
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "false"))
+            @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :off
+            mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "true"))
+            @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :on
 
             # truth state from run: adopts the SE run's state (bit-exact against
             # se_state.csv), documents the source, and the delta file appears
@@ -1173,10 +1226,17 @@ function run_legacy_webui_tests()
             # single-field exact-string comparison, hiding the intended per-field
             # isapprox tolerance below.
             csv_delim = occursin(';', first(lines3)) ? ';' : ','
+            # the note column is quoted and carries commas ("islanded: bus 8
+            # cut off, 0.0 MW load ..."); a plain split at the delimiter
+            # shifted the columns after it and made the number of checks
+            # depend on the note text (webui 3015 -> 3014 when an N-1 note
+            # changed). The quote-aware reader of the Web UI keeps one field
+            # per column.
+            ncols = length(SparlectraApp._webui_compare_split_csv(first(lines3), csv_delim))
             for (l3, l4) in zip(lines3, lines4)
-                f3 = split(l3, csv_delim)
-                f4 = split(l4, csv_delim)
-                @test length(f3) == length(f4)
+                f3 = SparlectraApp._webui_compare_split_csv(l3, csv_delim)
+                f4 = SparlectraApp._webui_compare_split_csv(l4, csv_delim)
+                @test length(f3) == length(f4) == ncols
                 for (a, b) in zip(f3, f4)
                     na = tryparse(Float64, a)
                     nb = tryparse(Float64, b)

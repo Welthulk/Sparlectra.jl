@@ -430,7 +430,7 @@
         "name": "B_ACL_110_1_3"
       }
     },
-    "format_version": "1.0",
+    "format_version": "1.2",
     "meta": {
       "case_name": "two_islands_prio",
       "created_by": "Sparlectra 0.30.2",
