@@ -32,7 +32,9 @@
 # bus to the terminal of its one shunt. Zero-injection rows (id prefix ZI)
 # carry the source token zero_injection and keep their sigma. Units are
 # unchanged otherwise: P and Q in MW and MVAr, I in A, angles in degrees.
-function _measurement_table_from_measurements(net::Net, ms::AbstractVector, index::MeasurementKeyIndex; lines::AbstractVector{<:Integer} = collect(eachindex(ms)))
+# `source` is the source cell of every row (`converted;v1` for the
+# converter, the SE run artifact names where its rows came from).
+function _measurement_table_from_measurements(net::Net, ms::AbstractVector, index::MeasurementKeyIndex; lines::AbstractVector{<:Integer} = collect(eachindex(ms)), source::AbstractString = "converted;v1")
   Row = NamedTuple{(:timestamp, :measurement_mrid, :terminal_mrid, :node_mrid, :type, :value, :sigma, :source, :valid),Tuple{String,String,String,String,String,String,String,String,Bool}}
   Problem = NamedTuple{(:line, :id, :problem, :detail),Tuple{Int,String,Symbol,String}}
   rows = Row[]
@@ -57,8 +59,8 @@ function _measurement_table_from_measurements(net::Net, ms::AbstractVector, inde
   problem!(i, m, p, d) = push!(problems, (line = Int(lines[i]), id = m.id, problem = p, detail = d))
   seen = Set{Tuple{String,String,String}}()
   for (i, m) in enumerate(ms)
-    zi = startswith(m.id, "ZI")
-    source = zi ? "converted;v1;zero_injection" : "converted;v1"
+    zi = m.zero_injection
+    row_source = zi ? string(source, ";zero_injection") : String(source)
     kind = ""
     key = ""
     typ = ""
@@ -126,7 +128,7 @@ function _measurement_table_from_measurements(net::Net, ms::AbstractVector, inde
       continue
     end
     push!(seen, (kind, key, typ))
-    push!(rows, Row(("", "", kind == "terminal" ? key : "", kind == "node" ? key : "", typ, value, sigma, source, m.active)))
+    push!(rows, Row(("", "", kind == "terminal" ? key : "", kind == "node" ? key : "", typ, value, sigma, row_source, m.active)))
     # the id importMeasurementTable gives the row
     new_id = if kind == "node"
       (typ == "P" || typ == "Q") ? (zi ? string(typ == "P" ? "ZI_PINJ_bus_" : "ZI_QINJ_bus_", m.busIdx) : string(typ, "bus@", key)) : string(typ, "@", key)
@@ -227,8 +229,10 @@ rewritten to the ids the import gives, so the SE service still writes
 
 Returns `(file, rows, problems, ids, report)`: the written path, the number
 of table rows, the rows not converted as `(line, id, problem, detail)`, the
-v1 id to table id map and a plain-text report. Throws the error of the v1
-reader for a file it refuses.
+v1 id to table id map and a plain-text report. A file the v1 parse refuses
+(version line, header, a row) throws an error naming file and line. The v1
+reader `readMeasurementsCSV!` was removed in 0.50.0; this converter still
+reads every v1 file.
 """
 function convertMeasurementsV1(v1_file::AbstractString, net::Net; out::AbstractString, index::MeasurementKeyIndex = nameMeasurementKeys(net))
   v1 = _read_measurements_csv_v1(net, v1_file)
@@ -255,13 +259,14 @@ function _measurement_key_index(imported)::MeasurementKeyIndex
   return cg === nothing ? nameMeasurementKeys(imported.net) : cgmesMeasurementKeys(cg)
 end
 
-# A measurement file of either format into `net.measurements`, decided by
-# content: a measurement table through readMeasurementTable! with `index`
-# (no zero-injection rows added, as the CSV v1 reader adds none), anything
-# else through the CSV v1 reader. Used where a case brings its measurement
-# file along (the sidecar <case>.measurements.csv of the CLI and the Web UI
-# export).
+# A measurement file into `net.measurements`: a measurement table through
+# readMeasurementTable! with `index` (no zero-injection rows added). Used
+# where a case brings its measurement file along (the sidecar
+# <case>.measurements.csv of the CLI and the Web UI export, save as and add
+# noise). A measurement CSV v1 is refused with MEASUREMENT_CSV_V1_REMOVED,
+# which names the converter; any other file with the reason of the table
+# reader.
 function _read_measurement_file!(net::Net, file::AbstractString; index::Union{Nothing,MeasurementKeyIndex} = nothing)
-  isMeasurementTable(file) || return readMeasurementsCSV!(net; file = file)
+  _is_measurement_csv_v1(file) && throw(ArgumentError("$(basename(file)): " * MEASUREMENT_CSV_V1_REMOVED))
   return readMeasurementTable!(net; file = file, index = something(index, nameMeasurementKeys(net)), zero_injection = false)
 end

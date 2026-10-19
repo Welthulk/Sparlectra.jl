@@ -328,6 +328,17 @@ function run_powsybl_importer_tests()
         runShortCircuit!(full; case = :max)
       end
       @test all(r -> r.status === :ok && !r.contains_defaulted_data, clean.rows)
+      # a wind generator is a converter unit: its record carries the mark
+      # and the engine takes it as a current source, k times the rated
+      # current from ratedS (as a CGMES machine on a WindGeneratingUnit)
+      wind_file = joinpath(dir, "wind.xiidm")
+      write(wind_file, replace(source, "<iidm:generator id=\"$(ids[2])\" energySource=\"OTHER\"" => "<iidm:generator id=\"$(ids[2])\" energySource=\"WIND\" ratedS=\"60.0\""))
+      wnet, _ = build_net_from_powsybl(Sparlectra.read_iidm_tables(wind_file), PowsyblAdapterOptions())
+      wrec = only(m for m in wnet.sc_sources.synchronous_machines if m.mrid == ids[2])
+      @test wrec.converter_unit == "WindGeneratingUnit"
+      @test count(m -> m.converter_unit !== nothing, wnet.sc_sources.synchronous_machines) == 1
+      wrow = k -> only(run_with_expected_warnings(() -> runShortCircuit!(wnet; buses = [wrec.bus], case = :max, converter_current_factor = k), ["short-circuit: "]).rows)
+      @test isapprox(wrow(1.5).ik_kA - wrow(0.0).ik_kA, 1.5 * 60.0 / (sqrt(3.0) * wrec.ratedU_kV); rtol = 1e-9)
       # the short-circuit data and the ratings change nothing in the power
       # flow: the same voltages as the file without them, bit for bit
       plain, _ = build_net_from_powsybl(Sparlectra.read_iidm_tables(joinpath(_powsybl_fixture("ieee14"), "ieee14.xiidm")), PowsyblAdapterOptions())

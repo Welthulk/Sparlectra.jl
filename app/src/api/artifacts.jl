@@ -76,6 +76,16 @@ function _artifact_description(kind::Symbol, name::String)::String
   return "Generated Sparlectra artifact $(name)"
 end
 
+## The artifact name of a file below the run directory: its path relative to
+## the run directory with "/" between the parts on every OS. relpath joins the
+## parts with the OS separator, a backslash on Windows, and
+## resolve_powerflow_artifact rejects every name with a backslash, so a chart
+## under plots/ would not load there. `separator` defaults to the OS
+## separator; a test passes "\\" to check the Windows form on any machine.
+function _artifact_name_from_relpath(relative::AbstractString, separator::AbstractString = Base.Filesystem.path_separator)::String
+  return replace(String(relative), separator => "/")
+end
+
 """
     collect_sparlectra_api_artifacts(output_dir) -> Vector{SparlectraApiArtifact}
 
@@ -94,7 +104,7 @@ function collect_sparlectra_api_artifacts(output_dir::AbstractString)::Vector{Sp
   sort!(files)
   return [begin
     kind = _artifact_kind(path)
-    relative_name = relpath(path, root)
+    relative_name = _artifact_name_from_relpath(relpath(path, root))
     exists = isfile(path)
     SparlectraApiArtifact(relative_name, kind, abspath(path), _artifact_mime_type(path), exists, exists ? Int(filesize(path)) : nothing, _artifact_description(kind, relative_name))
   end for path in files]

@@ -469,7 +469,7 @@
         "name": "Steinau_Lindhof"
       }
     },
-    "format_version": "1.0",
+    "format_version": "1.2",
     "measurements": {
       "provenance": {
         "noise": true,
@@ -478,132 +478,282 @@
       },
       "rows": [
         {
-          "positions": [1],
+          "node": 4,
           "sensor": 17,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_1"]
+          "sigma": 0.55,
+          "type": "U"
         },
         {
-          "positions": [4],
-          "sensor": 18,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_2"]
-        },
-        {
-          "positions": [7],
-          "sensor": 19,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_3"],
-          "values": [0.999423869202925]
-        },
-        {
-          "positions": [10],
-          "sensor": 20,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_4"]
-        },
-        {
-          "positions": [13],
-          "sensor": 21,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_5"]
-        },
-        {
-          "positions": [2, 3],
+          "node": 4,
           "sensor": 22,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_1", "Qinj_bus_1"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [5, 6],
+          "node": 4,
+          "sensor": 22,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 1,
+          "sensor": 18,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 1,
           "sensor": 23,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_2", "Qinj_bus_2"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [8, 9],
+          "node": 1,
+          "sensor": 23,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 5,
+          "sensor": 19,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 109.93662561232175
+        },
+        {
+          "node": 5,
           "sensor": 24,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_3", "Qinj_bus_3"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [11, 12],
+          "node": 5,
+          "sensor": 24,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 2,
+          "sensor": 20,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 2,
           "sensor": 25,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_4", "Qinj_bus_4"],
-          "values": [-21.45155075555306, -5.604669960115688]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -21.45155075555306
         },
         {
-          "positions": [14, 15],
+          "node": 2,
+          "sensor": 25,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 3,
+          "sensor": 21,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 3,
           "sensor": 26,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_5", "Qinj_bus_5"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [16, 18],
+          "node": 3,
+          "sensor": 26,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
           "sensor": 27,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_1_from", "Qflow_branch_1_from"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 7,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [17, 19],
           "sensor": 28,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_1_to", "Qflow_branch_1_to"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 7,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [20, 22],
+          "sensor": 27,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 7,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "sensor": 28,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 7,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
           "sensor": 29,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_2_from", "Qflow_branch_2_from"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 6,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [21, 23],
           "sensor": 30,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_2_to", "Qflow_branch_2_to"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 6,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [24, 26],
+          "sensor": 29,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 6,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "sensor": 30,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 6,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
           "sensor": 31,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_3_from", "Qflow_branch_3_from"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 8,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [25, 27],
           "sensor": 32,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_3_to", "Qflow_branch_3_to"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 8,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [28, 30],
+          "sensor": 31,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 8,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "sensor": 32,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 8,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
           "sensor": 33,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_4_from", "Qflow_branch_4_from"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 9,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [29, 31],
           "sensor": 34,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_4_to", "Qflow_branch_4_to"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 9,
+            "side": "to"
+          },
+          "type": "P"
         },
         {
-          "positions": [32, 34],
+          "sensor": 33,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 9,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "sensor": 34,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 9,
+            "side": "to"
+          },
+          "type": "Q"
+        },
+        {
           "sensor": 35,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_5_from", "Qflow_branch_5_from"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 10,
+            "side": "from"
+          },
+          "type": "P"
         },
         {
-          "positions": [33, 35],
           "sensor": 36,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pflow_branch_5_to", "Qflow_branch_5_to"]
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 10,
+            "side": "to"
+          },
+          "type": "P"
+        },
+        {
+          "sensor": 35,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 10,
+            "side": "from"
+          },
+          "type": "Q"
+        },
+        {
+          "sensor": 36,
+          "sigma": 1.0,
+          "terminal": {
+            "branch": 10,
+            "side": "to"
+          },
+          "type": "Q"
         }
       ]
     },
     "meta": {
       "case_name": "sp_case5",
-      "created_by": "Sparlectra 0.50.0",
+      "created_by": "Sparlectra 0.60.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",

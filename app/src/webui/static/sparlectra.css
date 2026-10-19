@@ -861,20 +861,34 @@ main.artifact-page {
   background: #b7c3d5;
 }
 
-/* the hide button of a column, shown while the pointer is on the header;
-   it sits on the side away from the name, so it never moves the name */
+/* the hide button of a column, shown while the pointer is on the header.
+   It sits in room the header keeps free for it, so it never covers the
+   name or the sort link and the column keeps its width when it appears:
+   on a text column between the name and the drag handle, on a number
+   column (name right-aligned) at the left edge */
 .artifact-csv th .csv-hide-col {
   position: absolute;
   top: 50%;
   right: 9px;
   transform: translateY(-50%);
-  padding: 0 .3rem;
+  width: 1.1rem;
+  padding: 0;
+  text-align: center;
   font-size: .8rem;
   line-height: 1.3;
   background: #dce3ee;
   color: #172033;
   border-radius: 4px;
   visibility: hidden;
+}
+
+.artifact-csv th:not(.csv-rn) {
+  padding-right: calc(9px + 1.4rem);
+}
+
+.artifact-csv th.num {
+  padding-left: calc(3px + 1.4rem);
+  padding-right: .6rem;
 }
 
 .artifact-csv th.num .csv-hide-col {
@@ -953,10 +967,23 @@ main.artifact-page {
   color: #5b6b82;
 }
 
-/* a sortable column header: a plain link back onto the view */
+/* a sortable column header: a plain link back onto the view. Every
+   sortable name keeps the room of the sort arrow behind it, so a sort does
+   not widen the column; the arrow sits in that room and takes no layout
+   width of its own */
 .artifact-csv th a {
+  position: relative;
+  padding-right: 1.1em;
   color: inherit;
   text-decoration: none;
+}
+
+.artifact-csv th .csv-sort-mark {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 1.1em;
+  text-align: center;
 }
 
 .artifact-csv th a:hover {
@@ -1458,7 +1485,7 @@ nav {
   margin: 4rem auto;
 }
 
-/* Stage 4A block 4: Runs-page sections (SE block and N-1 editor tabs) */
+/* Runs-page sections (SE block and N-1 editor tabs) */
 .se-section {
   margin-top: 1.5rem;
 }

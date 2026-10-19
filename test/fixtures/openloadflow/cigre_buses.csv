@@ -1,0 +1,23 @@
+# OpenLoadFlow reference solution of cigre.m
+# tool: pypowsybl 1.16.1 (OpenLoadFlow), written 2026-10-19T04:12:44Z
+# input: cigre.m sha256 73861b178aeea8e3b402458adcd55d993c819926a28b3ec210308c21deac6b0f
+# network: IIDM built row by row from the MATPOWER file: lines with b/2 at each end; transformers with rated_u1 = baseKV1 * ratio,
+#   rated_u2 = baseKV2 and their g + jb (g from mpc.sparlectra.transformer_losses) as shunts (g + jb)/2/ratio^2 at the from bus and (g + jb)/2 at the to bus;
+#   branch flows of a transformer include these shunts; slack generation = slack bus mismatch (no distributed slack)
+# parameters: distributed_slack=false, use_reactive_limits=false, voltage_init_mode=UNIFORM_VALUES, transformer/shunt/phase-shifter control off, slack bus forced to VL2
+# provider: generatorsWithZeroMwTargetAreNotStarted=false, maxNewtonRaphsonIterations=50, maxOuterLoopIterations=100, maxPlausibleTargetVoltage=1.5, minPlausibleTargetVoltage=0.5, newtonRaphsonConvEpsPerEq=1e-12, plausibleActivePowerLimit=100000, reactiveRangeCheckMode=TARGET_P, slackBusPMaxMismatch=1e-6, slackBusSelectionMode=NAME, slackBusesIds=VL2
+# result: status ComponentStatus.CONVERGED, 4 iterations, slack bus mismatch 206.60520292535858 MW written as slack generation
+bus,name,v_pu,v_angle_deg,p_gen_mw,q_gen_mvar
+1,Bus_1_220,1.0454085199338399,-1.4293185324576283,0.0,0.0
+2,Bus_2_22,1.03,0.0,206.60520292535858,-119.5057358746355
+3,Bus_3_380,1.0682281618657463,-1.9950284750873872,0.0,0.0
+4,Bus_4_220,1.0248029601888131,-0.23369095134763834,0.0,0.0
+5,Bus_5_22,1.0300000000000002,3.2967849524469424,500.0,56.58602927570837
+6,Bus_6_220,1.0267710682209505,-4.988642454894448,0.0,0.0
+7,Bus_7_220,1.0269647078821251,-4.92379680561503,0.0,0.0
+8,Bus_8_22,1.03,-0.6949800969400359,300.0,23.100471185437726
+9,Bus_9_220,1.0496107999550581,-4.109792933021849,0.0,0.0
+10,Bus_10_220,1.042899301568066,-5.894780584674038,0.0,0.0
+11,Bus_11_220,1.049268080404828,-3.8121142444755605,0.0,0.0
+12,Bus_12_380,1.0693651264410067,-3.2774309180829366,0.0,0.0
+13,Bus_13_22,1.03,-2.433590677176222,200.0,-150.2563896312875

@@ -103,8 +103,8 @@ function _run_short_circuit_scf(case_path::AbstractString, config::SparlectraCon
   sc_max, sc_min = try
     Logging.with_logger(sc_logger) do
       (
-        runShortCircuit!(net; buses = buses, case = :max, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses),
-        runShortCircuit!(net; buses = buses, case = :min, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses),
+        runShortCircuit!(net; buses = buses, case = :max, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses, converter_current_factor = config.shortcircuit.converter_current_factor),
+        runShortCircuit!(net; buses = buses, case = :min, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses, converter_current_factor = config.shortcircuit.converter_current_factor),
       )
     end
   catch err
@@ -294,8 +294,8 @@ function _run_short_circuit_powsybl(case_path::AbstractString, config::Sparlectr
   sc_max, sc_min = try
     Logging.with_logger(sc_logger) do
       (
-        runShortCircuit!(net; case = :max, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses),
-        runShortCircuit!(net; case = :min, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses),
+        runShortCircuit!(net; case = :max, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses, converter_current_factor = config.shortcircuit.converter_current_factor),
+        runShortCircuit!(net; case = :min, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses, converter_current_factor = config.shortcircuit.converter_current_factor),
       )
     end
   catch err
@@ -470,8 +470,8 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
   sc_logger = _ScWarningCollector(String[], Logging.current_logger())
   sc_max, sc_min = Logging.with_logger(sc_logger) do
     (
-      runShortCircuit!(cgmes_result; case = :max, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses),
-      runShortCircuit!(cgmes_result; case = :min, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses),
+      runShortCircuit!(cgmes_result; case = :max, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses, converter_current_factor = config.shortcircuit.converter_current_factor),
+      runShortCircuit!(cgmes_result; case = :min, c_factor = c_factor, sweep_method = config.shortcircuit.sweep_method, takahashi_min_buses = config.shortcircuit.takahashi_min_buses, converter_current_factor = config.shortcircuit.converter_current_factor),
     )
   end
 

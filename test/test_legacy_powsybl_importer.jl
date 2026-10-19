@@ -51,8 +51,8 @@ function run_legacy_powsybl_importer_tests()
         bb = tables.bus_breaker_view_buses
         sw = tables.switches
         skipped_buses = count(s -> s.kind == "bus", report.skipped)
-        # an auxiliary bus (star point, boundary, X-node) carries the Aux_ component name
-        real_buses = count(nd -> !startswith(getCompName(nd.comp), "Aux_"), net.nodeVec)
+        # an auxiliary bus (star point, boundary, X-node) carries the AuxBus component type
+        real_buses = count(nd -> !Sparlectra._is_aux_node(nd), net.nodeVec)
         @test real_buses == length(bb.id) - skipped_buses
         retained = count(identity, sw.retained)
         @test length(net.linkVec) == retained - count(s -> s.kind == "switch", report.skipped)
@@ -184,7 +184,7 @@ function run_legacy_powsybl_importer_tests()
         # delivery solves to the voltages of the source (the total on the
         # segment, read back in halves, was 3e-3 pu off). The CGMES import
         # puts half of a transformer's end admittance on each terminal
-        # (0.50.0), so the two transformers with their magnetizing arm on
+        # (0.41.0), so the two transformers with their magnetizing arm on
         # side 1 write it as a compensator too
         _, erg = runpf!(net, 60, 1e-10, 0; method = :rectangular, qlimits_enabled = false)
         @test erg == 0

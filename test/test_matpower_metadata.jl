@@ -693,6 +693,73 @@ mpc.sparlectra.tap_changers = [
         @test maximum(abs(a._vm_pu - b._vm_pu) for (a, b) in zip(cigre.nodeVec, back.nodeVec)) < 1e-8
         @test maximum(abs(a._va_deg - b._va_deg) for (a, b) in zip(cigre.nodeVec, back.nodeVec)) < 1e-6
       end
+
+      # three-winding star points through a model-only round trip: two star
+      # equivalents whose 110 kV windings (r 0.00044 pu, ratio 0.9649) close
+      # a loop. At 1.0 pu the star points drive a large circulating current
+      # and Newton does not converge; the solver's flat start puts them at
+      # the ratio of that winding. Before the fix the file wrote 1.0 pu and
+      # the reader built plain buses, so the re-read net failed both from the
+      # file voltages and from a flat start (50 iterations, status 1, as the
+      # CGMES MiniGrid did).
+      n3 = Sparlectra.Net(name = "star_roundtrip", baseMVA = 100.0)
+      for (b, vn, aux) in (("S10", 10.0, false), ("M110", 110.0, false), ("H380", 380.0, false), ("X1", 380.0, true), ("X2", 380.0, true), ("T1", 30.0, false), ("T2", 30.0, false), ("L10", 10.0, false))
+        Sparlectra.addBus!(net = n3, busName = b, vn_kV = vn, isAux = aux)
+      end
+      Sparlectra.addProsumer!(net = n3, busName = "S10", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, vm_pu = 1.0, va_deg = 0.0, referencePri = "S10")
+      Sparlectra.addProsumer!(net = n3, busName = "L10", type = "ENERGYCONSUMER", p = 9.0, q = 5.0)
+      Sparlectra.addPIModelTrafo!(net = n3, fromBus = "M110", toBus = "S10", r_pu = 0.0055, x_pu = 0.132, b_pu = 0.0, status = 1, ratio = 1.039)
+      Sparlectra.addPIModelTrafo!(net = n3, fromBus = "M110", toBus = "L10", r_pu = 0.0175, x_pu = 0.42, b_pu = 0.0, status = 1, ratio = 0.9957)
+      for (x, t) in (("X1", "T1"), ("X2", "T2"))
+        Sparlectra.addPIModelTrafo!(net = n3, fromBus = "H380", toBus = x, r_pu = 0.00041, x_pu = 0.0665, b_pu = 0.0, status = 1, ratio = 1.0)
+        Sparlectra.addPIModelTrafo!(net = n3, fromBus = x, toBus = "M110", r_pu = 0.00044, x_pu = 1.0e-5, b_pu = 0.0, status = 1, ratio = 0.9649)
+        Sparlectra.addPIModelTrafo!(net = n3, fromBus = x, toBus = t, r_pu = 0.0028, x_pu = 0.14, b_pu = 0.0, status = 1, ratio = 1.0526)
+      end
+      # since 0.50.0 addBus! gives the node its busName, and an isAux bus is
+      # auxiliary by its component type whatever it is called (X1, X2 carry
+      # no Aux_ prefix)
+      @test [Sparlectra.getCompName(n.comp) for n in n3.nodeVec] == ["S10", "M110", "H380", "X1", "X2", "T1", "T2", "L10"]
+      aux3 = [Sparlectra._is_aux_node(n) for n in n3.nodeVec]
+      @test aux3 == [false, false, false, true, true, false, false, false]
+      @test Sparlectra.runpf!(n3, 50, 1e-8, 0; opt_flatstart = true) == (5, 0)
+      # the re-read net from the file voltages and from a flat start
+      solves_like_n3(net) = for flat in (false, true)
+        nb = deepcopy(net)
+        @test Sparlectra.runpf!(nb, 50, 1e-8, 0; opt_flatstart = flat) == (5, 0)
+        @test maximum(abs(nb.nodeVec[i]._vm_pu - n3.nodeVec[i]._vm_pu) for i in eachindex(n3.nodeVec)) < 1e-8
+      end
+      cfg3 = Sparlectra.active_sparlectra_config()
+      mktempdir() do dir
+        path3 = joinpath(dir, "star.m")
+        Sparlectra.writeMatpowerCasefile(n3, path3; write_solution = false)
+        stars = [n3.busDict["X1"], n3.busDict["X2"]]
+        mpc3 = Sparlectra.MatpowerIO.read_case_m(path3; legacy_compat = false)
+        @test all(mpc3.bus[stars, 8] .≈ 0.9649)
+        # the role travels as the bus list mpc.sparlectra.aux_buses
+        @test vec(mpc3.sparlectra.aux_buses) == stars
+        back3 = Sparlectra.createNetFromMatPowerFile(filename = path3)
+        @test [Sparlectra._is_aux_node(n) for n in back3.nodeVec] == aux3
+        solves_like_n3(back3)
+        # the SCF converter path reads the same role
+        conv3 = Sparlectra.build_net(Sparlectra.convert_case(Sparlectra.MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(path3; legacy_compat = true), Sparlectra.matpower_adapter_options(cfg3)); config = cfg3)
+        @test [Sparlectra._is_aux_node(n) for n in conv3.nodeVec] == aux3
+        # an SCF round trip keeps the role (roles.aux_nodes)
+        scf3 = Sparlectra.scf_to_net(Sparlectra.net_to_scf(n3))
+        @test [Sparlectra._is_aux_node(n) for n in scf3.nodeVec] == aux3
+        # a file written before 0.50.0: no bus list, the star points under
+        # their schematic name Aux_<idx>_<kV>; both readers keep them auxiliary
+        old = read(path3, String)
+        old = replace(old, r"%% auxiliary buses[^\n]*\n" => "", r"mpc\.sparlectra\.aux_buses = \[[^\]]*\];\n" => "")
+        old = replace(old, "'X1';" => "'Aux_4_380';", "'X2';" => "'Aux_5_380';")
+        @test !occursin("aux_buses", old) && occursin("'Aux_4_380';", old)
+        path_old = joinpath(dir, "star_old.m")
+        write(path_old, old)
+        back_old = Sparlectra.createNetFromMatPowerFile(filename = path_old)
+        @test [Sparlectra._is_aux_node(n) for n in back_old.nodeVec] == aux3
+        solves_like_n3(back_old)
+        conv_old = Sparlectra.build_net(Sparlectra.convert_case(Sparlectra.MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(path_old; legacy_compat = true), Sparlectra.matpower_adapter_options(cfg3)); config = cfg3)
+        @test [Sparlectra._is_aux_node(n) for n in conv_old.nodeVec] == aux3
+      end
     end)() end
 
     @testset "Tap-changer-model marker prevents double correction on reimport" begin (function ()

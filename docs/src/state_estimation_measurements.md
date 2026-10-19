@@ -16,13 +16,57 @@ UI generator and "add noise" write it, and the sets shipped with the demo
 cases are tables. `readMeasurementTable!(net; file)` reads one set into
 `net.measurements`; `writeMeasurementTable(file, rows)` writes rows, for
 example from `generateMeasurementTableFromPF`. The measurement CSV v1 is
-deprecated (see [Deprecated: measurement CSV v1](@ref se_measurement_csv_v1)).
+no longer read (see [Removed: measurement CSV v1](@ref se_measurement_csv_v1)).
 
-The `measurements.csv` artifact of an estimation run keeps the layout of
-the CSV v1 with two verdict columns behind `id`: `bad_data` holds `*` on
-every row the diagnostics flagged, `status` says `critical measurement`
-where the loss of the row would leave the set unobservable. The table has
-no columns for that verdict.
+**Run artifacts.** An estimation run writes the set it estimated as a
+measurement table, `measurements.csv` in the run directory, and the
+verdict per row in `measurements_verdict.csv` next to it. The name
+`measurements.csv` is kept: the Web UI links and the history know it, and
+it matches the `<case>.measurements.csv` sets. The table loads directly
+with `readMeasurementTable!` (for a CGMES case with
+`index = cgmesMeasurementKeys(result)`) or as the measurement file of a
+new run, and gives the same measurement set: the run estimates exactly
+the set this file reads back to.
+
+- A table set keeps the rows that became a measurement, in file order,
+  with their keys, value text, source and valid flag; rows that did not
+  are listed in `measurement_import.txt`. A row without a sigma cell gets
+  the sigma the run used and the source token `sigma_level` or
+  `sigma_default`, so the file reads back the same under any
+  configuration.
+- Zero-injection rows the run added are bus balance rows with source
+  `se_run;zero_injection`; a set carried by a case file is written with
+  source `case_file`. A measurement the table cannot carry (a link flow)
+  is named as a comment line and stays in the estimate.
+- The comments of the input table are carried over (case binding,
+  generator provenance, tap table, truth values).
+
+The verdict file has one line per data row of the table, joined by its
+line number in `measurements.csv` (a key with its type is not unique: a
+bus sum covers the rows of all its prosumers, and each of them gets the
+verdict of the sum). Its CSV format follows `output.csv_format`.
+
+| column | content |
+|---|---|
+| `line` | line number of the row in `measurements.csv` |
+| `key`, `type` | the key cell and the type of the row |
+| `measurement_id` | id of the measurement the row belongs to |
+| `residual` | measured minus estimated, in the unit of the row (MW, MVAr, A, degrees, `U` in kV) |
+| `normalized_residual` | residual over its standard deviation; 0 for a zero-injection constraint |
+| `wii` | residual sensitivity of the row |
+| `localizable` | `wii` above the localizability threshold |
+| `eliminated` | removed by the bad-data elimination; residual and normalized residual are those of the solve before its removal |
+| `constraint` | zero-injection row solved as a constraint (`state_estimation.zero_injection: constraint`) |
+| `reason` | tokens separated by `;`: `inactive` (valid=false), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical` |
+
+Every other active row carries the residuals of the final diagnostics
+(after every elimination). The suspicious count in `run.log`, on the
+result page and in `se_suspicious` is taken from the same diagnostics;
+the pass before the elimination lists its own suspects in
+`se_diagnostics.md`.
+A run directory written before 0.50.0 holds the CSV v1 artifact
+(`bad_data` and `status` behind `id`); the Web UI shows such a run, and
+the topology hypothesis test asks for a new run instead of reading it.
 
 **Comment blocks.** A table carries them as `#` lines before its header.
 
@@ -33,17 +77,21 @@ no columns for that verdict.
 | `# truth_value,...` | generator | the noise-free truth value of every row (source of `se_deltas.csv`, see [Measurement generator v2](@ref se-generator-v2)) |
 | `# flow_end,...` | generator | the flow-end choice per branch |
 | `# generator: v2` | generator | the set's provenance (truth source, flow-end choices, passive handling) |
-| `sparlectra-taps-estimated v1` | estimation run (`measurements.csv` artifact) | one line per transformer with model step, estimated step, fixed step and change, when taps were estimated |
 
-**Bad-data artifact.** `se_bad_data.csv` lists the suspicious, eliminated,
-suppressed (replacement) and down-weighted (staged) rows with their network
-locations. Eliminated rows are inactive in the reported run (its `J` is the
-`J` without them); `se_diagnostics.md` names the run, the case, the set and
+**Bad data.** The verdict file names the suspicious, eliminated,
+suppressed (replacement) and down-weighted (staged) rows. Until 0.50.0
+`se_bad_data.csv` listed them; the verdict file replaces it. The tap steps
+of a run are in `se_tap_estimates.csv`. Eliminated rows are inactive in
+the reported run (its `J` is the `J` without them); `se_diagnostics.md` names the run, the case, the set and
 the reported numbers, then the pass that found them ("Diagnostics pass").
 An elimination counts only when the control solve without the row
 converges; otherwise the row stays active, the attempt is named
 ("Reverted") and the sequence stops with `not_converged`. After a
-tap-estimation fallback the diagnostics run again on the frozen taps.
+tap-estimation fallback the diagnostics run again on the frozen taps,
+without the rows the first pass removed; the rows of both passes are
+`eliminated`, each with the residual of the pass that removed it. The
+topology hypothesis test reads `measurements.csv` and leaves out the rows
+the verdict file marks as eliminated.
 
 The set tab of the Web UI (download, re-upload, inline editor, tap comment
 table) is described in [Web UI](webui_reference.md#State-estimation).
@@ -137,7 +185,7 @@ critical measurements are configurable in the Web UI form.
 | | `from run` | adopts the solved voltages of a successful run of the same case from the run history (SE runs through `se_state.csv`, power-flow runs through `bus_voltages_complex.csv`, any CSV export format), bit-exact against the artifact |
 | Flow measurements per branch | `both ends` (default) | measures P/Q (and I) at from and to |
 | | `one end (balance-aware)` | keeps one flow group per branch; the end at a bus with injection telemetry is preferred (`ZI` rows do not count), the from end wins when both or neither qualify; the choice is documented per branch in the set's `# flow_end,...` comments |
-| Passive nodes | checkbox (`state_estimation.zero_injection`, default on) | buses without generation, load and shunt (`findPassiveBuses`) are written as protected zero-injection constraints (`addZeroInjectionMeasurements!` rows, prefix `ZI`, excluded from elimination and robust modification, at the configured sigma but never tighter than `ZERO_INJECTION_SIGMA` = 0.001 MW) and no duplicate injection rows |
+| Passive nodes | checkbox (`state_estimation.zero_injection`, default on; `constraint` shows as checked) | buses without generation, load and shunt (`findPassiveBuses`) are written as protected zero-injection constraints (`addZeroInjectionMeasurements!` rows, prefix `ZI`, excluded from elimination and robust modification, at the configured sigma but never tighter than `ZERO_INJECTION_SIGMA` = 0.001 MW) and no duplicate injection rows |
 | | off | explicit zero balance rows `Pinj/Qinj = 0` at the configured sigma (default 0.05 MW/MVar) |
 | | both | the checkbox is the case's `state_estimation.zero_injection`: it is seeded from the configuration, and a generation writes it into the case configuration file, so the SE runs of the case (measurement CSV, case file, measurement table) follow it; see [State-Estimation Configuration](state_estimation_configuration.md) |
 | `critical measurements` | count (0 = off) | thins the set until that many rows are critical; the set comments name the target, the rows that ended critical and the rows removed; when the target is out of reach, the message says how many were reached |
@@ -213,18 +261,20 @@ outer-loop controllers (taps, machine control, Q-limits) still iterate and
 legitimately move the operating point, which shows as a small residual
 pickup.
 
-## [Deprecated: measurement CSV v1](@id se_measurement_csv_v1)
+## [Removed: measurement CSV v1](@id se_measurement_csv_v1)
 
-The measurement CSV v1 is read in 0.50.0 with a deprecation warning and the
-reader is removed in 0.60.0. `readMeasurementsCSV!` logs the warning once
-per session, the SE service writes it to `run.log` of every run on a v1
-file, and the Web UI shows it at the file. Convert a v1 file and its case
-with `convertMeasurementsV1` (see
-[Migrating from the v1 CSV](@ref se_table_migration)).
+The reader of the measurement CSV v1 (`readMeasurementsCSV!`) was removed
+in 0.50.0. The SE service refuses a v1 file with
+an error that names the converter, and so does "add noise" in the Web UI.
+The Web UI export and "Save case as" write the case without a v1 set and
+name the skipped file and the converter in their message. Convert a v1 file and its
+case with `convertMeasurementsV1` or `sparlectra convert-measurements` (see
+[Migrating from the v1 CSV](@ref se_table_migration)); the converter still
+reads every v1 file.
 
-`readMeasurementsCSV!(net; file, replace = true)` reads the file,
-`writeMeasurementsCSV(net; file)` writes it (the run artifact uses it). The
-first line is the version comment, the second the header:
+`writeMeasurementsCSV(net; file)` stays and writes this layout, the input
+of the converter. The first line is the version comment, the second the
+header:
 
     # sparlectra-measurements v1
     type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id
@@ -240,11 +290,11 @@ first line is the version comment, the second the header:
 | `value`, `sigma` | measured value and standard deviation in the type's unit (Vm in pu, powers in MW/MVAr, currents in A, angles in degrees) | numbers keep their shortest round-trip form |
 | `active` | active flag | inactive rows are kept in the file |
 | `id` | measurement id | prefixes `ZI` (zero injection) and `SHDERIV` (derived shunt Q) mark protected rows |
-| `bad_data`, `status` | run artifact only | the reader ignores both columns, so the artifact reads back as the same set |
+| `bad_data`, `status` | run artifact before 0.50.0 only | the converter ignores both columns |
 
 Exactly one location group per row (`bus` |
 `from_bus`+`to_bus`+`branch_nr` | `link_nr`). Delimiter and decimal
 separator follow `output.csv_format` of the writing run or session
-(`excel_de`: semicolon and decimal comma); the reader tells the format from
-the header line, and a round trip reproduces every row exactly. The import
-is atomic with line-precise errors (`file:line: reason`).
+(`excel_de`: semicolon and decimal comma); the converter tells the format
+from the header line and reports errors with file and line
+(`file:line: reason`).

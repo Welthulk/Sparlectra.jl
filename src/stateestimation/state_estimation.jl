@@ -410,7 +410,7 @@ function _active_measurements_with_indices(measurements::Vector{Measurement})
 end
 
 @inline function _set_measurement_active(m::Measurement, active::Bool)
-  return Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
+  return Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
 end
 
 ## SE working context after link contraction (SE phase 3).
@@ -550,7 +550,7 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
         continue
       end
       newBus = busmap[reps[m.busIdx]]
-      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, busIdx = newBus, branchIdx = m.branchIdx, direction = m.direction, id = m.id))
+      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, busIdx = newBus, branchIdx = m.branchIdx, direction = m.direction, id = m.id, zero_injection = m.zero_injection))
       push!(origIdx, activeIdx[k])
       continue
     end
@@ -567,8 +567,13 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
       vals = [activeMeas[k].value for k in positions]
       sigs = [activeMeas[k].sigma for k in positions]
       ids = [activeMeas[k].id for k in positions]
+      # a cluster whose members are all zero-injection rows is the zero
+      # injection of the fused bus: the aggregate carries the flag (id
+      # unchanged), so it is protected like its members and
+      # zero_injection = constraint solves it as a constraint as well
+      allZI = all(k -> activeMeas[k].zero_injection, positions)
       aggId = "LINKAGG_$(typ == PinjMeas ? "Pinj" : "Qinj")_rep_$(rep)"
-      push!(remapped, Measurement(typ = typ, value = sum(vals), sigma = sqrt(sum(sigs .^ 2)), active = true, busIdx = busmap[rep], id = aggId))
+      push!(remapped, Measurement(typ = typ, value = sum(vals), sigma = sqrt(sum(sigs .^ 2)), active = true, busIdx = busmap[rep], id = aggId, zero_injection = allZI))
       push!(origIdx, 0)
       push!(notes, (reason = :aggregated_cluster_injection, id = aggId, detail = "members: " * join(ids, ", ")))
     else
@@ -606,8 +611,9 @@ Returns `nothing` when no verdict is possible: no Jacobian was kept, or the
 diagnostics refuse this problem size (they error rather than allocate an
 unaffordable dense inverse). The caller then suppresses NOTHING. Falling
 back to the raw ratio `|r|/sigma` is deliberately not offered: it is the
-measure this task removed, and a suppression decided on the wrong scale is
-worse than none, because nothing downstream shows which scale was used.
+measure the normalized residual replaced, and a suppression decided on the
+wrong scale is worse than none, because nothing downstream shows which
+scale was used.
 
 Returns `rn` together with the residual sensitivity `wii`, because the
 caller needs both: `rn` says HOW far the row is off, `wii` says whether
@@ -943,6 +949,10 @@ end
 ## single source row. Never index `measurements[row.measurement_index]`
 ## without checking `>= 1` first; the sequential elimination skips these
 ## rows for exactly that reason.
+##
+## `constraintRows` (local indices) are equality constraints
+## (`state_estimation.zero_injection = constraint`): `constraint = true`,
+## never `suspicious`; the caller has set their normalized residual to zero.
 function _build_measurement_suspicion_report(
   activeMeas::Vector{Measurement},
   activeIdx::Vector{Int},
@@ -952,8 +962,11 @@ function _build_measurement_suspicion_report(
   wii::Union{Nothing,Vector{Float64}} = nothing,
   wiiThreshold::Float64 = 0.3,
   kmax::Union{Nothing,Vector{Float64}} = nothing,
+  constraintRows::Vector{Int} = Int[],
 )
   rows = NamedTuple[]
+  isCon = falses(length(activeMeas))
+  isCon[constraintRows] .= true
   for i in eachindex(activeMeas)
     m = activeMeas[i]
     wv = wii === nothing ? NaN : wii[i]
@@ -968,7 +981,8 @@ function _build_measurement_suspicion_report(
         residual = r[i],
         normalized_residual = rn[i],
         abs_normalized_residual = abs(rn[i]),
-        suspicious = abs(rn[i]) >= normalizedThreshold,
+        suspicious = !isCon[i] && abs(rn[i]) >= normalizedThreshold,
+        constraint = isCon[i],
         wii = wv,
         localizable = !isnan(wv) && wv > wiiThreshold,
         max_abs_correlation = kv,
@@ -2387,7 +2401,7 @@ function _se_remap_island_measurements(sub, measurements::Vector{Measurement}, i
         @warn "SE: measurement $(m.id) excluded (its link is not inside the island)"
         nothing
       else
-        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, direction = m.direction, id = m.id, linkIdx = nl)
+        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, direction = m.direction, id = m.id, linkIdx = nl, zero_injection = m.zero_injection)
       end
     elseif m.branchIdx !== nothing
       nb = get(sub.branchmap, m.branchIdx, 0)
@@ -2395,10 +2409,10 @@ function _se_remap_island_measurements(sub, measurements::Vector{Measurement}, i
         @warn "SE: measurement $(m.id) excluded (its branch is not inside the island)"
         nothing
       else
-        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, branchIdx = nb, direction = m.direction, id = m.id)
+        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, branchIdx = nb, direction = m.direction, id = m.id, zero_injection = m.zero_injection)
       end
     elseif m.busIdx !== nothing
-      Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = sub.busmap[m.busIdx], direction = m.direction, id = m.id)
+      Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = sub.busmap[m.busIdx], direction = m.direction, id = m.id, zero_injection = m.zero_injection)
     else
       nothing
     end
@@ -2851,6 +2865,79 @@ function _se_solve_normal_equations!(ctx::_SENormalEquationsSolver, G::SparseMat
   return copy(solve_newton_factorized!(ctx.lu_ctx, G, g))
 end
 
+# _zero_injection_constraint(m) -> Bool: the row is a zero-injection row by
+# origin (the `zero_injection` flag the creating code sets; the LINKAGG
+# aggregate of a closed-link cluster whose members all carry it) and an
+# injection type: the row set that state_estimation.zero_injection =
+# constraint solves as equality constraints. Never decided by the id: a
+# measurement table uses the meter mRID as id.
+@inline _zero_injection_constraint(m::Measurement)::Bool = m.zero_injection && (m.typ == PinjMeas || m.typ == QinjMeas)
+
+# Indices of the rows solved as equality constraints in `meas` under `mode`
+# (`state_estimation.zero_injection`): every ZI row with :constraint, none
+# otherwise.
+_zero_injection_constraint_rows(meas::Vector{Measurement}, mode::Symbol)::Vector{Int} = mode === :constraint ? Int[i for (i, m) in enumerate(meas) if _zero_injection_constraint(m)] : Int[]
+
+# Weights for the residual covariance with constraint rows: the diagnostics
+# keep the gain matrix H'WH and take a constraint row as a row of weight
+# 1/ZERO_INJECTION_SIGMA^2 (or its own, if tighter). That is the limit the
+# constraint stands for, with an error of the order w_measurement / w_ZI on
+# Omega, and it keeps the dense, Takahashi and blockwise paths unchanged
+# (derivation in the State Estimation docs).
+function _constraint_diagnostic_weights(w::Vector{Float64}, conIdx::Vector{Int})::Vector{Float64}
+  isempty(conIdx) && return w
+  wd = copy(w)
+  for i in conIdx
+    wd[i] = max(wd[i], inv(ZERO_INJECTION_SIGMA^2))
+  end
+  return wd
+end
+
+# _se_solve_constrained!(ctx, G, g, C, rc) -> Vector{Float64}: one
+# Gauss-Newton step of the equality-constrained WLS (Lagrange, KKT of the
+# normal equations)
+#
+#   [ G    a C' ] [ dx ]   [ g    ]
+#   [ a C  0    ] [ mu ] = [ a rc ]
+#
+# G = H_M' W H_M of the measurement rows (constraint rows enter with weight
+# zero), C the Jacobian rows of the constraints, rc = 0 - c(x) their
+# residuals. The matrix is symmetric indefinite, so it always takes the LU
+# route of the context (UMFPACK with the kept analysis, or KLU). The scale
+# a = max diag(G) / max |C| brings the constraint rows to the size of G:
+# dx does not depend on a, the condition number does. Measured on
+# sp_case14/60/188, SmallGrid and MiniGrid: unscaled (a = 1) the KKT matrix
+# was worse conditioned than G with sigma rows (up to 8e17), with this a it
+# sits at cond(G_M). A singular KKT
+# matrix takes the fallback chain of `solve_newton_factorized!` (sparse
+# QR, least squares); the second return value says that this happened, so
+# the caller can name it (see _kkt_singular_reason).
+function _se_solve_constrained!(ctx::_SENormalEquationsSolver, G::SparseMatrixCSC{Float64,Int64}, g::AbstractVector{Float64}, C::SparseMatrixCSC{Float64,Int64}, rc::AbstractVector{Float64})::Tuple{Vector{Float64},Bool}
+  n = size(G, 1)
+  p = size(C, 1)
+  gmax = maximum(abs, diag(G); init = 0.0)
+  cmax = maximum(abs, nonzeros(C); init = 0.0)
+  a = (gmax > 0.0 && cmax > 0.0) ? gmax / cmax : 1.0
+  K = [G a*C'; a*C spzeros(Float64, p, p)]
+  rhs = vcat(g, a .* rc)
+  fallbacks = ctx.lu_ctx.fallback_count
+  sol = solve_newton_factorized!(ctx.lu_ctx, K, rhs)
+  return sol[1:n], ctx.lu_ctx.fallback_count > fallbacks
+end
+
+# Why the KKT matrix of the constrained step was singular: the constraint
+# rows C are linearly dependent (two rows state the same balance), or C has
+# full row rank and the measurements plus constraints do not fix every
+# state (an unobservable part, for example an island that only zero
+# injections touch). Sparse QR rank of C', computed once per run and only
+# after a fallback.
+function _kkt_singular_reason(C::SparseMatrixCSC{Float64,Int64})::String
+  p = size(C, 1)
+  r = rank(qr(sparse(C')))
+  r < p && return "dependent constraints ($(p - r) of $(p) zero-injection rows are combinations of the others)"
+  return "the measurements and the constraints do not fix every state (an unobservable part, such as an island only zero injections touch)"
+end
+
 function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
   maxIte = cfg.max_iter
   flatstart = cfg.flatstart
@@ -3083,6 +3170,12 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
 
   z = _measurement_vector(activeMeas)
   w = _weight_vector(activeMeas)
+  # state_estimation.zero_injection = constraint: the ZI rows are equality
+  # constraints (Lagrange, see _se_solve_constrained!). They leave the
+  # objective (a constraint has no statistical residual, wJ zeroes them)
+  # but stay in the redundancy: dof = m_M - (n - p) = m - n as before.
+  conIdx = _zero_injection_constraint_rows(activeMeas, cfg.zero_injection)
+  wJ = isempty(conIdx) ? w : (wt = copy(w); wt[conIdx] .= 0.0; wt)
 
   converged = false
   r = zeros(Float64, length(activeMeas))
@@ -3164,6 +3257,9 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # this call (suppression rounds and the tap fixation re-solve included);
   # the pattern guard inside re-analyzes when the row set changes G
   local seSolver = _SENormalEquationsSolver(cfg.linear_solver)
+  # zero_injection = constraint: the reason of the first singular KKT step
+  # (nothing while every step factorized); the closure assigns it on purpose
+  local kktSingular = nothing
   local symmetricGain = cfg.symmetric_gain
 
   function _wls_solve!(gateImag::Bool)
@@ -3225,6 +3321,13 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
         # would otherwise never converge, and constant weights turn the
         # remaining iterations into a plain, smoothly converging WLS
         (lastStep < 1e-4 || ite >= robustStart + 15) && (robustFrozenW = wSolve)
+      end
+      # constraint rows never enter G or g as weighted rows (weight zero,
+      # after the robust stages, which could otherwise give them one); they
+      # enter the KKT block of the solve below
+      if !isempty(conIdx)
+        wSolve = copy(wSolve)
+        wSolve[conIdx] .= 0.0
       end
 
       # Normal equations for WLS:
@@ -3298,7 +3401,12 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
           end
         end
       end
-      Δx = _se_solve_normal_equations!(seSolver, G, g)
+      if isempty(conIdx)
+        Δx = _se_solve_normal_equations!(seSolver, G, g)
+      else
+        Δx, kktFell = _se_solve_constrained!(seSolver, G, g, H[conIdx, :], r[conIdx])
+        kktFell && kktSingular === nothing && (kktSingular = _kkt_singular_reason(H[conIdx, :]))
+      end
       # Released regulator states get a STEP LIMIT, not a hard band.
       # Measured on a CGMES delivery with 11 transformers off by
       # 4 mechanical steps: clamping the state into its declared band (both
@@ -3366,7 +3474,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       hr = _predict_measurements(activeMeas, net, Vr, Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset), shuntB = shuntMap === nothing ? nothing : _shunt_b_override(x, shuntMap), tapOverlay = _tap_ov(x))
       rr = z - hr
       _wrap_angle_residuals!(rr, activeMeas)
-      supDiag = _suppression_normalized_residuals(lastJacobian, rr, w; minStates = cfg.takahashi_min_states)
+      supDiag = _suppression_normalized_residuals(lastJacobian, rr, _constraint_diagnostic_weights(w, conIdx); minStates = cfg.takahashi_min_states)
       # No usable Omega (no Jacobian kept, or the diagnostics refused this
       # size): suppress NOTHING rather than fall back to the raw ratio the
       # task removed. A missed suppression is a weaker estimate; a wrong one
@@ -3426,7 +3534,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     rC = z - hC
     _wrap_angle_residuals!(rC, activeMeas)
     gatedC = isempty(iaRows) ? Set{Int}() : copy(_ia_gated!(Vc))
-    tapJBefore = isempty(gatedC) ? _wls_objective(rC, w) : _wls_objective(rC[[i for i in eachindex(rC) if !(i in gatedC)]], w[[i for i in eachindex(w) if !(i in gatedC)]])
+    tapJBefore = isempty(gatedC) ? _wls_objective(rC, wJ) : _wls_objective(rC[[i for i in eachindex(rC) if !(i in gatedC)]], wJ[[i for i in eachindex(wJ) if !(i in gatedC)]])
     tapDofBefore = length(activeMeas) - length(gatedC) - length(x)
     tapIteEst = iteDone
     tapConvEst = converged
@@ -3442,6 +3550,9 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       converged = converged && tapConvEst
     end
   end
+  # a singular KKT step was solved by the least-squares fallback: say so
+  # with the reason, the constrained estimate is then not exact
+  kktSingular === nothing || @warn "state estimation: the KKT matrix of the zero-injection constraints was singular, $(kktSingular); the step was solved by the sparse least-squares fallback"
 
   Vest = _state_to_voltage(x, slackIdx, nbus)
   vaOffsetRad = _va_offset_from_state(x, withVaOffset)
@@ -3454,7 +3565,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   for i in finalGated
     @info "runse!: current-angle measurement $(activeMeas[i].id) excluded (:ia_below_current_floor, predicted current below $(round(iaThreshold[i]; digits = 2)) A)"
   end
-  jval = isempty(finalGated) ? _wls_objective(r, w) : _wls_objective(r[[i for i in eachindex(r) if !(i in finalGated)]], w[[i for i in eachindex(w) if !(i in finalGated)]])
+  jval = isempty(finalGated) ? _wls_objective(r, wJ) : _wls_objective(r[[i for i in eachindex(r) if !(i in finalGated)]], wJ[[i for i in eachindex(wJ) if !(i in finalGated)]])
   ν = length(activeMeas) - length(finalGated) - length(x)
   # J_active: the objective WITHOUT the replacement-suppressed rows. Their
   # frozen solve weight (suppression sigma) already removed them from the
@@ -3466,7 +3577,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     supIdx = Set{Int}(i for i in eachindex(w) if replacementFrozenW[i] != w[i] && !(i in finalGated))
     if !isempty(supIdx)
       keep = [i for i in eachindex(r) if !(i in supIdx) && !(i in finalGated)]
-      activeObjective = (j = _wls_objective(r[keep], w[keep]), dof = ν - length(supIdx), suppressed = length(supIdx))
+      activeObjective = (j = _wls_objective(r[keep], wJ[keep]), dof = ν - length(supIdx), suppressed = length(supIdx))
     end
   end
 
@@ -3898,7 +4009,11 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
 
   H, h = _measurement_jacobian_fd(activeMeas, netLocal, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset, shuntMap = shuntMap)
   z = _measurement_vector(activeMeas)
-  w = _weight_vector(activeMeas)
+  # constraint rows (state_estimation.zero_injection = constraint) enter
+  # the residual covariance at the zero-injection weight, the limit they
+  # stand for (see _constraint_diagnostic_weights)
+  conIdx = _zero_injection_constraint_rows(activeMeas, base.zero_injection)
+  w = _constraint_diagnostic_weights(_weight_vector(activeMeas), conIdx)
   r = z - h
   _wrap_angle_residuals!(r, activeMeas)
   # K needs the full Omega up to the dense state cap, so there a
@@ -3906,6 +4021,9 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
   # selected inverse takes over above the size threshold (with an
   # automatic fallback on any guard failure)
   rd = _residual_diagnostics(H, r, w; need_full_omega = reportResidualCorrelation, minStates = base.takahashi_min_states)
+  # a constraint has no statistical residual: normalized residual zero,
+  # never suspicious, marked as constraint in the ranking
+  rd.rn[conIdx] .= 0.0
   kmax = nothing
   if reportResidualCorrelation
     if rd.omega !== nothing
@@ -3917,7 +4035,7 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
       kmax = _residual_correlation_max_blockwise(H, w)
     end
   end
-  ranking = _build_measurement_suspicion_report(activeMeas, activeIdx, r, rd.rn; normalizedThreshold = normalizedThreshold, wii = rd.wii, wiiThreshold = wiiThreshold, kmax = kmax)
+  ranking = _build_measurement_suspicion_report(activeMeas, activeIdx, r, rd.rn; normalizedThreshold = normalizedThreshold, wii = rd.wii, wiiThreshold = wiiThreshold, kmax = kmax, constraintRows = conIdx)
 
   suspicious = [row for row in ranking if row.suspicious]
   verdict = _band_test_verdict(result.objectiveJ, result.dof)
@@ -3944,14 +4062,15 @@ end
 validate_measurements(net::Net) = validate_measurements(net, Measurement[m for m in net.measurements])
 
 ## Internal helper: measurements protected from bad-data elimination.
-## Zero-injection pseudo-measurements (id prefix "ZI") encode network
+## Zero-injection rows (the `zero_injection` flag, set by the code that
+## creates them, also on the LINKAGG aggregate of a cluster of them) encode network
 ## structure, not telemetry, and any near-exact measurement (sigma <= 1e-6)
 ## is a constraint in disguise; eliminating either would remove model
 ## knowledge instead of a faulty meter. Derived shunt pseudo-measurements
 ## (id prefix "SHDERIV", SE phase 2 case B) are protected too: eliminating
 ## one would silently mask its source measurements (bay current, Vm).
 @inline function _elimination_protected(m::Measurement)::Bool
-  return startswith(m.id, "ZI") || startswith(m.id, "SHDERIV") || m.sigma <= 1e-6
+  return m.zero_injection || startswith(m.id, "SHDERIV") || m.sigma <= 1e-6
 end
 
 """
@@ -3971,7 +4090,9 @@ Returns `(diagnostics, rerun, eliminations, stop_reason, final_diagnostics)`:
 - `diagnostics`: the initial `validate_measurements` report
 - `eliminations`: one trace row per elimination
   `(elimination, measurement_index, id, typ, normalized_residual_before,
-  wii, skipped_unlocalizable, objective_before, objective_after)`.
+  residual_before, wii, skipped_unlocalizable, objective_before,
+  objective_after)`; `residual_before` is the residual of the row in its
+  measurement unit at the state before its removal.
   `wii` is the localizability of the removed row and
   `skipped_unlocalizable` counts the suspects that were passed over in that
   round BECAUSE they are not localizable, so the trace shows why the
@@ -4081,7 +4202,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
       break
     end
     push!(trace, (elimination = length(trace) + 1, measurement_index = idx, id = target.id, typ = target.typ,
-                  normalized_residual_before = target.normalized_residual, wii = target.wii,
+                  normalized_residual_before = target.normalized_residual, residual_before = target.residual, wii = target.wii,
                   skipped_unlocalizable = skipped_unlocalizable,
                   objective_before = objBefore, objective_after = current.objective.value))
     if firstElimination === nothing
@@ -4263,7 +4384,8 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     end
     for k = 1:nrows
       row = base.measurement_ranking[k]
-      flag = row.suspicious ? "BAD" : "OK"
+      # a constraint row (zero_injection = constraint) is no measurement
+      flag = get(row, :constraint, false) ? "constraint" : row.suspicious ? "BAD" : "OK"
       if hasWii
         loc = row.localizable ? "yes" : "no"
         if showK
@@ -4321,7 +4443,8 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "----------------------------------------------------------------------------------------------")
     for k = 1:nrows
       row = base.measurement_ranking[k]
-      flag = row.suspicious ? "BAD" : "OK"
+      # a constraint row (zero_injection = constraint) is no measurement
+      flag = get(row, :constraint, false) ? "constraint" : row.suspicious ? "BAD" : "OK"
       if hasWii
         loc = row.localizable ? "yes" : "no"
         if showK
@@ -4334,6 +4457,16 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
         @printf(io, "%5d %-28s %-12s %12.5f %12.5f %8s\n", row.measurement_index, row.id, string(row.typ), row.residual, row.normalized_residual, flag)
       end
     end
+  end
+
+  # constraint rows (zero_injection = constraint) are no measurements and
+  # sort last in the ranking (normalized residual zero): one line with their
+  # count and the largest residual, which shows that they hold
+  conRows = [row for row in base.measurement_ranking if get(row, :constraint, false)]
+  if !isempty(conRows)
+    worst = maximum(abs(row.residual) for row in conRows)
+    println(io)
+    @printf(io, "%s %d row(s) solved as equality constraints (not measurements), largest |residual| %.3g\n", format == :markdown ? "**Zero-injection constraints:**" : "Zero-injection constraints:", length(conRows), worst)
   end
 
   # robust R-modification rows (SE phase 4): measurements the FINAL iteration

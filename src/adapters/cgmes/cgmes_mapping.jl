@@ -27,6 +27,22 @@ base); nothing is evaluated in Stage 1. `importCGMES` keeps the records of
 the sources it mapped onto the network (`ExternalNetworkInjection`,
 `SynchronousMachine`, `EquivalentInjection`, `AsynchronousMachine`); a
 skipped one (terminal disconnected, out of service) feeds no fault current.
+
+`power_electronics_connections` holds one record per
+`PowerElectronicsConnection` (CGMES 3.0) that the import mapped (only with
+`map_power_electronics = true`), with `maxIFault_pu` (the maximum fault
+current in per unit of the rated current), `ratedS_MVA` and `ratedU_kV`.
+`maxIFault` is a CIM17 attribute that no CGMES 3.0 profile defines; it is
+read where a delivery carries it, and is `nothing` otherwise.
+
+A `SynchronousMachine` record carries `converter_unit`, the class name of
+its generating unit when that is a `WindGeneratingUnit` or a
+`SolarGeneratingUnit` (`nothing` otherwise), and for such a machine
+`pmax_MW` = `GeneratingUnit.maxOperatingP`. `runShortCircuit!` takes such a
+machine as a converter current source, not as a voltage source behind
+`x''d`. `windGenUnitType` holds the delivered `WindGeneratingUnit.windGenUnitType`
+(`onshore`, `offshore`, `nothing` when absent or not a wind unit); the CGMES
+export writes the unit class and this value back.
 """
 struct CGMESShortCircuitData
   external_network_injections::Vector{NamedTuple}
@@ -35,6 +51,7 @@ struct CGMESShortCircuitData
   transformer_ends::Vector{NamedTuple}
   equivalent_injections::Vector{NamedTuple}
   asynchronous_machines::Vector{NamedTuple}
+  power_electronics_connections::Vector{NamedTuple}
 end
 
 # one row of _svTapStepFits (cgmes_report.jl): a tap changer whose SvTapStep
@@ -72,9 +89,10 @@ created:
   `"<line mRID>#charging"`; index into `net.shuntVec`.
 - `:load`: `EnergyConsumer`, `ConformLoad`, `NonConformLoad`,
   `StationSupply`, `AsynchronousMachine`; index into `net.prosumpsVec`.
-- `:generator`: `SynchronousMachine`, `StaticVarCompensator`, and
-  `EnergySource` when `map_energy_source = true`; index into
-  `net.prosumpsVec`.
+- `:generator`: `SynchronousMachine`, `StaticVarCompensator`,
+  `EnergySource` when `map_energy_source = true`, and
+  `PowerElectronicsConnection` (CGMES 3.0) when
+  `map_power_electronics = true`; index into `net.prosumpsVec`.
 - `:external_grid`: `ExternalNetworkInjection`, `EquivalentInjection`,
   `VsConverter`, `CsConverter`; index into `net.prosumpsVec`.
 - `:link`: a closed switch between two buses; index into `net.linkVec`.
@@ -83,7 +101,9 @@ created:
   A tap changer that joins another one's group as follower has no entry.
 
 Skipped objects have no entry; they are in `skipped_equipment`, which also
-holds every `EnergySource` of an import with `map_energy_source = false`.
+holds every `EnergySource` of an import with `map_energy_source = false`
+and every `PowerElectronicsConnection` of an import with
+`map_power_electronics = false`.
 Buses are addressed by their TopologicalNode (`topo.bus_name`), not here.
 """
 struct CGMESImportResult
@@ -145,6 +165,10 @@ struct _MapCtx
   # cgmes_import.map_energy_source: EnergySource objects become PQ
   # injections; off, they are counted and listed as not mapped
   map_energy_source::Bool
+  # cgmes_import.map_power_electronics: PowerElectronicsConnection objects
+  # become PQ or voltage-regulating injections; off, they are counted and
+  # listed as not mapped
+  map_power_electronics::Bool
   # bus index of every three-winding star point, in creation order; its start
   # voltage is set by _startStarBuses! once every branch exists
   star_buses::Vector{Int}
@@ -155,8 +179,8 @@ struct _MapCtx
   # (_pLimitsRead!); one notice in _mapInjections! counts them
   p_limit_placeholders::Dict{String,Int}
 end
-_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false, map_energy_source::Bool = false, eb_min_z_pu::Float64 = 1e-6) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, Int[], eb_min_z_pu, Dict{String,Int}())
+_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false, map_energy_source::Bool = false, map_power_electronics::Bool = false, eb_min_z_pu::Float64 = 1e-6) =
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, map_power_electronics, Int[], eb_min_z_pu, Dict{String,Int}())
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -1927,6 +1951,64 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
   end
 end
 
+# Bank regulators of the delivery (cgmes_import.shunt_control): a
+# LinearShuntCompensator with SSH controlEnabled and an enabled
+# voltage RegulatingControl at its own TopologicalNode becomes a switched
+# bank (ShuntVoltageControl in discrete mode) that takes over the mapped
+# shunt (addShuntVoltageControl! with shunt_idx): blocks of bPerSection at
+# the nominal voltage, from 0 to maximumSections, the SSH sections as start,
+# the target in pu of the regulated bus, the deadband half of
+# targetDeadband (as for the tap controllers), at least 1e-3 pu. Each case
+# the controller cannot represent stays a fixed shunt with a notice: a
+# remote target (ShuntVoltageControl holds its own bus), a nonlinear
+# characteristic (no uniform block), a conductance, a target outside the
+# vset band, a bus that is not PQ, a second bank on one bus. Runs after
+# the bus types are final.
+function _attachShuntControls!(net, store::CGMESStore, topo::CGMESTopology, ctx::_MapCtx)
+  n_ctrl = 0
+  n_kept = 0
+  keep(name, why) = (push!(ctx.messages, "notice: shunt control: $(name) stays a fixed shunt, $(why)"); n_kept += 1)
+  for sh in objectsOf(store, :NonlinearShuntCompensator)
+    haskey(ctx.element_by_mrid, sh.mrid) || continue
+    something(boolval(sh, :controlEnabled), false) || continue
+    ref(store, sh, :RegulatingControl) === nothing && continue
+    keep(something(str(sh, :name), sh.mrid), "a nonlinear characteristic has no uniform block")
+  end
+  for sh in objectsOf(store, :LinearShuntCompensator)
+    el = get(ctx.element_by_mrid, sh.mrid, nothing)
+    (el === nothing || el[1] !== :shunt) && continue
+    something(boolval(sh, :controlEnabled), false) || continue
+    rc = ref(store, sh, :RegulatingControl)
+    rc === nothing && continue
+    name = something(str(sh, :name), sh.mrid)
+    endswith(something(enumval(rc, :mode), ""), ".voltage") || (keep(name, "its RegulatingControl is no voltage control"); continue)
+    something(boolval(rc, :enabled), true) || continue
+    t = busOfEquipment(topo, sh, 1)
+    t === nothing && continue
+    own = topo.bus_name[t.tn]
+    tinfo = _regulatedBus(store, topo, rc)
+    tinfo === nothing && (keep(name, "control terminal unresolved"); continue)
+    tinfo.bus == own || (keep(name, "remote target bus $(tinfo.bus) (a bank regulator holds its own bus)"); continue)
+    num(sh, :gPerSection, 0.0) == 0.0 || (keep(name, "it has a conductance per section"); continue)
+    target = num(rc, :targetValue, 0.0) / tinfo.vn_kV
+    (ctx.vset_min_pu <= target <= ctx.vset_max_pu) || (keep(name, "voltage target $(round(target; digits = 4)) pu outside $(ctx.vset_min_pu) to $(ctx.vset_max_pu)"); continue)
+    step = num(sh, :bPerSection, 0.0) * t.vn_kV^2
+    nmax = num(sh, :maximumSections, 0.0)
+    (step != 0.0 && nmax >= 1.0) || (keep(name, "no block (bPerSection or maximumSections)"); continue)
+    busidx = Sparlectra.geNetBusIdx(net = net, busName = own)
+    Sparlectra.getNodeType(net.nodeVec[busidx]) == Sparlectra.PQ || (keep(name, "bus $(own) is $(Sparlectra.getNodeType(net.nodeVec[busidx])), its voltage is held otherwise"); continue)
+    any(c -> c isa Sparlectra.ShuntVoltageControl && c.bus == own, net.machineControls) && (keep(name, "bus $(own) has a bank regulator already"); continue)
+    lo, hi = minmax(0.0, nmax * step)
+    deadband = max(num(rc, :targetDeadband, 0.0) / tinfo.vn_kV / 2.0, 1e-3)
+    Sparlectra.addShuntVoltageControl!(net; bus = own, target_vm_pu = target, bs_min_mvar = lo, bs_max_mvar = hi, step_mvar = abs(step), deadband_vm_pu = deadband,
+                                       name = name, shunt_idx = el[2])
+    n_ctrl += 1
+    push!(ctx.messages, "shunt control: $(name) → voltage $(round(target; digits = 4)) pu at $(own), $(Int(nmax)) blocks of $(round(abs(step); digits = 3)) MVAr")
+  end
+  (n_ctrl + n_kept) > 0 && push!(ctx.messages, "notice: cgmes_import.shunt_control = true: $(n_ctrl) bank regulator(s) attached, $(n_kept) controlled bank(s) kept as fixed shunts")
+  return nothing
+end
+
 function _mapLoads!(net, store, topo, created, svmap, ctx::_MapCtx)
   for cls in (:EnergyConsumer, :ConformLoad, :NonConformLoad, :StationSupply)
     for load in objectsOf(store, cls)
@@ -2389,7 +2471,10 @@ function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
     n_islands += 1
     around = something(_busDictName(net, first(buses)), net.nodeVec[first(buses)].comp.cName)
     at = something(_busDictName(net, bus), net.nodeVec[bus].comp.cName)
-    push!(ctx.messages, "warning: electrical island of $(length(buses)) bus(es) around $(around) has infeed but no reference; $(get(name_of, k, "unit $(k)")) at $(at) made its slack ($(reason)), voltage setpoint $(round(vm; digits = 4)) pu from the start voltage of its bus")
+    # a converter can hold an island only when it forms the grid; CGMES does
+    # not say which kind it is, so the warning states the assumption
+    converter = ps.comp.cTyp == Sparlectra.PowerElectronicsConnection ? "; its unit type is unknown and assumed grid-following, an island of grid-following units only cannot stand in operation" : ""
+    push!(ctx.messages, "warning: electrical island of $(length(buses)) bus(es) around $(around) has infeed but no reference; $(get(name_of, k, "unit $(k)")) at $(at) made its slack ($(reason)), voltage setpoint $(round(vm; digits = 4)) pu from the start voltage of its bus$(converter)")
   end
   n_islands == 0 && return nothing
   Sparlectra.refreshBusTypesFromProsumers!(net)
@@ -2939,27 +3024,169 @@ function _mapEnergySources!(pending::Vector{NamedTuple}, net, store, topo, creat
   return nothing
 end
 
-# A mapped EnergySource is no slack candidate of the delivery, but with
-# P > 0 it is generation, so _deEnergizeSourcelessComponents! keeps the
-# island it feeds energized. With multi_slack = true
+# The CGMES 3.0 subclasses of PowerElectronicsUnit. The reader keeps every
+# object under its own class, so the abstract base is listed only in case a
+# delivery instantiates it.
+const _PE_UNIT_CLASSES = [:PowerElectronicsUnit, :BatteryUnit, :PhotoVoltaicUnit, :PowerElectronicsWindUnit]
+
+# Active power limits of each PowerElectronicsConnection from its units
+# (PowerElectronicsUnit.minP/maxP in EQ, nameplate values in generator sign
+# like GeneratingUnit.min/maxOperatingP): the sum over the units that
+# reference the connection, `nothing` for a bound that one of them does not
+# state, so a partial sum never reads as the full limit.
+function _powerElectronicsPLimits(store::CGMESStore)::Dict{String,Tuple{Union{Nothing,Float64},Union{Nothing,Float64}}}
+  units = Dict{String,Vector{CIMObject}}()
+  for cls in _PE_UNIT_CLASSES, u in objectsOf(store, cls)
+    pec = get(u.refs, :PowerElectronicsConnection, nothing)
+    pec === nothing || push!(get!(Vector{CIMObject}, units, pec), u)
+  end
+  out = Dict{String,Tuple{Union{Nothing,Float64},Union{Nothing,Float64}}}()
+  for (pec, us) in units
+    lo = [num(u, :minP) for u in us]
+    hi = [num(u, :maxP) for u in us]
+    out[pec] = (any(isnothing, lo) ? nothing : sum(something, lo), any(isnothing, hi) ? nothing : sum(something, hi))
+  end
+  return out
+end
+
+# PowerElectronicsConnection (CGMES 3.0: wind and solar parks, batteries
+# behind a converter). Without it their
+# generation is missing from the network. Behind the switch
+# cgmes_import.map_power_electronics (default off like map_energy_source;
+# the release decides both): off, every connection goes to ctx.skipped and
+# one notice names the switch, while count and P sum stand in the table of
+# classes not mapped. The SSH p and q of the connection use the load sign
+# like EnergySource.activePower ("positive sign means flow out from a
+# node"), so the injection is the negated value. The connection is a RegulatingCondEq:
+# with RegulatingCondEq.controlEnabled (SSH, absent counts as on, as for the
+# SVC) and a voltage RegulatingControl that is enabled and has a target
+# above zero it regulates like a SynchronousMachine (_voltageSetpoint: PV at
+# its own bus on the target; a target outside vset_min_pu/vset_max_pu holds
+# it PV at its bus voltage with a warning; a remote target holds it PV at its
+# own bus or, with machine_control, gives it an outer-loop controller). No
+# target, a target <= 0, controlEnabled = false, a disabled control or a
+# control in another mode leave a fixed PQ injection. The Q
+# limits are the minQ/maxQ hull of the machines; a regulating connection
+# without usable minQ/maxQ gets the machines' wide fallback from ratedS, a
+# PQ one keeps none. P limits come from its PowerElectronicsUnits. ratedU,
+# ratedS and maxIFault go to the short-circuit harvest
+# (collectShortCircuitData), where the connection is a current source. An
+# injection like EnergySource, and like it no slack candidate of the delivery
+# (slack_candidate = false; CGMES gives a connection no referencePriority); in
+# an island without other reference it can still become the slack
+# (_slackForIslandsWithoutReference!). The prosumer carries the component type
+# PowerElectronicsConnection, so the short-circuit engine neither takes its
+# maxP as the size of a machine at the same bus nor counts it as a
+# synchronous source.
+function _mapPowerElectronicsConnections!(pending::Vector{NamedTuple}, net, store, topo, created, svmap, ctx::_MapCtx)
+  pecs = collect(CIMObject, objectsOf(store, :PowerElectronicsConnection))
+  isempty(pecs) && return nothing
+  if !ctx.map_power_electronics
+    foreach(pec -> push!(ctx.skipped, pec.mrid), pecs)
+    # same form as the EnergySource notice: the count and P sum stand in the
+    # table of classes not mapped, this line names the switch
+    push!(ctx.messages, "notice: PowerElectronicsConnection not mapped, switch cgmes_import.map_power_electronics (count and SSH P sum in the table of classes not mapped)")
+    return nothing
+  end
+  plimits = _powerElectronicsPLimits(store)
+  n_mapped = 0
+  n_regulating = 0
+  n_skipped = 0
+  p_sum = 0.0
+  q_sum = 0.0
+  for pec in pecs
+    t = busOfEquipment(topo, pec, 1)
+    name = something(str(pec, :name), pec.mrid)
+    reason = if t === nothing
+      "no TopologicalNode"
+    elseif !_conn(ctx, t.connected)
+      "terminal disconnected"
+    elseif !_inService(ctx, pec)
+      "out of service, SSH inService=false"
+    else
+      nothing
+    end
+    if reason !== nothing
+      push!(ctx.messages, "skip: PowerElectronicsConnection $(name) ($(reason))")
+      push!(ctx.skipped, pec.mrid)
+      n_skipped += 1
+      continue
+    end
+    bus = _ensureBus!(net, created, topo, svmap, t.tn)
+    p = -num(pec, :p, 0.0)                        # load convention -> injection
+    q = -num(pec, :q, 0.0)
+    vset, vctrl, remote_bus = if something(boolval(pec, :controlEnabled), true)
+      _voltageSetpoint(store, topo, pec, t.tn, ctx.messages; vset_min_pu = ctx.vset_min_pu, vset_max_pu = ctx.vset_max_pu, allow_remote = ctx.machine_control)
+    else
+      (nothing, false, nothing)
+    end
+    is_remote = remote_bus !== nothing
+    qlo = _limitHullMin(num(pec, :minQ), num(pec, :maxQ))
+    qhi = _limitHullMax(num(pec, :minQ), num(pec, :maxQ))
+    if qlo === nothing || qhi === nothing || (qhi - qlo) < 1e-6
+      qlo = nothing
+      qhi = nothing
+      if vctrl
+        qwide = max(num(pec, :ratedS, 0.0), net.baseMVA)
+        qlo = -qwide
+        qhi = qwide
+        push!(ctx.messages, "notice: PowerElectronicsConnection $(name) regulates voltage and has no usable minQ/maxQ, using ±$(qwide) MVAr")
+      end
+    end
+    pmin, pmax = get(plimits, pec.mrid, (nothing, nothing))
+    push!(
+      pending,
+      (
+        bus = bus,
+        type = "POWERELECTRONICSCONNECTION",
+        p = p,
+        q = q,
+        pMin = pmin,
+        pMax = pmax,
+        qMin = qlo,
+        qMax = qhi,
+        vm_pu = (vctrl && !is_remote) ? _pvVoltage(net, bus, vset) : nothing,
+        isRegulated = vctrl && !is_remote,
+        slack_candidate = false,
+        name = name,
+        remote_target = is_remote ? (bus = remote_bus, vset_pu = vset) : nothing,
+        mrid = pec.mrid,
+      ),
+    )
+    n_mapped += 1
+    vctrl && (n_regulating += 1)
+    p_sum += p
+    q_sum += q
+  end
+  push!(ctx.messages, "notice: $(n_mapped) PowerElectronicsConnection object(s) mapped ($(n_regulating) voltage-regulating, $(n_mapped - n_regulating) PQ; P = $(round(p_sum; digits = 2)) MW, Q = $(round(q_sum; digits = 2)) MVAr injected), $(n_skipped) skipped")
+  return nothing
+end
+
+# A mapped EnergySource or PowerElectronicsConnection is no slack candidate
+# of the delivery, but with P > 0 it is generation, so
+# _deEnergizeSourcelessComponents! keeps the island it feeds energized. With multi_slack = true
 # _slackForIslandsWithoutReference! gives such an island a slack before this
 # runs, so the notice below only fires with multi_slack = false: then an
-# island whose only source is EnergySource leaves the import without a
+# island whose only sources are such objects leaves the import without a
 # reference. The island-wise solve (power_flow.islands) gives such an island
 # its strongest generating unit as reference (detect_ac_islands, status
-# promote_generator_ref), so the P of that EnergySource is a result of the
-# island balance and no longer the SSH value; with islands disabled the
-# solve rejects the island. One notice per such island makes that visible.
-# A Slack or PV bus in the island (a regulating SVC) means the solver picks
-# another reference, so those islands are left out.
+# promote_generator_ref), so the P of that source is a result of the island
+# balance and no longer the SSH value; with islands disabled the solve
+# rejects the island. One notice per such island makes that visible. A Slack
+# or PV bus in the island (a regulating SVC or PowerElectronicsConnection)
+# means the solver picks another reference, so those islands are left out.
 function _noticeEnergySourceOnlyIslands!(net, store, ctx::_MapCtx)
-  ctx.map_energy_source || return nothing
-  es_name = Dict{Int,String}()   # prosumer index -> EnergySource name
-  for es in objectsOf(store, :EnergySource)
-    k = get(ctx.prosumer_by_mrid, es.mrid, nothing)
-    k === nothing || (es_name[k] = something(str(es, :name), es.mrid))
+  src = Dict{Int,Tuple{Symbol,String}}()   # prosumer index -> (class, name)
+  classes = Symbol[]
+  ctx.map_energy_source && push!(classes, :EnergySource)
+  ctx.map_power_electronics && push!(classes, :PowerElectronicsConnection)
+  for cls in classes
+    for o in objectsOf(store, cls)
+      k = get(ctx.prosumer_by_mrid, o.mrid, nothing)
+      k === nothing || (src[k] = (cls, something(str(o, :name), o.mrid)))
+    end
   end
-  isempty(es_name) && return nothing
+  isempty(src) && return nothing
   # generating units per bus that the solver could promote (an SVC carries
   # no active power and is never promoted)
   units = Dict{Int,Vector{Int}}()
@@ -2973,12 +3200,13 @@ function _noticeEnergySourceOnlyIslands!(net, store, ctx::_MapCtx)
   for (buses, has_ref) in zip(islands, held)
     has_ref && continue
     ks = reduce(vcat, (get(units, b, Int[]) for b in buses); init = Int[])
-    (isempty(ks) || !all(k -> haskey(es_name, k), ks)) && continue
-    names = sort!([es_name[k] for k in ks])
+    (isempty(ks) || !all(k -> haskey(src, k), ks)) && continue
+    names = sort!([last(src[k]) for k in ks])
     shown = length(names) <= 5 ? join(names, ", ") : join(names[1:5], ", ") * ", ..."
+    classes = join(sort!(unique([String(first(src[k])) for k in ks])), " and ")
     around = something(_busDictName(net, first(buses)), net.nodeVec[first(buses)].comp.cName)
     which = length(ks) == 1 ? "it" : "the strongest of them"
-    push!(ctx.messages, "notice: electrical island of $(length(buses)) bus(es) around $(around) has no slack and no source but EnergySource ($(shown)); the island-wise solve makes $(which) the island reference, so its P follows the island balance instead of the SSH value (with power_flow.islands.enabled = false the solve rejects the island)")
+    push!(ctx.messages, "notice: electrical island of $(length(buses)) bus(es) around $(around) has no slack and no source but $(classes) ($(shown)); the island-wise solve makes $(which) the island reference, so its P follows the island balance instead of the SSH value (with power_flow.islands.enabled = false the solve rejects the island)")
   end
   return nothing
 end
@@ -2989,7 +3217,7 @@ end
 # subclass under its own class, so the EnergyConsumer and RotatingMachine
 # subclasses are listed one by one; RotatingMachine.p arrives as :p on
 # SynchronousMachine and AsynchronousMachine, ACDCConverter.p on VsConverter
-# and CsConverter. PowerElectronicsConnection (3.0 only) is never mapped.
+# and CsConverter. PowerElectronicsConnection exists in 3.0 only.
 const _SSH_ACTIVE_POWER_ATTR = [
   :EnergyConsumer => :p,
   :ConformLoad => :p,
@@ -3069,14 +3297,14 @@ end
 # - a switch of _SWITCH_FAMILY_CLASSES the topology consumes (_switchConsumed);
 # - an object out of service or without a connected terminal on a
 #   TopologicalNode, if its class is one the importer maps
-#   (_MAPPED_EQUIPMENT_CLASSES; EnergySource with its switch on): the
-#   importer skips it on purpose and says so.
+#   (_MAPPED_EQUIPMENT_CLASSES; EnergySource and PowerElectronicsConnection
+#   with their switch on): the importer skips it on purpose and says so.
 # Objects of a class the importer does not map count in any state.
 # The row holds the number of objects not accounted for, the sum of their SSH
 # active power in MW in load sign (`nothing` where none of them carries an
 # SSH value) and how many of them carry none. Reads only the store and the
 # element map, so the importer and the tests share it.
-function _unmappedClasses(store::CGMESStore, element_by_mrid::AbstractDict; map_energy_source::Bool = false, ignore_connected::Bool = false)
+function _unmappedClasses(store::CGMESStore, element_by_mrid::AbstractDict; map_energy_source::Bool = false, map_power_electronics::Bool = false, ignore_connected::Bool = false)
   # carries the importer's in-service and connected rules with its override
   flags = _MapCtx(false, ignore_connected)
   terms = Dict{String,Vector{CIMObject}}()
@@ -3102,6 +3330,7 @@ function _unmappedClasses(store::CGMESStore, element_by_mrid::AbstractDict; map_
   end
   with_path = Set{Symbol}(_MAPPED_EQUIPMENT_CLASSES)
   map_energy_source && push!(with_path, :EnergySource)
+  map_power_electronics && push!(with_path, :PowerElectronicsConnection)
   no_terms = CIMObject[]
   rows = @NamedTuple{class::Symbol, count::Int, p_mw::Union{Nothing,Float64}, no_p::Int}[]
   for cls in sort!(collect(candidates); by = String)
@@ -3140,6 +3369,14 @@ function _noteRegulationOff!(messages::Vector{String}, ctrl_off, cls::Symbol)
   push!(messages, "notice: $(length(names)) $(cls)(s) with controlEnabled = false, no voltage regulation: $(shown)")
   return nothing
 end
+
+# IdentifiedObject.description of an EquivalentInjection the 2.4.15 export
+# wrote for a PowerElectronicsConnection (2.4.15 has no class for it). The
+# import gives such an injection the component type
+# PowerElectronicsConnection again: the short circuit then flags its island
+# for the fault current the export could not carry, and a new export writes
+# it as EquivalentInjection again.
+const _PEC_EI_DESCRIPTION = "PowerElectronicsConnection"
 
 function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_slack::Bool = true)
   scan = _SlackScan()
@@ -3635,12 +3872,14 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         # no `mrid` on purpose (export identity, see the flush below); the
         # source mRID only feeds element_by_mrid
         src_mrid = ei.mrid,
+        converter = str(ei, :description) == _PEC_EI_DESCRIPTION,
       ),
     )
   end
   n_ei_status_missing > 0 && push!(ctx.messages, "notice: $(n_ei_status_missing) EquivalentInjection(s) with regulationCapability = true and no SSH regulationStatus, no voltage regulation")
 
   _mapEnergySources!(pending, net, store, topo, created, svmap, ctx)
+  _mapPowerElectronicsConnections!(pending, net, store, topo, created, svmap, ctx)
 
   slack_bus = _chooseSlack(scan, ctx.messages)
   # One slack per island: every SV angle-reference bus that carries a unit
@@ -3651,8 +3890,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   ctx.machine_control && _resolveMachineControlPlans!(pending, net, slack_buses, ctx.messages)
   marked = Set{String}()
   for inj in pending
-    # an EnergySource tuple carries slack_candidate = false: the importer
-    # never gives it the reference role, even on the slack bus
+    # an EnergySource or PowerElectronicsConnection tuple carries
+    # slack_candidate = false: the importer never gives it the reference
+    # role, even on the slack bus
     is_slack = get(inj, :slack_candidate, true) && inj.bus in slack_buses && !(inj.bus in marked)
     is_slack && push!(marked, inj.bus)
     vm = inj.vm_pu
@@ -3690,9 +3930,10 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     inj_mrid = get(inj, :mrid, nothing)
     inj_mrid === nothing || (ctx.prosumer_by_mrid[String(inj_mrid)] = lastindex(net.prosumpsVec))
     # every pending tuple carries its source mRID, an EquivalentInjection
-    # as src_mrid (`something` throws for a tuple with neither); SVCs and
-    # EnergySources are injection-type prosumers like the machines,
-    # converters and equivalents share the external-grid type string
+    # as src_mrid (`something` throws for a tuple with neither); SVCs,
+    # EnergySources and PowerElectronicsConnections are injection-type
+    # prosumers like the machines, converters and equivalents share the
+    # external-grid type string
     addr_mrid = String(something(inj_mrid, get(inj, :src_mrid, nothing)))
     addr_kind = inj.type == "EXTERNALNETWORKINJECTION" ? :external_grid : :generator
     ctx.element_by_mrid[addr_mrid] = (addr_kind, lastindex(net.prosumpsVec))
@@ -3703,6 +3944,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     if inj.type == "SYNCHRONOUSMACHINE"
       net.prosumpsVec[end].comp.cTyp = Sparlectra.SynchronousMachine
       _captureBusEquipment!(net, ctx, "SM", inj.bus, get(inj, :mrid, nothing); children = (T1 = get(inj, :terminal_mrid, nothing), GU = get(inj, :gu_mrid, nothing), RC = get(inj, :rc_mrid, nothing)))
+    elseif inj.type == "EXTERNALNETWORKINJECTION" && get(inj, :converter, false)
+      # an EquivalentInjection the 2.4.15 export wrote for a converter (see
+      # _PEC_EI_DESCRIPTION): the converter type again, and like a
+      # PowerElectronicsConnection no captured identity, so the export
+      # counter of external injections at the bus stays as the export saw it
+      net.prosumpsVec[end].comp.cTyp = Sparlectra.PowerElectronicsConnection
     elseif inj.type == "EXTERNALNETWORKINJECTION"
       net.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
       # EquivalentInjections arrive under the same type string without an
@@ -3711,6 +3958,10 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     elseif inj.type == "STATICVARCOMPENSATOR"
       net.prosumpsVec[end].comp.cTyp = Sparlectra.StaticVarCompensator
       _captureBusEquipment!(net, ctx, "SVC", inj.bus, get(inj, :mrid, nothing); children = (T1 = get(inj, :terminal_mrid, nothing), RC = get(inj, :rc_mrid, nothing)))
+    elseif inj.type == "POWERELECTRONICSCONNECTION"
+      # no captured identity: the 2.4.15 exporter writes it as an
+      # EquivalentInjection under a minted mRID
+      net.prosumpsVec[end].comp.cTyp = Sparlectra.PowerElectronicsConnection
     end
     # surviving remote-control plans pick up their prosumer index here (the
     # prosumer just pushed is the machine); the controller itself is attached
@@ -3761,6 +4012,20 @@ function collectShortCircuitData(store::CGMESStore, topo::CGMESTopology)::CGMESS
   end
   machines = NamedTuple[]
   for o in objectsOf(store, :SynchronousMachine)
+    # A machine on a wind or solar unit is a converter unit in fact: the
+    # record names the class of the unit (`converter_unit`), and the engine
+    # takes it as a current source. Its
+    # rated current comes from ratedS, else from the maximum active power of
+    # the unit, so `pmax_MW` carries GeneratingUnit.maxOperatingP for such a
+    # machine only: a thermal machine keeps the size search of
+    # sc_machine_size through the network unit, unchanged.
+    gu = ref(store, o, :GeneratingUnit)
+    converter_unit = (gu !== nothing && gu.class in (:WindGeneratingUnit, :SolarGeneratingUnit)) ? String(gu.class) : nothing
+    pmax = converter_unit === nothing ? nothing : num(gu, :maxOperatingP)
+    # WindGeneratingUnit.windGenUnitType (onshore, offshore) rides along so
+    # the CGMES export writes the unit as delivered
+    wind_type = gu === nothing || gu.class !== :WindGeneratingUnit ? nothing : str(gu, :windGenUnitType)
+    wind_type === nothing || (wind_type = String(last(split(wind_type, '.'))))
     push!(
       machines,
       (
@@ -3776,6 +4041,9 @@ function collectShortCircuitData(store::CGMESStore, topo::CGMESTopology)::CGMESS
         earthing = boolval(o, :earthing),
         ratedS_MVA = num(o, :ratedS),
         ratedU_kV = num(o, :ratedU),
+        converter_unit = converter_unit,
+        pmax_MW = pmax,
+        windGenUnitType = wind_type,
       ),
     )
   end
@@ -3829,7 +4097,18 @@ function collectShortCircuitData(store::CGMESStore, topo::CGMESTopology)::CGMESS
       ),
     )
   end
-  return CGMESShortCircuitData(enis, machines, lines, ptes, eis, asms)
+  # Converter-connected units (CGMES 3.0): PowerElectronicsConnection.maxIFault
+  # is the maximum fault current "in per-unit of rated current" (CIM17, type
+  # PU), the rated current follows from ratedS and ratedU. No CGMES 3.0
+  # profile (EQ, SC, SSH, DY, OP) defines maxIFault, so a conforming
+  # delivery has none and the record carries nothing; it is read where a
+  # delivery carries it beyond the profile. importCGMES keeps the records
+  # of the connections it mapped.
+  pecs = NamedTuple[]
+  for o in objectsOf(store, :PowerElectronicsConnection)
+    push!(pecs, (mrid = o.mrid, name = str(o, :name), bus = _busOrNothing(topo, o), maxIFault_pu = num(o, :maxIFault), ratedS_MVA = num(o, :ratedS), ratedU_kV = num(o, :ratedU)))
+  end
+  return CGMESShortCircuitData(enis, machines, lines, ptes, eis, asms, pecs)
 end
 
 # --- public API -------------------------------------------------------------
@@ -3915,6 +4194,53 @@ the default `false` the objects stay out of the network, are listed in
 `skipped_equipment`, and one notice names the key that maps them; their
 count and P sum stand in the table of classes not mapped.
 
+With `map_power_electronics = true` every in-service, connected
+`PowerElectronicsConnection` (CGMES 3.0) on a TopologicalNode becomes an
+injection prosumer of component type `PowerElectronicsConnection` with
+`p = -p` and `q = -q` from the SSH, addressed as `:generator` in
+`element_by_mrid`. With
+`controlEnabled` and an enabled voltage `RegulatingControl` with a target
+above zero it regulates like a `SynchronousMachine` (local target: PV at
+its bus; a target outside `vset_min_pu`/`vset_max_pu`: held PV at its bus
+voltage with a warning; remote target: held PV at its bus, or an
+outer-loop controller with `machine_control = true`), otherwise it is a
+fixed PQ injection. Q limits
+come from the `minQ`/`maxQ` hull (a regulating one without them gets
+±max(`ratedS`, `baseMVA`)), P limits from the summed `minP`/`maxP` of its
+`PowerElectronicsUnit`s. It is no slack candidate of the delivery; an
+island whose only sources are such PQ injections is treated like an
+`EnergySource` island (an importer slack, or with `multi_slack = false` the
+same notice). One notice counts the mapped, regulating and skipped
+objects with their P and Q sums. Each mapped connection leaves a record in
+`shortcircuit.power_electronics_connections` (`maxIFault`, `ratedS`,
+`ratedU`), from which `runShortCircuit!` forms its fault current.
+`maxIFault` is a CIM17 attribute outside the CGMES 3.0 profiles, so a
+conforming delivery has none and its connections flag their island in the
+short circuit instead. With the default `false` the connections
+stay out of the network like unmapped `EnergySource` objects: listed in
+`skipped_equipment`, one notice naming the key, count and P sum in the
+table of classes not mapped. An `EquivalentInjection` with
+`IdentifiedObject.description` = `PowerElectronicsConnection` (the CGMES
+2.4.15 export writes a connection so) gets the component type
+`PowerElectronicsConnection`, whatever the key: it has no fault current,
+so the short circuit flags its island.
+
+A `SynchronousMachine` on a `WindGeneratingUnit` or `SolarGeneratingUnit`
+is mapped like any machine for the power flow; its short-circuit record
+names the unit class (`converter_unit`) and carries
+`GeneratingUnit.maxOperatingP`, so `runShortCircuit!` takes it as a
+converter current source (`short_circuit.converter_current_factor` times
+the rated current from `ratedS`, else from `maxOperatingP`).
+
+With `shunt_control = true` every mapped `LinearShuntCompensator` with SSH
+`controlEnabled` and an enabled voltage `RegulatingControl` at its own bus
+gets a switched-bank `ShuntVoltageControl` that takes over its shunt: blocks
+of `bPerSection` at the nominal voltage from 0 to `maximumSections`, the SSH
+`sections` as start, the target in pu of the bus, half the `targetDeadband`
+as deadband. A remote target, a target outside the `vset` band, a
+conductance per section, a bus that is not PQ, a second bank on one bus and
+a `NonlinearShuntCompensator` keep the shunt fixed with a notice.
+
 Every class with terminals or with an SSH active power value of which no
 object outside the boundary set is mapped gets one row `class not mapped:`
 with its object count and the sum of its SSH P in MW, below one header
@@ -3950,6 +4276,8 @@ function importCGMES(;
   infer_base_voltages::Bool = false,
   hvdc_mode::Symbol = :injections,
   map_energy_source::Bool = false,
+  map_power_electronics::Bool = false,
+  shunt_control::Bool = false,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
@@ -3962,7 +4290,7 @@ function importCGMES(;
     loadCGMES(path)
   end
   equivalent_branch_min_z_pu >= 0.0 || throw(ArgumentError("importCGMES: equivalent_branch_min_z_pu must not be negative, got $(equivalent_branch_min_z_pu)"))
-  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, eb_min_z_pu = equivalent_branch_min_z_pu)
+  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, map_power_electronics = map_power_electronics, eb_min_z_pu = equivalent_branch_min_z_pu)
   ignore_connected && push!(ctx.messages, "notice: ignore_connected = true — SSH Terminal.connected flags are overridden, everything is treated as in service")
   messages = ctx.messages
   unresolved = unresolvedReferences(store)
@@ -4066,7 +4394,7 @@ function importCGMES(;
   # network elements show up in the import report; the header states the
   # sign convention once for all rows, and a row without any SSH value has no
   # P sum
-  unmapped = _unmappedClasses(store, ctx.element_by_mrid; map_energy_source = ctx.map_energy_source, ignore_connected = ctx.ignore_connected)
+  unmapped = _unmappedClasses(store, ctx.element_by_mrid; map_energy_source = ctx.map_energy_source, map_power_electronics = ctx.map_power_electronics, ignore_connected = ctx.ignore_connected)
   isempty(unmapped) || push!(ctx.messages, "notice: classes not mapped, P sum from SSH in load sign (positive means flow out of the node):")
   for r in unmapped
     p_sum = r.p_mw === nothing ? "" : string(r.no_p == 0 ? "" : ", $(r.no_p) without SSH P", ", P sum $(round(r.p_mw; digits = 2)) MW")
@@ -4074,6 +4402,7 @@ function importCGMES(;
   end
   tap_control && _disableIneffectiveTapControllers!(net, ctx)
   machine_control && _attachMachineControls!(net, ctx)
+  shunt_control && _attachShuntControls!(net, store, topo, ctx)
   # HVDC pairing (#297 Draft B): detection runs on the raw store, so even in
   # the default Stage-0 mode the pairs are named in the messages; only
   # :paired_control attaches steerable controllers.
@@ -4099,6 +4428,9 @@ function importCGMES(;
   for field in (:external_network_injections, :synchronous_machines, :equivalent_injections, :asynchronous_machines)
     filter!(r -> haskey(ctx.element_by_mrid, r.mrid), getfield(sc, field))
   end
+  # a connection the import did not map (switch off, out of service, no
+  # node) is no element of the network and feeds no fault current
+  filter!(r -> haskey(ctx.prosumer_by_mrid, r.mrid), sc.power_electronics_connections)
   isempty(sc.ac_line_segments) || push!(ctx.messages, "short-circuit data: $(length(sc.ac_line_segments)) lines (read, not evaluated)")
   isempty(sc.synchronous_machines) || push!(ctx.messages, "short-circuit data: $(length(sc.synchronous_machines)) machines (read, not evaluated)")
   isempty(sc.external_network_injections) || push!(ctx.messages, "short-circuit data: $(length(sc.external_network_injections)) external injections (read, not evaluated)")
@@ -4138,7 +4470,7 @@ function importCGMES(;
   # the harvest travels with the network as well (the container is
   # field-identical), so an export or a short-circuit run of the network
   # alone has the source data of the delivery
-  for field in (:external_network_injections, :synchronous_machines, :ac_line_segments, :transformer_ends, :equivalent_injections, :asynchronous_machines)
+  for field in fieldnames(CGMESShortCircuitData)
     append!(getfield(net.sc_sources, field), getfield(sc, field))
   end
   # every tap controller exists now, so its position in _tap_controllers(net)

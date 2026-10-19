@@ -180,6 +180,28 @@ function _matpower_bus_setpoints(net::Net)::Dict{Int,Float64}
   return vset
 end
 
+# The flat state of a model-only export (write_solution = false) at the
+# auxiliary PQ buses (three-winding star points): the start the solver's flat
+# start gives them (_aux_bus_flat_start!, the ratio of the stiffest winding)
+# instead of 1.0 pu, keyed by busIdx as (vm_pu, va_deg). The file VM/VA is the
+# start of a reader that does not flat-start (Sparlectra's default, MATPOWER);
+# with 1.0 pu there the CGMES MiniGrid did not converge after the round trip.
+# Empty for a net without auxiliary buses or without a slack.
+function _matpower_aux_flat_start(net::Net)::Dict{Int,Tuple{Float64,Float64}}
+  out = Dict{Int,Tuple{Float64,Float64}}()
+  any(_is_aux_node, net.nodeVec) || return out
+  slack_idx = findfirst(n -> getNodeType(n) == Slack, net.nodeVec)
+  slack_idx === nothing && return out
+  V0, _ = initialVrect(net; flatstart = true)
+  flat = copy(V0)
+  _aux_bus_flat_start!(V0, net, slack_idx)
+  for k in eachindex(V0)
+    V0[k] == flat[k] && continue
+    out[net.nodeVec[k].busIdx] = (abs(V0[k]), rad2deg(angle(V0[k])))
+  end
+  return out
+end
+
 function writeBusData(net::Net, file; write_solution::Bool = true, solved::Bool = true, branch_shunt_rows = _matpower_branch_shunt_rows(net))
   for r in branch_shunt_rows
     br = net.branchVec[Int(r[1])]
@@ -196,6 +218,7 @@ function writeBusData(net::Net, file; write_solution::Bool = true, solved::Bool 
   hasPVBus = false
   slackIdx = 0
   vgSlack = 1.0
+  aux_start = write_solution ? Dict{Int,Tuple{Float64,Float64}}() : _matpower_aux_flat_start(net)
   for node in NodeVec
     rows += 1
     bus_i = node.busIdx
@@ -230,15 +253,15 @@ function writeBusData(net::Net, file; write_solution::Bool = true, solved::Bool 
 
     # write_solution = false: the export is a pure model file, so non-slack/
     # non-PV buses do not carry a (possibly solved) voltage state. Slack and
-    # PV setpoints are meaningful pre-solve input and are preserved. An
+    # PV setpoints are meaningful pre-solve input and are preserved; an
+    # auxiliary bus gets its flat-start value (_matpower_aux_flat_start). An
     # unsolved net writes the generator setpoint there (vset is empty when
     # the net is solved, then the solved voltage is the setpoint).
     if write_solution || num in (2, 3)
       vm_pu = get(vset, bus_i, (node._vm_pu === nothing) ? 1.0 : node._vm_pu)
       va_deg = (node._va_deg === nothing) ? 0.0 : node._va_deg
     else
-      vm_pu = 1.0
-      va_deg = 0.0
+      vm_pu, va_deg = get(aux_start, node.busIdx, (1.0, 0.0))
     end
     if isnothing(node.comp.cVN)
       @warn "Base Voltage not defined for node $(node.comp.cID) -> set to 1.0"
@@ -556,8 +579,8 @@ end
 # emitted once whenever any extension content is present (transformer-loss
 # metadata, the tap-changer-model roundtrip marker, or the solution-written
 # marker); each sub-field is otherwise independently optional.
-function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool, link_rows = Tuple{Int,Int,Int}[], tap_changer_rows = NTuple{14,Float64}[], branch_shunt_rows = NTuple{4,Float64}[])
-  isempty(loss_rows) && tap_changer_model_marker === nothing && !solution_written && isempty(link_rows) && isempty(tap_changer_rows) && isempty(branch_shunt_rows) && return nothing
+function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker::Union{Nothing,Symbol}, solution_written::Bool, link_rows = Tuple{Int,Int,Int}[], tap_changer_rows = NTuple{14,Float64}[], branch_shunt_rows = NTuple{4,Float64}[], aux_bus_rows = Int[])
+  isempty(loss_rows) && tap_changer_model_marker === nothing && !solution_written && isempty(link_rows) && isempty(tap_changer_rows) && isempty(branch_shunt_rows) && isempty(aux_bus_rows) && return nothing
   write(file, "mpc.sparlectra = struct();\n")
   write(file, "mpc.sparlectra.format_version = 1;\n")
   !isempty(loss_rows) && writeSparlectraTransformerLossMetadata(file, loss_rows)
@@ -575,6 +598,16 @@ function writeSparlectraExtensionBlock(file; loss_rows, tap_changer_model_marker
     write(file, "mpc.sparlectra.branch_shunts = [\n")
     for r in branch_shunt_rows
       write(file, "\t", string(Int(r[1])), "\t", string(Int(r[2])), "\t", string(r[3]), "\t", string(r[4]), ";\n")
+    end
+    write(file, "];\n")
+  end
+  if !isempty(aux_bus_rows)
+    # the auxiliary role (_is_aux_node) by bus number: a bus keeps its own
+    # name, so the name no longer says that it is a star point
+    write(file, "%% auxiliary buses (bus): three-winding star points and other internal nodes, flat start at the ratio of the stiffest winding\n")
+    write(file, "mpc.sparlectra.aux_buses = [\n")
+    for b in aux_bus_rows
+      write(file, "\t", string(b), ";\n")
     end
     write(file, "];\n")
   end
@@ -698,7 +731,7 @@ function writeSparlectraMetadata(net::Net, file; solution_written::Bool = false,
     end
     write(file, "};\n")
   end
-  writeSparlectraExtensionBlock(file; loss_rows = _sparlectra_transformer_loss_rows(net), tap_changer_model_marker = _matpower_export_tap_changer_model_marker(net), solution_written = solution_written, link_rows = _sparlectra_link_rows(net), tap_changer_rows = _sparlectra_tap_changer_rows(net), branch_shunt_rows = branch_shunt_rows)
+  writeSparlectraExtensionBlock(file; loss_rows = _sparlectra_transformer_loss_rows(net), tap_changer_model_marker = _matpower_export_tap_changer_model_marker(net), solution_written = solution_written, link_rows = _sparlectra_link_rows(net), tap_changer_rows = _sparlectra_tap_changer_rows(net), branch_shunt_rows = branch_shunt_rows, aux_bus_rows = Int[n.busIdx for n in net.nodeVec if _is_aux_node(n)])
 end
 
 """
@@ -733,9 +766,13 @@ which Sparlectra reads back; see the MATPOWER page of the documentation.
   the historical 13-column model-only `mpc.branch` export instead of writing
   empty result columns. When `false`, the export is a pure model file:
   `mpc.branch` keeps 13 columns and `VM = 1.0`/`VA = 0.0` for all
-  non-slack/non-PV buses (slack and PV setpoints are preserved). A network
-  without solved branch flows writes the generator voltage setpoint as `Vg`
-  and as `VM` of its PV and slack bus.
+  non-slack/non-PV buses (slack and PV setpoints are preserved), except an
+  auxiliary bus (three-winding star point), which gets the start the
+  solver's flat start gives it: the voltage at which its stiffest winding
+  carries no current. The auxiliary buses are listed in
+  `mpc.sparlectra.aux_buses`, so the reader keeps them auxiliary. A
+  network without solved branch flows writes the generator voltage setpoint
+  as `Vg` and as `VM` of its PV and slack bus.
 
 # Example
 ```julia

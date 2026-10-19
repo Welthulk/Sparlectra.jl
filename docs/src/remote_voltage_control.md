@@ -102,12 +102,16 @@ constant-Q controller.
 - Each applied step updates the machine's `ProSumer.qVal` and its
   bus-level generation sum by the same delta.
 - Tap and machine controllers run in the same outer loop (`run_control!`
-  evaluates all, applies all, re-solves). One machine controller per
-  target bus; several machines at one bus targeting different buses
-  pollute each other's measured sensitivities (more outer iterations).
+  evaluates all, applies by rank, re-solves; at equal
+  [priority](@ref controller_priority_ranks), the default, all apply in
+  the same pass). One machine controller per target bus; several machines
+  at one bus targeting different buses pollute each other's measured
+  sensitivities (more outer iterations).
 - A tap controller and a machine controller on one target bus:
-  `addMachineVoltageControl!` warns but does not resolve it (a
-  tap-regulated bus stays PQ); reconfigure one of them.
+  `addMachineVoltageControl!` warns (a tap-regulated bus stays PQ) unless
+  the machine has another priority and the same target within both
+  deadbands; then the lower rank waits while the higher one is in its
+  band. Otherwise reconfigure one of them.
 - Coordinated Q-sharing among several machines on one target
   (participation factors) is not implemented; the first machine claims the
   target.

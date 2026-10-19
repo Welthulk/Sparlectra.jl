@@ -25,6 +25,18 @@
 # object reads better in PGM order; everything else is sorted)
 const _SCF_ROOT_KEY_ORDER = ("version", "type", "is_batch", "attributes", "data", "sparlectra")
 
+# A number of the measurement rows (`value`, `sigma` in
+# sparlectra.measurements.rows) with more significant digits than a Float64
+# prints: its decimal text and the Float64 it parses to. A U value in kV that
+# no Float64 divides back to its per-unit value is written this way by the
+# exporter (_measurement_table_kv_text), and the row reader divides the text
+# at 256 bits as the measurement table does. The parser makes one only at
+# these two keys; the writer prints the text as it is.
+struct ScfDecimalText
+  text::String
+  value::Float64
+end
+
 function _scf_json_escape(s::AbstractString)::String
   io = IOBuffer()
   for ch in s
@@ -56,6 +68,10 @@ function _scf_json_scalar(io::IO, value)
     print(io, value ? "true" : "false")
   elseif value isa Integer
     print(io, value)
+  elseif value isa ScfDecimalText
+    # a measurement-row number kept as its decimal text (see ScfDecimalText);
+    # written back as it was read or computed, so a parse/write cycle keeps it
+    print(io, value.text)
   elseif value isa AbstractFloat
     # normalize negative zero: -0.0 and 0.0 are numerically equal but
     # textually different, which would break the byte-identical round trip
@@ -97,7 +113,7 @@ function scf_number_or_sentinel(value, context::AbstractString)::Float64
   throw(ArgumentError("SCF: $(context) must be a number or \"inf\"/\"-inf\", got $(repr(value))."))
 end
 
-_scf_is_scalar(v) = v === nothing || v === missing || v isa Bool || v isa Integer || v isa AbstractFloat || v isa AbstractString || v isa Symbol
+_scf_is_scalar(v) = v === nothing || v === missing || v isa Bool || v isa Integer || v isa AbstractFloat || v isa AbstractString || v isa Symbol || v isa ScfDecimalText
 
 # name the key when a non-finite value reaches the writer: "cannot write Inf"
 # alone leaves the producer unknown
@@ -187,8 +203,10 @@ end
 ## Reader: a minimal, dependency-free JSON parser in the spirit of the
 ## repository's minimal YAML reader. Integers stay `Int` (component ids must
 ## not silently become floats), everything with a fraction or exponent
-## becomes `Float64`. Errors name the byte position, so a broken case file
-## points at itself instead of at a generic parse failure.
+## becomes `Float64`. The one exception: `value` and `sigma` of
+## `sparlectra.measurements.rows` keep a literal with more than 17
+## significant digits as ScfDecimalText. Errors name the byte position, so a
+## broken case file points at itself instead of at a generic parse failure.
 ## ---------------------------------------------------------------------------
 
 mutable struct _ScfJsonCursor
@@ -252,7 +270,26 @@ function _scf_parse_string!(c::_ScfJsonCursor)::String
   end
 end
 
-function _scf_parse_number!(c::_ScfJsonCursor)
+# Where the parser stands, for the one place that keeps a number as text:
+# root object, the sparlectra block, its measurements block, the rows list,
+# one row, and the value or sigma of a row; everything else is _SCF_AT_OTHER.
+const _SCF_AT_OTHER = 0
+const _SCF_AT_ROOT = 1
+const _SCF_AT_SPAR = 2
+const _SCF_AT_MEAS = 3
+const _SCF_AT_ROWS = 4
+const _SCF_AT_ROW = 5
+const _SCF_AT_ROW_NUMBER = 6
+
+function _scf_parse_child_state(state::Int, key::String)::Int
+  state == _SCF_AT_ROOT && key == "sparlectra" && return _SCF_AT_SPAR
+  state == _SCF_AT_SPAR && key == "measurements" && return _SCF_AT_MEAS
+  state == _SCF_AT_MEAS && key == "rows" && return _SCF_AT_ROWS
+  state == _SCF_AT_ROW && (key == "value" || key == "sigma") && return _SCF_AT_ROW_NUMBER
+  return _SCF_AT_OTHER
+end
+
+function _scf_parse_number!(c::_ScfJsonCursor, state::Int = _SCF_AT_OTHER)
   start = c.pos
   n = ncodeunits(c.text)
   isfloat = false
@@ -271,6 +308,9 @@ function _scf_parse_number!(c::_ScfJsonCursor)
   if isfloat
     v = tryparse(Float64, lit)
     v === nothing && _scf_json_error(c, string("invalid number ", repr(lit)))
+    # value or sigma of a measurement row with more digits than a Float64
+    # prints: kept with its text (ScfDecimalText); everywhere else a Float64
+    state == _SCF_AT_ROW_NUMBER && _measurement_table_digits(lit) > 17 && return ScfDecimalText(lit, v)
     return v
   end
   v = tryparse(Int, lit)
@@ -278,7 +318,7 @@ function _scf_parse_number!(c::_ScfJsonCursor)
   return v
 end
 
-function _scf_parse_value!(c::_ScfJsonCursor)
+function _scf_parse_value!(c::_ScfJsonCursor, state::Int = _SCF_AT_OTHER)
   _scf_skip_ws!(c)
   c.pos <= ncodeunits(c.text) || _scf_json_error(c, "unexpected end of input")
   ch = c.text[c.pos]
@@ -294,7 +334,7 @@ function _scf_parse_value!(c::_ScfJsonCursor)
       _scf_skip_ws!(c)
       key = _scf_parse_string!(c)
       _scf_expect!(c, ':')
-      out[key] = _scf_parse_value!(c)
+      out[key] = _scf_parse_value!(c, _scf_parse_child_state(state, key))
       _scf_skip_ws!(c)
       c.pos <= ncodeunits(c.text) || _scf_json_error(c, "unterminated object")
       sep = c.text[c.pos]
@@ -312,7 +352,7 @@ function _scf_parse_value!(c::_ScfJsonCursor)
       return out
     end
     while true
-      push!(out, _scf_parse_value!(c))
+      push!(out, _scf_parse_value!(c, state == _SCF_AT_ROWS ? _SCF_AT_ROW : _SCF_AT_OTHER))
       _scf_skip_ws!(c)
       c.pos <= ncodeunits(c.text) || _scf_json_error(c, "unterminated array")
       sep = c.text[c.pos]
@@ -333,7 +373,7 @@ function _scf_parse_value!(c::_ScfJsonCursor)
     c.pos += 4
     return nothing
   else
-    return _scf_parse_number!(c)
+    return _scf_parse_number!(c, state)
   end
 end
 
@@ -341,7 +381,11 @@ end
     scf_json_parse(text) -> Dict{String,Any}
 
 Parse an SCF case file. Object keys become `String`, integers stay `Int`
-(component ids), numbers with a fraction or exponent become `Float64`. A
+(component ids), numbers with a fraction or exponent become `Float64`. The
+one exception is `value` and `sigma` of `sparlectra.measurements.rows`: a
+literal with more than 17 significant digits there stays a
+`ScfDecimalText` (its text and its Float64), so the row reader can divide
+a U value in kV at 256 bits and the writer prints it back unchanged. A
 leading UTF-8 byte order mark is skipped (Windows editors write one; the
 export never does), everything else outside the JSON grammar is an error.
 """
@@ -352,7 +396,7 @@ function scf_json_parse(text::AbstractString)::Dict{String,Any}
   # `invalid integer ""` at byte 1
   start = startswith(str, "\ufeff") ? 4 : 1
   c = _ScfJsonCursor(str, start)
-  value = _scf_parse_value!(c)
+  value = _scf_parse_value!(c, _SCF_AT_ROOT)
   _scf_skip_ws!(c)
   c.pos <= ncodeunits(c.text) && _scf_json_error(c, "trailing content after the root object")
   value isa AbstractDict || throw(ArgumentError("SCF: the root of a case file must be a JSON object"))

@@ -68,6 +68,7 @@ mutable struct HvdcPairControl <: AbstractOuterController
   deadband_vm_pu::Float64
   max_outer_iters::Int
   enabled::Bool
+  priority::Int               # rank in the outer loop, 0 acts first (control_priority)
   status::Symbol
   converged::Bool
   at_limit::Bool
@@ -264,7 +265,8 @@ injections at `from_bus` and `to_bus`.
   `from_qmin_mvar`/`from_qmax_mvar` resp. `to_qmin_mvar`/`to_qmax_mvar`
   range (defaults from the prosumer's `minQ`/`maxQ` when present).
 - `deadband_vm_pu::Float64 = 1e-3`, `max_outer_iters::Int = 20`,
-  `enabled::Bool = true`, `name = nothing`: as in the other controllers.
+  `enabled::Bool = true`, `name = nothing`, `priority::Int = 0`: as in the
+  other controllers.
 - `from_prosumer`, `to_prosumer`: explicit prosumer indices when a bus
   carries more than one injection.
 
@@ -301,7 +303,9 @@ function addHvdcPairControl!(
   name::Union{Nothing,String} = nothing,
   from_prosumer::Union{Nothing,Int} = nothing,
   to_prosumer::Union{Nothing,Int} = nothing,
+  priority::Int = 0,
 )
+  _check_control_priority(priority, "HvdcPairControl")
   from_bus == to_bus && error("HvdcPairControl: from_bus equals to_bus ($(from_bus)); a pair couples two different terminals.")
   mode in HVDC_PAIR_MODES || error("HvdcPairControl: unknown mode $(mode); use one of $(HVDC_PAIR_MODES).")
   if mode == :setpoint
@@ -348,15 +352,17 @@ function addHvdcPairControl!(
   end
 
   # same cross-controller courtesy warning as machine/shunt controllers:
-  # two devices steering one voltage fight each other in the outer loop
+  # two devices steering one voltage fight each other in the outer loop,
+  # unless the terminal is ranked behind the tap with the same target
+  # (_fights_tap_controller)
   for (side_bus, vset) in ((from_bus, from_vset_pu), (to_bus, to_vset_pu))
     vset === nothing && continue
     for tf in net.trafos
       for w in (tf.side1, tf.side2, tf.side3)
         w === nothing && continue
         for c in w.controls
-          if c.target_bus == side_bus && c.target_vm_pu !== nothing
-            @warn "HvdcPairControl: a transformer tap controller already regulates the voltage of bus $(side_bus); two controllers on one voltage fight each other."
+          if c.target_bus == side_bus && c.target_vm_pu !== nothing && _fights_tap_controller(c, priority, vset, deadband_vm_pu)
+            @warn "HvdcPairControl: a transformer tap controller already regulates the voltage of bus $(side_bus) (target $(c.target_vm_pu) pu, priority $(control_priority(c))); two controllers on one voltage fight each other unless they have different priorities and the same target within their deadbands."
           end
         end
       end
@@ -391,6 +397,7 @@ function addHvdcPairControl!(
     deadband_vm_pu,
     max_outer_iters,
     enabled,
+    priority,
     :idle,
     false,
     false,

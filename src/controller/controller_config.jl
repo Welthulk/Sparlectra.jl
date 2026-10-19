@@ -26,12 +26,17 @@
 # the corresponding add* function accepts (beyond net), the required
 # subset, and per-key value converters. Keeping this table next to the
 # dispatcher makes "unknown key" and "missing key" errors self-updating.
+# Every type takes `priority`, the rank of the controller in the outer loop
+# (control_priority, 0 acts first).
 const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
   "power_transformer" => (
     # followers (list of trafo ids) makes the entry a master/slave group
-    # (#322); the add function enforces the voltage-mode-only rule
+    # (#322); the add function enforces the voltage-mode-only rule.
+    # tap_min/tap_max give the controller a control range inside the
+    # physical one; on a transformer that already carries a tap controller
+    # they set that controller's range (_apply_configured_tap_range!)
     required = ("trafo", "mode"),
-    optional = ("followers", "target_bus", "target_branch", "target_vm_pu", "p_target_mw", "q_target_mvar", "control_ratio", "control_phase", "is_discrete", "deadband_vm_pu", "deadband_p_mw", "voltage_error_metric", "max_outer_iters", "enabled"),
+    optional = ("followers", "target_bus", "target_branch", "target_vm_pu", "p_target_mw", "q_target_mvar", "control_ratio", "control_phase", "is_discrete", "deadband_vm_pu", "deadband_p_mw", "voltage_error_metric", "max_outer_iters", "enabled", "priority", "tap_min", "tap_max"),
     symbols = ("mode", "voltage_error_metric"),
     supports_name = false,
   ),
@@ -39,7 +44,7 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     # s_max_mva / i_max_ka switch the controller into STATCOM mode (#297
     # Draft A); the add function enforces exclusivity with qmin/qmax
     required = ("bus", "target_bus", "target_vm_pu"),
-    optional = ("qmin_mvar", "qmax_mvar", "s_max_mva", "i_max_ka", "deadband_vm_pu", "prosumer_index", "max_outer_iters", "enabled", "name"),
+    optional = ("qmin_mvar", "qmax_mvar", "s_max_mva", "i_max_ka", "deadband_vm_pu", "prosumer_index", "max_outer_iters", "enabled", "name", "priority"),
     symbols = (),
     supports_name = true,
   ),
@@ -47,7 +52,7 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     # step_mvar switches the controller into the discrete MSC/MSR bank
     # mode (#324); without it the actuator is the continuous SVC
     required = ("bus", "target_vm_pu", "bs_min_mvar", "bs_max_mvar"),
-    optional = ("step_mvar", "bs_start_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name"),
+    optional = ("step_mvar", "bs_start_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name", "priority"),
     symbols = (),
     supports_name = true,
   ),
@@ -55,7 +60,7 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     # x_min_pu/x_max_pu (TCSC window) or v_inj_max_pu (SSSC, #297 Draft F);
     # the add function enforces exactly one of the two limit forms
     required = ("from_bus", "to_bus", "p_target_mw"),
-    optional = ("x_min_pu", "x_max_pu", "v_inj_max_pu", "deadband_p_mw", "max_outer_iters", "enabled", "name"),
+    optional = ("x_min_pu", "x_max_pu", "v_inj_max_pu", "deadband_p_mw", "max_outer_iters", "enabled", "name", "priority"),
     symbols = (),
     supports_name = true,
   ),
@@ -65,7 +70,7 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     # single controller steering line P AND Q, shunt on a reactive setpoint
     # (q_shunt_mvar). addUpfcControl! enforces the per-model key requirements.
     required = ("from_bus", "to_bus", "shunt_bus", "p_target_mw", "v_inj_max_pu"),
-    optional = ("model", "target_bus", "target_vm_pu", "q_target_mvar", "q_shunt_mvar", "series_phase", "s_max_mva", "i_max_ka", "deadband_vm_pu", "deadband_p_mw", "deadband_q_mvar", "prosumer_index", "max_outer_iters", "enabled", "name"),
+    optional = ("model", "target_bus", "target_vm_pu", "q_target_mvar", "q_shunt_mvar", "series_phase", "s_max_mva", "i_max_ka", "deadband_vm_pu", "deadband_p_mw", "deadband_q_mvar", "prosumer_index", "max_outer_iters", "enabled", "name", "priority"),
     symbols = ("model", "series_phase"),
     supports_name = true,
   ),
@@ -74,7 +79,7 @@ const _CONTROLLER_TYPE_SPECS = Dict{String,NamedTuple}(
     # forbidden in island_feed, so the spec keeps it optional and lets
     # addHvdcPairControl! enforce the mode-dependent rule
     required = ("from_bus", "to_bus"),
-    optional = ("mode", "p_transfer_mw", "deadband_p_mw", "loss_mw", "loss_fraction", "p_rating_mw", "from_q_mvar", "to_q_mvar", "from_vset_pu", "to_vset_pu", "from_qmin_mvar", "from_qmax_mvar", "to_qmin_mvar", "to_qmax_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name", "from_prosumer", "to_prosumer"),
+    optional = ("mode", "p_transfer_mw", "deadband_p_mw", "loss_mw", "loss_fraction", "p_rating_mw", "from_q_mvar", "to_q_mvar", "from_vset_pu", "to_vset_pu", "from_qmin_mvar", "from_qmax_mvar", "to_qmin_mvar", "to_qmax_mvar", "deadband_vm_pu", "max_outer_iters", "enabled", "name", "from_prosumer", "to_prosumer", "priority"),
     symbols = (),
     supports_name = true,
   ),
@@ -131,6 +136,8 @@ end
 _controller_cfg_float(v, label) = v isa Real ? Float64(v) : throw(ArgumentError("$(label) must be a number, got $(typeof(v))"))
 _controller_cfg_int(v, label) = v isa Integer ? Int(v) : throw(ArgumentError("$(label) must be an integer, got $(typeof(v))"))
 _controller_cfg_bool(v, label) = v isa Bool ? v : throw(ArgumentError("$(label) must be true or false, got $(typeof(v))"))
+# the rank key every controller type takes, 0 when the entry leaves it out
+_controller_cfg_priority(entry::Dict{String,Any})::Int = haskey(entry, "priority") ? _controller_cfg_int(entry["priority"], "priority") : 0
 
 # Identity used for the skip-if-present rule: applying the same declaration
 # twice to one net must be a no-op (run_sparlectra(net = ...) may execute
@@ -165,6 +172,29 @@ function _configured_controller_exists(net::Net, typ::String, entry::Dict{String
   return false
 end
 
+# A power_transformer entry for a transformer that already carries a tap
+# controller (a case file brings its own) adds nothing, but its control
+# range reaches that controller: the configuration narrows the range of a
+# controller the case file defines. A side the entry leaves out keeps the
+# controller's value. Validation errors name the entry like those of the
+# add path.
+function _apply_configured_tap_range!(net::Net, entry::Dict{String,Any}, label::AbstractString)
+  (haskey(entry, "tap_min") || haskey(entry, "tap_max")) || return nothing
+  trafo = string(entry["trafo"])
+  try
+    lo = haskey(entry, "tap_min") ? _controller_cfg_float(entry["tap_min"], "tap_min") : nothing
+    hi = haskey(entry, "tap_max") ? _controller_cfg_float(entry["tap_max"], "tap_max") : nothing
+    for c in _tap_controllers(net)
+      c.trafo == trafo && _set_tap_control_range!(c, _find_trafo_branch(net, trafo), something(lo, c.tap_min, Some(nothing)), something(hi, c.tap_max, Some(nothing)))
+    end
+  catch err
+    # ArgumentError from the range check or the number conversion
+    err isa ArgumentError || rethrow()
+    throw(ArgumentError("$(label): $(sprint(showerror, err))"))
+  end
+  return nothing
+end
+
 """
     applyConfiguredControllers!(net::Net, control_cfg::ControlConfig) -> Int
 
@@ -178,8 +208,12 @@ of controllers added.
 Entries whose controlled element already carries a controller of the same
 type are skipped, so repeated runs on the same `Net` stay idempotent; edit
 programmatically or rebuild the net to change an already-applied
-controller. Structural errors (unknown type or key, missing required key)
-and device errors (unknown bus/branch/transformer, invalid limits) throw an
+controller. One exception: `tap_min`/`tap_max` of a `power_transformer`
+entry set the control range of the tap controller already on that
+transformer, so a configuration can narrow the range of a controller that
+comes with the case file. Structural errors (unknown type or key, missing
+required key) and device errors (unknown bus/branch/transformer, invalid
+limits, a control range outside the physical tap range) throw an
 `ArgumentError` naming the entry.
 
 The run pipeline calls this automatically before the outer control loop
@@ -197,6 +231,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
     label = name === nothing ? "control.controllers entry (type=$(typ))" : "control.controllers.$(name) (type=$(typ))"
     if _configured_controller_exists(net, typ, entry)
       @debug "configured controller already present, skipped" label
+      typ == "power_transformer" && _apply_configured_tap_range!(net, entry, label)
       continue
     end
     try
@@ -233,6 +268,9 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           voltage_error_metric = haskey(entry, "voltage_error_metric") ? Symbol(string(entry["voltage_error_metric"])) : :vm,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          priority = _controller_cfg_priority(entry),
+          tap_min = haskey(entry, "tap_min") ? _controller_cfg_float(entry["tap_min"], "tap_min") : nothing,
+          tap_max = haskey(entry, "tap_max") ? _controller_cfg_float(entry["tap_max"], "tap_max") : nothing,
         )
       elseif typ == "machine_voltage"
         addMachineVoltageControl!(
@@ -249,6 +287,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          priority = _controller_cfg_priority(entry),
         )
       elseif typ == "shunt_voltage"
         addShuntVoltageControl!(
@@ -262,6 +301,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           deadband_vm_pu = haskey(entry, "deadband_vm_pu") ? _controller_cfg_float(entry["deadband_vm_pu"], "deadband_vm_pu") : 1e-3,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          priority = _controller_cfg_priority(entry),
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
         )
       elseif typ == "series_reactance"
@@ -276,6 +316,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           deadband_p_mw = haskey(entry, "deadband_p_mw") ? _controller_cfg_float(entry["deadband_p_mw"], "deadband_p_mw") : 0.5,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          priority = _controller_cfg_priority(entry),
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
         )
       elseif typ == "upfc"
@@ -301,6 +342,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          priority = _controller_cfg_priority(entry),
         )
       elseif typ == "hvdc_pair"
         addHvdcPairControl!(
@@ -324,6 +366,7 @@ function applyConfiguredControllers!(net::Net, control_cfg::ControlConfig)::Int
           deadband_vm_pu = haskey(entry, "deadband_vm_pu") ? _controller_cfg_float(entry["deadband_vm_pu"], "deadband_vm_pu") : 1e-3,
           max_outer_iters = haskey(entry, "max_outer_iters") ? _controller_cfg_int(entry["max_outer_iters"], "max_outer_iters") : 20,
           enabled = haskey(entry, "enabled") ? _controller_cfg_bool(entry["enabled"], "enabled") : true,
+          priority = _controller_cfg_priority(entry),
           name = haskey(entry, "name") ? string(entry["name"]) : nothing,
           from_prosumer = haskey(entry, "from_prosumer") ? _controller_cfg_int(entry["from_prosumer"], "from_prosumer") : nothing,
           to_prosumer = haskey(entry, "to_prosumer") ? _controller_cfg_int(entry["to_prosumer"], "to_prosumer") : nothing,

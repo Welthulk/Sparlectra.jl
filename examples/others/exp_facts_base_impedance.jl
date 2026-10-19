@@ -55,7 +55,7 @@ end
 function main()
   print_example_banner("examples/others/exp_facts_base_impedance.jl", "equipment impedance vs FACTS operating point (#329): SC and export read the base")
 
-  scd = Sparlectra.CGMESImporter.CGMESShortCircuitData([_feeder("S")], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
+  scd = Sparlectra.CGMESImporter.CGMESShortCircuitData([_feeder("S")], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
 
   # 1) the equipment network (no UPFC): the short-circuit reference
   base = build_mesh()

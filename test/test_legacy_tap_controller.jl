@@ -595,6 +595,20 @@ function run_legacy_tap_controller_tests()
       @test bctrl.s_max_mva === nothing
       bels = controllableElements(bnet)
       @test bels[1].device == "machine remote voltage control"
+
+      # priority: a bank at rank 1 waits until the STATCOM stands at its
+      # current limit and switches in the next pass. At its limit the STATCOM
+      # keeps following V * S_max; those moves do not hold the bank, so the
+      # run converges within the default budget of 20 passes
+      pnet = build_weak_net()
+      addMachineVoltageControl!(pnet; bus = "Mid", target_bus = "Load", target_vm_pu = 1.0, s_max_mva = 12.0)
+      pbank = addShuntVoltageControl!(pnet; bus = "Load", target_vm_pu = 1.0, bs_min_mvar = 0.0, bs_max_mvar = 60.0, step_mvar = 5.0, deadband_vm_pu = 0.02, priority = 1)
+      pres = run_control!(pnet)
+      @test pres.status === :converged
+      @test pbank.bs_mvar > 0.0
+      first_bank = minimum(r.outer_iteration for r in pres.trace if r.controller_type == "ShuntVoltageControl")
+      first_statcom_at_limit = minimum(r.outer_iteration for r in pres.trace if r.controller_type == "MachineVoltageControl" && r.at_limit)
+      @test first_bank == first_statcom_at_limit + 1
     end)() end
 
     @testset "SVC vs STATCOM limit characteristic (#297 Draft E)" begin (function ()

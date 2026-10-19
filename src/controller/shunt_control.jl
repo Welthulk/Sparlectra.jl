@@ -61,6 +61,7 @@ mutable struct ShuntVoltageControl <: AbstractOuterController
   deadband_vm_pu::Float64
   max_outer_iters::Int
   enabled::Bool
+  priority::Int                       # rank in the outer loop, 0 acts first (control_priority)
   status::Symbol
   converged::Bool
   at_limit::Bool
@@ -100,7 +101,8 @@ end
 Add an SVC-style variable-shunt voltage controller at `bus`. Creates its own
 shunt element (initially at `bs_start_mvar`) whose susceptance the outer
 control loop moves within `[bs_min_mvar, bs_max_mvar]` to hold
-`target_vm_pu` at the bus.
+`target_vm_pu` at the bus. With `shunt_idx` it takes over that existing
+shunt of the bus instead (a CGMES bank with its own regulating control).
 
 # Arguments
 - `net::Net`: the network.
@@ -117,16 +119,28 @@ control loop moves within `[bs_min_mvar, bs_max_mvar]` to hold
   SVC actuator.
 - `bs_start_mvar::Float64 = 0.0`: initial susceptance, clamped to the range
   (and snapped to the step grid in discrete mode).
+- `shunt_idx::Int = 0`: position of an existing shunt in `net.shuntVec` at
+  `bus` that the controller takes over; its present susceptance is the
+  start value (`bs_start_mvar` is then not used) and its conductance must be
+  0, since the controller writes a pure susceptance. A start off the range or
+  the step grid is clamped and snapped and written to the shunt. `0` (default)
+  appends a new shunt.
 - `deadband_vm_pu::Float64 = 1e-3`: convergence band around the target.
 - `max_outer_iters::Int = 20`, `enabled::Bool = true`: outer-loop budget/switch.
+- `priority::Int = 0`: rank in the outer loop (`control_priority`). A bank
+  ranked behind the tap controller of its bus switches only when that tap
+  is inside its deadband or at its limit; the bank itself counts as at its
+  limit on its outermost block or when parked.
 - `name`: optional controller name (defaults to `SVC_<bus>`, or
   `MSC_<bus>` in discrete mode).
 
 Fails with an error for a missing bus, an inverted susceptance range, a
 non-positive step, a step grid with no admissible block inside the range,
-a non-PQ bus, or a second shunt controller on the same bus. Warns when a
-transformer tap controller already regulates the same bus voltage (two
-controllers steering one voltage fight each other).
+a non-PQ bus, a second shunt controller on the same bus, or a `shunt_idx`
+that is out of range, sits on another bus or has a conductance. Warns when a
+transformer tap controller already regulates the same bus voltage at the
+same priority or toward a different target (outside the smaller of the
+two deadbands): the two controllers fight each other.
 """
 function addShuntVoltageControl!(
   net::Net;
@@ -140,7 +154,10 @@ function addShuntVoltageControl!(
   max_outer_iters::Int = 20,
   enabled::Bool = true,
   name::Union{Nothing,String} = nothing,
+  priority::Int = 0,
+  shunt_idx::Int = 0,
 )
+  _check_control_priority(priority, "ShuntVoltageControl")
   busIdx = geNetBusIdx(net = net, busName = bus)
   target_vm_pu > 0.0 || error("ShuntVoltageControl: target_vm_pu must be positive, got $(target_vm_pu)")
   bs_min_mvar < bs_max_mvar || error("ShuntVoltageControl: bs_min_mvar ($(bs_min_mvar)) must be below bs_max_mvar ($(bs_max_mvar))")
@@ -155,24 +172,38 @@ function addShuntVoltageControl!(
   any(c -> c isa ShuntVoltageControl && c.bus == bus, net.machineControls) && error("ShuntVoltageControl: bus $(bus) already has a shunt voltage controller.")
   # Cross-type check, same reasoning as for machine controllers: a
   # tap-regulated bus stays PQ, so only this warning can flag the double
-  # regulation.
+  # regulation. A bank ranked behind the tap with the same target is the
+  # intended cascade and stays quiet (_fights_tap_controller).
   for tf in net.trafos
     for w in (tf.side1, tf.side2, tf.side3)
       w === nothing && continue
       for ctrl in w.controls
-        if ctrl.target_bus == bus && ctrl.target_vm_pu !== nothing
-          @warn "ShuntVoltageControl: a transformer tap controller already regulates the voltage of bus $(bus) — two controllers on one voltage fight each other; expect oscillating outer iterations or reconfigure one of them."
+        if ctrl.target_bus == bus && ctrl.target_vm_pu !== nothing && _fights_tap_controller(ctrl, priority, target_vm_pu, deadband_vm_pu)
+          @warn "ShuntVoltageControl: a transformer tap controller already regulates the voltage of bus $(bus) (target $(ctrl.target_vm_pu) pu, priority $(control_priority(ctrl))); two controllers on one voltage fight each other unless they have different priorities and the same target within their deadbands. Expect oscillating outer iterations, or reconfigure one of them."
         end
       end
     end
   end
 
-  bs0 = _shunt_start_value(bs_start_mvar, bs_min_mvar, bs_max_mvar, step_mvar)
-  addShuntMatpower!(net = net, busName = bus, Gs = 0.0, Bs = bs0)
+  # a taken-over shunt starts from its own susceptance
+  bs_own = nothing
+  if shunt_idx != 0
+    (1 <= shunt_idx <= length(net.shuntVec)) || error("ShuntVoltageControl: shunt_idx $(shunt_idx) out of range 1:$(length(net.shuntVec))")
+    sh = net.shuntVec[shunt_idx]
+    sh.busIdx == busIdx || error("ShuntVoltageControl: shunt $(shunt_idx) is not connected to bus $(bus)")
+    real(sh.y_pu_shunt) == 0.0 || error("ShuntVoltageControl: shunt $(shunt_idx) at bus $(bus) has a conductance; the controller writes a pure susceptance")
+    bs_own = imag(sh.y_pu_shunt) * net.baseMVA
+  end
+  # clamp and snap onto the block grid like the SCF writer (_shunt_start_value)
+  bs0 = _shunt_start_value(something(bs_own, bs_start_mvar), bs_min_mvar, bs_max_mvar, step_mvar)
+  # a taken-over shunt already on the grid keeps its value; the grid
+  # product (sections times block) differs from it in the last bits only
+  (bs_own !== nothing && abs(bs0 - bs_own) <= 1e-9) && (bs0 = bs_own)
+  shunt_idx == 0 && addShuntMatpower!(net = net, busName = bus, Gs = 0.0, Bs = bs0)
   ctrl = ShuntVoltageControl(
     something(name, string(step_mvar === nothing ? "SVC_" : "MSC_", bus)),
     bus,
-    length(net.shuntVec),
+    shunt_idx == 0 ? length(net.shuntVec) : shunt_idx,
     target_vm_pu,
     bs_min_mvar,
     bs_max_mvar,
@@ -181,6 +212,7 @@ function addShuntVoltageControl!(
     deadband_vm_pu,
     max_outer_iters,
     enabled,
+    priority,
     :idle,
     false,
     false,
@@ -191,6 +223,9 @@ function addShuntVoltageControl!(
     0,
   )
   push!(net.machineControls, ctrl)
+  # a taken-over shunt off the range or the grid goes onto the start value;
+  # on it, the shunt keeps its admittance bit for bit
+  (bs_own !== nothing && bs0 != bs_own) && _set_shunt_susceptance!(net, ctrl, bs0)
   return ctrl
 end
 
@@ -216,6 +251,22 @@ function _find_controlled_shunt(net::Net, ctrl::ShuntVoltageControl)::Shunt
   sh = net.shuntVec[ctrl.shunt_idx]
   sh.busIdx == geNetBusIdx(net = net, busName = ctrl.bus) || error("ShuntVoltageControl $(ctrl.name): shunt $(ctrl.shunt_idx) is not connected to bus $(ctrl.bus)")
   return sh
+end
+
+# The one write path of the bank susceptance: the shunt element (MATPOWER
+# stamping convention of addShuntMatpower!, y_pu = (Gs + jBs)/baseMVA) and
+# the actuator value of the controller. control_apply_update! and the
+# take-over of an imported shunt in addShuntVoltageControl! both write
+# through it.
+function _set_shunt_susceptance!(net::Net, ctrl::ShuntVoltageControl, bs_mvar::Float64)
+  sh = _find_controlled_shunt(net, ctrl)
+  sh.y_pu_shunt = ComplexF64(0.0, bs_mvar) / net.baseMVA
+  sh.G_shunt = real(sh.y_pu_shunt)
+  sh.B_shunt = imag(sh.y_pu_shunt)
+  sh.p_shunt = 0.0
+  sh.q_shunt = bs_mvar
+  ctrl.bs_mvar = bs_mvar
+  return nothing
 end
 
 control_name(ctrl::ShuntVoltageControl) = string(ctrl.name, ctrl.step_mvar === nothing ? " SVC" : " MSC")
@@ -322,16 +373,9 @@ end
 function control_apply_update!(ctrl::ShuntVoltageControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
   moved = abs(update.new_bs - update.old_bs) > 1e-9
   if moved
-    sh = _find_controlled_shunt(net, ctrl)
-    # MATPOWER stamping convention (addShuntMatpower!): y_pu = (Gs + jBs)/baseMVA
-    sh.y_pu_shunt = ComplexF64(0.0, update.new_bs) / net.baseMVA
-    sh.G_shunt = real(sh.y_pu_shunt)
-    sh.B_shunt = imag(sh.y_pu_shunt)
-    sh.p_shunt = 0.0
-    sh.q_shunt = update.new_bs
+    _set_shunt_susceptance!(net, ctrl, update.new_bs)
     ctrl.prev_bs_mvar = update.old_bs
     ctrl.prev_vm_pu = ctrl.achieved_vm_pu
-    ctrl.bs_mvar = update.new_bs
   end
   # clamped susceptance = constant-B limit region; the injected Q keeps
   # following V² through the Y-bus, which is exactly the SVC device

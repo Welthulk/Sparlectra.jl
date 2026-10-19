@@ -71,9 +71,10 @@ metadata only; failed runs are indexed once they produced `result.json`.
   artifact resolution rejects traversal, missing artifacts and paths
   outside the run directory.
 - The measurement table (`# sparlectra-measurement-table v1`) keeps its
-  fixed layout (comma, decimal point); the `measurements.csv` artifact of
-  an SE run and the SE state CSV follow the format, and `readSEStateCSV!`
-  accepts the SE state CSV in any of the three formats.
+  fixed layout (comma, decimal point), also as the `measurements.csv`
+  artifact of an SE run; its verdict file `measurements_verdict.csv` and
+  the SE state CSV follow the format, and `readSEStateCSV!` accepts the SE
+  state CSV in any of the three formats.
 - The Web UI wraps the call in `start_webui_powerflow_run`, one active job
   at a time with cooperative abort; an aborted run gets a normal run
   directory, `result.json`, index entry and `run.log` status marker.

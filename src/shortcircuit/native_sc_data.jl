@@ -31,7 +31,7 @@ consumed by [`runShortCircuit!`](@ref) exactly like the CGMES harvest.
 
 Deliberately **field-identical** to `CGMESImporter.CGMESShortCircuitData` and
 **not** related to it through a common supertype: the short-circuit engine is
-duck-typed over the record contract (issue #299): the six
+duck-typed over the record contract (issue #299): the seven
 `Vector{NamedTuple}` fields with their tuple keys ARE the interface, and a
 type hierarchy would suggest a coupling that does not exist. Keep both
 structs in sync field-by-field when the contract evolves.
@@ -48,6 +48,7 @@ struct NativeShortCircuitData
   transformer_ends::Vector{NamedTuple}
   equivalent_injections::Vector{NamedTuple}
   asynchronous_machines::Vector{NamedTuple}
+  power_electronics_connections::Vector{NamedTuple}
 end
 
-NativeShortCircuitData() = NativeShortCircuitData(NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
+NativeShortCircuitData() = NativeShortCircuitData(NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])

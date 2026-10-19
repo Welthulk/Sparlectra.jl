@@ -157,9 +157,22 @@ function quiet_test_output(f::Function; verbose::Bool = sparlectra_test_verbose(
   return result
 end
 
+# Failed and errored @tests recorded so far in the enclosing testset, its
+# finished child testsets included (the counts the test summary prints).
+# Outside any testset the fallback testset counts nothing, but there a
+# failing @test throws and the group line says FAIL through the catch.
+function _testset_nonpass_counts()
+  tc = Test.get_test_counts(Test.get_testset())
+  return (tc.fails + tc.cumulative_fails, tc.errors + tc.cumulative_errors)
+end
+
 function run_profile_group(i::Int, total::Int, name::AbstractString, runner::Function)
   print("[", i, "/", total, "] ", name, " ... ")
   skipped = String[]
+  # a failing @test inside the group throws nothing, its result goes to the
+  # enclosing testset; the counts before and after the group give the
+  # group's own failures and errors (without them the line said PASS)
+  fails0, errors0 = _testset_nonpass_counts()
   timed = try
     @timed quiet_test_output(runner; group = name, skipped_out = skipped)
   catch err
@@ -167,11 +180,14 @@ function run_profile_group(i::Int, total::Int, name::AbstractString, runner::Fun
     println("FAIL")
     rethrow()
   end
+  fails1, errors1 = _testset_nonpass_counts()
+  fails, errors = fails1 - fails0, errors1 - errors0
+  verdict = fails + errors == 0 ? "PASS" : "FAIL ($(fails) failed, $(errors) errored)"
   # compile_time and recompile_time come from @timed since Julia 1.11 and are
   # the whole point of this line: without them a slow group is indistinguishable
   # from a group that merely compiled a lot, and the two need opposite remedies.
-  @printf("PASS %.3f s (%.3f s compile, %.3f s recompile), %.1f MiB allocated, %.3f s GC\n",
-          timed.time, timed.compile_time, timed.recompile_time, timed.bytes / 1024.0^2, timed.gctime)
+  @printf("%s %.3f s (%.3f s compile, %.3f s recompile), %.1f MiB allocated, %.3f s GC\n",
+          verdict, timed.time, timed.compile_time, timed.recompile_time, timed.bytes / 1024.0^2, timed.gctime)
   for line in skipped
     println("        ", line)
   end
@@ -399,6 +415,164 @@ function createTest3BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, ql
   addProsumer!(net = Bus3Net, busName = "ASTADT", type = "ENERGYCONSUMER", p = 100.0, q = 30.0)
 
   return Bus3Net
+end
+
+# The CIGRE HV benchmark (Task Force C6.04.02, TB 575) and the five-bus test
+# net, moved here from testgrid.jl in 0.50.0 so the fast profile can solve
+# them against their OpenLoadFlow fixtures without including testgrid.jl.
+function createCIGRE(lLine_6a6b = 0.01)::Net
+  Sbase_MVA = 1000.0
+  netName = "cigre"
+  net = Net(name = netName, baseMVA = Sbase_MVA)
+  @debug "Creating $netName test network"
+  # A R E A 1
+  # Bus 1, 220kV  
+  addBus!(net = net, busName = "B1", vn_kV = 220.0)
+  # Bus 9, 22kV  
+  addBus!(net = net, busName = "B9", vn_kV = 22.0)
+  # Bus 7, 22kV  
+  addBus!(net = net, busName = "B7", vn_kV = 380.0)
+  # Bus 2, 220kV  
+  addBus!(net = net, busName = "B2", vn_kV = 220.0)
+  # Bus 10, 22kV  
+  addBus!(net = net, busName = "B10", vn_kV = 22.0)
+  # A R E A 2
+  # B6a, 220kV  
+  addBus!(net = net, busName = "B6a", vn_kV = 220.0)
+  # B6b, 220kV   
+  addBus!(net = net, busName = "B6b", vn_kV = 220.0)
+  # Bus 12, 22kV  
+  addBus!(net = net, busName = "B12", vn_kV = 22.0)
+  # A R E A 3
+  # Bus 5, 220kV  
+  addBus!(net = net, busName = "B5", vn_kV = 220.0)
+  # Bus 4, 220kV  
+  addBus!(net = net, busName = "B4", vn_kV = 220.0)
+  # Bus 3, 220kV
+  addBus!(net = net, busName = "B3", vn_kV = 220.0)
+  # Bus 8, 380kV  
+  addBus!(net = net, busName = "B8", vn_kV = 380.0)
+  # Bus 11, 22kV  
+  addBus!(net = net, busName = "B11", vn_kV = 22.0)
+
+  ##### Shunt    
+  addShunt!(net = net, busName = "B6a", pShunt = 0.0, qShunt = 180.0)
+  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 160.0)
+  addShunt!(net = net, busName = "B5", pShunt = 0.0, qShunt = 80.0)
+
+  ###### ACLines   
+  # 220kV-Lines
+  # (bus1, bus2, length_km=100)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B2", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  # (bus1, bus6a, length_km=300)
+  add_test_line_pu_c!(net = net, fromBus = "B1", toBus = "B6a", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  # (bus2, bus5, length_km=300)
+  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B5", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  # (bus3, bus4, length_km=100)
+  add_test_line_pu_c!(net = net, fromBus = "B3", toBus = "B4", length_km = 100.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  # (bus3, bus4, length_km=100)
+  add_test_line_pu_c!(net = net, fromBus = "B3", toBus = "B4", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  # (bus4, bus5, length_km=300)
+  add_test_line_pu_c!(net = net, fromBus = "B4", toBus = "B5", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  # (bus4, bus6a, length_km=300)
+  add_test_line_pu_c!(net = net, fromBus = "B4", toBus = "B6a", length_km = 300.0, r_pu = 0.0653, x_pu = 0.398, c_nf_per_km = 9.08, tanδ = 0.0)
+  #(bus6a, bus6b, length_km=length_km_6a_6b)
+  # before 0.50.0 a length up to 1 km multiplied r and x, a longer one took
+  # them as totals; the same rule applies here
+  scale_6a6b = lLine_6a6b <= 1.0 ? lLine_6a6b : 1.0
+  add_test_line_pu_c!(net = net, fromBus = "B6a", toBus = "B6b", length_km = lLine_6a6b, r_pu = 0.0653 * scale_6a6b, x_pu = 0.398 * scale_6a6b, c_nf_per_km = 9.08, tanδ = 0.0)
+
+  # 380kV-Lines
+  # (bus7, bus8, length_km=600)
+  add_test_line_pu_c!(net = net, fromBus = "B7", toBus = "B8", length_km = 600.0, r_pu = 0.0328, x_pu = 0.312, c_nf_per_km = 11.5, tanδ = 0.0)
+
+  #### Trafos  
+  # 'Trafo 1-7' (bus7, bus1, sn_mva=1000,  vn_hv_kv=380, vn_lv_kv=220, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0,   shift_degree=0.0)
+  add2WTrafo!(net = net, fromBus = "B7", toBus = "B1", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.28, pfe_kw = 20.0, i0_percent = 0.06)
+  #Trafo 3-8, (bus8, bus3, sn_mva=1000,  vn_hv_kv=380, vn_lv_kv=220, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0, shift_degree=0.0)
+  add2WTrafo!(net = net, fromBus = "B8", toBus = "B3", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.0, pfe_kw = 0.0, i0_percent = 0.0)
+  # Trafo 9-1 (bus1, bus9, sn_mva=1000,vn_hv_kv=220, vn_lv_kv=22, vkr_percent=0.0,vk_percent=13.0, pfe_kw=0, i0_percent=0,shift_degree=330.0)
+  add2WTrafo!(net = net, fromBus = "B1", toBus = "B9", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.0, pfe_kw = 0.0, i0_percent = 0.0)
+  # Trafo 10-2 (bus2, bus10, sn_mva=1000, vn_hv_kv=220, vn_lv_kv=22, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0, shift_degree=330.0)
+  add2WTrafo!(net = net, fromBus = "B2", toBus = "B10", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.0, pfe_kw = 0.0, i0_percent = 0.0)
+  # Trafo 11-3 (bus3, bus11, sn_mva=1000, vn_hv_kv=220, vn_lv_kv=22, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0, shift_degree=330.0)
+  add2WTrafo!(net = net, fromBus = "B3", toBus = "B11", sn_mva = 1000.0, vk_percent = 13.0, vkr_percent = 0.0, pfe_kw = 0.0, i0_percent = 0.0)
+  # 'Trafo 12-6b' (bus6b, bus12, sn_mva=500, vn_hv_kv=220, vn_lv_kv=22, vkr_percent=0.0, vk_percent=13.0, pfe_kw=0, i0_percent=0, shift_degree=330.0)
+  add2WTrafo!(net = net, fromBus = "B6b", toBus = "B12", sn_mva = 500.0, vk_percent = 13.0, vkr_percent = 0.0, pfe_kw = 0.0, i0_percent = 0.0)
+
+  # Loads
+  # 'Load 2' (bus2, p_mw=285, q_mvar=200)  
+  # addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 285.0, q = 200.0)
+  # 'Load 3' (bus3, p_mw=103.0, q_mvar=62.0)
+  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
+  # 'Load 4' (net_cigre_hv, bus4, p_mw=326.0, q_mvar=244.0, name='Load 4')
+  addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 320.0, q = 200.0)
+  # 'Load 5' (net_cigre_hv, bus5, p_mw=103, q_mvar=62, name='Load 5')	
+  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
+  # 'Load 6a' (net_cigre_hv, bus6a, p_mw=435, q_mvar=296, name='Load 6a')
+  addProsumer!(net = net, busName = "B6a", type = "ENERGYCONSUMER", p = 435.0, q = 296.0)
+
+  # Generators
+  # 'Generator 9' (bus9, vm_pu=1.03, va_degree=0)
+  addProsumer!(net = net, busName = "B9", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.03, va_deg = 0.0, referencePri = "B9")
+  # 'Generator 10' (bus10, vm_pu=1.03, p_mw=500)
+  addProsumer!(net = net, busName = "B10", type = "SYNCHRONOUSMACHINE", p = 500.0, vm_pu = 1.03, va_deg = 0.0)
+  # 'Generator 11' (bus11, vm_pu=1.03, p_mw=200)
+  addProsumer!(net = net, busName = "B11", type = "SYNCHRONOUSMACHINE", p = 200.0, vm_pu = 1.03, va_deg = 0.0)
+  # 'Generator 12' (bus12, vm_pu=1.03, p_mw=300)
+  addProsumer!(net = net, busName = "B12", type = "SYNCHRONOUSMACHINE", p = 300.0, vm_pu = 1.03, va_deg = 0.0)
+
+  return net
+end
+
+function createTest5BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, qlim_max = nothing, pq_only = false, mul_gens::Bool = true)::Net
+  Sbase_MVA = 100.0
+  netName = "test5bus"
+  r = 0.05
+  x = 0.5
+  c_nf_per_km = 10.0
+  tanδ = 0.0
+
+  @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max, pq_only=$pq_only"
+
+  Bus5Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
+  addBus!(net = Bus5Net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B2", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B3", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B4", vn_kV = 110.0)
+  addBus!(net = Bus5Net, busName = "B5", vn_kV = 110.0)
+
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B1", toBus = "B3", length_km = 20.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B3", toBus = "B5", length_km = 50.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B5", toBus = "B4", length_km = 100.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B4", toBus = "B1", length_km = 100.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B4", toBus = "B2", length_km = 100.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+  add_test_line_pu_c!(net = Bus5Net, fromBus = "B2", toBus = "B1", length_km = 20.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
+
+  addProsumer!(net = Bus5Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  if mul_gens
+    addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+    addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
+    vm_b3 = pq_only ? nothing : 1.03
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 15.0, vm_pu = vm_b3, va_deg = 0.0, qMax = 0.6 * qlim_max, qMin = 0.6 * qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 10.0, q = 10.0, vm_pu = vm_b3, va_deg = 0.0, qMax = 0.4 * qlim_max, qMin = 0.4 * qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 7.0)
+    addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 10.0, q = 5.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 15.0, q = 1.0)
+    if !pq_only
+      addProsumer!(net = Bus5Net, busName = "B5", type = "SYNCHRONOUSMACHINE", p = 0.0, vm_pu = 1.0, qMax = qlim_max, qMin = qlim_min)
+    end
+  else
+    addProsumer!(net = Bus5Net, busName = "B2", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+    vm_b3 = pq_only ? nothing : 1.0
+    addProsumer!(net = Bus5Net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 25.0, vm_pu = vm_b3, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
+    addProsumer!(net = Bus5Net, busName = "B4", type = "ENERGYCONSUMER", p = 50.0, q = 15.0)
+    addProsumer!(net = Bus5Net, busName = "B5", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
+  end
+
+  return Bus5Net
 end
 
 # A small network with one three-winding transformer in the star equivalent

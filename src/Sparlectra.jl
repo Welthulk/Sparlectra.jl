@@ -638,8 +638,7 @@ export
   test_topology_hypotheses,               # Stage-3 status-toggle hypothesis test on working copies (recommendations only).
   addShuntQMeasurement!,                  # Add shunt-bay reactive-power measurement (MVar; SE phase 2 case A).
   deriveShuntPseudoMeasurements!,         # Derive ShuntQ pseudo-measurements from bay current plus Vm (SE phase 2 case B).
-  readMeasurementsCSV!,                   # Read a measurement CSV v1 file (atomic import; SE phase 5).
-  writeMeasurementsCSV,                   # Write net.measurements as a measurement CSV v1 file (lossless roundtrip).
+  writeMeasurementsCSV,                   # Write net.measurements in the CSV v1 layout (input of convertMeasurementsV1; the v1 reader was removed in 0.50.0).
   # measurement table (several snapshots per file, keys resolved through a
   # MeasurementKeyIndex: cgmesMeasurementKeys for mRIDs, nameMeasurementKeys
   # for element names)

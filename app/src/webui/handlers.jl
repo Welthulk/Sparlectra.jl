@@ -311,10 +311,36 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
   return _webui_redirect("/powerflow/case$(query)$(separator)import_message=$(message)")
 end
 
+# A CGMES test-set alias typed without the `cgmes:` form, as people write
+# it: any case, an optional `cgmes` prefix followed by a space, `_`, `-` or
+# `:`, an optional `.zip`. Returns the alias key, or nothing. The rest must
+# equal a key of CGMES_TESTSET_ALIASES exactly; there is no fuzzy matching,
+# so a typo still fails (and gets the list below).
+function _webui_loose_cgmes_alias(name::AbstractString)::Union{Nothing,String}
+  key = lowercase(strip(String(name)))
+  m = match(r"^cgmes[ _\-:](.+)$", key)
+  m === nothing || (key = strip(String(m[1])))
+  endswith(key, ".zip") && (key = key[1:(end - 4)])
+  return haskey(CGMESImporter.CGMES_TESTSET_ALIASES, key) ? key : nothing
+end
+
+# The message for a bare name nothing resolves: what the field accepts. An
+# input that contains an alias (plain substring test, longest alias first)
+# gets a "did you mean" line.
+function _webui_case_resolve_accepted_message(name::AbstractString)::String
+  aliases = sort(collect(keys(CGMESImporter.CGMES_TESTSET_ALIASES)))
+  lowered = lowercase(String(name))
+  contained = sort([a for a in aliases if occursin(a, lowered)]; by = length, rev = true)
+  hint = isempty(contained) ? "" : " Did you mean cgmes:$(first(contained))?"
+  return "not a shipped case, a case file in the case directory, a MATPOWER case name or a CGMES test set. Accepted: a MATPOWER name such as case118.m, a shipped case such as sp_case14.scf.json, or cgmes:<alias> with alias one of $(join(aliases, ", ")).$(hint)"
+end
+
 """
 Resolve a manually typed case reference (a bare MATPOWER case name to download,
-or a full local path to copy) into the case cache directory, without starting
-a PowerFlow run. The resolved file then appears in the "choose existing case"
+a shipped case, a CGMES test set as `cgmes:<alias>` or as the plain alias, or
+a full local path to copy) into the case cache directory, without starting
+a PowerFlow run. A name that matches none of these fails with a message that
+lists the accepted forms. The resolved file then appears in the "choose existing case"
 selector, mirroring `handle_powerflow_case_import` for typed rather than
 uploaded cases.
 """
@@ -358,12 +384,24 @@ function handle_powerflow_case_resolve(form::AbstractDict; output_root::Abstract
       # A bare name: a bundled case first (the shipped SCF and PGM files and
       # the CGMES demo deliveries, which are packed into the case directory
       # here), then a MATPOWER case name downloaded into the case directory.
+      # A CGMES alias typed loosely ("smallgrid", "CGMES SmallGrid.zip") is
+      # fetched as if "cgmes:<alias>" had been typed; a file of that name in
+      # the case directory still wins. Anything else that is neither a file
+      # there nor a MATPOWER name (.m, .jl) gets the list of accepted forms
+      # instead of the extension error of the MATPOWER download.
       staged = _webui_stage_bundled_case!(application_root, directory, manual_value)
+      loose_alias = _webui_loose_cgmes_alias(manual_value)
+      local_file = isfile(joinpath(directory, manual_value)) || isfile(manual_value)
+      matpower_name = endswith(lowercase(manual_value), ".m") || endswith(lowercase(manual_value), ".jl")
       if staged !== nothing
         resolved_name = basename(staged)
-      else
+      elseif loose_alias !== nothing && !local_file
+        resolved_name = basename(CGMESImporter.fetchCGMESTestSet(loose_alias; outdir = directory))
+      elseif local_file || matpower_name
         resolved_path = ensure_casefile(manual_value; outdir = directory)
         resolved_name = basename(resolved_path)
+      else
+        error(_webui_case_resolve_accepted_message(manual_value))
       end
     end
   catch err
@@ -455,6 +493,9 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
   (endswith(stem, ".scf") || endswith(stem, ".pgm")) && (stem = first(splitext(stem)))
   out_name = string(stem, strict ? ".pgm.json" : ".scf.json")
   out_path = joinpath(directory, out_name)
+  # a measurement CSV v1 sidecar (reader removed in 0.50.0) does not stop
+  # the export: the case is written without it and the message says why
+  v1_note = ""
   try
     # the request builder validates the same override set the run path uses,
     # so the exported config block can never carry a key a run would reject
@@ -472,7 +513,9 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     # the set's own provenance comments travel into the case file: whether the
     # values carry noise decides how a J from them may be read at all
     provenance = Dict{String,Any}()
-    if isfile(sidecar)
+    if isfile(sidecar) && _is_measurement_csv_v1(sidecar)
+      v1_note = " Measurement set $(basename(sidecar)) was not included: $(MEASUREMENT_CSV_V1_REMOVED)"
+    elseif isfile(sidecar)
       _read_measurement_file!(net, sidecar; index = isMeasurementTable(sidecar) ? _measurement_key_index(imported) : nothing)
       merge!(provenance, _webui_measurement_set_provenance(sidecar))
     end
@@ -495,8 +538,8 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     record_webui_operation!(operation_log, "scf_export_failed"; route = "/powerflow/export-scf", method = "POST", user_action = true, casefile = requested, message = sprint(showerror, err))
     return back("SCF export failed for '$(requested)': $(sprint(showerror, err))")
   end
-  record_webui_operation!(operation_log, "scf_export_completed"; route = "/powerflow/export-scf", method = "POST", user_action = true, casefile = requested, scf_file = out_name)
-  return done("Exported $(out_name) ($(round(filesize(out_path) / 1024; digits = 1)) kB) into the case directory." * (strict ? " Strict PGM: names, roles, tap nameplates, measurements, configuration and the system frequency (f_nom) are NOT in this file." : ""), out_name)
+  record_webui_operation!(operation_log, "scf_export_completed"; route = "/powerflow/export-scf", method = "POST", user_action = true, casefile = requested, scf_file = out_name, measurement_note = v1_note)
+  return done("Exported $(out_name) ($(round(filesize(out_path) / 1024; digits = 1)) kB) into the case directory." * (strict ? " Strict PGM: names, roles, tap nameplates, measurements, configuration and the system frequency (f_nom) are NOT in this file." : "") * v1_note, out_name)
 end
 
 """
@@ -519,6 +562,8 @@ are saved as SCF the same way the plain export does), so it writes:
   source case (a text copy with its `# case:` header line rewritten); a
   second or further bound set is copied as
   `<name>_<original stem>.measurements.csv` so the names never collide.
+  A measurement CSV v1 set (reader removed in 0.50.0) is neither read nor
+  copied; the message names it and the converter.
 
 Refuses an existing `<name>.scf.json` unless `save_as_overwrite` is a truthy
 form value (`true`/`on`/`1`). `save_as_name` is validated like the case
@@ -557,6 +602,9 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
   isfile(out_scf) && !overwrite && return back("A case named '$(new_name)' already exists. Tick \"overwrite\" to replace it.")
 
   copied_measurements = String[]
+  # measurement CSV v1 sets (reader removed in 0.50.0) are neither read nor
+  # copied: the case is saved without them and the message names them
+  skipped_v1 = String[]
   try
     request = powerflow_webui_request(form; default_output_root = output_root)
     overrides = Dict{String,Any}(String(k) => v for (k, v) in get(request, "config_overrides", Dict{String,Any}()))
@@ -569,7 +617,9 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
     config = imported.config
     sidecar = string(first(splitext(case_path)), ".measurements.csv")
     provenance = Dict{String,Any}()
-    if isfile(sidecar)
+    if isfile(sidecar) && _is_measurement_csv_v1(sidecar)
+      push!(skipped_v1, basename(sidecar))
+    elseif isfile(sidecar)
       _read_measurement_file!(net, sidecar; index = isMeasurementTable(sidecar) ? _measurement_key_index(imported) : nothing)
       merge!(provenance, _webui_measurement_set_provenance(sidecar))
     end
@@ -618,6 +668,10 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
       isempty(bound) || (meas_case[name] = bound)
     end
     bound_sets = [name for name in directory_measurements if get(meas_case, name, "") == requested]
+    for name in filter(n -> _is_measurement_csv_v1(joinpath(directory, n)), bound_sets)
+      name in skipped_v1 || push!(skipped_v1, name)
+    end
+    filter!(n -> !(n in skipped_v1), bound_sets)
     new_case_header = "# case: $(string(new_name, ".scf.json"))"
     for (i, name) in enumerate(bound_sets)
       target_name = i == 1 ? string(new_name, ".measurements.csv") : string(new_name, "_", first(splitext(name)), ".measurements.csv")
@@ -643,9 +697,9 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
     record_webui_operation!(operation_log, "case_save_as_failed"; route, method = "POST", user_action = true, casefile = requested, save_as_name = new_name, message = sprint(showerror, err))
     return back("Save case as '$(new_name)' failed: $(sprint(showerror, err))")
   end
-  record_webui_operation!(operation_log, "case_save_as_completed"; route, method = "POST", user_action = true, casefile = requested, save_as_name = new_name, scf_file = basename(out_scf), measurement_files = join(copied_measurements, ","))
+  record_webui_operation!(operation_log, "case_save_as_completed"; route, method = "POST", user_action = true, casefile = requested, save_as_name = new_name, scf_file = basename(out_scf), measurement_files = join(copied_measurements, ","), skipped_v1 = join(skipped_v1, ","))
   out_name = basename(out_scf)
-  msg = "Saved as $(out_name)" * (isempty(copied_measurements) ? "" : " with $(length(copied_measurements)) measurement set(s)") * ". Settings outside case scope (installation configuration) are not written here."
+  msg = "Saved as $(out_name)" * (isempty(copied_measurements) ? "" : " with $(length(copied_measurements)) measurement set(s)") * ". Settings outside case scope (installation configuration) are not written here." * (isempty(skipped_v1) ? "" : " Not included: $(join(skipped_v1, ", ")). $(MEASUREMENT_CSV_V1_REMOVED)")
   return _webui_redirect("/powerflow/case?casefile=$(_webui_urlencode(out_name))&import_message=$(_webui_urlencode(msg))")
 end
 
@@ -1381,7 +1435,7 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
   case_format_raw = lowercase(strip(String(something(_webui_form_value(form, "case_format", ""), ""))))
   # scf and pgm name the same reader; both are accepted so the choice made
   # in the form survives the save (see _normalize_case_format)
-  case_format_raw in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm") && (form_updates["case_format"] = case_format_raw)
+  case_format_raw in ("auto", "matpower", "dtf_for001", "cgmes", "scf", "pgm", "powsybl") && (form_updates["case_format"] = case_format_raw)
   # the SE section's save carries the measurement-set choice (a file name,
   # no option spec of its own): kept in the form block so the section arms
   # that set again on the next load (it was never stored)
@@ -2178,10 +2232,11 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
       src = src isa AbstractString ? String(src) : ""
       block = sp isa AbstractDict ? get(sp, "measurements", nothing) : nothing
       if block isa AbstractDict
-        # one entry of `rows` is one PGM SENSOR, and a sensor carries one or
-        # two measurement rows (a P/Q pair). The page must show measurements,
-        # not sensors, or it understates the set.
-        n = sum(length(get(r, "sparlectra_ids", [])) for r in get(block, "rows", []); init = 0)
+        # The page shows measurements, not sensors. From SCF 1.2 on one
+        # entry of `rows` is one measurement; in 1.0 one entry is one PGM
+        # SENSOR with one or two measurements (a P/Q pair) in its
+        # sparlectra_ids, and the shunt-bay rows have their own list.
+        n = sum((r isa AbstractDict && haskey(r, "sparlectra_ids")) ? length(r["sparlectra_ids"]) : 1 for r in get(block, "rows", []); init = 0) + length(get(block, "shunt_bay_rows", []))
         prov = get(block, "provenance", nothing)
         noise = prov isa AbstractDict ? get(prov, "noise", nothing) : nothing
         (n, noise isa Bool ? noise : nothing, src)
@@ -2482,6 +2537,47 @@ function handle_se_measurement_update_values(form::AbstractDict; output_root::Ab
   return redirectq("updated $(changed) measurement value(s) in $(name)")
 end
 
+# The configuration a topology hypothesis test judges a state-estimation run
+# with: the run's effective configuration from resolve_config, the function
+# the SE service resolves it with (case configuration file, general file,
+# defaults), plus the estimator thresholds the run recorded as decided
+# (se_* metadata, where a form value beat the files). The candidate solves
+# keep their fixed max_iter 100 and tol 1e-8.
+function _se_hypothesis_config(result::AbstractDict)
+  metadata = get(result, "metadata", Dict{String,Any}())
+  cfg = resolve_config(String(get(result, "config_file", DEFAULT_SPARLECTRA_CONFIG_PATH)), String(get(result, "casefile", ""))).config
+  num(k) = (v = get(metadata, k, nothing); (v isa Real && !(v isa Bool)) ? Float64(v) : nothing)
+  se = _se_config_with(cfg.state_estimation; max_iter = 100, tol = 1e-8, k_eliminate = num("se_k_eliminate"), robust_k1 = num("se_robust_k1"), robust_k2 = num("se_robust_k2"), k_suppress = num("se_k_suppress"), suppression_sigma = num("se_suppression_sigma"))
+  return _sparlectra_config_with(cfg; state_estimation = se)
+end
+
+# The lines of measurements.csv that measurements_verdict.csv marks as
+# eliminated. The table artifact is the input set of the run (valid as
+# read, reloadable as it is); the rows the run removed are named in the
+# verdict file only. Throws ArgumentError on a file without the verdict
+# header.
+function _se_verdict_eliminated_lines(file::AbstractString)::Set{Int}
+  lines = readlines(file)
+  isempty(lines) && throw(ArgumentError("$(basename(file)) is empty"))
+  head = lines[1]
+  # the header starts with `line`, the next character is the delimiter of
+  # output.csv_format
+  (startswith(head, "line") && length(head) > 4) || throw(ArgumentError("$(basename(file)) has no verdict header"))
+  delim = head[5]
+  cols = _webui_compare_split_csv(head, delim)
+  cols == _SE_VERDICT_HEADER || throw(ArgumentError("$(basename(file)) has no verdict header"))
+  iline = findfirst(==("line"), cols)
+  ielim = findfirst(==("eliminated"), cols)
+  out = Set{Int}()
+  for l in lines[2:end]
+    isempty(strip(l)) && continue
+    f = _webui_compare_split_csv(l, delim)
+    length(f) == length(cols) || throw(ArgumentError("$(basename(file)): $(length(f)) fields in '$(l)', expected $(length(cols))"))
+    f[ielim] == "true" && push!(out, parse(Int, f[iline]))
+  end
+  return out
+end
+
 """
     handle_se_topology_hypotheses(form; output_root, application_root, case_directory, operation_log) -> SparlectraWebUIResponse
 
@@ -2502,23 +2598,53 @@ function handle_se_topology_hypotheses(form::AbstractDict; output_root::Abstract
   outdir = String(get(result, "output_dir", ""))
   mf = joinpath(outdir, "measurements.csv")
   isfile(mf) || return back("measurements.csv of this run is not available any more")
+  vf = joinpath(outdir, "measurements_verdict.csv")
+  # a run written before 0.50.0 kept the artifact in the measurement CSV v1
+  # layout, which is no longer read; the run page stays, the test needs a
+  # new run
+  _is_measurement_csv_v1(mf) && return back("this run was written by a Sparlectra version before 0.50.0: its measurements.csv is a measurement CSV v1, which is no longer read. Repeat the state estimation to test topology hypotheses.")
+  isfile(vf) || return back("measurements_verdict.csv of this run is not available any more; the test needs it to leave out the rows the run eliminated")
+  # the settings of the run under test; the general file alone skipped a
+  # case configuration file and judged with other thresholds than the run.
+  # A configuration that no longer resolves is reported like a failed test.
+  config = try
+    _se_hypothesis_config(result)
+  catch err
+    return back("topology hypothesis test failed: $(sprint(showerror, err))")
+  end
   t0 = time_ns()
   rep = try
-    config = load_sparlectra_config(String(get(result, "config_file", DEFAULT_SPARLECTRA_CONFIG_PATH)); reload = true)
     # same format hint the run form uses: a bare .DAT is ambiguous and the
     # detector refuses to guess, so the DTF network case would fail here
     se_case = String(get(result, "casefile", ""))
-    net = _se_import_case_net(se_case, config; requested_format = _webui_case_format_hint(se_case))
-    # the run's own artifact (a CSV v1 with verdict columns), no user file
-    _take_measurements_csv_v1!(net; file = mf, replace = true)
-    with_state_estimation_config(max_iter = 100, tol = 1e-8) do
+    hint = _webui_case_format_hint(se_case)
+    imported = _se_import_case(se_case, config; requested_format = hint)
+    # the run's own artifact, a measurement table keyed like the run read
+    # it (mRIDs for a CGMES case, names otherwise); every row carries its
+    # sigma and the zero-injection rows of the run, so nothing is added
+    index = _se_measurement_index(imported, _se_case_format(se_case; requested = hint))
+    index === nothing && throw(ArgumentError("the CGMES import kept no CGMES model to resolve the mRIDs of measurements.csv"))
+    net = imported.net
+    set = readMeasurementTable!(net; file = mf, index = index, zero_injection = false)
+    # the test starts from the set the run ended with: the rows the run
+    # eliminated leave here as they left the run (the table keeps them
+    # valid, the verdict file names them); with them back in, the base J
+    # carried the gross errors (J 16870 at dof 83 instead of 78.4 at dof
+    # 82 on sp_case14 with its bad-data set)
+    eliminated = _se_verdict_eliminated_lines(vf)
+    for (k, m) in enumerate(net.measurements)
+      any(in(eliminated), get(set.sources, m.id, Int[])) && (net.measurements[k] = _set_measurement_active(m, false))
+    end
+    with_sparlectra_config(config) do
       test_topology_hypotheses(net; max_candidates = 5)
     end
   catch err
     return back("topology hypothesis test failed: $(sprint(showerror, err))")
   end
+  se_used = config.state_estimation
   open(joinpath(outdir, "topology_hypotheses.md"), "w") do io
     println(io, "# Topology hypothesis test (advisory)\n")
+    println(io, "Settings of the run: k_eliminate ", se_used.k_eliminate, ", k_suppress ", se_used.k_suppress, ", robust_mode ", se_used.robust_mode, ", zero_injection ", se_used.zero_injection, ".\n")
     println(io, "Base run: J = ", round(rep.base_j; sigdigits = 4), " (dof ", rep.base_dof, ", band ", rep.base_verdict, "). ", rep.n_candidates, " candidate(s) tested.")
     rep.ambiguous && println(io, "\nSEVERAL hypotheses land in the band: the case is ambiguous, ranked by J below.")
     println(io, "\n| element | current status | hypothesis | J before | J after | z before | z after | verdict | time s |")
@@ -2693,7 +2819,13 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
     _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); case_directory = directory)
     # the checkbox goes into the case configuration as
     # state_estimation.zero_injection, read by every SE run of the case
-    passive_as_zi === nothing || _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("gen_passive_as_zi" => passive_as_zi ? "on" : "off"); case_directory = directory)
+    # as on or off; a case set to constraint (equality-constrained zero
+    # injection, configured in the file) keeps it while the box is checked,
+    # the box only says whether the rows exist
+    if passive_as_zi !== nothing
+      zi_mode = passive_as_zi ? (resolve_config(config_file, case_path).config.state_estimation.zero_injection === :constraint ? "constraint" : "on") : "off"
+      _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("gen_passive_as_zi" => zi_mode); case_directory = directory)
+    end
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, message = sprint(showerror, err))
   end

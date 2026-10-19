@@ -61,7 +61,7 @@ function _write_rectangular_bus_power_results!(net::Net, nodes, Sbus_MVA)
   # bus draws itself. The nodes keep the GENERATION (every reader prints the
   # bus load next to it, the Q-limit checks compare it with the generator
   # limits), so the bus's own consumption at the solved voltage goes back on
-  # top. Up to 0.50.0 the injection itself was written: a slack or PV bus
+  # top. Before 0.41.0 the injection itself was written: a slack or PV bus
   # with a load showed its generation reduced by that load.
   p_cons, q_cons = _bus_consumption_MVA(net, length(nodes))
   @inbounds for (k, node) in enumerate(nodes)

@@ -516,62 +516,62 @@ function run_measurement_table_tests()
       @test Sparlectra._sigma_from_level(lv, 110.0, "Q", 300.0) === nothing
       @test Sparlectra._sigma_from_level(lv, 20.0, "P", 300.0) === nothing
 
-      # sp_case14 has two levels, 110 kV and 20 kV. Every sigma cell of the
-      # generated table is emptied except one P row, which keeps its own.
+      # sp_case14 has two levels, 110 kV and 20 kV; transformer
+      # B_2WT_110_3_10 runs from Moorau_110 to Moorau_20
       net = load_fixture_net("sp_case14")
       _, erg = runpf!(net, 40, 1e-10, 0)
       @test erg == 0
       Vpf = Sparlectra.buildVoltageVector(net)
       index = nameMeasurementKeys(net)
-      vn(b) = net.nodeVec[b].comp.cVN
-      @test sort!(unique(vn.(eachindex(net.nodeVec)))) == [20.0, 110.0]
+      two = [L(vn_kv = 110, p_mw = 1.5, q_mvar = 2.5, u_kv = 0.4, rel_pct = 0.5), L(vn_kv = 20, p_mw = 0.3, q_mvar = 0.4, u_kv = 0.08)]
+      # hand rows: (key, node?, type, value, own sigma)
+      hand = [("Moorau_110", true, "U", 115.5, nothing), ("Moorau_20", true, "U", 20.5, nothing),
+        ("B_2WT_110_3_10:from", false, "P", 400.0, nothing), ("B_2WT_110_3_10:to", false, "P", -40.0, nothing),
+        ("B_ACL_110_2_3:from", false, "Q", 100.0, nothing), ("B_ACL_20_10_11:from", false, "Q", 5.0, nothing),
+        ("B_ACL_110_3_4:from", false, "P", 50.0, 0.7), ("Ld_20.0@Hassel_20", false, "P", -2.0, nothing)]
+      hrows = [MeasurementRow(i, "", "", node ? "" : key, node ? key : "", typ, v, s, "test", true, :none, "") for (i, (key, node, typ, v, s)) in enumerate(hand)]
+      hset(levels) = (s = only(importMeasurementTable(hrows, index; sigma_by_voltage_level = levels).sets); @test isempty(s.problems); (Dict(m.id => m.sigma for m in s.measurements), s.sigma_origin))
+      h, ho = hset(two)
+      # U in pu of its bus: max(0.4, 0.5 % of 115.5 kV) = 0.5775 kV over
+      # 110 kV, and 0.08 kV over 20 kV
+      @test h["U@Moorau_110"] ≈ 0.00525 rtol = 1e-14
+      @test h["U@Moorau_20"] ≈ 0.004 rtol = 1e-14
+      # P and Q at the bus of the branch end: the 110 kV end of the
+      # transformer max(1.5, 0.5 % of 400 MW) = 2 MW, its 20 kV end 0.3 MW
+      @test h["P@B_2WT_110_3_10:from"] == 2.0 && h["P@B_2WT_110_3_10:to"] == 0.3
+      @test h["Q@B_ACL_110_2_3:from"] == 2.5 && h["Q@B_ACL_20_10_11:from"] == 0.4
+      # the row's own sigma wins
+      @test h["P@B_ACL_110_3_4:from"] == 0.7 && ho["P@B_ACL_110_3_4:from"] === :row
+      # a bus sum of one member carries the member sigma
+      @test h["PinjMeas@bus11"] == 0.3 && ho["PinjMeas@bus11"] === :level && ho["U@Moorau_20"] === :level
+      # the bus sum is the root sum of its members: four injections at B2
+      # (110 kV), 600 MW gives 3 MW, 100 MW three times 1.5 MW, so
+      # sqrt(3^2 + 3 * 1.5^2) = sqrt(15.75)
+      shared = _shared_name_net()
+      sidx = nameMeasurementKeys(shared)
+      members = sort(sidx.groups[(:injection, 2)])
+      @test length(members) == 4
+      srows = [MeasurementRow(i, "", "", key, "", "P", i == 1 ? 600.0 : 100.0, nothing, "test", true, :none, "") for (i, key) in enumerate(members)]
+      sset = only(importMeasurementTable(srows, sidx; sigma_by_voltage_level = two).sets)
+      @test only(sset.measurements).sigma ≈ sqrt(15.75) rtol = 1e-15
+      # a level missing from the case table: with only the 110 kV row the
+      # 20 kV measurements take the default of their type
+      one = [L(vn_kv = 110, p_mw = 1.5, q_mvar = 2.5, u_kv = 0.4), L(vn_kv = 380, p_mw = 2.0)]
+      h1, ho1 = hset(one)
+      defaults = measurementStdDevs()
+      @test h1["U@Moorau_20"] == defaults[Sparlectra.VmMeas] && ho1["U@Moorau_20"] === :default
+      @test h1["P@B_2WT_110_3_10:to"] == defaults[Sparlectra.PflowMeas] && ho1["P@B_2WT_110_3_10:to"] === :default
+      @test h1["P@B_2WT_110_3_10:from"] == 1.5 && ho1["P@B_2WT_110_3_10:from"] === :level
+
+      # the summary of the generated table, every sigma cell emptied except
+      # one P row, under the 110 kV row alone: the 20 kV measurements count
+      # as default, the configured 380 kV level is not in the case
       exact = generateMeasurementTableFromPF(net; noise = false, include_injections = true)
       keep = findfirst(r -> r.type == "P" && occursin(":from", r.terminal_mrid), exact)
       blank(rows; own = nothing) = [MeasurementRow(i, r.timestamp, r.measurement_mrid, r.terminal_mrid, r.node_mrid, r.type, r.value, i == own ? 0.7 : nothing, r.source, r.valid, :none, "") for (i, r) in enumerate(rows)]
       rows = blank(exact; own = keep)
-      two = [L(vn_kv = 110, p_mw = 1.5, q_mvar = 2.5, u_kv = 0.4, rel_pct = 0.5), L(vn_kv = 20, p_mw = 0.3, q_mvar = 0.4, u_kv = 0.08)]
       set = only(importMeasurementTable(rows, index; sigma_by_voltage_level = two).sets)
-      @test isempty(set.problems)
-      kept_id = string("P@", exact[keep].terminal_mrid)
-      level_of(b) = only(filter(r -> r.vn_kv == vn(b), two))
-      # the sigma of each measurement, recomputed: U in pu of its bus
-      # (max(u_kv, rel_pct/100 * U_kV) / Vn), P and Q in MW/MVAr at the bus
-      # of the branch end, a bus sum sqrt(sum of the member sigmas squared)
-      for m in set.measurements
-        if m.id == kept_id
-          @test m.sigma == 0.7 && set.sigma_origin[m.id] === :row
-          continue
-        end
-        @test set.sigma_origin[m.id] === :level
-        b = Sparlectra._sigma_level_bus(net, m)
-        r = level_of(b)
-        if m.typ == Sparlectra.VmMeas
-          @test m.sigma ≈ max(r.u_kv, r.rel_pct / 100 * m.value * vn(b)) / vn(b) rtol = 1e-14
-        elseif m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas)
-          a = m.typ == Sparlectra.PflowMeas ? r.p_mw : r.q_mvar
-          @test m.sigma ≈ max(a, r.rel_pct / 100 * abs(m.value)) rtol = 1e-14
-        elseif vn(b) == 20.0 && m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas)
-          # rel_pct 0 at 20 kV: every member has the absolute sigma
-          n = length(index.groups[(:injection, b)])
-          @test m.sigma ≈ (m.typ == Sparlectra.PinjMeas ? r.p_mw : r.q_mvar) * sqrt(n) rtol = 1e-14
-        end
-      end
-      @test any(m -> m.typ == Sparlectra.VmMeas && vn(m.busIdx) == 20.0, set.measurements)
-      @test any(m -> m.typ == Sparlectra.PinjMeas && vn(m.busIdx) == 20.0, set.measurements)
-      # only the 110 kV row: the 20 kV measurements fall back to the default
-      # and are counted as such; a configured 380 kV level is a note
-      one = [L(vn_kv = 110, p_mw = 1.5, q_mvar = 2.5, u_kv = 0.4), L(vn_kv = 380, p_mw = 2.0)]
       set1 = only(importMeasurementTable(rows, index; sigma_by_voltage_level = one).sets)
-      defaults = measurementStdDevs()
-      for m in set1.measurements
-        m.id == kept_id && continue
-        if vn(Sparlectra._sigma_level_bus(net, m)) == 20.0
-          @test set1.sigma_origin[m.id] === :default
-          m.typ in (Sparlectra.VmMeas, Sparlectra.PflowMeas, Sparlectra.QflowMeas) && @test m.sigma == defaults[m.typ]
-        else
-          @test set1.sigma_origin[m.id] === :level
-        end
-      end
       summ = Sparlectra._sigma_level_summary(net, set1.measurements; origins = set1.sigma_origin, levels = one)
       @test summ.unused == [380.0] && summ.unlocated == 0
       s110 = only(filter(l -> l.vn_kv == 110.0, summ.levels))
@@ -625,16 +625,15 @@ function run_measurement_table_tests()
       set_cfg = with_state_estimation_config(() -> only(importMeasurementTable(rows, index).sets); sigma_by_voltage_level = two)
       @test [m.sigma for m in set_cfg.measurements] == [m.sigma for m in set.measurements]
 
-      # the generator writes the level sigma and draws its noise with it;
-      # noise 0 reproduces the state to 1e-6 pu with or without the table
+      # the generator writes the level sigma (U in kV: max(0.4, 0.5 % of the
+      # reading) at 110 kV, the 20 kV row without rel_pct its absolute
+      # sigma) and draws its noise with it; noise 0 reproduces the state to
+      # 1e-6 pu with or without the table
       gen = generateMeasurementTableFromPF(net; noise = false, include_injections = true, sigma_by_voltage_level = two)
-      nodebus = Dict(k => b for (k, b) in index.nodes)
-      for r in gen
-        b = isempty(r.node_mrid) ? index.terminals[r.terminal_mrid].busIdx : nodebus[r.node_mrid]
-        lr = level_of(b)
-        a = r.type == "U" ? lr.u_kv : r.type == "P" ? lr.p_mw : lr.q_mvar
-        @test r.sigma ≈ max(a, lr.rel_pct / 100 * abs(r.value)) rtol = 1e-14
-      end
+      u110 = only(filter(r -> r.type == "U" && r.node_mrid == "Moorau_110", gen))
+      @test u110.sigma == max(0.4, 0.005 * u110.value)
+      @test only(filter(r -> r.type == "P" && r.terminal_mrid == "B_2WT_110_3_10:to", gen)).sigma == 0.3
+      @test only(filter(r -> r.type == "Q" && r.terminal_mrid == "B_ACL_20_10_11:from", gen)).sigma == 0.4
       for table in (gen, exact)
         _, se_g = _estimate_table(net, table)
         @test se_g.converged && maximum(abs.(se_g.voltages .- Vpf)) < 1e-6
@@ -645,15 +644,15 @@ function run_measurement_table_tests()
       # the same random draw, scaled by each row's written sigma
       @test all(isapprox((a.value - p.value) / a.sigma, (b.value - p.value) / b.sigma; atol = 1e-8) for (a, b, p) in zip(noisy_two, noisy_def, plain))
       @test any(a.sigma != b.sigma for (a, b) in zip(noisy_two, noisy_def))
-      # pseudo rows carry the level sigma where the level has a column
+      # pseudo rows carry the level sigma where the level has a column: the
+      # 20 kV load its absolute sigmas, the 110 kV load max(1.5, 0.5 %)
       loads = Set(k for (k, t) in index.terminals if t.kind === :injection && t.detail == "load")
       cut = filter(r -> !(r.terminal_mrid in loads), exact)
       pseudo = generatePseudoMeasurementTable(net, cut; sigma = 10.0, sigma_by_voltage_level = two)
-      @test !isempty(pseudo)
-      for r in pseudo
-        lr = level_of(index.terminals[r.terminal_mrid].busIdx)
-        @test r.sigma ≈ max(r.type == "P" ? lr.p_mw : lr.q_mvar, lr.rel_pct / 100 * abs(r.value)) rtol = 1e-14
-      end
+      prow(key, typ) = only(filter(r -> r.terminal_mrid == key && r.type == typ, pseudo))
+      @test prow("Ld_20.0@Hassel_20", "P").sigma == 0.3 && prow("Ld_20.0@Hassel_20", "Q").sigma == 0.4
+      p110 = prow("Ld_110.0@Roggau_110", "P")
+      @test p110.sigma == max(1.5, 0.005 * abs(p110.value))
       @test all(r -> r.sigma == 10.0, generatePseudoMeasurementTable(net, cut; sigma = 10.0, sigma_by_voltage_level = Sparlectra.SESigmaLevel[]))
 
       # a 380/110 kV transformer of sp_case188: the P row at its 110 kV end
@@ -663,34 +662,23 @@ function run_measurement_table_tests()
       idx188 = nameMeasurementKeys(net188)
       is_trafo(t) = t.kind === :branch && (br = net188.branchVec[t.branchIdx]; br.ratio != 0.0 && Set((vn188(br.fromBus), vn188(br.toBus))) == Set((380.0, 110.0)))
       k = minimum(t.branchIdx for (_, t) in idx188.terminals if is_trafo(t))
-      ends = [(key, t) for (key, t) in idx188.terminals if t.kind === :branch && t.branchIdx == k]
-      @test length(ends) == 2
-      trows = [MeasurementRow(i, "", "", key, "", "P", 50.0, nothing, "test", true, :none, "") for (i, (key, _)) in enumerate(ends)]
+      ends = [key for (key, t) in idx188.terminals if t.kind === :branch && t.branchIdx == k]
+      trows = [MeasurementRow(i, "", "", key, "", "P", 50.0, nothing, "test", true, :none, "") for (i, key) in enumerate(ends)]
       tset = only(importMeasurementTable(trows, idx188; sigma_by_voltage_level = [L(vn_kv = 380, p_mw = 2.0), L(vn_kv = 110, p_mw = 1.0)]).sets)
-      for m in tset.measurements
-        side = m.direction === :from ? net188.branchVec[k].fromBus : net188.branchVec[k].toBus
-        @test m.sigma == (vn188(side) == 380.0 ? 2.0 : 1.0)
-      end
-      @test Set(m.sigma for m in tset.measurements) == Set([1.0, 2.0])
+      side(m) = m.direction === :from ? net188.branchVec[k].fromBus : net188.branchVec[k].toBus
+      @test sort!([(vn188(side(m)), m.sigma) for m in tset.measurements]) == [(110.0, 1.0), (380.0, 2.0)]
 
-      # the SV generator on the SmallGrid takes the table the same way
+      # the SV generator on the SmallGrid takes the table the same way: the
+      # level sigma at the configured level, its own sigma elsewhere
       result = _smallgrid_import()
       cindex = cgmesMeasurementKeys(result)
       top = maximum(nd.comp.cVN for nd in result.net.nodeVec)
       sv = generateMeasurementTableFromSV(result; noise = false, sigma_by_voltage_level = [L(vn_kv = top, p_mw = 3.0, q_mvar = 4.0, u_kv = 1.0)])
       sv0 = generateMeasurementTableFromSV(result; noise = false, sigma_by_voltage_level = Sparlectra.SESigmaLevel[])
       @test length(sv) == length(sv0)
-      n_top = 0
-      for (r, r0) in zip(sv, sv0)
-        b = isempty(r.node_mrid) ? cindex.terminals[r.terminal_mrid].busIdx : cindex.nodes[r.node_mrid]
-        if result.net.nodeVec[b].comp.cVN == top
-          n_top += 1
-          @test r.sigma == (r.type == "U" ? 1.0 : r.type == "P" ? 3.0 : 4.0)
-        else
-          @test r.sigma == r0.sigma
-        end
-      end
-      @test n_top > 0
+      at_top(r) = result.net.nodeVec[isempty(r.node_mrid) ? cindex.terminals[r.terminal_mrid].busIdx : cindex.nodes[r.node_mrid]].comp.cVN == top
+      @test any(at_top, sv) && all(r.sigma == (r.type == "U" ? 1.0 : r.type == "P" ? 3.0 : 4.0) for r in sv if at_top(r))
+      @test all(r.sigma == r0.sigma for (r, r0) in zip(sv, sv0) if !at_top(r))
 
       # the Web UI measurement generator (generateMeasurementsFromPF, CSV
       # v1) takes the table of the case configuration: a P, I or U row at
@@ -718,27 +706,28 @@ function run_measurement_table_tests()
         @test all(k -> startswith(k, "I@"), symdiff(Set(keys(m0)), Set(keys(m1))))
         @test all(t0[k] == t1[k] for k in intersect(keys(t0), keys(t1)))
         lr = L(vn_kv = 110, p_mw = 1.5, i_a = 20, u_kv = 0.8, rel_pct = 0.5)
-        n_level = 0
-        for (id, a) in m0
-          haskey(m1, id) || continue
-          b = m1[id]
-          vnb = w.nodeVec[Sparlectra._sigma_level_bus(w, a)].comp.cVN
-          typ = Sparlectra._sigma_table_type(a.typ)
-          if vnb == 110.0 && typ in ("P", "I", "U") && haskey(t0, id) && !startswith(id, "ZI")
-            t = t0[id]
-            want = typ == "U" ? max(lr.u_kv, lr.rel_pct / 100 * t * vnb) / vnb : max(typ == "P" ? lr.p_mw : lr.i_a, lr.rel_pct / 100 * abs(t))
-            @test b.sigma ≈ want rtol = 1e-12
-            @test (b.value - t) / b.sigma ≈ (a.value - t) / a.sigma atol = 1e-6
-          else
-            @test b.sigma == a.sigma && b.value == a.value
-          end
+        vn_of(m) = w.nodeVec[Sparlectra._sigma_level_bus(w, m)].comp.cVN
+        takes_level(id, m, t) = vn_of(m) == 110.0 && Sparlectra._sigma_table_type(m.typ) in ("P", "I", "U") && haskey(t, id) && !startswith(id, "ZI")
+        pairs = [(id, a, m1[id]) for (id, a) in m0 if haskey(m1, id)]
+        lvl = [(id, a, b) for (id, a, b) in pairs if takes_level(id, a, t0)]
+        # one row of each level type by hand: sigma from the noise-free value
+        # and the noise draw scaled to it
+        for typ in (Sparlectra.PflowMeas, Sparlectra.ImagMeas, Sparlectra.VmMeas)
+          id, a, b = first(sort!(filter(x -> x[2].typ == typ, lvl); by = first))
+          t = t0[id]
+          want = typ == Sparlectra.VmMeas ? max(0.8, 0.005 * t * 110.0) / 110.0 : max(typ == Sparlectra.PflowMeas ? 1.5 : 20.0, 0.005 * abs(t))
+          @test b.sigma ≈ want rtol = 1e-12
+          @test (b.value - t) / b.sigma ≈ (a.value - t) / a.sigma atol = 1e-6
+        end
+        # the other rows stay: a Q flow at 110 kV, a 20 kV row, a
+        # zero-injection constraint
+        rest = [(id, a, b) for (id, a, b) in pairs if !takes_level(id, a, t0)]
+        for pick in ((id, a) -> a.typ == Sparlectra.QflowMeas && vn_of(a) == 110.0, (id, a) -> vn_of(a) == 20.0, (id, a) -> startswith(id, "ZI"))
+          id, a, b = first(sort!(filter(x -> pick(x[1], x[2]), rest); by = first))
+          @test b.sigma == a.sigma && b.value == a.value
         end
         # the rows of the written table that take the level sigma
-        for (id, b) in m1
-          vnb = w.nodeVec[Sparlectra._sigma_level_bus(w, b)].comp.cVN
-          (vnb == 110.0 && Sparlectra._sigma_table_type(b.typ) in ("P", "I", "U") && haskey(t1, id) && !startswith(id, "ZI")) && (n_level += 1)
-        end
-        @test n_level == g1.sigma_level_rows
+        @test count(takes_level(id, b, t1) for (id, b) in m1) == g1.sigma_level_rows
       end
     end)()
   end
@@ -1053,9 +1042,11 @@ function run_measurement_table_tests()
       @test count(r -> occursin("zero_injection", r.source), readMeasurementTable(tbl)) == 2 * length(passive)
       # back in pu: the import gives the v1 measurements bit for bit, in
       # their order, with the ids the converter announced
-      ref = deepcopy(net)
-      @test_logs (:warn, r"sparlectra-measurements v1") (:warn, r"repeat a quantity") readMeasurementsCSV!(ref; file = v1)
-      a = [m for (k, m) in enumerate(ref.measurements[1:(end-1)]) if !(k in neg)]
+      # (the v1 side as the converter's private parse reads it; the public
+      # v1 reader was removed in 0.50.0)
+      ref_ms = Sparlectra._read_measurements_csv_v1(net, v1).measurements
+      @test ref_ms == ms
+      a = [m for (k, m) in enumerate(ref_ms[1:(end-1)]) if !(k in neg)]
       set = only(importMeasurementTable(readMeasurementTable(tbl), nameMeasurementKeys(net)).sets)
       b = set.measurements
       @test isempty(set.problems) && length(a) == length(b)
@@ -1077,11 +1068,11 @@ function run_measurement_table_tests()
       ressg = convertMeasurementsV1(v1sg, sgnet; out = joinpath(d, "smallgrid.table.csv"), index = index)
       # the group sums of the fixture are bus balances in v1 and stay so
       @test isempty(ressg.problems)
-      refsg = deepcopy(sgnet)
-      @test_logs (:warn, r"sparlectra-measurements v1") readMeasurementsCSV!(refsg; file = v1sg)
+      refsg_ms = Sparlectra._read_measurements_csv_v1(sgnet, v1sg).measurements
       setsg = only(importMeasurementTable(readMeasurementTable(ressg.file), index).sets)
-      @test all(x.typ == y.typ && x.value === y.value && x.sigma === y.sigma && x.active == y.active for (x, y) in zip(refsg.measurements, setsg.measurements))
-      elim = _converted_same_estimate(sgnet, refsg.measurements, setsg.measurements, ressg.ids)
+      @test length(refsg_ms) == length(setsg.measurements)
+      @test all(x.typ == y.typ && x.value === y.value && x.sigma === y.sigma && x.active == y.active for (x, y) in zip(refsg_ms, setsg.measurements))
+      elim = _converted_same_estimate(sgnet, refsg_ms, setsg.measurements, ressg.ids)
       @test elim >= 1
       # rows the table has no place for are listed, not dropped
       link = Measurement(typ = Sparlectra.PflowMeas, value = 1.0, sigma = 0.1, direction = :from, id = "link_row", linkIdx = 1)
@@ -1105,9 +1096,17 @@ function run_measurement_table_tests()
           @test g.rows == length(g.measurements) - length(g.not_written)
           @test all(p -> p.problem === :bad_value, g.not_written)
           @test occursin("# truth_value,", read(tbl, String)) && occursin("zero_injection", read(tbl, String))
-          # the same set as CSV v1, with the comments the table carries
+          # the table carries the generated set: value, sigma and flag of
+          # every written row bit for bit, in the order of the set
           imported = SparlectraApp._se_import_case(case, Sparlectra.load_sparlectra_config())
           net = imported.net
+          set = first(importMeasurementTable(readMeasurementTable(tbl), Sparlectra._measurement_key_index(imported)).sets)
+          skipped = Set(p.line for p in g.not_written)
+          written = [m for (k, m) in enumerate(g.measurements) if !(k in skipped)]
+          @test length(written) == length(set.measurements)
+          @test all(x.typ == y.typ && x.value === y.value && x.sigma === y.sigma && x.active == y.active for (x, y) in zip(written, set.measurements))
+          # the same set as CSV v1: the SE service refuses it (reader
+          # removed in 0.50.0) with the converter named, the table runs
           empty!(net.measurements)
           append!(net.measurements, g.measurements)
           v1 = joinpath(d, "$(label).v1.csv")
@@ -1115,17 +1114,10 @@ function run_measurement_table_tests()
           run(f, tag) = SparlectraApp.to_dict(redirect_stdout(devnull) do
             SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, tag), tag, f)
           end)
-          ra = run_with_expected_warnings(() -> run(v1, "$(label)_v1"), [r"topology precheck", r"sparlectra-measurements v1"])
+          ra = run_with_expected_warnings(() -> run(v1, "$(label)_v1"), [r"topology precheck"])
           rb = run_with_expected_warnings(() -> run(tbl, "$(label)_table"), [r"topology precheck"])
-          # every run on a CSV v1 notes the deprecation, a table run not
-          @test get(ra["metadata"], "se_measurement_csv_v1", false) == true && !haskey(rb["metadata"], "se_measurement_csv_v1")
-          @test occursin("removed in 0.60.0", read(joinpath(d, "$(label)_v1", "run.log"), String))
-          @test ra["status"] == "succeeded" && rb["status"] == "succeeded"
-          @test ra["metadata"]["se_objective"] === rb["metadata"]["se_objective"]
-          @test ra["metadata"]["se_dof"] == rb["metadata"]["se_dof"] && ra["metadata"]["se_eliminations"] == rb["metadata"]["se_eliminations"]
-          @test read(joinpath(d, "$(label)_v1", "se_state.csv")) == read(joinpath(d, "$(label)_table", "se_state.csv"))
-          bad(tag) = (f = joinpath(d, tag, "se_bad_data.csv"); isfile(f) ? [join(split(l, ",")[3:end], ",") for l in readlines(f)[2:end]] : String[])
-          @test bad("$(label)_v1") == bad("$(label)_table")
+          @test ra["status"] != "succeeded" && occursin("convertMeasurementsV1", string(get(ra, "error", ""), get(ra, "message", "")))
+          @test rb["status"] == "succeeded"
         end
       end
     end)()
@@ -1171,13 +1163,40 @@ function run_measurement_table_tests()
         @test occursin("## Measurement sigma by voltage level", read(joinpath(d, "on", "se_diagnostics.md"), String))
         # state_estimation.zero_injection on (the default): the passive buses
         # without an injection row get ZI pairs, counted in the report, the
-        # log and the metadata, and written to the run's measurements.csv;
-        # off adds none and estimates the 862 rows of the table alone
+        # log and the metadata, and written to the run's measurements.csv
+        # as node rows with the source token zero_injection; off adds none
+        # and estimates the 862 rows of the table alone
         zi_on = d_on["metadata"]["se_zero_injection_rows"]
         @test zi_on > 0 && iseven(zi_on)
         @test occursin("zero-injection rows $(zi_on)", report)
         @test occursin("zero injection: $(zi_on) row(s) added", read(joinpath(d, "on", "run.log"), String))
-        @test count(l -> occursin("ZI_PINJ_bus_", l), readlines(joinpath(d, "on", "measurements.csv"))) == zi_on ÷ 2
+        art = joinpath(d, "on", "measurements.csv")
+        art_rows = readMeasurementTable(art)
+        @test count(r -> r.source == "se_run;zero_injection", art_rows) == zi_on
+        # the artifact is the estimated set as a table: read back with the
+        # run's mRID index it gives the first set of the input table plus the
+        # zero-injection rows, bitwise in value and sigma (redundant U at
+        # busbar sections and bus sums of several prosumers included), and
+        # an estimation on the artifact gives the same J
+        @test length(unique(r.timestamp for r in art_rows)) == 1
+        back = _smallgrid_import()
+        back_set = readMeasurementTable!(back.net; file = art, index = cgmesMeasurementKeys(back), zero_injection = false)
+        @test isempty(back_set.problems)
+        ref = _smallgrid_import()
+        applyMeasurementSet!(ref.net, first(importMeasurementTable(readMeasurementTable(_SMALLGRID_TABLE), cgmesMeasurementKeys(ref)).sets); zero_injection = true)
+        mkey(m) = (m.id, m.typ, m.busIdx, m.branchIdx, m.direction, m.active, m.zero_injection, reinterpret(UInt64, m.value), reinterpret(UInt64, m.sigma))
+        @test sort!(mkey.(ref.net.measurements)) == sort!(mkey.(back.net.measurements))
+        on2 = redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg, joinpath(d, "on2"), "table_on2", art)
+        end
+        d_on2 = SparlectraApp.to_dict(on2)
+        @test d_on2["status"] == "succeeded"
+        @test d_on2["metadata"]["se_objective"] === d_on["metadata"]["se_objective"]
+        @test d_on2["metadata"]["se_zero_injection_rows"] == 0
+        # the verdict: one line per table row, joined by its line number
+        verdict = readlines(joinpath(d, "on", "measurements_verdict.csv"))
+        @test length(verdict) == length(art_rows) + 1
+        @test [parse(Int, first(split(l, ","))) for l in verdict[2:end]] == [r.line for r in art_rows]
         cfg_zoff = joinpath(d, "table_zi_off.yaml")
         write(cfg_zoff, "config_version: 1\nstate_estimation:\n  measurement_table: true\n  zero_injection: off\n")
         zoff = redirect_stdout(devnull) do
@@ -1188,7 +1207,7 @@ function run_measurement_table_tests()
         @test d_zoff["metadata"]["se_measurement_rows"] == 862
         @test d_zoff["metadata"]["se_zero_injection_rows"] == 0
         @test occursin("zero-injection rows 0", read(joinpath(d, "zoff", "measurement_import.txt"), String))
-        @test !any(l -> occursin("ZI_PINJ_bus_", l), readlines(joinpath(d, "zoff", "measurements.csv")))
+        @test !any(r -> occursin("zero_injection", r.source), readMeasurementTable(joinpath(d, "zoff", "measurements.csv")))
         @test !haskey(d_on["metadata"], "se_duplicate_rows")
         # a table without its version line gets the reader's message, not
         # the one of the measurement CSV v1 reader

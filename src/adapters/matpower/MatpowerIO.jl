@@ -632,7 +632,21 @@ function try_parse_sparlectra_extension(txt::String)
     end
     size(branch_shunts, 2) == 4 || throw(ArgumentError("mpc.sparlectra.branch_shunts needs 4 columns (branch bus Gs_MW Bs_MVar), got $(size(branch_shunts, 2))."))
   end
-  return (format_version = version, warning = warning, transformer_losses = losses, tap_changer_model = tap_changer_model, solution_written = solution_written, links = links, tap_changers = tap_changers, branch_shunts = branch_shunts)
+  # Optional auxiliary buses (0.50.0): one BUS_I per row, the buses Sparlectra
+  # built as auxiliary (three-winding star points, internal nodes). The role
+  # sets the solver's flat start of such a bus; the bus name no longer marks
+  # it since a bus keeps its own name.
+  aux_buses = nothing
+  if occursin("mpc.sparlectra.aux_buses", txt)
+    aux_buses = try
+      parse_matrix_block(txt, "mpc.sparlectra.aux_buses")
+    catch err
+      throw(ArgumentError("mpc.sparlectra.aux_buses could not be parsed: $(sprint(showerror, err))"))
+    end
+    # a column (one bus per row, as the exporter writes it) or one row
+    (isempty(aux_buses) || size(aux_buses, 1) == 1 || size(aux_buses, 2) == 1) || throw(ArgumentError("mpc.sparlectra.aux_buses needs one bus number per row, got $(size(aux_buses, 1))x$(size(aux_buses, 2))."))
+  end
+  return (format_version = version, warning = warning, transformer_losses = losses, tap_changer_model = tap_changer_model, solution_written = solution_written, links = links, tap_changers = tap_changers, branch_shunts = branch_shunts, aux_buses = aux_buses)
 end
 
 function for001_contingency_branch_indices(mpc::MatpowerCase)::Vector{Int}

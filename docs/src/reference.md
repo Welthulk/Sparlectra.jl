@@ -11,7 +11,8 @@ that directory.
 - [Rectangular Power Flow](reference_powerflow_rectangular.md): the Newton-Raphson solver in rectangular coordinates
 - [DC Power Flow](reference_powerflow_dc.md): the linear DC approximation
 - [Short Circuit](reference_shortcircuit.md): IEC 60909 short-circuit calculation
-- [Format Adapters](reference_adapters.md): MATPOWER, CGMES, DTF, and the Sparlectra Case Format
+- [Format Adapters](reference_adapters.md): MATPOWER, DTF, PowSyBl, PGM, and the Sparlectra Case Format
+- [CGMES Adapter](reference_cgmes.md): CGMES import and export
 - [State Estimation and Measurements](reference_stateestimation.md): WLS estimator, measurement model, tap estimation
 - [Configuration Internals](reference_config.md): configuration loading and YAML handling
 - [Controllers](reference_controller.md): the control framework and its controllers

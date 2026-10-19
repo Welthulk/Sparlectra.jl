@@ -657,8 +657,17 @@ function refreshBusTypesFromProsumers!(net::Net)
   return nothing
 end
 
+const _addbus_bus_type_warned = Ref(false)
+
 """
-addBus!: Adds a bus to the network.
+    addBus!(; net, busName, vn_kV, ...)
+
+Add a bus to the network. Voltage limits default to the network's; `area`,
+`zone` and the source bus number are optional identity data.
+
+`busName` is the key of `net.busDict` and the component name of the node.
+Only an empty `busName` gives the schematic name `Bus_<idx>_<kV>`
+(`Aux_<idx>_<kV>` for an auxiliary bus).
 
 Parameters:
 - `net::Net`: Network object.
@@ -669,19 +678,11 @@ Parameters:
 - `va_deg::Float64 = 0.0`: Voltage angle of the bus in degrees (default is 0.0).
 - `vmin_pu::Union{Nothing,Float64} = nothing`: Minimum voltage limit in per unit (default is network's vmin_pu).
 - `vmax_pu::Union{Nothing,Float64} = nothing`: Maximum voltage limit in per unit (default is network's vmax_pu).
-- `isAux::Bool = false`: Boolean indicating if the bus is auxiliary (default is false).
+- `isAux::Bool = false`: The bus is auxiliary (three-winding star point, internal node of an importer). The node then carries the component type `AuxBus`, which marks it auxiliary whatever its name.
 - `oBusIdx::Union{Nothing,Int} = nothing`: Original bus index (default is nothing).
 - `zone::Union{Nothing,Int} = nothing`: Zone index (default is nothing).
 - `area::Union{Nothing,Int} = nothing`: Area index (default is nothing).
 - `ratedS::Union{Nothing,Float64} = nothing`: Rated power of the bus in MVA (default is nothing).
-"""
-const _addbus_bus_type_warned = Ref(false)
-
-"""
-    addBus!(; net, busName, vn_kV, ...)
-
-Add a bus to the network. Voltage limits default to the network's; `area`,
-`zone` and the source bus number are optional identity data.
 """
 function addBus!(;
   net::Net,
@@ -735,7 +736,7 @@ function addBus!(;
     push!(net.slackVec, busIdx)
   end
 
-  node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(static_bus_type), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS)
+  node = Node(busIdx = busIdx, vn_kV = vn_kV, nodeType = toNodeType(static_bus_type), vm_pu = vm_pu, va_deg = va_deg, vmin_pu = vmin_pu, vmax_pu = vmax_pu, isAux = isAux, oBusIdx = oBusIdx, zone = zone, area = area, ratedS = ratedS, name = busName)
   push!(net.nodeVec, node)
 end
 

@@ -22,6 +22,47 @@
 @inline _voltage_within_deadband(vm::Float64, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool = abs(vm - target_vm_pu) <= deadband_vm_pu
 @inline _voltage_control_error(vm::Float64, target_vm_pu::Float64, metric::Symbol)::Float64 = metric == :vm2 ? vm^2 - target_vm_pu^2 : vm - target_vm_pu
 
+# Cross-type check of a voltage controller (machine, shunt, HVDC terminal)
+# against a tap controller on the same bus. The two fight each other in the
+# outer loop unless they stand at different ranks (control_priority) and
+# agree on the target within both deadbands: then the lower rank waits
+# while the higher one holds the bus in its band and takes over at its
+# limit. With different targets the lower rank pulls the voltage out of the
+# higher one's band whenever that one is in band, and both walk against
+# each other until one sits at its limit, at any ranks. A target on the
+# edge of the band agrees: 1.01 against 1.0 +/- 0.01 differs by
+# 0.010000000000000009 in floats, so the comparison allows 1e-9.
+function _fights_tap_controller(tap::PowerTransformerControl, priority::Int, target_vm_pu::Float64, deadband_vm_pu::Float64)::Bool
+  control_priority(tap) == priority && return true
+  return abs(tap.target_vm_pu - target_vm_pu) > min(tap.deadband_vm_pu, deadband_vm_pu) + 1e-9
+end
+
+# Ratio window the controller moves its tap in: its own control range
+# (tap_min/tap_max of the controller) where set, the physical range of the
+# branch otherwise.
+_tap_control_range(ctrl::PowerTransformerControl, br::Branch)::Tuple{Float64,Float64} = (something(ctrl.tap_min, br.tap_min), something(ctrl.tap_max, br.tap_max))
+
+# Check a control range against the transformer and store it on the
+# controller. Both ends lie inside the physical range of the branch
+# (tap_min/tap_max, 1e-12 slack for ratios read back from a file) and the
+# lower end below the upper one; a range on a controller without ratio
+# control is refused. `nothing` keeps the physical limit on that side.
+function _set_tap_control_range!(ctrl::PowerTransformerControl, br::Branch, tap_min::Union{Nothing,Real}, tap_max::Union{Nothing,Real})
+  (tap_min === nothing && tap_max === nothing) && return ctrl
+  who = string("PowerTransformerControl ", br.comp.cName)
+  ctrl.control_ratio || throw(ArgumentError(string(who, ": a control range (tap_min/tap_max) needs ratio control (control_ratio = true)")))
+  lo = tap_min === nothing ? br.tap_min : Float64(tap_min)
+  hi = tap_max === nothing ? br.tap_max : Float64(tap_max)
+  for (key, v) in (("tap_min", tap_min), ("tap_max", tap_max))
+    v === nothing && continue
+    (isfinite(v) && br.tap_min - 1e-12 <= v <= br.tap_max + 1e-12) || throw(ArgumentError(string(who, ": control range ", key, " = ", v, " lies outside the physical tap range ", br.tap_min, " .. ", br.tap_max)))
+  end
+  lo < hi || throw(ArgumentError(string(who, ": control range tap_min = ", lo, " must be below tap_max = ", hi)))
+  ctrl.tap_min = tap_min === nothing ? nothing : lo
+  ctrl.tap_max = tap_max === nothing ? nothing : hi
+  return ctrl
+end
+
 """
     _tap_controllers(net)
 
@@ -136,6 +177,9 @@ function control_evaluate!(ctrl::PowerTransformerControl, net::Net, ::AbstractCo
     converged_p = abs(p - ctrl.p_target_mw) <= ctrl.deadband_p_mw
   end
   ctrl.converged = converged_v && converged_p
+  # a ratio outside the control range (the case ratio left out by a
+  # narrowed range) holds the controller open until it stands inside
+  ctrl.converged = ctrl.converged && !_ratio_outside_control_range(ctrl, br)
   ctrl.status = ctrl.converged ? :converged : :active
   ctrl.outer_iters = context.outer_iteration
   return nothing
@@ -153,15 +197,26 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
   # a probe with islands off refused every net with two AC islands that both
   # have branches, although the run itself solves them island by island.
   probe_cfg = context.pf_config
+  if _ratio_outside_control_range(ctrl, br)
+    # the range wins over the setpoint: the ratio goes onto the nearer end
+    # of its range (on a tabular changer the table point nearest it)
+    # whatever the voltage error, without a probe, and the phase waits
+    # for the next pass
+    lo, hi = _tap_control_range(ctrl, br)
+    _warn_start_outside_control_range(ctrl, br, lo, hi)
+    return (old_ratio = old_ratio, new_ratio = _ratio_toward_control_range(br, lo, hi), old_phase = old_phase, new_phase = old_phase)
+  end
   if !ctrl.converged && ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)
     direction = _ratio_probe_direction(net, br, ctrl, probe_cfg)
     direction == 0.0 && (direction = -1.0)
     Δ = ctrl.is_discrete ? br.tap_step : 0.25 * br.tap_step
     e_v = _voltage_control_error(ctrl.achieved_vm_pu, ctrl.target_vm_pu, ctrl.voltage_error_metric)
     up = (e_v < 0.0) ? direction : -direction
-    # a tabular changer steps onto its next table ratio; tap_step is only
-    # the mean step there and would stop between two points
-    new_ratio = (ctrl.is_discrete && br.tap_ratio_points !== nothing) ? _ratio_points_shift(br, old_ratio, up > 0.0 ? 1 : -1) : clamp(old_ratio + up * Δ, br.tap_min, br.tap_max)
+    lo, hi = _tap_control_range(ctrl, br)
+    # a tabular changer steps onto its next table ratio inside the control
+    # range; tap_step is only the mean step there and would stop between
+    # two points
+    new_ratio = (ctrl.is_discrete && br.tap_ratio_points !== nothing) ? _ratio_points_shift(br, old_ratio, up > 0.0 ? 1 : -1; window = (lo, hi)) : clamp(old_ratio + up * Δ, lo, hi)
   end
   if !ctrl.converged && ctrl.control_phase && ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power)
     direction = _phase_probe_direction(net, br, ctrl, probe_cfg)
@@ -230,28 +285,35 @@ end
 # of a derived branch that brings the resolved ratio (:ratio) or shift
 # (:phase) closest to `target`, among the current step and its two
 # neighbours; moves the step, re-resolves the branch fields through the
-# resolver and reports whether it moved.
-function _move_model_step!(br::Branch, which::Symbol, target::Float64)::Bool
+# resolver and reports whether it moved. A neighbour whose value lies
+# outside `window` (the control range of the controller) is no candidate.
+# A current step outside the window jumps to the step nearest the window
+# instead (_model_step_toward_window), whatever `target` says: a tap that
+# starts outside its range goes back in with its first move.
+function _move_model_step!(br::Branch, which::Symbol, target::Float64; window::Tuple{Float64,Float64} = (-Inf, Inf))::Bool
   m = _derived_tap_model(br, which)
   m === nothing && return false
-  w = br.tap_winding
-  value_at = function (step::Int)
-    res = which === :ratio ? resolve_winding_taps(w; tap_changer_model = br.tap_correction, ratio_step = step) : resolve_winding_taps(w; tap_changer_model = br.tap_correction, phase_step = step)
-    return which === :ratio ? res.ratio : res.shift_deg
-  end
+  outside = v -> max(window[1] - v, v - window[2], 0.0)
   best = m.step
-  bestd = abs(value_at(m.step) - target)
-  for cand in (m.step - 1, m.step + 1)
-    (cand < m.lowStep || cand > m.highStep) && continue
-    d = abs(value_at(cand) - target)
-    if d < bestd - 1e-12
-      best = cand
-      bestd = d
+  v_now = _model_step_value(br, which, m.step)
+  if outside(v_now) > 1e-12
+    best = _model_step_toward_window(br, which, window)
+  else
+    bestd = abs(v_now - target)
+    for cand in (m.step - 1, m.step + 1)
+      (cand < m.lowStep || cand > m.highStep) && continue
+      v = _model_step_value(br, which, cand)
+      outside(v) <= 1e-12 || continue
+      d = abs(v - target)
+      if d < bestd - 1e-12
+        best = cand
+        bestd = d
+      end
     end
   end
   best == m.step && return false
   m.step = best
-  resolve_branch_taps!(br, w; tap_changer_model = br.tap_correction)
+  resolve_branch_taps!(br, br.tap_winding; tap_changer_model = br.tap_correction)
   return true
 end
 
@@ -259,8 +321,8 @@ end
 # `tap_ratio_points` (positive: higher ratio), stopping at the first or last
 # point. A ratio between two points (fractional start step) counts the next
 # point in the direction as the first step. Only points inside `window`
-# count, so a move stops at the last point inside it; the default window
-# takes every point.
+# (the control range of the controller) count, so a move stops at the last
+# point inside it; the default window takes every point.
 function _ratio_points_shift(br::Branch, ratio::Float64, nsteps::Int; window::Tuple{Float64,Float64} = (-Inf, Inf))::Float64
   pts = br.tap_ratio_points
   tol = 1e-12
@@ -309,12 +371,134 @@ function _shift_model_steps!(br::Branch, which::Symbol, nsteps::Int)::Bool
   return true
 end
 
+# On a modelled transformer the step grid rarely meets a control range
+# exactly: a tap inside its range stands at that range's limit when a
+# neighbouring model step resolves to a ratio outside it. Without a control
+# range the check stays the ratio comparison with tap_min/tap_max alone.
+function _model_step_at_window_edge(ctrl::PowerTransformerControl, br::Branch)::Bool
+  (ctrl.tap_min === nothing && ctrl.tap_max === nothing) && return false
+  m = _derived_tap_model(br, :ratio)
+  m === nothing && return false
+  lo, hi = _tap_control_range(ctrl, br)
+  (lo - 1e-12 <= br.tap_ratio <= hi + 1e-12) || return false
+  for cand in (m.step - 1, m.step + 1)
+    (cand < m.lowStep || cand > m.highStep) && continue
+    r = resolve_winding_taps(br.tap_winding; tap_changer_model = br.tap_correction, ratio_step = cand).ratio
+    (lo - 1e-12 <= r <= hi + 1e-12) || return true
+  end
+  return false
+end
+
+# The same on a tabular changer (tap_ratio_points): a ratio inside the
+# control range stands at its limit when no table point inside the range
+# lies beyond it in one direction. Without a control range the ratio
+# comparison with tap_min/tap_max (the first and last point) decides.
+function _table_point_at_window_edge(ctrl::PowerTransformerControl, br::Branch)::Bool
+  (ctrl.tap_min === nothing && ctrl.tap_max === nothing) && return false
+  br.tap_ratio_points === nothing && return false
+  lo, hi = _tap_control_range(ctrl, br)
+  (lo - 1e-12 <= br.tap_ratio <= hi + 1e-12) || return false
+  r = br.tap_ratio
+  return _ratio_points_shift(br, r, 1; window = (lo, hi)) == r || _ratio_points_shift(br, r, -1; window = (lo, hi)) == r
+end
+
+# The model step nearest to `window`: the step with the least distance
+# outside the window over the whole model range, among equals the one whose
+# value is closest to the current step's. A window between two grid points
+# gives the step next to it; the current step wins a tie, so a step that is
+# already nearest stays.
+function _model_step_toward_window(br::Branch, which::Symbol, window::Tuple{Float64,Float64})::Int
+  m = _derived_tap_model(br, which)
+  outside = v -> max(window[1] - v, v - window[2], 0.0)
+  v_now = _model_step_value(br, which, m.step)
+  best = m.step
+  best_out = outside(v_now)
+  best_d = 0.0
+  for step in m.lowStep:m.highStep
+    v = _model_step_value(br, which, step)
+    o = outside(v)
+    d = abs(v - v_now)
+    if o < best_out - 1e-12 || (abs(o - best_out) <= 1e-12 && d < best_d - 1e-12)
+      best, best_out, best_d = step, o, d
+    end
+  end
+  return best
+end
+
+# Warning for a ratio that starts outside the control range and goes onto
+# its nearer end in this pass: transformer, start ratio and step, the limit
+# it lies beyond and the ratio and step it goes to. It comes once per
+# controller and run, as the first pass moves the ratio into the range.
+# The plain step grid counts positions from the ratio 1.0, as the report
+# rows do; a modelled transformer names its model step, a tabular changer
+# the table point.
+function _warn_start_outside_control_range(ctrl::PowerTransformerControl, br::Branch, lo::Float64, hi::Float64)
+  m = _derived_tap_model(br, :ratio)
+  position = function (ratio::Float64, step::Union{Nothing,Int})
+    step !== nothing && return string("model step ", step)
+    if br.tap_ratio_points !== nothing
+      k = findfirst(q -> abs(q - ratio) <= 1e-12, br.tap_ratio_points)
+      return k === nothing ? "between table points" : string("table point ", k, " of ", length(br.tap_ratio_points))
+    end
+    p = _tap_position(ratio, 1.0, br.tap_step)
+    return ismissing(p) ? "no tap position" : @sprintf("tap position %+d", p)
+  end
+  start_label = position(br.tap_ratio, m === nothing ? nothing : m.step)
+  if m === nothing
+    new_ratio = _ratio_toward_control_range(br, lo, hi)
+    new_label = position(new_ratio, nothing)
+  else
+    new_step = _model_step_toward_window(br, :ratio, (lo, hi))
+    new_ratio = _model_step_value(br, :ratio, new_step)
+    new_label = position(new_ratio, new_step)
+  end
+  limit = br.tap_ratio < lo ? string("below its control range (tap_min = ", lo, ")") : string("above its control range (tap_max = ", hi, ")")
+  @warn @sprintf("PowerTransformerControl: transformer %s starts at ratio %.5f (%s) %s and goes to %.5f (%s) in the first pass.", br.comp.cName, br.tap_ratio, start_label, limit, new_ratio, new_label)
+  return nothing
+end
+
+# A ratio outside the control range of a voltage controller (the case
+# ratio left out by a narrowed range). On a modelled transformer it counts
+# only while a model step nearer to the range exists, so a range between
+# two grid points does not hold the controller open.
+function _ratio_outside_control_range(ctrl::PowerTransformerControl, br::Branch)::Bool
+  (ctrl.tap_min === nothing && ctrl.tap_max === nothing) && return false
+  (ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)) || return false
+  lo, hi = _tap_control_range(ctrl, br)
+  lo - 1e-12 <= br.tap_ratio <= hi + 1e-12 && return false
+  m = _derived_tap_model(br, :ratio)
+  m === nothing || return _model_step_toward_window(br, :ratio, (lo, hi)) != m.step
+  return _ratio_toward_control_range(br, lo, hi) != br.tap_ratio
+end
+
+# Ratio a tap outside its control range goes to on a branch without a tap
+# model: the nearer end of the range on the plain step grid, on a tabular
+# changer the table point nearest the range (among equals the one closest
+# to the current ratio, the current ratio winning a tie), so the tap stays
+# on its table.
+function _ratio_toward_control_range(br::Branch, lo::Float64, hi::Float64)::Float64
+  pts = br.tap_ratio_points
+  pts === nothing && return clamp(br.tap_ratio, lo, hi)
+  outside = v -> max(lo - v, v - hi, 0.0)
+  best = br.tap_ratio
+  best_out = outside(best)
+  best_d = 0.0
+  for p in pts
+    o = outside(p)
+    d = abs(p - br.tap_ratio)
+    if o < best_out - 1e-12 || (abs(o - best_out) <= 1e-12 && d < best_d - 1e-12)
+      best, best_out, best_d = p, o, d
+    end
+  end
+  return best
+end
+
 function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
   br = _find_trafo_branch(net, ctrl.trafo)
   moved = false
   if update.new_ratio != update.old_ratio
     if _derived_tap_model(br, :ratio) !== nothing
-      moved = _move_model_step!(br, :ratio, update.new_ratio) || moved
+      moved = _move_model_step!(br, :ratio, update.new_ratio; window = _tap_control_range(ctrl, br)) || moved
     else
       br.tap_ratio = update.new_ratio
       br.ratio = update.new_ratio
@@ -372,7 +556,9 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
       _apply_tap_step_impedance!(_find_trafo_branch(net, fname))
     end
   end
-  ctrl.at_limit = isapprox(br.tap_ratio, br.tap_min; atol = 1e-12) || isapprox(br.tap_ratio, br.tap_max; atol = 1e-12)
+  lo, hi = _tap_control_range(ctrl, br)
+  ctrl.at_limit = isapprox(br.tap_ratio, lo; atol = 1e-12) || isapprox(br.tap_ratio, hi; atol = 1e-12)
+  ctrl.at_limit = ctrl.at_limit || _model_step_at_window_edge(ctrl, br) || _table_point_at_window_edge(ctrl, br)
   ctrl.at_limit = ctrl.at_limit || isapprox(br.phase_shift_deg, br.phase_min_deg; atol = 1e-12) || isapprox(br.phase_shift_deg, br.phase_max_deg; atol = 1e-12)
   ctrl.status = ctrl.at_limit ? :at_limit : ctrl.status
   return moved
@@ -413,7 +599,7 @@ function control_element_descriptor(ctrl::PowerTransformerControl, net::Net)::Un
   quantity = ctrl.mode === :voltage ? :bus_voltage : ctrl.mode === :branch_active_power ? :branch_active_power : :bus_voltage_and_branch_active_power
   target = ctrl.target_bus !== nothing ? ctrl.target_bus : ctrl.target_branch === nothing ? "" : string(ctrl.target_branch[1], "->", ctrl.target_branch[2])
   target_value = ctrl.target_vm_pu !== nothing ? ctrl.target_vm_pu : ctrl.p_target_mw
-  amin, amax = phase && !ratio ? (br.phase_min_deg, br.phase_max_deg) : (br.tap_min, br.tap_max)
+  amin, amax = phase && !ratio ? (br.phase_min_deg, br.phase_max_deg) : _tap_control_range(ctrl, br)
   # a master of a group names its unit count: "T1 (+2 followers)"
   element_label = isempty(ctrl.followers) ? br.comp.cName : string(br.comp.cName, " (+", length(ctrl.followers), " follower", length(ctrl.followers) == 1 ? "" : "s", ")")
   return (
@@ -460,11 +646,26 @@ end
   return round(Int, (value - neutral) / step)
 end
 
+# The achieved P of a report row comes from the stored branch flows, and only
+# calcNetLosses! writes them: a bare runpf! leaves them unset. The row then
+# reports missing, like the branch table reports 0.0 for the same branch,
+# instead of failing on the unset flow.
+function _reported_branch_p_mw(net::Net, from_bus::String, to_bus::String)
+  br = getNetBranch(net = net, fromBus = from_bus, toBus = to_bus)
+  (isnothing(br.fBranchFlow) || isnothing(br.tBranchFlow)) && return missing
+  p = get_branch_p_from_to_mw(net, from_bus, to_bus)
+  return isnothing(p) ? missing : p
+end
+
 """
     buildTapControllerReportRows(net::Net)
 
 Build typed, machine-readable tap-controller report rows with engineering fields
-for textual and DataFrame-based reporting.
+for textual and DataFrame-based reporting. `ratio_tap_min`/`ratio_tap_max`
+give the range the controller moves the ratio in: its control range where
+set, the physical range of the transformer otherwise. `achieved_p_mw` reads
+the stored branch flows; it is `missing` until `calcNetLosses!` has computed
+them (a bare `runpf!` does not).
 """
 function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
   rows = NamedTuple[]
@@ -473,7 +674,7 @@ function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
     target_bus = ctrl.target_bus
     target_branch = ctrl.target_branch
     achieved_vm = isnothing(target_bus) ? missing : get_bus_vm_pu(net, target_bus)
-    achieved_p = isnothing(target_branch) ? missing : get_branch_p_from_to_mw(net, target_branch[1], target_branch[2])
+    achieved_p = isnothing(target_branch) ? missing : _reported_branch_p_mw(net, target_branch[1], target_branch[2])
     push!(
       rows,
       (
@@ -495,8 +696,8 @@ function buildTapControllerReportRows(net::Net)::Vector{NamedTuple}
         phase_shift_deg = br.phase_shift_deg,
         ratio_tap_position = ctrl.is_discrete && br.has_ratio_tap ? (_derived_tap_model(br, :ratio) !== nothing ? _derived_tap_model(br, :ratio).step : _tap_position(br.tap_ratio, 1.0, br.tap_step)) : missing,
         phase_tap_position = ctrl.is_discrete && br.has_phase_tap ? (_derived_tap_model(br, :phase) !== nothing ? _derived_tap_model(br, :phase).step : _tap_position(br.phase_shift_deg, 0.0, br.phase_step_deg)) : missing,
-        ratio_tap_min = br.has_ratio_tap ? br.tap_min : missing,
-        ratio_tap_max = br.has_ratio_tap ? br.tap_max : missing,
+        ratio_tap_min = br.has_ratio_tap ? _tap_control_range(ctrl, br)[1] : missing,
+        ratio_tap_max = br.has_ratio_tap ? _tap_control_range(ctrl, br)[2] : missing,
         ratio_tap_step = br.has_ratio_tap ? br.tap_step : missing,
         phase_tap_min_deg = br.has_phase_tap ? br.phase_min_deg : missing,
         phase_tap_max_deg = br.has_phase_tap ? br.phase_max_deg : missing,
@@ -525,6 +726,29 @@ Validation rules:
   voltage controller (ratio tap) plus an active-power controller (phase tap).
 - Required target fields must be set according to `mode`.
 - `control_ratio` / `control_phase` must match the chosen mode.
+
+`priority::Int = 0` is the rank in the outer loop (`control_priority`): a
+controller with a larger number waits while this one still moves its tap.
+A tap counts as at its limit when its ratio stands at `tap_min`/`tap_max`
+(or its shift at the end of the phase range); a last partial step onto a
+limit that is off the step grid still counts as a move.
+
+`tap_min`/`tap_max` (ratios, default `nothing`) give the controller its own
+control range inside the physical range of the transformer: the controller
+moves the ratio only within it and stands at its limit at either end. A
+value outside the physical range, a lower end not below the upper one, or a
+range on a controller without ratio control throws an `ArgumentError`
+naming the transformer. A side left at `nothing` keeps the physical limit.
+A ratio outside the range (for example the case ratio when the range
+leaves it out) goes onto the nearer end of the range in the first pass,
+whatever the voltage error, and the controller does not count as converged
+until it is inside; on a modelled transformer it goes to the model step
+nearest the range, on a tabular changer to the table point nearest it.
+That move logs a warning naming the transformer, the start ratio and
+step, the limit and the ratio it goes to, once per controller and run. The
+probe that finds
+the direction of a step still uses the physical range; followers of a
+group keep their own physical range.
 """
 function addPowerTransformerControl!(
   net::Net;
@@ -544,6 +768,9 @@ function addPowerTransformerControl!(
   voltage_error_metric::Symbol = :vm,
   max_outer_iters::Int = 20,
   enabled::Bool = true,
+  priority::Int = 0,
+  tap_min::Union{Nothing,Real} = nothing,
+  tap_max::Union{Nothing,Real} = nothing,
 )
   br = _find_trafo_branch(net, trafo)
   trafo_obj = findfirst(t -> t.comp.cFrom_bus == br.comp.cFrom_bus && t.comp.cTo_bus == br.comp.cTo_bus, net.trafos)
@@ -632,7 +859,9 @@ function addPowerTransformerControl!(
     voltage_error_metric = voltage_error_metric,
     max_outer_iters = max_outer_iters,
     enabled = enabled,
+    priority = priority,
   )
+  _set_tap_control_range!(ctrl, br, tap_min, tap_max)
   if isnothing(trafo_obj)
     error("PowerTransformerControl: no transformer object found for branch $(br.branchIdx)")
   end

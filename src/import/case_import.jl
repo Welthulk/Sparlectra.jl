@@ -161,7 +161,7 @@ end
     importCGMES(config; path, name, hvdc_mode, ignore_connected) -> CGMESImportResult
 
 Import a CGMES delivery with everything the configuration says about it, in
-one place: the fourteen `cgmes_import` values and the bus shunt model (the
+one place: the fifteen `cgmes_import` values and the bus shunt model (the
 net-parameter stamping lives with the import dispatch:
 once per importer). The four service call sites used
 to unpack the same values by hand, and a new option had to be added in four
@@ -193,6 +193,8 @@ function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::Abstrac
     infer_base_voltages = cgmes_cfg.infer_base_voltages,
     hvdc_mode = hvdc_mode,
     map_energy_source = cgmes_cfg.map_energy_source,
+    map_power_electronics = cgmes_cfg.map_power_electronics,
+    shunt_control = cgmes_cfg.shunt_control,
     name = String(name),
   )
   return result

@@ -57,7 +57,7 @@ Fields:
 - `passive_sigma`, `passive_as_zi`: passive-node balances as protected
   zero-injection constraints (`true`) or as balance rows at `passive_sigma`
   (MW; must be positive). `nothing` (the default) takes the case's
-  effective `state_estimation.zero_injection` (`on` is `true`), the switch
+  effective `state_estimation.zero_injection` (`on` and `constraint` are `true`), the switch
   every SE path of the case reads.
 - `seed`: RNG seed; the same seed regenerates the identical set.
 - `critical_count`: number of rows to make critical by targeted thinning
@@ -174,7 +174,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   config = imported.config
   # not stated: the case's zero-injection switch decides, so the set and
   # the later SE run of the case follow the same setting
-  passive_as_zi = something(passive_as_zi, config.state_estimation.zero_injection === :on)
+  passive_as_zi = something(passive_as_zi, config.state_estimation.zero_injection !== :off)
   # A generated set REPLACES; it is never an addition. A Sparlectra Case
   # Format case brings its own measurements along, and without this the
   # generator wrote them out again next to the fresh ones (59 carried + 75
@@ -321,7 +321,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   end
   for (gi2, m) in enumerate(meas)
     newid = row_id(m)
-    meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx)
+    meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
   end
   # the level sigma per row id: the thinning and the passive rows below can
   # drop or replace such a row, so the set's count is taken at the end
@@ -334,7 +334,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   flow_note = ""
   flow_comments = String[]
   if flow_ends === :one_balance_aware
-    injBuses = Set{Int}(m.busIdx for m in meas if m.active && m.typ in (PinjMeas, QinjMeas) && m.busIdx !== nothing && !startswith(m.id, "ZI"))
+    injBuses = Set{Int}(m.busIdx for m in meas if m.active && m.typ in (PinjMeas, QinjMeas) && m.busIdx !== nothing && !m.zero_injection)
     flowBranches = sort!(unique(Int[m.branchIdx for m in meas if m.branchIdx !== nothing && m.typ in (PflowMeas, QflowMeas, ImagMeas, IaMeas)]))
     chosenByBranch = Dict{Int,Symbol}()
     for k in flowBranches
@@ -428,7 +428,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       # source row: never named, never removed, never counted
       1 <= mi <= length(meas) || return false
       m = meas[mi]
-      startswith(m.id, "ZI") && return false
+      m.zero_injection && return false
       (m.busIdx !== nothing && m.busIdx in passiveSetC && m.typ in (PinjMeas, QinjMeas)) && return false
       return true
     end
@@ -509,7 +509,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     # constraints are never corrupted (they are elimination-protected by
     # design, a gross error there could not be worked off). A dedicated RNG
     # stream keeps the row draw independent of the noise draw.
-    eligible = [i for (i, m) in enumerate(meas) if m.active && !startswith(m.id, "ZI")]
+    eligible = [i for (i, m) in enumerate(meas) if m.active && !m.zero_injection]
     if !isempty(eligible)
       rng_gross = Random.MersenneTwister(seed * 7919 + 13)
       picks = _seeded_permutation(rng_gross, eligible)[1:min(gross_count, length(eligible))]
@@ -517,7 +517,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       gross_ids = String[]
       for gi in picks
         m0 = meas[gi]
-        meas[gi] = Measurement(typ = m0.typ, value = m0.value + gross_k * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx)
+        meas[gi] = Measurement(typ = m0.typ, value = m0.value + gross_k * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx, zero_injection = m0.zero_injection)
         push!(gross_ids, m0.id)
       end
       gross_note = ", bad data +$(gross_k) sigma on $(length(gross_ids)) row(s): $(join(gross_ids, " "))"
@@ -562,7 +562,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   end
   passiveTruthSet = passive_as_zi ? Set{Int}() : Set(passiveBuses)
   for m in meas
-    v = startswith(m.id, "ZI") ? 0.0 : get(truthById, m.id, nothing)
+    v = m.zero_injection ? 0.0 : get(truthById, m.id, nothing)
     (m.busIdx !== nothing && m.busIdx in passiveTruthSet && m.typ in (PinjMeas, QinjMeas)) && (v = 0.0)
     v === nothing && continue
     push!(tailcomments, string("truth_value,", m.id, ",", repr(v)))

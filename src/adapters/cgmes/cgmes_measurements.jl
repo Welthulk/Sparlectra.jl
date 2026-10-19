@@ -19,9 +19,11 @@
 #          method of the pseudo-row generator.
 
 # equipment the mapping turns into prosumers (one terminal, bus injection);
-# an EnergySource only with cgmes_import.map_energy_source, otherwise it is
-# in skipped_equipment and resolves to :not_modelled before the class test
-const _MEASUREMENT_INJECTION_CLASSES = (:EnergyConsumer, :ConformLoad, :NonConformLoad, :StationSupply, :SynchronousMachine, :AsynchronousMachine, :ExternalNetworkInjection, :EquivalentInjection, :StaticVarCompensator, :EnergySource)
+# an EnergySource only with cgmes_import.map_energy_source and a
+# PowerElectronicsConnection only with cgmes_import.map_power_electronics,
+# otherwise it is in skipped_equipment and resolves to :not_modelled before
+# the class test
+const _MEASUREMENT_INJECTION_CLASSES = (:EnergyConsumer, :ConformLoad, :NonConformLoad, :StationSupply, :SynchronousMachine, :AsynchronousMachine, :ExternalNetworkInjection, :EquivalentInjection, :StaticVarCompensator, :EnergySource, :PowerElectronicsConnection)
 # equipment the mapping turns into bus shunts
 const _MEASUREMENT_SHUNT_CLASSES = (:LinearShuntCompensator, :NonlinearShuntCompensator)
 
@@ -45,7 +47,8 @@ the delivery, resolved to the bus, branch end or bus group of `result.net`.
   `:not_modelled` at both ends (the estimator does not take flow
   measurements on a partially open branch yet).
 - A terminal of a load, machine, external grid, equivalent injection,
-  SVC or mapped energy source resolves to `:injection`, a terminal of a shunt compensator to
+  SVC, power electronics connection or mapped energy source resolves to
+  `:injection`, a terminal of a shunt compensator to
   `:shunt`, as long as the equipment is mapped, its terminal connected and
   its bus energized; each such terminal is a member of the group sum at
   its bus.

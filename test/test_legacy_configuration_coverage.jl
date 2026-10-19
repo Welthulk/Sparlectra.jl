@@ -324,6 +324,9 @@ function test_configuration_webui_keys_both_directions()
       "state_estimation.linear_solver" => "estimator linear-algebra backend, a performance switch; set via configuration.yaml or the case sidecar",
       "state_estimation.symmetric_gain" => "estimator linear-algebra switch (Cholesky route for the gain matrix), a performance choice; set via configuration.yaml or the case sidecar",
       "cgmes_import.map_energy_source" => "CGMES import switch for deliveries that carry generation as EnergySource; set via configuration.yaml or the case sidecar",
+      "cgmes_import.map_power_electronics" => "CGMES import switch for CGMES 3.0 deliveries with PowerElectronicsConnection; set via configuration.yaml or the case sidecar",
+      "cgmes_import.shunt_control" => "CGMES import switch for the bank regulators of a delivery; set via configuration.yaml or the case sidecar",
+      "short_circuit.converter_current_factor" => "converter fault current without maxIFault, a modelling choice per case; set via configuration.yaml, the case sidecar or the API",
       "power_flow.plausibility.vmin_warn" => "threshold of the plausibility warning after a converged run; set via configuration.yaml or the case sidecar",
       "state_estimation.sigma_by_voltage_level" => "a table, not a scalar field: the sigma table of the State Estimation section posts it (se_sigma_lvl_* fields), the run takes it as an override and Save settings writes it into the case configuration",
     )

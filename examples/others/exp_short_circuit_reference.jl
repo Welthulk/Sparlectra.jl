@@ -37,7 +37,7 @@ _motor(bus; ilr, rx, ratedS, ratedU) =
   (mrid = "M", name = "M1", bus = bus, iaIrRatio = ilr, rxLockedRotorRatio = rx, efficiency_percent = nothing, ratedMechanicalPower_MW = nothing, polePairNumber = nothing, ratedS_MVA = ratedS, ratedU_kV = ratedU, ratedPowerFactor = nothing)
 
 _data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[]) =
-  Sparlectra.CGMESImporter.CGMESShortCircuitData(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms)
+  Sparlectra.CGMESImporter.CGMESShortCircuitData(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms, NamedTuple[])
 
 function _case_r1_r2()
   net = Net(name = "ref_feeder_line", baseMVA = 100.0)

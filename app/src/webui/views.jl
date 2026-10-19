@@ -980,7 +980,7 @@ place: saved-settings precedence (`webui_form_state`), the case list and
 effective case directory, the combobox value split (list value vs free-typed
 value), the format hint (delegating to `_detect_case_format`, see
 `_webui_case_format_hint`), short-circuit button gating, and the SCF-only
-scenario gate. Stage 4A extracts this from `render_powerflow_form` so the
+scenario gate. It is extracted from `render_powerflow_form` so the
 Case, Settings, and Runs pages consume one shared context instead of
 re-deriving it (and drifting apart) per page.
 """
@@ -1097,7 +1097,32 @@ function _webui_case_context(;
   else
     ""
   end
-  return (; profile_values, profile_path, profile_notice, case_file_notice, case_format_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf)
+  # which format-bound options the pages render (see _WEBUI_FIELD_CASE_FORMATS)
+  option_format = _webui_case_option_format(effective_case_value, case_format_value, format_hint)
+  # the frequency select renders for every format; only the SCF/PGM import
+  # reads the key (line c1), the other formats get it disabled, and so does
+  # an SCF file that states its own meta.f_nom (the file wins on import)
+  case_frequency = option_format === :scf ? _webui_case_file_frequency(effective_case_value, effective_case_directory; application_root) : nothing
+  frequency_applies = (option_format === nothing || option_format === :scf) && case_frequency === nothing
+  return (; profile_values, profile_path, profile_notice, case_file_notice, case_format_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf, option_format, frequency_applies, case_frequency)
+end
+
+# The case format that decides which format-bound options a page renders:
+# the format chosen in the selector when it names one, else the detected
+# format, else the extension of a case that resolves to no file yet.
+# nothing (no case, or a name that says nothing) renders every option.
+function _webui_case_option_format(case_value::AbstractString, case_format_value, format_hint::Symbol)::Union{Nothing,Symbol}
+  value = strip(String(case_value))
+  isempty(value) && return nothing
+  chosen = lowercase(strip(_webui_form_string(case_format_value)))
+  chosen in ("matpower", "dtf_for001", "cgmes", "powsybl") && return Symbol(chosen)
+  # scf and pgm name the same reader
+  chosen in ("scf", "pgm") && return :scf
+  format_hint in (:matpower, :dtf_for001, :cgmes, :powsybl, :scf) && return format_hint
+  ext = lowercase(splitext(value)[2])
+  ext in (".m", ".jl") && return :matpower
+  ext == ".json" && return :scf
+  return nothing
 end
 
 # Shared page scripts: the former run-page monolith's inline script is split into
@@ -1468,7 +1493,7 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "matpower_import_ratio" => (label = "Transformer ratio convention", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_shift_sign" => (label = "Phase-shift sign", title = "", attrs = " data-matpower-import-field", input_attrs = " step=\"2\" min=\"-1\" max=\"1\"", option_labels = nothing),
   "matpower_import_shift_unit" => (label = "Phase-shift unit", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
-  "matpower_import_bus_shunt_model" => (label = "Bus-shunt model", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
+  "matpower_import_bus_shunt_model" => (label = "Bus-shunt model", title = "", attrs = "", input_attrs = "", option_labels = nothing),
   "matpower_import_dcline_mode" => (label = "DC-line mode", title = "Model of active mpc.dcline rows: pf_injections adds two fixed terminal injections per row; paired_control also couples each pair as a steerable HVDC link.", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_pv_voltage_source" => (label = "PV voltage source", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_import_compare_voltage_reference" => (label = "Voltage reference comparison", title = "", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
@@ -1476,6 +1501,60 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "matpower_import_apply_bus_names" => (label = "Apply bus names", title = "Use the case file's mpc.bus_name entries as bus names in results and logs instead of numeric BUS_I ids. Requires a bus_name block matching the bus count.", attrs = " data-matpower-import-field", input_attrs = "", option_labels = nothing),
   "matpower_export_write_solution" => (label = "Export Solution", title = "", attrs = "", input_attrs = "", option_labels = nothing),
 )
+
+# The case formats a format-bound option is read by; a field not listed
+# applies to every format. A page does not render a field whose list misses
+# the format of the selected case (_webui_case_option_format), and its saved
+# value stays in the case configuration file: the save only writes fields
+# the form posts. Readers: matpower_import.* and model.auto_profile only on
+# the MATPOWER import (acpflow/import_context.jl, matpower/converter.jl);
+# model.bus_shunt_model in the MATPOWER, DTF and CGMES constructors (an SCF
+# file records the model of each shunt); model.tap_changer_model in the
+# MATPOWER and DTF builds; cgmes_import.* and powsybl_import.* in their own
+# adapters; the DTF outage run fields only on the DTF branch of the run
+# (api/run_api.jl). matpower_export.write_solution and the MATPOWER export
+# artifact act on every format. The system frequency renders for every
+# format and is disabled where the format does not read it
+# (frequency_applies of _webui_case_context).
+const _WEBUI_FIELD_CASE_FORMATS = Dict{String,Vector{Symbol}}(
+  "cgmes_start_values" => [:cgmes],
+  "cgmes_require_boundary" => [:cgmes],
+  "cgmes_infer_base_voltages" => [:cgmes],
+  "cgmes_hvdc_mode" => [:cgmes],
+  "powsybl_import_hvdc_mode" => [:powsybl],
+  "powsybl_import_remote_regulation" => [:powsybl],
+  "powsybl_import_multi_slack" => [:powsybl],
+  "powsybl_import_slack_ids" => [:powsybl],
+  "powsybl_import_base_mva" => [:powsybl],
+  "matpower_import_auto_profile" => [:matpower],
+  "matpower_import_ratio" => [:matpower],
+  "matpower_import_shift_sign" => [:matpower],
+  "matpower_import_shift_unit" => [:matpower],
+  "matpower_import_dcline_mode" => [:matpower],
+  "matpower_import_pv_voltage_source" => [:matpower],
+  "matpower_import_compare_voltage_reference" => [:matpower],
+  "matpower_import_apply_bus_names" => [:matpower],
+  "matpower_import_bus_shunt_model" => [:matpower, :dtf_for001, :cgmes],
+  "transformer_tap_changer_model" => [:matpower, :dtf_for001],
+)
+
+# the DTF outage run on the Runs page (request fields, not configuration):
+# one section, shown or left out as a whole
+const _WEBUI_DTF_OUTAGE_FIELDS = ["for002_reference_file", "dtf_outage_selection_mode", "dtf_outage_selection", "write_outage_artifacts", "write_outage_matpower_exports"]
+for _f in _WEBUI_DTF_OUTAGE_FIELDS
+  _WEBUI_FIELD_CASE_FORMATS[_f] = [:dtf_for001]
+end
+
+_webui_field_applies(field::AbstractString, option_format::Union{Nothing,Symbol})::Bool =
+  option_format === nothing || option_format in get(_WEBUI_FIELD_CASE_FORMATS, String(field), [option_format])
+
+# the line under a section that lost options to the case format, so nothing
+# disappears without a word; data-hidden-options carries the count
+function _webui_hidden_options_note(n::Integer; what::AbstractString = "this case format")::String
+  n > 0 || return ""
+  return string("<p class=\"field-hint span-2 hidden-options-note\" data-hidden-options=\"", n, "\">",
+    n == 1 ? "1 option does not" : string(n, " options do not"), " apply to ", what, ".</p>")
+end
 
 # per-section field order (presentation) plus the extras that widen the
 # form surface beyond the conversion struct: the auto-profile
@@ -1538,8 +1617,8 @@ end
 const _WEBUI_MATPOWER_CONVENTION_FIELDS = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model")
 const _WEBUI_MATPOWER_CONVENTIONS_HINT = "The standard MATPOWER reading (degrees, sign +1, ratio as stored, bus shunt as admittance) passes the independent power-balance check on every case of the study; change these only for a file you know to deviate. With the scan off and every value standard, nothing about conventions is logged."
 
-function _webui_matpower_conventions_active(profile_values)::Bool
-  for f in _WEBUI_MATPOWER_CONVENTION_FIELDS
+function _webui_matpower_conventions_active(profile_values; fields = _WEBUI_MATPOWER_CONVENTION_FIELDS)::Bool
+  for f in fields
     spec = _webui_option_spec(f)
     default = _webui_option_default(f)
     value = spec.control == :number ? _webui_input_value(profile_values, f, default) : _webui_selected(profile_values, f, default)
@@ -1549,33 +1628,39 @@ function _webui_matpower_conventions_active(profile_values)::Bool
 end
 
 """
-    _webui_adapter_options_html(key, profile_values) -> String
+    _webui_adapter_options_html(key, profile_values; option_format = nothing) -> String
 
 The generated option group of one adapter section: the field
 set is derived from `options_type(adapter)` and the :adapter-scope specs,
 the order and wording come from the presentation table, both pinned by
-load-time asserts. Returns "" for an adapter without form options (DTF,
-PGM).
+load-time asserts. Fields that do not apply to `option_format` (the
+selected case's format, `nothing` for all) are left out, see
+`_WEBUI_FIELD_CASE_FORMATS`; `_webui_adapter_hidden_count` counts them.
+Returns "" for an adapter without form options (DTF, PGM) or without a
+field for the format.
 """
-function _webui_adapter_options_html(key::Symbol, profile_values)::String
+function _webui_adapter_options_html(key::Symbol, profile_values; option_format::Union{Nothing,Symbol} = nothing)::String
   for sec in _WEBUI_ADAPTER_SECTIONS
     sec.key == key || continue
-    isempty(sec.order) && return ""
+    order = [f for f in sec.order if _webui_field_applies(f, option_format)]
+    isempty(order) && return ""
     # visibility follows the spec section: :basic
     # fields render directly, :expert fields fold into a nested details
-    basics = [f for f in sec.order if _webui_option_spec(f).section == :basic]
-    experts = [f for f in sec.order if _webui_option_spec(f).section == :expert && !(f in _WEBUI_MATPOWER_CONVENTION_FIELDS)]
-    conventions = [f for f in sec.order if f in _WEBUI_MATPOWER_CONVENTION_FIELDS]
+    basics = [f for f in order if _webui_option_spec(f).section == :basic]
+    experts = [f for f in order if _webui_option_spec(f).section == :expert && !(f in _WEBUI_MATPOWER_CONVENTION_FIELDS)]
+    conventions = [f for f in order if f in _WEBUI_MATPOWER_CONVENTION_FIELDS]
     parts = String[_webui_adapter_option_html(f, profile_values) for f in basics]
     if !isempty(experts) || !isempty(conventions)
       # the experimental convention block (0.30.0): its fields default to
       # the standard MATPOWER reading; the Advanced details open by itself
       # when a case configuration (a sidecar) carries a non-standard value
       # or the scan, so an active experimental setting is never hidden
-      active = _webui_matpower_conventions_active(profile_values)
+      active = _webui_matpower_conventions_active(profile_values; fields = conventions)
+      # outside a MATPOWER case only the bus-shunt model is left in the block
+      legend = option_format in (nothing, :matpower) ? "MATPOWER conventions (experimental)" : "Conventions (experimental)"
       block = isempty(conventions) ? "" : string(
         "<fieldset class=\"matpower-conventions-experimental\" title=\"", _webui_escape(_WEBUI_MATPOWER_CONVENTIONS_HINT), "\">",
-        "<legend>MATPOWER conventions (experimental)</legend>",
+        "<legend>", legend, "</legend>",
         join((_webui_adapter_option_html(f, profile_values) for f in conventions), "\n"), "</fieldset>")
       push!(parts, string("<details class=\"span-2 expert-section adapter-expert\"", active ? " open" : "", "><summary>Advanced</summary>",
         join((_webui_adapter_option_html(f, profile_values) for f in experts), "\n"), block, "</details>"))
@@ -1585,15 +1670,27 @@ function _webui_adapter_options_html(key::Symbol, profile_values)::String
   return ""
 end
 
-# The system frequency select of the Case page: its own section, shown for
-# every case format (the model.* keys of the MATPOWER section are hidden for
-# CGMES and PowSyBl). The value comes from the form state, which takes an SCF
-# file's meta.f_nom over the configuration (webui_form_state), so an
-# unchanged form never posts a value against the file.
-function _webui_system_frequency_html(profile_values)::String
+# the number of fields of an adapter section the case format leaves out
+function _webui_adapter_hidden_count(key::Symbol, option_format::Union{Nothing,Symbol})::Int
+  for sec in _WEBUI_ADAPTER_SECTIONS
+    sec.key == key && return count(f -> !_webui_field_applies(f, option_format), sec.order)
+  end
+  return 0
+end
+
+# The system frequency select of the Case page: its own section, rendered
+# for every case format. `applies` (SCF/PGM, or no case) leaves it enabled;
+# for MATPOWER, DTF, CGMES and PowSyBl it is disabled, shows the value in
+# effect and says it has no effect there. An SCF file stating meta.f_nom
+# (`file_value`) gets it disabled at the file's value. A disabled select is not posted,
+# so a save leaves the stored key as it is. The value comes from the form
+# state, which takes an SCF file's meta.f_nom over the configuration
+# (webui_form_state), so an unchanged form never posts a value against the
+# file.
+function _webui_system_frequency_html(profile_values; applies::Bool = true, file_value::Union{Nothing,Float64} = nothing)::String
   field = "model_nominal_frequency_hz"
   spec = _webui_option_spec(field)
-  selected = _webui_selected(profile_values, field, spec.default)
+  selected = file_value === nothing ? _webui_selected(profile_values, field, spec.default) : file_value
   values = collect(Any, spec.allowed_values)
   # a case file may state another frequency (meta.f_nom = 59.5, say); it is
   # listed, or the browser would preselect 50 and post it against the file
@@ -1601,13 +1698,15 @@ function _webui_system_frequency_html(profile_values)::String
   sel === nothing || any(v -> v == sel, values) || push!(values, sel)
   label(v) = isinteger(v) ? string(round(Int, v), " Hz") : string(v, " Hz")
   opts = join((_webui_option(v, label(v), selected) for v in values), "")
+  hint = file_value !== nothing ? "Taken from the case file (<code>meta.f_nom</code>); saving does not change the configured key." : applies ?
+    "Turns the <code>c1</code> of SCF and PGM lines into susceptance where the file states no frequency of its own. The short circuit does not depend on it." :
+    "Has no effect for this case format; an SCF export of the case writes it as <code>meta.f_nom</code>."
   return string(
     "<fieldset class=\"model-section\" data-model-section>",
     "<legend>Network model</legend>",
-    "<label>", _webui_field_label(field, "System frequency"), "<select id=\"", field, "\" name=\"", field, "\">", opts, "</select></label>",
-    "<p class=\"field-hint span-2\">Acts only where capacitance is used: lines from per-km capacitance and the <code>c1</code> of PGM/SCF lines. ",
-    "The short circuit does not depend on it. Cases given in ohm, siemens or per unit are unchanged in the power flow. ",
-    "An SCF file states its own frequency, which preselects this field.</p>",
+    "<label", applies ? "" : " class=\"disabled\"", ">", _webui_field_label(field, "System frequency"),
+    "<select id=\"", field, "\" name=\"", field, "\"", applies ? "" : " disabled", ">", opts, "</select></label>",
+    "<p class=\"field-hint span-2\">", hint, "</p>",
     "</fieldset>")
 end
 
@@ -1642,6 +1741,14 @@ function render_case_page(;
   effective_case_value = ctx.effective_case_value
   case_format_value = ctx.case_format_value
   dat_case_assistance = ctx.dat_case_assistance
+  # format-bound options the selected case does not read are not rendered
+  # (_WEBUI_FIELD_CASE_FORMATS); each section says how many it left out
+  fmt = ctx.option_format
+  show_cgmes = _webui_field_applies("cgmes_start_values", fmt)
+  show_powsybl = _webui_field_applies("powsybl_import_hvdc_mode", fmt)
+  input_format_note = _webui_hidden_options_note(_webui_adapter_hidden_count(:cgmes, fmt) + _webui_adapter_hidden_count(:powsybl, fmt))
+  import_conventions_note = _webui_hidden_options_note(_webui_adapter_hidden_count(:matpower, fmt))
+  import_conventions_legend = fmt in (nothing, :matpower) ? "MATPOWER import conventions" : "Import conventions"
   error_html = _webui_error_alert_html(error_message)
   # a freshly exported file is offered right here: it was written next to the
   # case (where a run finds it), and this is the way back out to the browser
@@ -1687,17 +1794,19 @@ $(ctx.case_format_notice)<details$(dtf_details_attrs)>
 <fieldset>
 <label>$(_webui_field_label("case_format", "Case input format"))<select name="case_format"><option value="auto"$(_webui_form_string(case_format_value) == "auto" ? " selected" : "")>Auto</option><option value="matpower"$(_webui_form_string(case_format_value) == "matpower" ? " selected" : "")>MATPOWER</option><option value="dtf_for001"$(_webui_form_string(case_format_value) == "dtf_for001" ? " selected" : "")>DTF diagnostics (experimental/internal)</option><option value="cgmes"$(_webui_form_string(case_format_value) == "cgmes" ? " selected" : "")>CGMES (ENTSO-E, folder or ZIP)</option><option value="scf"$(_webui_form_string(case_format_value) == "scf" ? " selected" : "")>Sparlectra Case Format (.scf.json)</option><option value="pgm"$(_webui_form_string(case_format_value) == "pgm" ? " selected" : "")>power-grid-model JSON (input.json)</option><option value="powsybl"$(_webui_form_string(case_format_value) == "powsybl" ? " selected" : "")>PowSyBl (IIDM file)</option></select></label>
 <p class="field-help">SCF and power-grid-model JSON are read by the same importer; the <code>sparlectra</code> block is optional, so a plain power-grid-model dataset loads as well. <em>Auto</em> already resolves every <code>.json</code> to that reader, so these two entries only matter when the extension does not say it.</p>
-$(_webui_adapter_options_html(:cgmes, profile_values))
-$(_webui_adapter_options_html(:powsybl, profile_values))
-<p class="field-help" data-powsybl-import-field>PowSyBl only: a <code>.xiidm</code> file is read as it is. <a href="/help/reference#webui_powsybl" target="_blank" rel="noopener noreferrer">Help on PowSyBl IIDM files</a>.</p>
-<p class="field-help" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>
+$(_webui_adapter_options_html(:cgmes, profile_values; option_format = fmt))
+$(_webui_adapter_options_html(:powsybl, profile_values; option_format = fmt))
+$(show_powsybl ? "<p class=\"field-help\" data-powsybl-import-field>PowSyBl only: a <code>.xiidm</code> file is read as it is. <a href=\"/help/reference#webui_powsybl\" target=\"_blank\" rel=\"noopener noreferrer\">Help on PowSyBl IIDM files</a>.</p>" : "")
+$(show_cgmes ? "<p class=\"field-help\" data-cgmes-start-values-field>CGMES only: <em>Flat start</em> lets the solver earn the solution itself; <em>Imported SV state</em> starts Newton-Raphson from the delivery's own SvVoltage solution (competing start-value machines are forced off). The SV comparison check (<code>sv_compare.csv</code>) runs either way.</p>" : "")
+$(input_format_note)
 </fieldset>
 </details>
-$(_webui_system_frequency_html(profile_values))
+$(_webui_system_frequency_html(profile_values; applies = ctx.frequency_applies, file_value = ctx.case_frequency))
 <fieldset class=\"import-section\" data-import-conventions-section>
-<legend>MATPOWER import conventions</legend>
+<legend>$(import_conventions_legend)</legend>
 <p class=\"field-hint span-2\" data-import-conventions-hint hidden>Not applicable to the selected CGMES or PowSyBl case: these options steer MATPOWER (and DTF) parsing only. The CGMES and PowSyBl importers read the delivery's own conventions; Export Solution stays available.</p>
-$(_webui_adapter_options_html(:matpower, profile_values))
+$(_webui_adapter_options_html(:matpower, profile_values; option_format = fmt))
+$(import_conventions_note)
 </fieldset>
 <div class=\"span-2 actions\"><button class=\"secondary-button\" type=\"submit\">Save case options</button></div>
 </form>
@@ -2321,6 +2430,22 @@ function render_powerflow_form(;
   for002_list_options = join(("<option value=\"$(_webui_escape(candidate))\">$(_webui_escape(candidate))</option>" for candidate in for002_candidates), "")
   for002_list_html = isempty(for002_candidates) ? "" : "<datalist id=\"for002-reference-candidates\">$(for002_list_options)</datalist>"
   for002_list_attr = isempty(for002_candidates) ? "" : " list=\"for002-reference-candidates\""
+  # the DTF outage run is read on the DTF branch of the run only: other case
+  # formats do not render it (_WEBUI_FIELD_CASE_FORMATS); the MATPOWER
+  # export artifact below it acts on every format
+  show_dtf_outage = all(f -> _webui_field_applies(f, ctx.option_format), _WEBUI_DTF_OUTAGE_FIELDS)
+  dtf_outage_note = show_dtf_outage ? "" : _webui_hidden_options_note(length(_WEBUI_DTF_OUTAGE_FIELDS))
+  dtf_outage_html = show_dtf_outage ? """
+<details$(dtf_details_attrs)>
+<summary>DTF outage run (internal diagnostics)</summary>
+<fieldset>
+<label>$(_webui_field_label("for002_reference_file", "Optional FOR002 reference file"))<input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)</label>
+<label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
+<label>$(_webui_field_label("dtf_outage_selection", "Selected DTF outage labels/indices"))<input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"></label>
+<label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
+<label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
+</fieldset>
+</details>""" : ""
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   config_control = "<input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">"
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
@@ -2332,17 +2457,9 @@ $(config_control)
 <label class="span-2">$(_webui_field_label("casefile", "Case file"))<input type="hidden" name="casefile" value="$(_webui_escape(effective_case_value))"><span class="selected-case-display"><code>$(isempty(strip(effective_case_value)) ? "no case selected" : _webui_escape(effective_case_value))</code> <a class="case-page-link" href="/powerflow/case$(isempty(strip(effective_case_value)) ? "" : "?casefile=" * _webui_urlencode(effective_case_value))">change on the Case page</a></span><small class="field-hint">Choosing, importing, exporting, and configuring cases moved to the Case page; this run uses the case named here with its saved case options.</small></label>
 <details class=\"span-2 expert-section runs-expert-section\"$(dat_case_assistance ? " open" : "")>
 <summary>Advanced run options</summary>
-<details$(dtf_details_attrs)>
-<summary>DTF outage run (internal diagnostics)</summary>
-<fieldset>
-<label>$(_webui_field_label("for002_reference_file", "Optional FOR002 reference file"))<input name="for002_reference_file" value=\"$(_webui_escape(for002_reference_value))\" placeholder="examples/FOR002.DAT"$for002_list_attr>$(for002_list_html)</label>
-<label><span class="field-label">DTF outage run mode</span><select name="dtf_outage_selection_mode"><option value="none">Run base case only</option><option value="all">Run all DTF outage records</option><option value="selected">Run selected DTF outage records</option></select></label>
-<label>$(_webui_field_label("dtf_outage_selection", "Selected DTF outage labels/indices"))<input name="dtf_outage_selection" placeholder="1 or L1 ALPHA S1 -> BETA1 S1"></label>
-<label class="check"><input name="write_outage_artifacts" type="hidden" value="false"><input name="write_outage_artifacts" type="checkbox" value="true" checked>Write DTF outage artifacts</label>
+$(dtf_outage_html)
 <label class="check"><input name="matpower_export_requested" type="hidden" value="false"><input name="matpower_export_requested" type="checkbox" value="true">Write MATPOWER export artifact</label>
-<label class="check"><input name="write_outage_matpower_exports" type="hidden" value="false"><input name="write_outage_matpower_exports" type="checkbox" value="true">Write MATPOWER outage exports</label>
-</fieldset>
-</details>
+$(dtf_outage_note)
 </details>
 <div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Diagnostic mode: evaluate the mismatch at the case's own stored VM/VA without a corrective Newton step and write the report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button><label class=\"contingency-kind\">N-1 kind <select name=\"contingency_kind\" data-contingency-kind><option value=\"branch\">branch</option><option value=\"gen\">generator</option></select></label><label class=\"scenario-source\" title=\"Which outages the N-1 run takes: the N-1 kind, or all branches, branches or generators.\">N-1 list <select name=\"scenario_source\" data-scenario-source><option value=\"\">generated (N-1 kind)</option><option value=\"n1_all\">N-1 all</option><option value=\"n1_branches\">N-1 branches</option><option value=\"n1_generators\">N-1 generators</option></select></label><label class=\"screening-mode\" title=\"Contingency screening on the base factorization: off (default) runs every scenario fully, flag solves only flagged scenarios fully, only reports estimates.\">Screening <select name=\"screening_mode\" data-screening-mode><option value=\"\">configured</option><option value=\"off\">off</option><option value=\"flag\">flag</option><option value=\"only\">only</option></select></label><label class=\"screening-margin\" title=\"Margin in percent (empty means configured, default 10): flag when an estimated loading reaches 100 minus margin or a voltage comes within margin of a limit.\">Margin % <input name=\"screening_margin_pct\" type=\"number\" step=\"any\" min=\"0\" class=\"screening-margin-input\" placeholder=\"cfg\"></label>$(scen_editor_html)<a class=\"weights-link\" href=\"/powerflow/contingency-weights?case=$(_webui_urlencode(selected_casefile))\" title=\"Upload or edit the per-case N-1 weight list\">edit N-1 weights</a><button class=\"powerflow-submit contingency-submit\" type=\"submit\" name=\"contingency_mode\" value=\"true\" data-contingency-button title=\"N-1 analysis: take each in-service branch or generator out one at a time and report convergence, overloads, voltage violations, load shed and severity.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Contingency (N-1)</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running N-1...</span></button>$(scen_button_html)</div></form>
 <script>
@@ -3050,12 +3167,12 @@ function render_powerflow_result(result::AbstractDict)::String
     status in ("aborted_unknown", "interrupted_unknown") ?
     "<div class=\"alert warning\"><p>Run state was recovered after Web UI restart.</p><p>Last known phase: <code>$(_webui_escape(get(result, "last_phase", get(result, "current_phase", "unknown"))))</code>.</p><p>No live solver task is attached anymore. Partial artifacts may be available.</p></div>" :
     ""
-  # bad data must be findable in one click: a direct download when the run
-  # produced the se_bad_data.csv extract (suspicious/eliminated rows with
-  # their network locations)
+  # bad data must be findable in one click: a direct download of the
+  # verdict per measurement row of an SE run (residual, normalized
+  # residual, eliminated, reason)
   bad_data_link = begin
     od = String(get(result, "output_dir", ""))
-    !isempty(od) && isfile(joinpath(od, "se_bad_data.csv")) ? "<a class=\"button\" href=\"/powerflow/artifact/$(_webui_urlencode(run_id))/se_bad_data.csv\">Bad data (se_bad_data.csv)</a>" : ""
+    !isempty(od) && isfile(joinpath(od, "measurements_verdict.csv")) ? "<a class=\"button\" href=\"/powerflow/artifact/$(_webui_urlencode(run_id))/measurements_verdict.csv\">Verdict per measurement (measurements_verdict.csv)</a>" : ""
   end
   links =
     isempty(String(run_id)) ? "" :
@@ -3763,7 +3880,9 @@ function _webui_artifact_csv_html(text::AbstractString; truncated::Bool = false,
       first_order = has_value[j] ? "desc" : "asc"
       next_order = j == sorted_column ? (csv_display.order == "desc" ? "asc" : "desc") : first_order
       target = _WebUICsvDisplay(csv_display.digits, csv_display.power, name, next_order, csv_display.hide)
-      marker = j == sorted_column ? (csv_display.order == "desc" ? " &#9660;" : " &#9650;") : ""
+      # the arrow in its own element: the stylesheet places it in room every
+      # sortable header keeps free, so a sort does not change the width
+      marker = j == sorted_column ? (csv_display.order == "desc" ? "<span class=\"csv-sort-mark\">&#9660;</span>" : "<span class=\"csv-sort-mark\">&#9650;</span>") : ""
       title = has_value[j] ? (next_order == "desc" ? "Sort largest first" : "Sort smallest first") : (next_order == "asc" ? "Sort A to Z" : "Sort Z to A")
       "<th$(class) data-col=\"$(j)\"><a href=\"?$(_webui_escape(_webui_csv_display_query(target)))\" title=\"$(title)\" data-csv-keep>$(label)$(marker)</a></th>"
     else
@@ -4718,8 +4837,9 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   # table (sparlectra-taps v1) renders as a real table, anything else as a
   # plain list; the per-type row counts say WHAT the set contains
   counts_html = isempty(set_counts) ? "" : string("<p><strong>Measured values in this set:</strong> ", join(("$(esc(replace(t, "Meas" => ""))) × $(n)" for (t, n) in set_counts), ", "), " ($(sum(last.(set_counts))) rows; the tap table below is metadata, the measurement rows follow it in the file)</p>")
-  # the deprecation notice at a measurement CSV v1 (the run log says it too)
-  v1_html = set_v1 ? "<p class=\"alert warning measurement-v1-notice\">$(esc(MEASUREMENT_CSV_V1_DEPRECATION))</p>" : ""
+  # the removal notice at a measurement CSV v1 (a run on it is refused with
+  # the same text)
+  v1_html = set_v1 ? "<p class=\"alert warning measurement-v1-notice\">$(esc(MEASUREMENT_CSV_V1_REMOVED))</p>" : ""
   counts_html = v1_html * counts_html
   info_html = ""
   # binding line + inline editor shared by both info-panel variants

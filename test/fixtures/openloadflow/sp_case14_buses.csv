@@ -1,0 +1,24 @@
+# OpenLoadFlow reference solution of sp_case14.m
+# tool: pypowsybl 1.16.1 (OpenLoadFlow), written 2026-10-19T04:12:45Z
+# input: sp_case14.m sha256 1a169601cfdeb5f5dba3ec8652b852a891d309e463afa5283a5c8c37bd485ef7
+# network: IIDM built row by row from the MATPOWER file: lines with b/2 at each end; transformers with rated_u1 = baseKV1 * ratio,
+#   rated_u2 = baseKV2 and their g + jb (g from mpc.sparlectra.transformer_losses) as shunts (g + jb)/2/ratio^2 at the from bus and (g + jb)/2 at the to bus;
+#   branch flows of a transformer include these shunts; slack generation = slack bus mismatch (no distributed slack)
+# parameters: distributed_slack=false, use_reactive_limits=false, voltage_init_mode=UNIFORM_VALUES, transformer/shunt/phase-shifter control off, slack bus forced to VL1
+# provider: generatorsWithZeroMwTargetAreNotStarted=false, maxNewtonRaphsonIterations=50, maxOuterLoopIterations=100, maxPlausibleTargetVoltage=1.5, minPlausibleTargetVoltage=0.5, newtonRaphsonConvEpsPerEq=1e-12, plausibleActivePowerLimit=100000, reactiveRangeCheckMode=TARGET_P, slackBusPMaxMismatch=1e-6, slackBusSelectionMode=NAME, slackBusesIds=VL1
+# result: status ComponentStatus.CONVERGED, 4 iterations, slack bus mismatch 19.725659001928392 MW written as slack generation
+bus,name,v_pu,v_angle_deg,p_gen_mw,q_gen_mvar
+1,Ostheim_110,1.02,0.0,19.725659001928392,13.26138479364009
+2,Neuwiese_110,1.0033946676631336,-0.6546904090487006,0.0,0.0
+3,Moorau_110,0.9907458567710328,-1.1190486564378195,0.0,0.0
+4,Dallwitz_110,1.01,2.0282115365193882,30.0,5.219809106313171
+5,Roggau_110,0.983959208658668,-0.5579493571248489,0.0,0.0
+6,Eichloh_110,1.0,1.120834028423328,20.0,2.933962618848529
+7,Wehrden_110,0.9869353605629102,-1.099707991911819,0.0,0.0
+8,Blanksee_110,0.9890079519563113,-1.8399444355433596,0.0,0.0
+9,Ilmrode_110,0.9831172788623912,-1.545244027810204,0.0,0.0
+10,Moorau_20,0.9837778468445656,-4.124387959215622,0.0,0.0
+11,Hassel_20,0.9472069488379409,-4.367260890543173,0.0,0.0
+12,Kleinau_20,0.9255864607790656,-4.511036064034597,0.0,0.0
+13,Torfloh_20,0.9161994464315129,-4.5650873045186975,0.0,0.0
+14,Wehrden_20,0.9744796259592914,-2.976194882484907,0.0,0.0

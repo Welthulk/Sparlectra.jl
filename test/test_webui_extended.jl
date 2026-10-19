@@ -1032,12 +1032,13 @@ form:
         @test occursin("Case input format", selection_html)
         @test occursin("DTF diagnostics (experimental/internal)", selection_html)
         # the FOR002 reference and DTF outage selection are RUN parameters
-        # and stayed on the run page
-        @test occursin("name=\"for002_reference_file\"", run_selection_html)
-        @test occursin("list=\"for002-reference-candidates\"", run_selection_html)
-        @test occursin("<datalist id=\"for002-reference-candidates\"><option value=\"FOR002.DAT\">FOR002.DAT</option><option value=\"FOR002_reference.DAT\">FOR002_reference.DAT</option></datalist>", run_selection_html)
-        @test occursin("Optional FOR002 reference file", run_selection_html)
-        @test occursin("DTF outage run", run_selection_html)
+        # on the run page, rendered for a DTF case only: a MATPOWER case
+        # leaves the five fields out and counts them, the MATPOWER export
+        # artifact (every format) stays
+        @test !occursin("name=\"for002_reference_file\"", run_selection_html)
+        @test !occursin("name=\"dtf_outage_selection_mode\"", run_selection_html)
+        @test occursin("data-hidden-options=\"5\"", run_selection_html)
+        @test occursin("name=\"matpower_export_requested\"", run_selection_html)
         @test !occursin("name=\"for002_reference_file\"", selection_html)
         @test !occursin("full DTF support", selection_html)
         @test occursin("const updateDatCaseAssistance = function ()", selection_html)
@@ -1072,6 +1073,11 @@ form:
         )
         @test occursin("<details class=\"span-2 dtf-internal-section is-dat-selected\" open>", dat_run_html)
         @test occursin("name=\"for002_reference_file\" value=\"\"", dat_run_html)
+        @test occursin("list=\"for002-reference-candidates\"", dat_run_html)
+        @test occursin("<datalist id=\"for002-reference-candidates\"><option value=\"FOR002.DAT\">FOR002.DAT</option><option value=\"FOR002_reference.DAT\">FOR002_reference.DAT</option></datalist>", dat_run_html)
+        @test occursin("name=\"dtf_outage_selection_mode\"", dat_run_html)
+        @test occursin("name=\"matpower_export_requested\"", dat_run_html)
+        @test !occursin("data-hidden-options", dat_run_html)
 
         for002_reference_html = SparlectraApp.render_powerflow_form(
           application_root = application_root,
@@ -1455,6 +1461,21 @@ form:
 
         empty_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile_manual" => ""); output_root, runtime)
         @test occursin("Enter a case name or path", SparlectraApp._webui_urldecode(Dict(empty_response.headers)["Location"]))
+
+        # CGMES aliases typed without "cgmes:" (the five tries of a user's
+        # operation log). The packed set is already in the case directory, so
+        # fetchCGMESTestSet reuses it and nothing is downloaded; a typo is no
+        # alias and gets the list of accepted forms, not the .m/.jl error.
+        write(joinpath(case_directory, "cgmes_smallgrid.zip"), "packed set placeholder")
+        for (typed, resolved) in [("cgmes smallgrind", nothing), ("cgmes_SmallGrid", "cgmes_smallgrid.zip"), ("cgmes_smallgrid.zip", "cgmes_smallgrid.zip"), ("CGMES SmallGrid.zip", "cgmes_smallgrid.zip"), ("smallgrid", "cgmes_smallgrid.zip")]
+          location = SparlectraApp._webui_urldecode(Dict(SparlectraApp.route_sparlectra_webui("POST", "/powerflow/resolve-case", Dict("casefile" => typed); output_root, runtime).headers)["Location"])
+          if resolved === nothing
+            @test occursin("Accepted: a MATPOWER name such as case118.m", location) && occursin("cgmes:<alias>", location) && occursin("smallgrid_nb", location)
+            @test !occursin("Unsupported casefile extension", location)
+          else
+            @test startswith(location, "/powerflow/case?casefile=$(resolved)&import_message=Resolved case: $(resolved)")
+          end
+        end
 
         log_text = read(SparlectraApp.webui_operation_log_path(output_root), String)
         @test occursin("case_resolve_completed", log_text)
@@ -2134,11 +2155,13 @@ form:
         @test occursin(field, settings_page_html)
       end
       @test occursin(r"<label data-ac-only-field data-matpower-import-field><span class=\"field-label\" title=\"[^\"]*\">Tap-changer model ", case_page_html)
-      # MATPOWER import conventions gray out for CGMES cases: 10 marked labels
-      # (all matpower_import_* incl. the dcline mode, apply-bus-names, and
-      # the tap-changer model; Export Solution stays active) + the one JS
-      # querySelector occurrence = 11, plus the hint and the toggle logic.
-      @test count("data-matpower-import-field", case_page_html) == 11
+      # MATPOWER import conventions gray out for CGMES cases: 9 marked labels
+      # (the matpower_import_* fields incl. the dcline mode and
+      # apply-bus-names, and the tap-changer model; Export Solution and the
+      # bus-shunt model, which the CGMES import reads too, stay active) +
+      # the one JS querySelector occurrence = 10, plus the hint and the
+      # toggle logic. Without a case every option renders.
+      @test count("data-matpower-import-field", case_page_html) == 10
       @test occursin("data-import-conventions-hint", case_page_html)
       @test occursin("const updateImportConventionApplicability = function ()", case_page_html)
       # the change listener wraps updateImportConventionApplicability together
@@ -2552,7 +2575,7 @@ result = get_powerflow_result(run_id)
       sorted_desc = SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "desc"))
       @test row_order(sorted_desc) == ["B", "D", "A", "C"]
       @test row_numbers(sorted_desc) == ["2", "4", "1", "3"]
-      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?sort=p_mw&amp;order=asc\" title=\"Sort smallest first\" data-csv-keep>p_mw &#9660;</a></th>", sorted_desc)
+      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?sort=p_mw&amp;order=asc\" title=\"Sort smallest first\" data-csv-keep>p_mw<span class=\"csv-sort-mark\">&#9660;</span></a></th>", sorted_desc)
       @test occursin("<th class=\"num\" data-col=\"3\"><a href=\"?sort=vm_pu\" title=\"Sort largest first\" data-csv-keep>vm_pu</a></th>", sorted_desc)
       @test occursin("Sorted by p_mw, largest first", sorted_desc)
       @test row_order(SparlectraApp._webui_artifact_csv_html(sort_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "p_mw", "asc"))) == ["A", "D", "B", "C"]
@@ -2567,7 +2590,7 @@ result = get_powerflow_result(run_id)
       text_asc = SparlectraApp._webui_artifact_csv_html(text_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "name", "asc"))
       @test row_numbers(text_asc) == ["4", "1", "2", "3"]
       @test occursin("Sorted by name, A to Z", text_asc)
-      @test occursin("<a href=\"?sort=name\" title=\"Sort Z to A\" data-csv-keep>name &#9650;</a>", text_asc)
+      @test occursin("<a href=\"?sort=name\" title=\"Sort Z to A\" data-csv-keep>name<span class=\"csv-sort-mark\">&#9650;</span></a>", text_asc)
       @test row_numbers(SparlectraApp._webui_artifact_csv_html(text_csv; csv_display = SparlectraApp._WebUICsvDisplay(5, "", "name", "desc"))) == ["2", "1", "4", "3"]
       # the header of a column is right-aligned like its cells: when most of
       # its non-empty cells are numbers (vm_pu with one NaN), else left
@@ -2603,7 +2626,7 @@ result = get_powerflow_result(run_id)
       @test occursin("<input type=\"hidden\" name=\"hide\" value=\"\" data-csv-hide-input disabled>", routed_sort)
       @test occursin("href=\"note_sort.csv?raw=1&amp;digits=4&amp;sort=p_mw&amp;order=asc\"", routed_sort)
       @test occursin("href=\"bus_voltages_complex.csv?digits=4\"", routed_sort)
-      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?digits=4&amp;sort=p_mw\" title=\"Sort largest first\" data-csv-keep>p_mw &#9650;</a></th>", routed_sort)
+      @test occursin("<th class=\"num\" data-col=\"2\"><a href=\"?digits=4&amp;sort=p_mw\" title=\"Sort largest first\" data-csv-keep>p_mw<span class=\"csv-sort-mark\">&#9650;</span></a></th>", routed_sort)
       routed_hidden = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifact/$(run_id)/note_sort.csv?sort=p_mw&hide=3%2C1"; output_root).body)
       @test row_order(routed_hidden) == ["B", "D", "A", "C"]
       @test occursin("<a href=\"?sort=p_mw&amp;order=asc&amp;hide=1%2C3\" title=\"Sort smallest first\" data-csv-keep>", routed_hidden)
@@ -2911,8 +2934,10 @@ result = get_powerflow_result(run_id)
       @test isfile(joinpath(server.runtime.case_directory, "warmup_case3.jl"))
       @test isfile(joinpath(server.runtime.case_directory, "warmup_case118.jl"))
       @test isfile(server.runtime.operation_log)
-      @test !startswith(server.runtime.case_directory, normpath(pkgdir(Sparlectra)))
-      @test !startswith(server.runtime.config_file, normpath(pkgdir(Sparlectra)))
+      # path boundary, not a string prefix: a sibling directory such as
+      # <pkg>-tmp must not count as inside the package
+      @test !startswith(server.runtime.case_directory, joinpath(normpath(pkgdir(Sparlectra)), ""))
+      @test !startswith(server.runtime.config_file, joinpath(normpath(pkgdir(Sparlectra)), ""))
       startup_log = read(server.runtime.operation_log, String)
       @test occursin("\"event\":\"webui_start_requested\"", startup_log)
       @test occursin("\"event\":\"webui_config_loaded\"", startup_log)

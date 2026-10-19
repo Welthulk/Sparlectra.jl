@@ -1,0 +1,13 @@
+# OpenLoadFlow reference solution of test3bus_qlim15.m
+# tool: pypowsybl 1.16.1 (OpenLoadFlow), written 2026-10-19T04:12:45Z
+# input: test3bus_qlim15.m sha256 60cb5327d1a3dca740ca0d6c4f285b9e2603b8856dcf61978f3ffb171737f823
+# network: IIDM built row by row from the MATPOWER file: lines with b/2 at each end; transformers with rated_u1 = baseKV1 * ratio,
+#   rated_u2 = baseKV2 and their g + jb (g from mpc.sparlectra.transformer_losses) as shunts (g + jb)/2/ratio^2 at the from bus and (g + jb)/2 at the to bus;
+#   branch flows of a transformer include these shunts; slack generation = slack bus mismatch (no distributed slack)
+# parameters: distributed_slack=false, use_reactive_limits=true, voltage_init_mode=UNIFORM_VALUES, transformer/shunt/phase-shifter control off, slack bus forced to VL3
+# provider: generatorsWithZeroMwTargetAreNotStarted=false, maxNewtonRaphsonIterations=50, maxOuterLoopIterations=100, maxPlausibleTargetVoltage=1.5, minPlausibleTargetVoltage=0.5, newtonRaphsonConvEpsPerEq=1e-12, plausibleActivePowerLimit=100000, reactiveRangeCheckMode=TARGET_P, slackBusPMaxMismatch=1e-6, slackBusSelectionMode=NAME, slackBusesIds=VL3
+# result: status ComponentStatus.CONVERGED, 9 iterations, slack bus mismatch 29.999999999999993 MW written as slack generation
+row,from_bus,to_bus,p_from_mw,q_from_mvar,p_to_mw,q_to_mvar
+1,1,2,-55.52413045846786,-9.505046703700359,55.52413045846786,23.953823682195598
+2,1,3,-44.47586954153215,-20.494953296299474,44.475869541532155,31.13433941652165
+3,3,2,-14.47586954153216,9.216598644729498,14.47586954153216,-8.953823682195665

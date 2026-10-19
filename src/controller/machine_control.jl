@@ -72,6 +72,7 @@ mutable struct MachineVoltageControl <: AbstractOuterController
   s_max_mva::Union{Nothing,Float64}   # converter rating at 1.0 pu; nothing in :constant_q mode
   max_outer_iters::Int
   enabled::Bool
+  priority::Int               # rank in the outer loop, 0 acts first (control_priority)
   # runtime state, owned by the control loop
   status::Symbol
   converged::Bool
@@ -154,6 +155,8 @@ voltage magnitude at `target_bus`.
 - `prosumer_index::Union{Nothing,Int}`: which prosumer to control when several
   generators sit at `bus`; defaults to the single generator there.
 - `max_outer_iters::Int = 20`, `enabled::Bool = true`: outer-loop budget/switch.
+- `priority::Int = 0`: rank in the outer loop (`control_priority`); the
+  machine counts as at its limit when its Q is clamped to the range.
 
 Fails with an error for a missing bus, a missing or ambiguous machine, a
 voltage-regulating (PV) machine, a non-PQ target bus, an inverted Q range,
@@ -174,7 +177,9 @@ function addMachineVoltageControl!(
   name::Union{Nothing,String} = nothing,
   max_outer_iters::Int = 20,
   enabled::Bool = true,
+  priority::Int = 0,
 )
+  _check_control_priority(priority, "MachineVoltageControl")
   busIdx = geNetBusIdx(net = net, busName = bus)
   targetIdx = geNetBusIdx(net = net, busName = target_bus)
   bus == target_bus && error("MachineVoltageControl: target_bus equals the machine bus $(bus) — local voltage control is a PV setpoint (addProsumer! with vm_pu), not a remote controller.")
@@ -185,14 +190,16 @@ function addMachineVoltageControl!(
   tnode = net.nodeVec[targetIdx]
   tnode._nodeType == PQ || error("MachineVoltageControl: target bus $(target_bus) is $(tnode._nodeType) — its voltage is already held; a remote controller needs a PQ target.")
   # Cross-type check: a tap-regulated bus stays PQ, so the node-type check
-  # above cannot see a transformer controller on the same target — but two
-  # controllers steering one voltage fight each other in the outer loop.
+  # above cannot see a transformer controller on the same target, but two
+  # controllers steering one voltage fight each other in the outer loop,
+  # unless the machine is ranked behind the tap with the same target
+  # (_fights_tap_controller).
   for tf in net.trafos
     for w in (tf.side1, tf.side2, tf.side3)
       w === nothing && continue
       for ctrl in w.controls
-        if ctrl.target_bus == target_bus && ctrl.target_vm_pu !== nothing
-          @warn "MachineVoltageControl: a transformer tap controller already regulates the voltage of target bus $(target_bus) — two controllers on one voltage fight each other; expect oscillating outer iterations or reconfigure one of them."
+        if ctrl.target_bus == target_bus && ctrl.target_vm_pu !== nothing && _fights_tap_controller(ctrl, priority, target_vm_pu, deadband_vm_pu)
+          @warn "MachineVoltageControl: a transformer tap controller already regulates the voltage of target bus $(target_bus) (target $(ctrl.target_vm_pu) pu, priority $(control_priority(ctrl))); two controllers on one voltage fight each other unless they have different priorities and the same target within their deadbands. Expect oscillating outer iterations, or reconfigure one of them."
         end
       end
     end
@@ -271,6 +278,7 @@ function addMachineVoltageControl!(
     s_rating,
     max_outer_iters,
     enabled,
+    priority,
     :active,
     false,
     false,

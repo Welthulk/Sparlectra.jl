@@ -11030,7 +11030,7 @@
         "node_type": "PQ"
       }
     },
-    "format_version": "1.0",
+    "format_version": "1.2",
     "measurements": {
       "provenance": {
         "noise": true,
@@ -11039,2312 +11039,3440 @@
       },
       "rows": [
         {
-          "positions": [1],
+          "node": 84,
           "sensor": 532,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_1"]
+          "sigma": 1.9000000000000001,
+          "type": "U"
         },
         {
-          "positions": [4],
-          "sensor": 533,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_2"]
-        },
-        {
-          "positions": [7],
-          "sensor": 534,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_3"]
-        },
-        {
-          "positions": [10],
-          "sensor": 535,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_4"]
-        },
-        {
-          "positions": [13],
-          "sensor": 536,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_5"]
-        },
-        {
-          "positions": [16],
-          "sensor": 537,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_6"]
-        },
-        {
-          "positions": [19],
-          "sensor": 538,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_7"]
-        },
-        {
-          "positions": [22],
-          "sensor": 539,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_8"]
-        },
-        {
-          "positions": [25],
-          "sensor": 540,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_9"]
-        },
-        {
-          "positions": [28],
-          "sensor": 541,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_10"]
-        },
-        {
-          "positions": [31],
-          "sensor": 542,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_11"]
-        },
-        {
-          "positions": [34],
-          "sensor": 543,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_12"]
-        },
-        {
-          "positions": [37],
-          "sensor": 544,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_13"]
-        },
-        {
-          "positions": [40],
-          "sensor": 545,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_14"]
-        },
-        {
-          "positions": [43],
-          "sensor": 546,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_15"]
-        },
-        {
-          "positions": [46],
-          "sensor": 547,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_16"]
-        },
-        {
-          "positions": [49],
-          "sensor": 548,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_17"]
-        },
-        {
-          "positions": [52],
-          "sensor": 549,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_18"]
-        },
-        {
-          "positions": [55],
-          "sensor": 550,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_19"]
-        },
-        {
-          "positions": [58],
-          "sensor": 551,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_20"]
-        },
-        {
-          "positions": [61],
-          "sensor": 552,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_21"]
-        },
-        {
-          "positions": [64],
-          "sensor": 553,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_22"],
-          "values": [0.9766609014980534]
-        },
-        {
-          "positions": [67],
-          "sensor": 554,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_23"]
-        },
-        {
-          "positions": [70],
-          "sensor": 555,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_24"]
-        },
-        {
-          "positions": [73],
-          "sensor": 556,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_25"]
-        },
-        {
-          "positions": [76],
-          "sensor": 557,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_26"],
-          "values": [0.9628135562805171]
-        },
-        {
-          "positions": [79],
-          "sensor": 558,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_27"],
-          "values": [0.9769867425733211]
-        },
-        {
-          "positions": [82],
-          "sensor": 559,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_28"]
-        },
-        {
-          "positions": [85],
-          "sensor": 560,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_29"]
-        },
-        {
-          "positions": [88],
-          "sensor": 561,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_30"],
-          "values": [0.8941480045907084]
-        },
-        {
-          "positions": [91],
-          "sensor": 562,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_31"],
-          "values": [0.8515138709792331]
-        },
-        {
-          "positions": [94],
-          "sensor": 563,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_32"]
-        },
-        {
-          "positions": [97],
-          "sensor": 564,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_33"],
-          "values": [0.8259870388872537]
-        },
-        {
-          "positions": [100],
-          "sensor": 565,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_34"]
-        },
-        {
-          "positions": [103],
-          "sensor": 566,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_35"]
-        },
-        {
-          "positions": [106],
-          "sensor": 567,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_36"]
-        },
-        {
-          "positions": [109],
-          "sensor": 568,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_37"]
-        },
-        {
-          "positions": [112],
-          "sensor": 569,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_38"]
-        },
-        {
-          "positions": [115],
-          "sensor": 570,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_39"]
-        },
-        {
-          "positions": [118],
-          "sensor": 571,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_40"]
-        },
-        {
-          "positions": [121],
-          "sensor": 572,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_41"]
-        },
-        {
-          "positions": [124],
-          "sensor": 573,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_42"]
-        },
-        {
-          "positions": [127],
-          "sensor": 574,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_43"]
-        },
-        {
-          "positions": [130],
-          "sensor": 575,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_44"]
-        },
-        {
-          "positions": [133],
-          "sensor": 576,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_45"]
-        },
-        {
-          "positions": [136],
-          "sensor": 577,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_46"]
-        },
-        {
-          "positions": [139],
-          "sensor": 578,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_47"]
-        },
-        {
-          "positions": [142],
-          "sensor": 579,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_48"]
-        },
-        {
-          "positions": [145],
-          "sensor": 580,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_49"]
-        },
-        {
-          "positions": [148],
-          "sensor": 581,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_50"]
-        },
-        {
-          "positions": [151],
-          "sensor": 582,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_51"]
-        },
-        {
-          "positions": [154],
-          "sensor": 583,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_52"],
-          "values": [0.8287900268721977]
-        },
-        {
-          "positions": [157],
-          "sensor": 584,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_53"]
-        },
-        {
-          "positions": [160],
-          "sensor": 585,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_54"]
-        },
-        {
-          "positions": [163],
-          "sensor": 586,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_55"]
-        },
-        {
-          "positions": [166],
-          "sensor": 587,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_56"]
-        },
-        {
-          "positions": [169],
-          "sensor": 588,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_57"]
-        },
-        {
-          "positions": [172],
-          "sensor": 589,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_58"]
-        },
-        {
-          "positions": [175],
-          "sensor": 590,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_59"]
-        },
-        {
-          "positions": [178],
-          "sensor": 591,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_60"]
-        },
-        {
-          "positions": [181],
-          "sensor": 592,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_61"]
-        },
-        {
-          "positions": [184],
-          "sensor": 593,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_62"]
-        },
-        {
-          "positions": [187],
-          "sensor": 594,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_63"]
-        },
-        {
-          "positions": [190],
-          "sensor": 595,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_64"]
-        },
-        {
-          "positions": [193],
-          "sensor": 596,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_65"],
-          "values": [0.9894978489826501]
-        },
-        {
-          "positions": [196],
-          "sensor": 597,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_66"],
-          "values": [0.982694704743514]
-        },
-        {
-          "positions": [199],
-          "sensor": 598,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_67"]
-        },
-        {
-          "positions": [202],
-          "sensor": 599,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_68"]
-        },
-        {
-          "positions": [205],
-          "sensor": 600,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_69"]
-        },
-        {
-          "positions": [208],
-          "sensor": 601,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_70"]
-        },
-        {
-          "positions": [211],
-          "sensor": 602,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_71"],
-          "values": [0.9610900492347754]
-        },
-        {
-          "positions": [214],
-          "sensor": 603,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_72"],
-          "values": [0.9705593052006098]
-        },
-        {
-          "positions": [217],
-          "sensor": 604,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_73"]
-        },
-        {
-          "positions": [220],
-          "sensor": 605,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_74"]
-        },
-        {
-          "positions": [223],
-          "sensor": 606,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_75"]
-        },
-        {
-          "positions": [226],
-          "sensor": 607,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_76"],
-          "values": [0.8681813351715505]
-        },
-        {
-          "positions": [229],
-          "sensor": 608,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_77"]
-        },
-        {
-          "positions": [232],
-          "sensor": 609,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_78"]
-        },
-        {
-          "positions": [235],
-          "sensor": 610,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_79"]
-        },
-        {
-          "positions": [238],
-          "sensor": 611,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_80"]
-        },
-        {
-          "positions": [241],
-          "sensor": 612,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_81"]
-        },
-        {
-          "positions": [244],
-          "sensor": 613,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_82"]
-        },
-        {
-          "positions": [247],
-          "sensor": 614,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_83"]
-        },
-        {
-          "positions": [250],
-          "sensor": 615,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_84"]
-        },
-        {
-          "positions": [253],
-          "sensor": 616,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_85"],
-          "values": [0.9235633597278572]
-        },
-        {
-          "positions": [256],
-          "sensor": 617,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_86"]
-        },
-        {
-          "positions": [259],
-          "sensor": 618,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_87"]
-        },
-        {
-          "positions": [262],
-          "sensor": 619,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_88"],
-          "values": [0.8341381864721309]
-        },
-        {
-          "positions": [265],
-          "sensor": 620,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_89"]
-        },
-        {
-          "positions": [268],
-          "sensor": 621,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_90"]
-        },
-        {
-          "positions": [271],
-          "sensor": 622,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_91"]
-        },
-        {
-          "positions": [274],
-          "sensor": 623,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_92"]
-        },
-        {
-          "positions": [277],
-          "sensor": 624,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_93"]
-        },
-        {
-          "positions": [280],
-          "sensor": 625,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_94"]
-        },
-        {
-          "positions": [283],
-          "sensor": 626,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_95"]
-        },
-        {
-          "positions": [286],
-          "sensor": 627,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_96"]
-        },
-        {
-          "positions": [289],
-          "sensor": 628,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_97"]
-        },
-        {
-          "positions": [292],
-          "sensor": 629,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_98"]
-        },
-        {
-          "positions": [295],
-          "sensor": 630,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_99"]
-        },
-        {
-          "positions": [298],
-          "sensor": 631,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_100"]
-        },
-        {
-          "positions": [301],
-          "sensor": 632,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_101"]
-        },
-        {
-          "positions": [304],
-          "sensor": 633,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_102"]
-        },
-        {
-          "positions": [307],
-          "sensor": 634,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_103"]
-        },
-        {
-          "positions": [310],
-          "sensor": 635,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_104"]
-        },
-        {
-          "positions": [313],
-          "sensor": 636,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_105"]
-        },
-        {
-          "positions": [316],
-          "sensor": 637,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_106"]
-        },
-        {
-          "positions": [319],
-          "sensor": 638,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_107"]
-        },
-        {
-          "positions": [322],
-          "sensor": 639,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_108"]
-        },
-        {
-          "positions": [325],
-          "sensor": 640,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_109"]
-        },
-        {
-          "positions": [328],
-          "sensor": 641,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_110"]
-        },
-        {
-          "positions": [331],
-          "sensor": 642,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_111"]
-        },
-        {
-          "positions": [334],
-          "sensor": 643,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_112"]
-        },
-        {
-          "positions": [337],
-          "sensor": 644,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_113"],
-          "values": [0.9823195017733339]
-        },
-        {
-          "positions": [340],
-          "sensor": 645,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_114"]
-        },
-        {
-          "positions": [343],
-          "sensor": 646,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_115"]
-        },
-        {
-          "positions": [346],
-          "sensor": 647,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_116"]
-        },
-        {
-          "positions": [349],
-          "sensor": 648,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_117"]
-        },
-        {
-          "positions": [352],
-          "sensor": 649,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_118"],
-          "values": [0.9550916773147698]
-        },
-        {
-          "positions": [355],
-          "sensor": 650,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_119"]
-        },
-        {
-          "positions": [358],
-          "sensor": 651,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_120"],
-          "values": [0.9076839543183511]
-        },
-        {
-          "positions": [361],
-          "sensor": 652,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_121"]
-        },
-        {
-          "positions": [364],
-          "sensor": 653,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_122"],
-          "values": [0.8433099858119388]
-        },
-        {
-          "positions": [367],
-          "sensor": 654,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_123"],
-          "values": [0.8294367106241788]
-        },
-        {
-          "positions": [370],
-          "sensor": 655,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_124"]
-        },
-        {
-          "positions": [373],
-          "sensor": 656,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_125"]
-        },
-        {
-          "positions": [376],
-          "sensor": 657,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_126"]
-        },
-        {
-          "positions": [379],
-          "sensor": 658,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_127"]
-        },
-        {
-          "positions": [382],
-          "sensor": 659,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_128"]
-        },
-        {
-          "positions": [385],
-          "sensor": 660,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_129"]
-        },
-        {
-          "positions": [388],
-          "sensor": 661,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_130"]
-        },
-        {
-          "positions": [391],
-          "sensor": 662,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_131"],
-          "values": [0.9017780356740025]
-        },
-        {
-          "positions": [394],
-          "sensor": 663,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_132"]
-        },
-        {
-          "positions": [397],
-          "sensor": 664,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_133"]
-        },
-        {
-          "positions": [400],
-          "sensor": 665,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_134"]
-        },
-        {
-          "positions": [403],
-          "sensor": 666,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_135"]
-        },
-        {
-          "positions": [406],
-          "sensor": 667,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_136"]
-        },
-        {
-          "positions": [409],
-          "sensor": 668,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_137"]
-        },
-        {
-          "positions": [412],
-          "sensor": 669,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_138"]
-        },
-        {
-          "positions": [415],
-          "sensor": 670,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_139"]
-        },
-        {
-          "positions": [418],
-          "sensor": 671,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_140"],
-          "values": [0.8807418431710408]
-        },
-        {
-          "positions": [421],
-          "sensor": 672,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_141"]
-        },
-        {
-          "positions": [424],
-          "sensor": 673,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_142"],
-          "values": [0.8296213446857372]
-        },
-        {
-          "positions": [427],
-          "sensor": 674,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_143"]
-        },
-        {
-          "positions": [430],
-          "sensor": 675,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_144"]
-        },
-        {
-          "positions": [433],
-          "sensor": 676,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_145"]
-        },
-        {
-          "positions": [436],
-          "sensor": 677,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_146"]
-        },
-        {
-          "positions": [439],
-          "sensor": 678,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_147"]
-        },
-        {
-          "positions": [442],
-          "sensor": 679,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_148"]
-        },
-        {
-          "positions": [445],
-          "sensor": 680,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_149"]
-        },
-        {
-          "positions": [448],
-          "sensor": 681,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_150"]
-        },
-        {
-          "positions": [451],
-          "sensor": 682,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_151"]
-        },
-        {
-          "positions": [454],
-          "sensor": 683,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_152"]
-        },
-        {
-          "positions": [457],
-          "sensor": 684,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_153"]
-        },
-        {
-          "positions": [460],
-          "sensor": 685,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_154"]
-        },
-        {
-          "positions": [463],
-          "sensor": 686,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_155"]
-        },
-        {
-          "positions": [466],
-          "sensor": 687,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_156"]
-        },
-        {
-          "positions": [469],
-          "sensor": 688,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_157"]
-        },
-        {
-          "positions": [472],
-          "sensor": 689,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_158"]
-        },
-        {
-          "positions": [475],
-          "sensor": 690,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_159"]
-        },
-        {
-          "positions": [478],
-          "sensor": 691,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_160"]
-        },
-        {
-          "positions": [481],
-          "sensor": 692,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_161"]
-        },
-        {
-          "positions": [484],
-          "sensor": 693,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_162"]
-        },
-        {
-          "positions": [487],
-          "sensor": 694,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_163"]
-        },
-        {
-          "positions": [490],
-          "sensor": 695,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_164"]
-        },
-        {
-          "positions": [493],
-          "sensor": 696,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_165"],
-          "values": [0.9054685698925024]
-        },
-        {
-          "positions": [496],
-          "sensor": 697,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_166"]
-        },
-        {
-          "positions": [499],
-          "sensor": 698,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_167"],
-          "values": [0.8562773903805488]
-        },
-        {
-          "positions": [502],
-          "sensor": 699,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_168"]
-        },
-        {
-          "positions": [505],
-          "sensor": 700,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_169"],
-          "values": [0.8234769359380093]
-        },
-        {
-          "positions": [508],
-          "sensor": 701,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_170"]
-        },
-        {
-          "positions": [511],
-          "sensor": 702,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_171"]
-        },
-        {
-          "positions": [514],
-          "sensor": 703,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_172"]
-        },
-        {
-          "positions": [517],
-          "sensor": 704,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_173"]
-        },
-        {
-          "positions": [520],
-          "sensor": 705,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_174"]
-        },
-        {
-          "positions": [523],
-          "sensor": 706,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_175"],
-          "values": [0.9284385136462953]
-        },
-        {
-          "positions": [526],
-          "sensor": 707,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_176"]
-        },
-        {
-          "positions": [529],
-          "sensor": 708,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_177"]
-        },
-        {
-          "positions": [532],
-          "sensor": 709,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_178"]
-        },
-        {
-          "positions": [535],
-          "sensor": 710,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_179"],
-          "values": [0.8310314080765008]
-        },
-        {
-          "positions": [538],
-          "sensor": 711,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_180"]
-        },
-        {
-          "positions": [541],
-          "sensor": 712,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_181"]
-        },
-        {
-          "positions": [544],
-          "sensor": 713,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_182"]
-        },
-        {
-          "positions": [547],
-          "sensor": 714,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_183"]
-        },
-        {
-          "positions": [550],
-          "sensor": 715,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_184"],
-          "values": [0.9025497042578057]
-        },
-        {
-          "positions": [553],
-          "sensor": 716,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_185"],
-          "values": [0.8769703738539868]
-        },
-        {
-          "positions": [556],
-          "sensor": 717,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_186"],
-          "values": [0.8432721278080574]
-        },
-        {
-          "positions": [559],
-          "sensor": 718,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_187"],
-          "values": [0.835571754634278]
-        },
-        {
-          "positions": [562],
-          "sensor": 719,
-          "sigmas": [0.005],
-          "sparlectra_ids": ["Vm_bus_188"]
-        },
-        {
-          "positions": [2, 3],
+          "node": 84,
           "sensor": 720,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_1", "Qinj_bus_1"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [5, 6],
+          "node": 84,
+          "sensor": 720,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 21,
+          "sensor": 533,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 21,
           "sensor": 721,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_2", "Qinj_bus_2"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [8, 9],
+          "node": 21,
+          "sensor": 721,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 48,
+          "sensor": 534,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 48,
           "sensor": 722,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_3", "Qinj_bus_3"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [11, 12],
+          "node": 48,
+          "sensor": 722,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 63,
+          "sensor": 535,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 63,
           "sensor": 723,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_4", "Qinj_bus_4"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [14, 15],
+          "node": 63,
+          "sensor": 723,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 31,
+          "sensor": 536,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 31,
           "sensor": 724,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_5", "Qinj_bus_5"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [17, 18],
+          "node": 31,
+          "sensor": 724,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 66,
+          "sensor": 537,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 66,
           "sensor": 725,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_6", "Qinj_bus_6"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [20, 21],
+          "node": 66,
+          "sensor": 725,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 134,
+          "sensor": 538,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 134,
           "sensor": 726,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_7", "Qinj_bus_7"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [23, 24],
+          "node": 134,
+          "sensor": 726,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 146,
+          "sensor": 539,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 146,
           "sensor": 727,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_8", "Qinj_bus_8"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [26, 27],
+          "node": 146,
+          "sensor": 727,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 64,
+          "sensor": 540,
+          "sigma": 1.9000000000000001,
+          "type": "U"
+        },
+        {
+          "node": 64,
           "sensor": 728,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_9", "Qinj_bus_9"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [29, 30],
+          "node": 64,
+          "sensor": 728,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 20,
+          "sensor": 541,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 20,
           "sensor": 729,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_10", "Qinj_bus_10"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [32, 33],
+          "node": 20,
+          "sensor": 729,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 1,
+          "sensor": 542,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 1,
           "sensor": 730,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_11", "Qinj_bus_11"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [35, 36],
+          "node": 1,
+          "sensor": 730,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 98,
+          "sensor": 543,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 98,
           "sensor": 731,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_12", "Qinj_bus_12"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [38, 39],
+          "node": 98,
+          "sensor": 731,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 122,
+          "sensor": 544,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 122,
           "sensor": 732,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_13", "Qinj_bus_13"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [41, 42],
+          "node": 122,
+          "sensor": 732,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 128,
+          "sensor": 545,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 128,
           "sensor": 733,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_14", "Qinj_bus_14"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [44, 45],
+          "node": 128,
+          "sensor": 733,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 182,
+          "sensor": 546,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 182,
           "sensor": 734,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_15", "Qinj_bus_15"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [47, 48],
+          "node": 182,
+          "sensor": 734,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 108,
+          "sensor": 547,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 108,
           "sensor": 735,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_16", "Qinj_bus_16"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [50, 51],
+          "node": 108,
+          "sensor": 735,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 47,
+          "sensor": 548,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 47,
           "sensor": 736,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_17", "Qinj_bus_17"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [53, 54],
+          "node": 47,
+          "sensor": 736,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 173,
+          "sensor": 549,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 173,
           "sensor": 737,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_18", "Qinj_bus_18"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [56, 57],
+          "node": 173,
+          "sensor": 737,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 163,
+          "sensor": 550,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 163,
           "sensor": 738,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_19", "Qinj_bus_19"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [59, 60],
+          "node": 163,
+          "sensor": 738,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 83,
+          "sensor": 551,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 83,
           "sensor": 739,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_20", "Qinj_bus_20"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [62, 63],
+          "node": 83,
+          "sensor": 739,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 22,
+          "sensor": 552,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 22,
           "sensor": 740,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_21", "Qinj_bus_21"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [65, 66],
+          "node": 22,
+          "sensor": 740,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 51,
+          "sensor": 553,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 107.43269916478587
+        },
+        {
+          "node": 51,
           "sensor": 741,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_22", "Qinj_bus_22"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [68, 69],
+          "node": 51,
+          "sensor": 741,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 55,
+          "sensor": 554,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 55,
           "sensor": 742,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_23", "Qinj_bus_23"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [71, 72],
+          "node": 55,
+          "sensor": 742,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 26,
+          "sensor": 555,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 26,
           "sensor": 743,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_24", "Qinj_bus_24"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [74, 75],
+          "node": 26,
+          "sensor": 743,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 67,
+          "sensor": 556,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 67,
           "sensor": 744,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_25", "Qinj_bus_25"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [77, 78],
+          "node": 67,
+          "sensor": 744,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 135,
+          "sensor": 557,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 105.90949119085688
+        },
+        {
+          "node": 135,
           "sensor": 745,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_26", "Qinj_bus_26"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [80, 81],
+          "node": 135,
+          "sensor": 745,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 149,
+          "sensor": 558,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 107.468541683065318
+        },
+        {
+          "node": 149,
           "sensor": 746,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_27", "Qinj_bus_27"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [83, 84],
+          "node": 149,
+          "sensor": 746,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 99,
+          "sensor": 559,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 99,
           "sensor": 747,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_28", "Qinj_bus_28"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [86, 87],
+          "node": 99,
+          "sensor": 747,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 10,
+          "sensor": 560,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 10,
           "sensor": 748,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_29", "Qinj_bus_29"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [89, 90],
+          "node": 10,
+          "sensor": 748,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 97,
+          "sensor": 561,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 17.88296009181417
+        },
+        {
+          "node": 97,
           "sensor": 749,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_30", "Qinj_bus_30"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [92, 93],
+          "node": 97,
+          "sensor": 749,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 117,
+          "sensor": 562,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 17.030277419584664
+        },
+        {
+          "node": 117,
           "sensor": 750,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_31", "Qinj_bus_31"],
-          "values": [-1.0533013367425903, -1.1180032127276205]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -1.0533013367425903
         },
         {
-          "positions": [95, 96],
+          "node": 117,
+          "sensor": 750,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 127,
+          "sensor": 563,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 127,
           "sensor": 751,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_32", "Qinj_bus_32"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [98, 99],
+          "node": 127,
+          "sensor": 751,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 184,
+          "sensor": 564,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.519740777745074
+        },
+        {
+          "node": 184,
           "sensor": 752,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_33", "Qinj_bus_33"],
-          "values": [-1.4413245371215284, 1.0504549272520372]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -1.4413245371215284
         },
         {
-          "positions": [101, 102],
+          "node": 184,
+          "sensor": 752,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 107,
+          "sensor": 565,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 107,
           "sensor": 753,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_34", "Qinj_bus_34"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [104, 105],
+          "node": 107,
+          "sensor": 753,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 175,
+          "sensor": 566,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 175,
           "sensor": 754,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_35", "Qinj_bus_35"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [107, 108],
+          "node": 175,
+          "sensor": 754,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 162,
+          "sensor": 567,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 162,
           "sensor": 755,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_36", "Qinj_bus_36"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [110, 111],
+          "node": 162,
+          "sensor": 755,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 85,
+          "sensor": 568,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 85,
           "sensor": 756,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_37", "Qinj_bus_37"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [113, 114],
+          "node": 85,
+          "sensor": 756,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 25,
+          "sensor": 569,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 25,
           "sensor": 757,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_38", "Qinj_bus_38"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [116, 117],
+          "node": 25,
+          "sensor": 757,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 42,
+          "sensor": 570,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 42,
           "sensor": 758,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_39", "Qinj_bus_39"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [119, 120],
+          "node": 42,
+          "sensor": 758,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 52,
+          "sensor": 571,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 52,
           "sensor": 759,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_40", "Qinj_bus_40"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [122, 123],
+          "node": 52,
+          "sensor": 759,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 27,
+          "sensor": 572,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 27,
           "sensor": 760,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_41", "Qinj_bus_41"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [125, 126],
+          "node": 27,
+          "sensor": 760,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 68,
+          "sensor": 573,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 68,
           "sensor": 761,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_42", "Qinj_bus_42"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [128, 129],
+          "node": 68,
+          "sensor": 761,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 138,
+          "sensor": 574,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 138,
           "sensor": 762,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_43", "Qinj_bus_43"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [131, 132],
+          "node": 138,
+          "sensor": 762,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 147,
+          "sensor": 575,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 147,
           "sensor": 763,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_44", "Qinj_bus_44"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [134, 135],
+          "node": 147,
+          "sensor": 763,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 9,
+          "sensor": 576,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 9,
           "sensor": 764,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_45", "Qinj_bus_45"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [137, 138],
+          "node": 9,
+          "sensor": 764,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 92,
+          "sensor": 577,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 92,
           "sensor": 765,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_46", "Qinj_bus_46"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [140, 141],
+          "node": 92,
+          "sensor": 765,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 115,
+          "sensor": 578,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 115,
           "sensor": 766,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_47", "Qinj_bus_47"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [143, 144],
+          "node": 115,
+          "sensor": 766,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 129,
+          "sensor": 579,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 129,
           "sensor": 767,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_48", "Qinj_bus_48"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [146, 147],
+          "node": 129,
+          "sensor": 767,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 183,
+          "sensor": 580,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 183,
           "sensor": 768,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_49", "Qinj_bus_49"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [149, 150],
+          "node": 183,
+          "sensor": 768,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 110,
+          "sensor": 581,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 110,
           "sensor": 769,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_50", "Qinj_bus_50"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [152, 153],
+          "node": 110,
+          "sensor": 769,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 174,
+          "sensor": 582,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 174,
           "sensor": 770,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_51", "Qinj_bus_51"],
-          "values": [-2.347678146592503, -2.6136042997975544]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -2.347678146592503
         },
         {
-          "positions": [155, 156],
+          "node": 174,
+          "sensor": 770,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 164,
+          "sensor": 583,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.575800537443953
+        },
+        {
+          "node": 164,
           "sensor": 771,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_52", "Qinj_bus_52"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [158, 159],
+          "node": 164,
+          "sensor": 771,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 88,
+          "sensor": 584,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 88,
           "sensor": 772,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_53", "Qinj_bus_53"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [161, 162],
+          "node": 88,
+          "sensor": 772,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 16,
+          "sensor": 585,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 16,
           "sensor": 773,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_54", "Qinj_bus_54"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [164, 165],
+          "node": 16,
+          "sensor": 773,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 39,
+          "sensor": 586,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 39,
           "sensor": 774,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_55", "Qinj_bus_55"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [167, 168],
+          "node": 39,
+          "sensor": 774,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 53,
+          "sensor": 587,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 53,
           "sensor": 775,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_56", "Qinj_bus_56"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [170, 171],
+          "node": 53,
+          "sensor": 775,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 28,
+          "sensor": 588,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 28,
           "sensor": 776,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_57", "Qinj_bus_57"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [173, 174],
+          "node": 28,
+          "sensor": 776,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 71,
+          "sensor": 589,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 71,
           "sensor": 777,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_58", "Qinj_bus_58"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [176, 177],
+          "node": 71,
+          "sensor": 777,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 136,
+          "sensor": 590,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 136,
           "sensor": 778,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_59", "Qinj_bus_59"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [179, 180],
+          "node": 136,
+          "sensor": 778,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 156,
+          "sensor": 591,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 156,
           "sensor": 779,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_60", "Qinj_bus_60"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [182, 183],
+          "node": 156,
+          "sensor": 779,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 4,
+          "sensor": 592,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 4,
           "sensor": 780,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_61", "Qinj_bus_61"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [185, 186],
+          "node": 4,
+          "sensor": 780,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 30,
+          "sensor": 593,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 30,
           "sensor": 781,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_62", "Qinj_bus_62"],
-          "values": [1.6144798213649358, -1.6037601927710405]
+          "sigma": 1.0,
+          "type": "P",
+          "value": 1.6144798213649358
         },
         {
-          "positions": [188, 189],
+          "node": 30,
+          "sensor": 781,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 90,
+          "sensor": 594,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 90,
           "sensor": 782,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_63", "Qinj_bus_63"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [191, 192],
+          "node": 90,
+          "sensor": 782,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 118,
+          "sensor": 595,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 118,
           "sensor": 783,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_64", "Qinj_bus_64"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [194, 195],
+          "node": 118,
+          "sensor": 783,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 186,
+          "sensor": 596,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 108.844763388091516
+        },
+        {
+          "node": 186,
           "sensor": 784,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_65", "Qinj_bus_65"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [197, 198],
+          "node": 186,
+          "sensor": 784,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 109,
+          "sensor": 597,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 108.09641752178653
+        },
+        {
+          "node": 109,
           "sensor": 785,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_66", "Qinj_bus_66"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [200, 201],
+          "node": 109,
+          "sensor": 785,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 176,
+          "sensor": 598,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 176,
           "sensor": 786,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_67", "Qinj_bus_67"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [203, 204],
+          "node": 176,
+          "sensor": 786,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 166,
+          "sensor": 599,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 166,
           "sensor": 787,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_68", "Qinj_bus_68"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [206, 207],
+          "node": 166,
+          "sensor": 787,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 80,
+          "sensor": 600,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 80,
           "sensor": 788,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_69", "Qinj_bus_69"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [209, 210],
+          "node": 80,
+          "sensor": 788,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 12,
+          "sensor": 601,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 12,
           "sensor": 789,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_70", "Qinj_bus_70"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [212, 213],
+          "node": 12,
+          "sensor": 789,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 40,
+          "sensor": 602,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 105.7199054158253
+        },
+        {
+          "node": 40,
           "sensor": 790,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_71", "Qinj_bus_71"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [215, 216],
+          "node": 40,
+          "sensor": 790,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 54,
+          "sensor": 603,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 106.761523572067083
+        },
+        {
+          "node": 54,
           "sensor": 791,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_72", "Qinj_bus_72"],
-          "values": [0.49549806079042996, -1.4375867364368295]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [218, 219],
+          "node": 54,
+          "sensor": 791,
+          "sigma": 1.0,
+          "type": "Q",
+          "value": -1.4375867364368295
+        },
+        {
+          "node": 29,
+          "sensor": 604,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 29,
           "sensor": 792,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_73", "Qinj_bus_73"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [221, 222],
+          "node": 29,
+          "sensor": 792,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 34,
+          "sensor": 605,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 34,
           "sensor": 793,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_74", "Qinj_bus_74"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [224, 225],
+          "node": 34,
+          "sensor": 793,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 69,
+          "sensor": 606,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 69,
           "sensor": 794,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_75", "Qinj_bus_75"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [227, 228],
+          "node": 69,
+          "sensor": 794,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 144,
+          "sensor": 607,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 17.36362670343101
+        },
+        {
+          "node": 144,
           "sensor": 795,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_76", "Qinj_bus_76"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [230, 231],
+          "node": 144,
+          "sensor": 795,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 155,
+          "sensor": 608,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 155,
           "sensor": 796,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_77", "Qinj_bus_77"],
-          "values": [-0.5346590214259204, 0.0142728810007423]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -0.5346590214259204
         },
         {
-          "positions": [233, 234],
+          "node": 155,
+          "sensor": 796,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 2,
+          "sensor": 609,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 2,
           "sensor": 797,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_78", "Qinj_bus_78"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [236, 237],
+          "node": 2,
+          "sensor": 797,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 93,
+          "sensor": 610,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 93,
           "sensor": 798,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_79", "Qinj_bus_79"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [239, 240],
+          "node": 93,
+          "sensor": 798,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 116,
+          "sensor": 611,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 116,
           "sensor": 799,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_80", "Qinj_bus_80"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [242, 243],
+          "node": 116,
+          "sensor": 799,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 131,
+          "sensor": 612,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 131,
           "sensor": 800,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_81", "Qinj_bus_81"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [245, 246],
+          "node": 131,
+          "sensor": 800,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 185,
+          "sensor": 613,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 185,
           "sensor": 801,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_82", "Qinj_bus_82"],
-          "values": [-5.0674496713325805, -0.10485861811909325]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -5.0674496713325805
         },
         {
-          "positions": [248, 249],
+          "node": 185,
+          "sensor": 801,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 111,
+          "sensor": 614,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 111,
           "sensor": 802,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_83", "Qinj_bus_83"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [251, 252],
+          "node": 111,
+          "sensor": 802,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 177,
+          "sensor": 615,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 177,
           "sensor": 803,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_84", "Qinj_bus_84"],
-          "values": [-1.5063814266802154, -0.5325847832372645]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [254, 255],
+          "node": 177,
+          "sensor": 803,
+          "sigma": 1.0,
+          "type": "Q",
+          "value": -0.5325847832372645
+        },
+        {
+          "node": 159,
+          "sensor": 616,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 18.471267194557143
+        },
+        {
+          "node": 159,
           "sensor": 804,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_85", "Qinj_bus_85"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [257, 258],
+          "node": 159,
+          "sensor": 804,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 77,
+          "sensor": 617,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 77,
           "sensor": 805,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_86", "Qinj_bus_86"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [260, 261],
+          "node": 77,
+          "sensor": 805,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 13,
+          "sensor": 618,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 13,
           "sensor": 806,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_87", "Qinj_bus_87"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [263, 264],
+          "node": 13,
+          "sensor": 806,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 41,
+          "sensor": 619,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.6827637294426179
+        },
+        {
+          "node": 41,
           "sensor": 807,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_88", "Qinj_bus_88"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [266, 267],
+          "node": 41,
+          "sensor": 807,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 58,
+          "sensor": 620,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 58,
           "sensor": 808,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_89", "Qinj_bus_89"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [269, 270],
+          "node": 58,
+          "sensor": 808,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 32,
+          "sensor": 621,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 32,
           "sensor": 809,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_90", "Qinj_bus_90"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [272, 273],
+          "node": 32,
+          "sensor": 809,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 76,
+          "sensor": 622,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 76,
           "sensor": 810,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_91", "Qinj_bus_91"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [275, 276],
+          "node": 76,
+          "sensor": 810,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 143,
+          "sensor": 623,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 143,
           "sensor": 811,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_92", "Qinj_bus_92"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [278, 279],
+          "node": 143,
+          "sensor": 811,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 151,
+          "sensor": 624,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 151,
           "sensor": 812,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_93", "Qinj_bus_93"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [281, 282],
+          "node": 151,
+          "sensor": 812,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 5,
+          "sensor": 625,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 5,
           "sensor": 813,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_94", "Qinj_bus_94"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [284, 285],
+          "node": 5,
+          "sensor": 813,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 91,
+          "sensor": 626,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 91,
           "sensor": 814,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_95", "Qinj_bus_95"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [287, 288],
+          "node": 91,
+          "sensor": 814,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 120,
+          "sensor": 627,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 120,
           "sensor": 815,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_96", "Qinj_bus_96"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [290, 291],
+          "node": 120,
+          "sensor": 815,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 130,
+          "sensor": 628,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 130,
           "sensor": 816,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_97", "Qinj_bus_97"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [293, 294],
+          "node": 130,
+          "sensor": 816,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 187,
+          "sensor": 629,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 187,
           "sensor": 817,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_98", "Qinj_bus_98"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [296, 297],
+          "node": 187,
+          "sensor": 817,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 112,
+          "sensor": 630,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 112,
           "sensor": 818,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_99", "Qinj_bus_99"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [299, 300],
+          "node": 112,
+          "sensor": 818,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 170,
+          "sensor": 631,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 170,
           "sensor": 819,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_100", "Qinj_bus_100"],
-          "values": [0.23813698421765547, -0.29438830320594433]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [302, 303],
+          "node": 170,
+          "sensor": 819,
+          "sigma": 1.0,
+          "type": "Q",
+          "value": -0.29438830320594433
+        },
+        {
+          "node": 78,
+          "sensor": 632,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 78,
           "sensor": 820,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_101", "Qinj_bus_101"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [305, 306],
+          "node": 78,
+          "sensor": 820,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 14,
+          "sensor": 633,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 14,
           "sensor": 821,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_102", "Qinj_bus_102"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [308, 309],
+          "node": 14,
+          "sensor": 821,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 45,
+          "sensor": 634,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 45,
           "sensor": 822,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_103", "Qinj_bus_103"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [311, 312],
+          "node": 45,
+          "sensor": 822,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 56,
+          "sensor": 635,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 56,
           "sensor": 823,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_104", "Qinj_bus_104"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [314, 315],
+          "node": 56,
+          "sensor": 823,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 75,
+          "sensor": 636,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 75,
           "sensor": 824,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_105", "Qinj_bus_105"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [317, 318],
+          "node": 75,
+          "sensor": 824,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 140,
+          "sensor": 637,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 140,
           "sensor": 825,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_106", "Qinj_bus_106"],
-          "values": [-19.6706243281858, -4.58696849826376]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -19.6706243281858
         },
         {
-          "positions": [320, 321],
+          "node": 140,
+          "sensor": 825,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 65,
+          "sensor": 638,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 65,
           "sensor": 826,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_107", "Qinj_bus_107"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [323, 324],
+          "node": 65,
+          "sensor": 826,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 148,
+          "sensor": 639,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 148,
           "sensor": 827,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_108", "Qinj_bus_108"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [326, 327],
+          "node": 148,
+          "sensor": 827,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 3,
+          "sensor": 640,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 3,
           "sensor": 828,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_109", "Qinj_bus_109"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [329, 330],
+          "node": 3,
+          "sensor": 828,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 95,
+          "sensor": 641,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 95,
           "sensor": 829,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_110", "Qinj_bus_110"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [332, 333],
+          "node": 95,
+          "sensor": 829,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 119,
+          "sensor": 642,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 119,
           "sensor": 830,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_111", "Qinj_bus_111"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [335, 336],
+          "node": 119,
+          "sensor": 830,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 132,
+          "sensor": 643,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 132,
           "sensor": 831,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_112", "Qinj_bus_112"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [338, 339],
+          "node": 132,
+          "sensor": 831,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 188,
+          "sensor": 644,
+          "sigma": 0.55,
+          "type": "U",
+          "value": 108.05514519506673
+        },
+        {
+          "node": 188,
           "sensor": 832,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_113", "Qinj_bus_113"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [341, 342],
+          "node": 188,
+          "sensor": 832,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 105,
+          "sensor": 645,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 105,
           "sensor": 833,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_114", "Qinj_bus_114"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [344, 345],
+          "node": 105,
+          "sensor": 833,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 167,
+          "sensor": 646,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 167,
           "sensor": 834,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_115", "Qinj_bus_115"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [347, 348],
+          "node": 167,
+          "sensor": 834,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 157,
+          "sensor": 647,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 157,
           "sensor": 835,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_116", "Qinj_bus_116"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [350, 351],
+          "node": 157,
+          "sensor": 835,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 79,
+          "sensor": 648,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 79,
           "sensor": 836,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_117", "Qinj_bus_117"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [353, 354],
+          "node": 79,
+          "sensor": 836,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 15,
+          "sensor": 649,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 19.10183354629539698
+        },
+        {
+          "node": 15,
           "sensor": 837,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_118", "Qinj_bus_118"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [356, 357],
+          "node": 15,
+          "sensor": 837,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 18,
+          "sensor": 650,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 18,
           "sensor": 838,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_119", "Qinj_bus_119"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [359, 360],
+          "node": 18,
+          "sensor": 838,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 43,
+          "sensor": 651,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 18.1536790863670228
+        },
+        {
+          "node": 43,
           "sensor": 839,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_120", "Qinj_bus_120"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [362, 363],
+          "node": 43,
+          "sensor": 839,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 62,
+          "sensor": 652,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 62,
           "sensor": 840,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_121", "Qinj_bus_121"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [365, 366],
+          "node": 62,
+          "sensor": 840,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 38,
+          "sensor": 653,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.8661997162387767
+        },
+        {
+          "node": 38,
           "sensor": 841,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_122", "Qinj_bus_122"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [368, 369],
+          "node": 38,
+          "sensor": 841,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 73,
+          "sensor": 654,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.588734212483576
+        },
+        {
+          "node": 73,
           "sensor": 842,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_123", "Qinj_bus_123"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [371, 372],
+          "node": 73,
+          "sensor": 842,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 137,
+          "sensor": 655,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 137,
           "sensor": 843,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_124", "Qinj_bus_124"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [374, 375],
+          "node": 137,
+          "sensor": 843,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 152,
+          "sensor": 656,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 152,
           "sensor": 844,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_125", "Qinj_bus_125"],
-          "values": [-1.330340934754398, -0.35713999513670625]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [377, 378],
+          "node": 152,
+          "sensor": 844,
+          "sigma": 1.0,
+          "type": "Q",
+          "value": -0.35713999513670625
+        },
+        {
+          "node": 7,
+          "sensor": 657,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 7,
           "sensor": 845,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_126", "Qinj_bus_126"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [380, 381],
+          "node": 7,
+          "sensor": 845,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 94,
+          "sensor": 658,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 94,
           "sensor": 846,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_127", "Qinj_bus_127"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [383, 384],
+          "node": 94,
+          "sensor": 846,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 121,
+          "sensor": 659,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 121,
           "sensor": 847,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_128", "Qinj_bus_128"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [386, 387],
+          "node": 121,
+          "sensor": 847,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 133,
+          "sensor": 660,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 133,
           "sensor": 848,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_129", "Qinj_bus_129"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [389, 390],
+          "node": 133,
+          "sensor": 848,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 181,
+          "sensor": 661,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 181,
           "sensor": 849,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_130", "Qinj_bus_130"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [392, 393],
+          "node": 181,
+          "sensor": 849,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 101,
+          "sensor": 662,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 18.03556071348004997
+        },
+        {
+          "node": 101,
           "sensor": 850,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_131", "Qinj_bus_131"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [395, 396],
+          "node": 101,
+          "sensor": 850,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 168,
+          "sensor": 663,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 168,
           "sensor": 851,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_132", "Qinj_bus_132"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [398, 399],
+          "node": 168,
+          "sensor": 851,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 158,
+          "sensor": 664,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 158,
           "sensor": 852,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_133", "Qinj_bus_133"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [401, 402],
+          "node": 158,
+          "sensor": 852,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 82,
+          "sensor": 665,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 82,
           "sensor": 853,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_134", "Qinj_bus_134"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [404, 405],
+          "node": 82,
+          "sensor": 853,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 17,
+          "sensor": 666,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 17,
           "sensor": 854,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_135", "Qinj_bus_135"],
-          "values": [-3.59108447888485, 0.08818474699064471]
+          "sigma": 1.0,
+          "type": "P",
+          "value": -3.59108447888485
         },
         {
-          "positions": [407, 408],
+          "node": 17,
+          "sensor": 854,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 50,
+          "sensor": 667,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 50,
           "sensor": 855,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_136", "Qinj_bus_136"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [410, 411],
+          "node": 50,
+          "sensor": 855,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 61,
+          "sensor": 668,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 61,
           "sensor": 856,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_137", "Qinj_bus_137"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [413, 414],
+          "node": 61,
+          "sensor": 856,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 36,
+          "sensor": 669,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 36,
           "sensor": 857,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_138", "Qinj_bus_138"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [416, 417],
+          "node": 36,
+          "sensor": 857,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 70,
+          "sensor": 670,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 70,
           "sensor": 858,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_139", "Qinj_bus_139"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [419, 420],
+          "node": 70,
+          "sensor": 858,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 141,
+          "sensor": 671,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 17.614836863420816
+        },
+        {
+          "node": 141,
           "sensor": 859,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_140", "Qinj_bus_140"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [422, 423],
+          "node": 141,
+          "sensor": 859,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 150,
+          "sensor": 672,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 150,
           "sensor": 860,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_141", "Qinj_bus_141"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [425, 426],
+          "node": 150,
+          "sensor": 860,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 6,
+          "sensor": 673,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.592426893714745
+        },
+        {
+          "node": 6,
           "sensor": 861,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_142", "Qinj_bus_142"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [428, 429],
+          "node": 6,
+          "sensor": 861,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 96,
+          "sensor": 674,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 96,
           "sensor": 862,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_143", "Qinj_bus_143"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [431, 432],
+          "node": 96,
+          "sensor": 862,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 123,
+          "sensor": 675,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 123,
           "sensor": 863,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_144", "Qinj_bus_144"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [434, 435],
+          "node": 123,
+          "sensor": 863,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 126,
+          "sensor": 676,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 126,
           "sensor": 864,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_145", "Qinj_bus_145"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [437, 438],
+          "node": 126,
+          "sensor": 864,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 178,
+          "sensor": 677,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 178,
           "sensor": 865,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_146", "Qinj_bus_146"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [440, 441],
+          "node": 178,
+          "sensor": 865,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 102,
+          "sensor": 678,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 102,
           "sensor": 866,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_147", "Qinj_bus_147"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [443, 444],
+          "node": 102,
+          "sensor": 866,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 169,
+          "sensor": 679,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 169,
           "sensor": 867,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_148", "Qinj_bus_148"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [446, 447],
+          "node": 169,
+          "sensor": 867,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 161,
+          "sensor": 680,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 161,
           "sensor": 868,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_149", "Qinj_bus_149"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [449, 450],
+          "node": 161,
+          "sensor": 868,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 81,
+          "sensor": 681,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 81,
           "sensor": 869,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_150", "Qinj_bus_150"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [452, 453],
+          "node": 81,
+          "sensor": 869,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 24,
+          "sensor": 682,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 24,
           "sensor": 870,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_151", "Qinj_bus_151"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [455, 456],
+          "node": 24,
+          "sensor": 870,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 145,
+          "sensor": 683,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 145,
           "sensor": 871,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_152", "Qinj_bus_152"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [458, 459],
+          "node": 145,
+          "sensor": 871,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 49,
+          "sensor": 684,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 49,
           "sensor": 872,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_153", "Qinj_bus_153"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [461, 462],
+          "node": 49,
+          "sensor": 872,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 59,
+          "sensor": 685,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 59,
           "sensor": 873,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_154", "Qinj_bus_154"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [464, 465],
+          "node": 59,
+          "sensor": 873,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 33,
+          "sensor": 686,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 33,
           "sensor": 874,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_155", "Qinj_bus_155"],
-          "values": [1.8263935485771379, 0.5613502055951425]
+          "sigma": 1.0,
+          "type": "P",
+          "value": 1.8263935485771379
         },
         {
-          "positions": [467, 468],
+          "node": 33,
+          "sensor": 874,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 74,
+          "sensor": 687,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 74,
           "sensor": 875,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_156", "Qinj_bus_156"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [470, 471],
+          "node": 74,
+          "sensor": 875,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 139,
+          "sensor": 688,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 139,
           "sensor": 876,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_157", "Qinj_bus_157"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [473, 474],
+          "node": 139,
+          "sensor": 876,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 154,
+          "sensor": 689,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 154,
           "sensor": 877,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_158", "Qinj_bus_158"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [476, 477],
+          "node": 154,
+          "sensor": 877,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 8,
+          "sensor": 690,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 8,
           "sensor": 878,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_159", "Qinj_bus_159"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [479, 480],
+          "node": 8,
+          "sensor": 878,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 100,
+          "sensor": 691,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 100,
           "sensor": 879,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_160", "Qinj_bus_160"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [482, 483],
+          "node": 100,
+          "sensor": 879,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 114,
+          "sensor": 692,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 114,
           "sensor": 880,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_161", "Qinj_bus_161"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [485, 486],
+          "node": 114,
+          "sensor": 880,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 124,
+          "sensor": 693,
+          "sigma": 0.55,
+          "type": "U"
+        },
+        {
+          "node": 124,
           "sensor": 881,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_162", "Qinj_bus_162"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [488, 489],
+          "node": 124,
+          "sensor": 881,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 103,
+          "sensor": 694,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 103,
           "sensor": 882,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_163", "Qinj_bus_163"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [491, 492],
+          "node": 103,
+          "sensor": 882,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 179,
+          "sensor": 695,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 179,
           "sensor": 883,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_164", "Qinj_bus_164"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [494, 495],
+          "node": 179,
+          "sensor": 883,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 104,
+          "sensor": 696,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 18.109371397850047
+        },
+        {
+          "node": 104,
           "sensor": 884,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_165", "Qinj_bus_165"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [497, 498],
+          "node": 104,
+          "sensor": 884,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 172,
+          "sensor": 697,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 172,
           "sensor": 885,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_166", "Qinj_bus_166"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [500, 501],
+          "node": 172,
+          "sensor": 885,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 160,
+          "sensor": 698,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 17.1255478076109768
+        },
+        {
+          "node": 160,
           "sensor": 886,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_167", "Qinj_bus_167"],
-          "values": [-1.7681421938575057, 0.3012173841210943]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [503, 504],
+          "node": 160,
+          "sensor": 886,
+          "sigma": 1.0,
+          "type": "Q",
+          "value": 0.3012173841210943
+        },
+        {
+          "node": 87,
+          "sensor": 699,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 87,
           "sensor": 887,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_168", "Qinj_bus_168"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [506, 507],
+          "node": 87,
+          "sensor": 887,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 23,
+          "sensor": 700,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.46953871876018605
+        },
+        {
+          "node": 23,
           "sensor": 888,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_169", "Qinj_bus_169"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [509, 510],
+          "node": 23,
+          "sensor": 888,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 46,
+          "sensor": 701,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 46,
           "sensor": 889,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_170", "Qinj_bus_170"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [512, 513],
+          "node": 46,
+          "sensor": 889,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 57,
+          "sensor": 702,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 57,
           "sensor": 890,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_171", "Qinj_bus_171"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [515, 516],
+          "node": 57,
+          "sensor": 890,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 37,
+          "sensor": 703,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 37,
           "sensor": 891,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_172", "Qinj_bus_172"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [518, 519],
+          "node": 37,
+          "sensor": 891,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 72,
+          "sensor": 704,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 72,
           "sensor": 892,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_173", "Qinj_bus_173"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [521, 522],
+          "node": 72,
+          "sensor": 892,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 142,
+          "sensor": 705,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 142,
           "sensor": 893,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_174", "Qinj_bus_174"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [524, 525],
+          "node": 142,
+          "sensor": 893,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 153,
+          "sensor": 706,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 18.5687702729259052
+        },
+        {
+          "node": 153,
           "sensor": 894,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_175", "Qinj_bus_175"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [527, 528],
+          "node": 153,
+          "sensor": 894,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 11,
+          "sensor": 707,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 11,
           "sensor": 895,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_176", "Qinj_bus_176"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [530, 531],
+          "node": 11,
+          "sensor": 895,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 89,
+          "sensor": 708,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 89,
           "sensor": 896,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_177", "Qinj_bus_177"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [533, 534],
+          "node": 89,
+          "sensor": 896,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 113,
+          "sensor": 709,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 113,
           "sensor": 897,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_178", "Qinj_bus_178"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [536, 537],
+          "node": 113,
+          "sensor": 897,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 125,
+          "sensor": 710,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.6206281615300155
+        },
+        {
+          "node": 125,
           "sensor": 898,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_179", "Qinj_bus_179"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [539, 540],
+          "node": 125,
+          "sensor": 898,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 180,
+          "sensor": 711,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 180,
           "sensor": 899,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_180", "Qinj_bus_180"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [542, 543],
+          "node": 180,
+          "sensor": 899,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 106,
+          "sensor": 712,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 106,
           "sensor": 900,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_181", "Qinj_bus_181"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [545, 546],
+          "node": 106,
+          "sensor": 900,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 171,
+          "sensor": 713,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 171,
           "sensor": 901,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_182", "Qinj_bus_182"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [548, 549],
+          "node": 171,
+          "sensor": 901,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 165,
+          "sensor": 714,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 165,
           "sensor": 902,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_183", "Qinj_bus_183"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [551, 552],
+          "node": 165,
+          "sensor": 902,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 86,
+          "sensor": 715,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 18.050994085156113
+        },
+        {
+          "node": 86,
           "sensor": 903,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_184", "Qinj_bus_184"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [554, 555],
+          "node": 86,
+          "sensor": 903,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 19,
+          "sensor": 716,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 17.5394074770797359
+        },
+        {
+          "node": 19,
           "sensor": 904,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_185", "Qinj_bus_185"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [557, 558],
+          "node": 19,
+          "sensor": 904,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 44,
+          "sensor": 717,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.8654425561611476
+        },
+        {
+          "node": 44,
           "sensor": 905,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_186", "Qinj_bus_186"],
-          "values": [-0.9430548259772966, -1.0827137913933358]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [560, 561],
+          "node": 44,
+          "sensor": 905,
+          "sigma": 1.0,
+          "type": "Q",
+          "value": -1.0827137913933358
+        },
+        {
+          "node": 60,
+          "sensor": 718,
+          "sigma": 0.1,
+          "type": "U",
+          "value": 16.7114350926855604
+        },
+        {
+          "node": 60,
           "sensor": 906,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_187", "Qinj_bus_187"]
+          "sigma": 1.0,
+          "type": "P"
         },
         {
-          "positions": [563, 564],
+          "node": 60,
+          "sensor": 906,
+          "sigma": 1.0,
+          "type": "Q"
+        },
+        {
+          "node": 35,
+          "sensor": 719,
+          "sigma": 0.1,
+          "type": "U"
+        },
+        {
+          "node": 35,
           "sensor": 907,
-          "sigmas": [1.0, 1.0],
-          "sparlectra_ids": ["Pinj_bus_188", "Qinj_bus_188"]
+          "sigma": 1.0,
+          "type": "P"
+        },
+        {
+          "node": 35,
+          "sensor": 907,
+          "sigma": 1.0,
+          "type": "Q"
         }
       ]
     },
     "meta": {
       "case_name": "sp_case188",
-      "created_by": "Sparlectra 0.50.0",
+      "created_by": "Sparlectra 0.60.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",

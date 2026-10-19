@@ -357,6 +357,12 @@ mutable struct PowerTransformerControl <: AbstractOuterController
   voltage_error_metric::Symbol
   max_outer_iters::Int
   enabled::Bool
+  # rank in the outer loop, 0 acts first (control_priority)
+  priority::Int
+  # control range of the ratio tap inside the branch's tap_min/tap_max;
+  # nothing on a side means the physical limit (_tap_control_range)
+  tap_min::Union{Nothing,Float64}
+  tap_max::Union{Nothing,Float64}
   converged::Bool
   at_limit::Bool
   status::Symbol
@@ -368,10 +374,11 @@ end
 function PowerTransformerControl(; trafo::String, followers::Vector{String} = String[], mode::Symbol, target_bus::Union{Nothing,String} = nothing, target_branch::Union{Nothing,Tuple{String,String}} = nothing,
   target_vm_pu::Union{Nothing,Float64} = nothing, p_target_mw::Union{Nothing,Float64} = nothing, q_target_mvar::Union{Nothing,Float64} = nothing,
   control_ratio::Bool = true, control_phase::Bool = false, is_discrete::Bool = true, deadband_vm_pu::Float64 = 1e-3, deadband_p_mw::Float64 = 0.5,
-  voltage_error_metric::Symbol = :vm, max_outer_iters::Int = 20, enabled::Bool = true)
+  voltage_error_metric::Symbol = :vm, max_outer_iters::Int = 20, enabled::Bool = true, priority::Int = 0)
   voltage_error_metric in (:vm, :vm2) || error("PowerTransformerControl: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
+  _check_control_priority(priority, "PowerTransformerControl")
   return PowerTransformerControl(trafo, followers, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
-    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, false, false, :idle, nothing, nothing, 0)
+    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, priority, nothing, nothing, false, false, :idle, nothing, nothing, 0)
 end
 
 @inline function expected_controller_count(trafoTyp::TrafoTyp)::Int

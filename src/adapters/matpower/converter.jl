@@ -148,6 +148,8 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   opts.matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections, :paired_control) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections, :paired_control."))
   opts.matpower_dcline_mode in (:pf_injections, :paired_control) || MatpowerIO.assert_no_active_dcline(mpc)
   bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = opts.apply_bus_names)
+  aux_buses = _matpower_aux_bus_numbers(mpc, busData, BUS_I)
+  aux_ids = Int[]
   bus_original_name_by_orig = Dict{Int,String}()
   raw_bus_names = _matpower_metadata_vector(mpc, :bus_name)
   if raw_bus_names !== nothing && length(raw_bus_names) == nbus
@@ -204,6 +206,8 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
     vn_kv = raw_vn <= 0.0 ? 1.0 : raw_vn
     id = nid()
     node_id_by_orig[orig] = id
+    # the auxiliary role, as the direct import sets isAux
+    orig in aux_buses && push!(aux_ids, id)
     u_rated = _mpsi_volt(vn_kv)
     u_rated_by_orig[orig] = u_rated
     zb_by_orig[orig] = u_rated^2 / s_base_va
@@ -540,6 +544,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
     spar.roles.slack = SCFSlackRole(mode = isempty(participation) ? "single" : "distributed", nodes = ref_nodes, participation = participation)
   end
   isempty(isolated_ids) || (spar.roles.isolated_nodes = isolated_ids)
+  isempty(aux_ids) || (spar.roles.aux_nodes = aux_ids)
   if opts.import_for001_contingencies && hasproperty(mpc, :for001_contingencies) && getproperty(mpc, :for001_contingencies) !== nothing
     # the metadata carries outage LABELS (strings), one row per label
     rows = Dict{String,Any}[Dict{String,Any}("label" => String(c)) for c in getproperty(mpc, :for001_contingencies)]

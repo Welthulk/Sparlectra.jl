@@ -41,7 +41,7 @@ the extended test profile.
 | `exp_open_terminal_line.jl` | `others` | one-sided open line: charging draw and Ferranti rise ([theory](branchmodel.md)) | others |
 | `exp_current_iteration_start.jl` | `powerflow` | guarded current-iteration start pre-solve via config overrides | powerflow |
 | `exp_diagnose_self_check.jl` | `others` | `run_fixed_reference_self_check` and the `diagnose.log` report | others |
-| `exp_short_circuit.jl` | `others` | `runShortCircuit!` on a hand-built net, safety flag on defaulted data | short_circuit |
+| `exp_short_circuit.jl` | `others` | `runShortCircuit!` on a hand-built net, safety flag on defaulted data, converter current source | short_circuit |
 | `exp_short_circuit_reference.jl` | `others` | PASS/FAIL check against analytic IEC 60909-0 values | short_circuit |
 | `exp_short_circuit_cgmes.jl` | `others` | `runShortCircuit!` on the ENTSO-E MicroGrid BE delivery (local test-set cache) | short_circuit |
 | `exp_synthetic_tiled_grid_pf_perf.jl` | `powerflow` | synthetic tiled-grid performance study | powerflow |
@@ -73,6 +73,8 @@ the extended test profile.
 | `exp_ac_rescue_dc_fallback.jl` | the `power_flow.rescue` ladder plus the `power_flow.dc.fallback` result | others |
 | `exp_cgmes_import_analysis.jl` | `analyzeCGMES` on an incomplete delivery | others |
 | `exp_cgmes_infer_base_voltages.jl` | `cgmes_import.infer_base_voltages` from the SV state | others |
+| `exp_cgmes_energy_source.jl` | `cgmes_import.map_energy_source`: EnergySource generation off and on; the same park as CGMES 3.0 `PowerElectronicsConnection` with `cgmes_import.map_power_electronics`, exported to CGMES 2.4.15 as `EquivalentInjection` and imported again | others |
+| `exp_cgmes_shunt_control.jl` | `cgmes_import.shunt_control`: SmallGrid banks as switched-bank regulators; a raised target switches blocks | others |
 | `exp_cgmes_topology_processor.jl` | node-breaker import without a TP profile (MiniGrid) | others |
 | `machine_remote_voltage_control.jl` | remote voltage control via machine reactive power ([theory](remote_voltage_control.md)) | others |
 | `using_links.jl` | busbar coupler as bus link, open/close behavior | others |
@@ -116,6 +118,7 @@ External FOR001/FOR002 datasets are not shipped; place files under
 | `state_estimation_manual_measurements.jl` | manual measurement setup | state_estimation |
 | `state_estimation_observability.jl` | observability scenario and diagnostics | state_estimation |
 | `state_estimation_passive_bus_zib_comparison.jl` | passive-bus / ZIB handling comparison | state_estimation |
+| `state_estimation_zero_injection_constraint.jl` | zero injection as weighted rows (`on`) against equality constraints (`constraint`) on `sp_case14`: condition, J, dof, largest ZI residual | state_estimation |
 | `state_estimation_pmu_angles.jl` | PMU angle measurements and the reference-offset state α | state_estimation |
 | `usage_state_estimation_diagnostics.jl` | diagnostics workflow | state_estimation |
 | `state_estimation_imag_bad_data.jl` | `ImagMeas` raising localizability (`wii`), elimination trace | state_estimation |

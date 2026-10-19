@@ -14,7 +14,7 @@
 
 # file: src/api/run_state_estimation_service.jl
 # purpose: Web UI/service state-estimation run (SE phase 5): build the net
-#          through the shared import paths, read a measurement CSV v1 set,
+#          through the shared import paths, read a measurement table set,
 #          check observability, run runse_diagnostics plus the final
 #          runse!(updateNet = true), and persist the SE artifacts including
 #          the se_state.csv chain anchor. Also the SE-started power-flow
@@ -368,7 +368,9 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   index === nothing && return nothing, "$(name) is a measurement table for a CGMES case, but the import kept no CGMES model to resolve its mRIDs."
   # rows without a sigma cell take the level sigma of the effective
   # configuration (case configuration first), not of the process default
-  imp = importMeasurementTable(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level)
+  # the sigma every row without a sigma cell gets, for the run artifact
+  filled = Dict{Int,Tuple{String,Symbol}}()
+  imp = _import_measurement_table(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level, filled_sigmas = filled)
   if isempty(imp.sets)
     write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
     return nothing, "$(name) holds no measurement row that can be assigned to a set; see measurement_import.txt."
@@ -376,7 +378,7 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   set = imp.sets[1]
   # applied before the report is written, so the report carries the
   # zero-injection rows of state_estimation.zero_injection for this set
-  applyMeasurementSet!(net, set; zero_injection = config.state_estimation.zero_injection === :on)
+  applyMeasurementSet!(net, set; zero_injection = config.state_estimation.zero_injection !== :off)
   write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
   zi = set.counts[:zero_injection]
   open(logfile, "a") do io
@@ -384,7 +386,189 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
     _se_log_zero_injection(io, config, zi)
     length(imp.sets) > 1 && println(io, "note: the other sets of the table are not estimated in this run: ", join((s.timestamp for s in imp.sets[2:end]), ", "))
   end
-  return (total = length(set.measurements), zero_injection = zi, sigma_origin = set.sigma_origin), nothing
+  return (total = length(set.measurements), zero_injection = zi, sigma_origin = set.sigma_origin, table = (rows = rows, set = set, filled = filled), index = index), nothing
+end
+
+# The measurements.csv artifact of an SE run is the measurement set the run
+# estimates, written as a measurement table (same writer, same keys as the
+# shipped tables), and the run estimates exactly the set that table reads
+# back to. A table set keeps its own rows: the rows that became a
+# measurement, in file order, with their keys, value text, source and valid
+# flag. A row without a sigma cell gets the sigma the import gave it plus
+# the source token sigma_level or sigma_default, so the artifact reads back
+# the same under any configuration. Zero-injection rows the run added
+# (state_estimation.zero_injection) and a set carried by a case file are
+# written through the converter's row builder (source se_run or case_file,
+# zero-injection rows with the token zero_injection). Measurements without
+# a place in the table (a link flow, a row the table cannot key) are not
+# written: they are named as comment lines and in run.log and stay in the
+# estimate behind the table set. Returns the artifact rows for the verdict
+# file: per data row its file line, key, type and the index of its
+# measurement in net.measurements, the key index (for the kV base of U),
+# and the id map of a case-file set (old id to table id).
+const _SE_ARTIFACT_ROW = NamedTuple{(:timestamp, :measurement_mrid, :terminal_mrid, :node_mrid, :type, :value, :sigma, :source, :valid),Tuple{String,String,String,String,String,String,String,String,Bool}}
+
+function _se_artifact_row(r::MeasurementRow, filled)::_SE_ARTIFACT_ROW
+  sigma = _measurement_table_number(r, :sigma)
+  source = r.source
+  if filled !== nothing
+    sigma = filled[1]
+    tok = filled[2] === :level ? "sigma_level" : "sigma_default"
+    source = isempty(source) ? tok : string(source, ";", tok)
+  end
+  return _SE_ARTIFACT_ROW((r.timestamp, r.measurement_mrid, r.terminal_mrid, r.node_mrid, r.type, _measurement_table_number(r, :value), sigma, source, r.valid))
+end
+
+function _se_write_measurement_artifact!(net::Net, index::MeasurementKeyIndex, file::AbstractString, comments::Vector{String}, logfile; table = nothing)
+  rows = _SE_ARTIFACT_ROW[]
+  # the measurement index (in net.measurements as loaded) of every row
+  owner = Int[]
+  unplaced = String[]
+  id_map = Dict{String,String}()
+  n_meas = length(net.measurements)
+  if table !== nothing
+    set = table.set
+    id_pos = Dict{String,Int}(m.id => k for (k, m) in enumerate(set.measurements))
+    line_owner = Dict{Int,Int}()
+    for (id, ls) in set.sources
+      for l in ls
+        line_owner[l] = id_pos[id]
+      end
+    end
+    for r in table.rows
+      haskey(line_owner, r.line) || continue
+      push!(rows, _se_artifact_row(r, get(table.filled, r.line, nothing)))
+      push!(owner, line_owner[r.line])
+    end
+    first_added = length(set.measurements) + 1
+  else
+    first_added = 1
+  end
+  # rows the run added (zero injection) or the set of a case file
+  added = first_added:n_meas
+  conv = _measurement_table_from_measurements(net, net.measurements[added], index; source = table === nothing ? "case_file" : "se_run")
+  without = Set{Int}(p.line for p in conv.problems)
+  # the added rows belong to the set of the table: same timestamp
+  ts = table === nothing ? "" : table.set.timestamp
+  append!(rows, (_SE_ARTIFACT_ROW((ts, Base.tail(Tuple(r))...)) for r in conv.rows))
+  append!(owner, [added[k] for k in eachindex(added) if !(k in without)])
+  table === nothing && merge!(id_map, conv.ids)
+  for p in conv.problems
+    push!(unplaced, string(p.id, ": ", p.problem, ": ", p.detail))
+  end
+  head = copy(comments)
+  write_table(rs, extra) = writeMeasurementTable(file, rs; comments = vcat(head, [string("not in the table: ", u) for u in extra]))
+  write_table(rows, unplaced)
+  # read back with the run's index; a row that does not read back (a case
+  # file row at a bus that is not energized) leaves the table and joins the
+  # measurements without a place, and the table is written once more
+  # an empty table (no measurement of a case file has a place) has no set
+  read_back() = isempty(rows) ? MeasurementSet("", Measurement[], Dict{String,Vector{Int}}(), Dict{Symbol,Int}(), NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}[], Dict{String,Symbol}()) : only(_import_measurement_table(readMeasurementTable(file), index).sets)
+  back = read_back()
+  data0 = 2 + length(head) + length(unplaced)
+  if !isempty(back.problems)
+    bad = Set{Int}(p.line - data0 for p in back.problems)
+    for p in back.problems
+      push!(unplaced, string("line ", p.line, ": ", p.problem, ": ", p.detail))
+    end
+    keep = [k for k in eachindex(rows) if !(k in bad)]
+    rows = rows[keep]
+    owner = owner[keep]
+    write_table(rows, unplaced)
+    back = read_back()
+    data0 = 2 + length(head) + length(unplaced)
+    isempty(back.problems) || error("measurements.csv: the run artifact does not read back: $(back.problems[1])")
+  end
+  carried = Set{Int}(owner)
+  rest = Measurement[net.measurements[k] for k in 1:n_meas if !(k in carried)]
+  isempty(rest) || open(logfile, "a") do io
+    println(io, "note: ", length(rest), " measurement(s) have no place in the measurement table and are not in measurements.csv (named there as comments); they stay in the estimate")
+  end
+  # the run estimates the set read back from the artifact, then the rest
+  empty!(net.measurements)
+  append!(net.measurements, back.measurements)
+  append!(net.measurements, rest)
+  pos = Dict{String,Int}(m.id => k for (k, m) in enumerate(back.measurements))
+  line_meas = Dict{Int,Int}()
+  for (id, ls) in back.sources
+    for l in ls
+      line_meas[l] = pos[id]
+    end
+  end
+  lines = collect(data0 .+ (1:length(rows)))
+  keys_ = String[isempty(r.measurement_mrid) ? (isempty(r.terminal_mrid) ? r.node_mrid : r.terminal_mrid) : r.measurement_mrid for r in rows]
+  return (index = index, lines = lines, keys = keys_, types = String[r.type for r in rows], measurement = Int[line_meas[l] for l in lines], id_map = id_map, rows = length(rows), not_in_table = length(rest))
+end
+
+# measurements_verdict.csv: the verdict per data row of measurements.csv,
+# joined by the line number of the row in that file (unique; a key with
+# its type is not, a bus sum spans the rows of all its members). Residuals
+# are in the unit of the table row (MW, MVAr, A, degrees, U in kV), the
+# residual of the measurement the row belongs to; a bus sum gives each
+# member row the residual of the sum. An eliminated row carries the
+# residual and normalized residual of the solve before its removal
+# (`eliminations` holds the trace rows of every diagnostics pass of the
+# run, a tap fallback repeats the pass), every other active row those of
+# the final diagnostics. A zero-injection
+# constraint (state_estimation.zero_injection = constraint) has normalized
+# residual 0 and constraint = true. `reason` lists the verdict tokens:
+# inactive, eliminated, suppressed, downweighted, suspicious, critical.
+const _SE_VERDICT_HEADER = ["line", "key", "type", "measurement_id", "residual", "normalized_residual", "wii", "localizable", "eliminated", "constraint", "reason"]
+
+function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag, eliminations, res, critical::Set{Int}, zi_constraint::Bool, fmt)
+  delim = string(fmt.delimiter)
+  cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
+  num(x) = x === nothing || isnan(x) ? "" : _format_csv_number(Float64(x), fmt)
+  ranking = Dict{Int,Any}(row.measurement_index => row for row in diag.final_diagnostics.measurement_ranking if row.measurement_index >= 1)
+  elim = Dict{Int,Any}(t.measurement_index => t for t in eliminations)
+  robust = something(res.robustRows, NamedTuple[])
+  suppressed = Set{String}(String(r.id) for r in robust if r.stage == 3)
+  downweighted = Set{String}(String(r.id) for r in robust if r.stage in (1, 2))
+  flagged = 0
+  open(file, "w") do io
+    println(io, join(_SE_VERDICT_HEADER, delim))
+    for k in eachindex(art.lines)
+      mi = art.measurement[k]
+      m = net.measurements[mi]
+      # U rows are in kV in the table, VmMeas residuals in pu of the bus
+      scale = m.typ == VmMeas ? art.index.bus_kV[m.busIdx] : 1.0
+      residual = nothing
+      rn = nothing
+      wii = nothing
+      localizable = false
+      suspicious = false
+      eliminated = haskey(elim, mi)
+      if eliminated
+        t = elim[mi]
+        residual = t.residual_before * scale
+        rn = t.normalized_residual_before
+        wii = t.wii
+        # elimination requires a localizable row
+        localizable = true
+      elseif m.active && haskey(ranking, mi)
+        row = ranking[mi]
+        residual = row.residual * scale
+        rn = row.normalized_residual
+        wii = row.wii
+        localizable = row.localizable
+        suspicious = row.suspicious
+      end
+      constraint = zi_constraint && _zero_injection_constraint(m)
+      constraint && (rn = 0.0)
+      tokens = String[]
+      # the final solve deactivates the eliminated rows in net.measurements;
+      # inactive means valid=false in the table
+      (m.active || eliminated) || push!(tokens, "inactive")
+      eliminated && push!(tokens, "eliminated")
+      m.id in suppressed && push!(tokens, "suppressed")
+      m.id in downweighted && push!(tokens, "downweighted")
+      suspicious && push!(tokens, "suspicious")
+      mi in critical && push!(tokens, "critical")
+      any(t -> t in ("eliminated", "suppressed", "downweighted", "suspicious"), tokens) && (flagged += 1)
+      println(io, join((art.lines[k], cf(art.keys[k]), cf(art.types[k]), cf(m.id), num(residual), num(rn), num(wii), localizable, eliminated, constraint, cf(join(tokens, ";"))), delim))
+    end
+  end
+  return flagged
 end
 
 # state_estimation.sigma_by_voltage_level of one run: per nominal voltage the
@@ -430,7 +614,7 @@ end
 # A generated set already carries ZI rows or balance rows at every passive
 # bus and gets nothing added. Returns the number of rows added.
 function _se_apply_zero_injection!(net::Net, config, logfile)::Int
-  added = config.state_estimation.zero_injection === :on ? _add_missing_zero_injections!(net.measurements, net) : 0
+  added = config.state_estimation.zero_injection !== :off ? _add_missing_zero_injections!(net.measurements, net) : 0
   open(logfile, "a") do io
     _se_log_zero_injection(io, config, added)
   end
@@ -439,8 +623,12 @@ end
 
 # the log line of the zero-injection switch, the same for every SE path
 function _se_log_zero_injection(io::IO, config, added::Int)
-  if config.state_estimation.zero_injection === :on
-    println(io, "zero injection: ", added, " row(s) added at ", added ÷ 2, " passive bus(es) without an injection measurement (state_estimation.zero_injection: on)")
+  if config.state_estimation.zero_injection !== :off
+    mode = config.state_estimation.zero_injection
+    # constraint: every ZI row of the set is solved as an equality
+    # constraint, the added ones and those the set brought along
+    how = mode === :constraint ? ", every ZI row solved as an equality constraint" : ""
+    println(io, "zero injection: ", added, " row(s) added at ", added ÷ 2, " passive bus(es) without an injection measurement", how, " (state_estimation.zero_injection: ", mode, ")")
   else
     println(io, "zero injection: off, no rows added (state_estimation.zero_injection: off)")
   end
@@ -502,11 +690,14 @@ end
 
 Service backend of the Web UI "Run state estimation" action (SE phase 5).
 Builds the net through the shared import paths, reads `measurement_file`
-(measurement CSV v1, atomic), evaluates global observability (structural
+(a measurement table; without one, the set an SCF case carries),
+evaluates global observability (structural
 islands plus FD-aware rank, phase 4), runs the bad-data diagnostics
 (`runse_diagnostics`, sequential elimination on the configured budget) and
 the final `runse!(updateNet = true)`, and writes the SE artifacts:
-`measurements.csv` (the set in the run's CSV format, comments carried over), `se_diagnostics.md`, `se_view.md`,
+`measurements.csv` (the estimated set as a measurement table, comments
+carried over; the run estimates the set this file reads back to),
+`measurements_verdict.csv` (the verdict per table row), `se_diagnostics.md`, `se_view.md`,
 `shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
 chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
 
@@ -723,7 +914,8 @@ function _run_state_estimation_service_body(
       println(io, "measurements: ", n_case_rows, " row(s) taken from the case file itself (no separate measurement set given)")
     end
     zi_rows = _se_apply_zero_injection!(net, config, logfile)
-    writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), busReference = :name, format = String(config.output.csv_format))
+    case_index = _se_measurement_index(imported, format)
+    artifact = _se_write_measurement_artifact!(net, case_index, joinpath(output_dir, "measurements.csv"), [string("case: ", basename(String(case_path))), string("measurement set of state-estimation run ", run_id, ", taken from the case file; verdict per row in measurements_verdict.csv")], logfile)
     (total = n_case_rows,)
   else
     if !isfile(measurement_file)
@@ -755,30 +947,21 @@ function _run_state_estimation_service_body(
       table_error === nothing || return _api_failure("invalid_measurements", table_error; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
       zi_rows = table_summary.zero_injection
       # the comment lines of the table (case binding, generator provenance,
-      # taps table, truth values) go into the artifact as for a CSV v1 set
+      # taps table, truth values) go into the artifact
       table_comments, _ = _measurement_csv_comments(measurement_file)
-      writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), headerComments = table_comments, busReference = format === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
+      # the run lines of an artifact given as the set again are replaced,
+      # not stacked
+      filter!(c -> !startswith(c, "measurement set of state-estimation run ") && !startswith(c, "not in the table: "), table_comments)
+      tset = table_summary.table.set
+      push!(table_comments, string("measurement set of state-estimation run ", run_id, ": set ", isempty(tset.timestamp) ? "(no timestamp)" : tset.timestamp, " of ", basename(String(measurement_file)), ", ", sum(length, values(tset.sources); init = 0), " of ", tset.counts[:rows], " row(s) used (the others: measurement_import.txt); verdict per row in measurements_verdict.csv"))
+      artifact = _se_write_measurement_artifact!(net, table_summary.index, joinpath(output_dir, "measurements.csv"), table_comments, logfile; table = table_summary.table)
       table_summary
     else
-      read_summary = try
-        readMeasurementsCSV!(net; file = measurement_file, replace = true)
-      catch err
-        return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
-      end
-      # the library warns once per session; every run on a v1 file says it
-      base_metadata["se_measurement_csv_v1"] = true
-      open(logfile, "a") do io
-        println(io, "note: ", MEASUREMENT_CSV_V1_DEPRECATION)
-      end
-      zi_rows = _se_apply_zero_injection!(net, config, logfile)
-      # The artifact is written in the run's CSV format, not copied (a German
-      # Excel user found commas here next to semicolon result tables);
-      # the set's comment lines (case binding, generator
-      # provenance, taps table) are carried over, so the artifact still reads
-      # back as the same measurement set.
-      head_comments, tail_comments = _measurement_csv_comments(measurement_file)
-      writeMeasurementsCSV(net; file = joinpath(output_dir, "measurements.csv"), headerComments = head_comments, footerComments = tail_comments, busReference = format === :cgmes ? :mrid : :name, format = String(config.output.csv_format))
-      read_summary
+      # the measurement CSV v1 reader was removed in 0.50.0: a v1 file is
+      # refused with the converter named, anything else as no table
+      name = basename(String(measurement_file))
+      msg = _is_measurement_csv_v1(String(measurement_file)) ? "$(name): $(MEASUREMENT_CSV_V1_REMOVED)" : "$(name) is no measurement table (the first line must be $(MEASUREMENT_TABLE_VERSION_LINE))."
+      return _api_failure("invalid_measurements", msg; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
   end
 
@@ -1028,6 +1211,13 @@ function _run_state_estimation_service_body(
     (1 <= e.measurement_index <= length(net.measurements)) || continue
     net.measurements[e.measurement_index] = _set_measurement_active(net.measurements[e.measurement_index], false)
   end
+  # every row the run removed, with the trace row of the pass that removed
+  # it: a tap fallback below repeats the diagnostics on a set that already
+  # lacks the rows of this pass, so its own trace names only the rows it
+  # removed itself (seen on cgmes_minigrid_tap_fallback, staged start:
+  # 3 + 3 rows out of the reported run, 3 reported)
+  eliminations = NamedTuple[e for e in diag.eliminations]
+  first_pass_eliminations = length(eliminations)
   se_phase("state_estimation")
   # kept for the tap fallback below: runse! writes its state into the net
   # whether or not it converged, so the retry needs the state as it was
@@ -1099,6 +1289,7 @@ function _run_state_estimation_service_body(
       # run it comes with, so the diagnostics repeat on the frozen taps; rows they
       # eliminate leave the reported run the same way as in the first pass.
       diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
+      append!(eliminations, diag.eliminations)
       if !isempty(diag.eliminations)
         for e in diag.eliminations
           (1 <= e.measurement_index <= length(net.measurements)) || continue
@@ -1142,8 +1333,12 @@ function _run_state_estimation_service_body(
     println(io, "- **Converged:** ", res.converged, " in ", reported_it, " iteration(s)", reported_it != res.iterations ? " (max over the passes; final solve $(res.iterations))" : "")
     println(io, "- **J/dof:** ", round(res.objectiveJ / max(res.dof, 1); digits = 2))
     println(io, "- **Objective J:** ", round(res.objectiveJ; digits = 6), " (dof=", res.dof, ")", tap_fallback_used ? ", every tap frozen at its model position" : "")
-    n_elim = length(diag.eliminations)
-    n_elim > 0 && println(io, "- **Eliminated rows:** ", n_elim, " (identified by the diagnostics pass below; inactive in the reported run, still counted in the pass's own J)")
+    n_elim = length(eliminations)
+    if tap_fallback_used && first_pass_eliminations > 0
+      println(io, "- **Eliminated rows:** ", n_elim, " (inactive in the reported run): ", first_pass_eliminations, " by the pass on the released taps (", join(("`" * String(e.id) * "`" for e in eliminations[1:first_pass_eliminations]), ", "), "), ", n_elim - first_pass_eliminations, " by the pass below on the frozen taps, which ran without the first ones")
+    else
+      n_elim > 0 && println(io, "- **Eliminated rows:** ", n_elim, " (identified by the diagnostics pass below; inactive in the reported run, still counted in the pass's own J)")
+    end
     (hasproperty(diag, :reverted) && diag.reverted !== nothing) && println(io, "- **Not eliminated:** `", diag.reverted.id, "` (the control solve without it did not converge; the row stays active, see the pass below)")
     println(io, "\nThese are the numbers of the status line and of `run.log`.\n")
     println(io, "## Measurement sigma by voltage level\n")
@@ -1216,84 +1411,16 @@ function _run_state_estimation_service_body(
     end
   end
 
-  # bad data at a glance: every suspicious
-  # or eliminated measurement with its network location in one CSV; the
-  # diagnostics markdown keeps the full ranking, this is the extract to
-  # open first. se_state.csv stays untouched: it is the machine-read chain
-  # anchor (bus voltages/balances), not a measurement report.
-  suspicious = diag.diagnostics.suspicious_measurements
   # rows the robust solve acted on (final state-writing run): replacement
   # stage 3 = SUPPRESSED with the fixed sigma, staged stages 1/2 =
-  # down-weighted. The bad-data extract must say so per row, not just
-  # eliminated true/false.
+  # down-weighted; measurements_verdict.csv names them per row
+  # suspicious: the rows the FINAL diagnostics flag (after every
+  # elimination), the count of the verdict file, run.log, the result page
+  # and se_suspicious alike; the pass before the elimination lists its own
+  # suspects in se_diagnostics.md
+  suspicious = diag.final_diagnostics.suspicious_measurements
   suppressedIds = Set{String}(String(r.id) for r in something(res.robustRows, NamedTuple[]) if r.stage == 3)
   downweightedIds = Set{String}(String(r.id) for r in something(res.robustRows, NamedTuple[]) if r.stage in (1, 2))
-  if !isempty(suspicious) || !isempty(diag.eliminations) || !isempty(suppressedIds)
-    nby = _bus_name_by_idx(net)
-    open(joinpath(output_dir, "se_bad_data.csv"), "w") do io
-      println(io, join(("measurement_index", "id", "type", "bus", "from_bus", "to_bus", "normalized_residual", "wii", "localizable", "eliminated", "suppressed", "downweighted"), se_csv_delim))
-      elim = Set(t.id for t in diag.eliminations)
-      listed = Set{String}()
-      cf(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
-      for row in suspicious
-        bus = ""
-        fb = ""
-        tb = ""
-        if 1 <= row.measurement_index <= length(net.measurements)
-          m = net.measurements[row.measurement_index]
-          m.busIdx !== nothing && (bus = get(nby, m.busIdx, string(m.busIdx)))
-          if m.branchIdx !== nothing && 1 <= m.branchIdx <= length(net.branchVec)
-            br = net.branchVec[m.branchIdx]
-            fb = get(nby, Int(br.fromBus), string(Int(br.fromBus)))
-            tb = get(nby, Int(br.toBus), string(Int(br.toBus)))
-          end
-        end
-        push!(listed, String(row.id))
-        println(
-          io,
-          join(
-            (row.measurement_index, cf(row.id), cf(row.typ), cf(bus), cf(fb), cf(tb), _format_csv_number(Float64(row.normalized_residual), se_csv_format), isnan(row.wii) ? "" : _format_csv_number(Float64(row.wii), se_csv_format), row.localizable, row.id in elim, String(row.id) in suppressedIds, String(row.id) in downweightedIds),
-            se_csv_delim,
-          ),
-        )
-      end
-      for t in diag.eliminations
-        t.id in listed && continue
-        push!(listed, String(t.id))
-        println(
-          io,
-          join(
-            (t.measurement_index, cf(t.id), cf(t.typ), "", "", "", _format_csv_number(Float64(t.normalized_residual_before), se_csv_format), "", true, true, String(t.id) in suppressedIds, String(t.id) in downweightedIds),
-            se_csv_delim,
-          ),
-        )
-      end
-      # suppressed rows below the elimination threshold (possible when
-      # k_suppress < k_eliminate) still belong in the extract
-      for r in something(res.robustRows, NamedTuple[])
-        r.stage == 3 || continue
-        rid = String(r.id)
-        rid in listed && continue
-        push!(listed, rid)
-        mi = r.measurement_index
-        bus = ""
-        fb = ""
-        tb = ""
-        ty = ""
-        if 1 <= mi <= length(net.measurements)
-          m = net.measurements[mi]
-          ty = string(m.typ)
-          m.busIdx !== nothing && (bus = get(nby, m.busIdx, string(m.busIdx)))
-          if m.branchIdx !== nothing && 1 <= m.branchIdx <= length(net.branchVec)
-            br = net.branchVec[m.branchIdx]
-            fb = get(nby, Int(br.fromBus), string(Int(br.fromBus)))
-            tb = get(nby, Int(br.toBus), string(Int(br.toBus)))
-          end
-        end
-        println(io, join((mi, cf(rid), cf(ty), cf(bus), cf(fb), cf(tb), _format_csv_number(Float64(r.t), se_csv_format), "", "", false, true, false), se_csv_delim))
-      end
-    end
-  end
   # measured/truth/estimated delta file (generator v2): written when the
   # set carries truth_value comments (generated sets). measured and sigma
   # come from the loaded rows, truth is the generator's noise-free value,
@@ -1304,7 +1431,8 @@ function _run_state_estimation_service_body(
   deltas_written = false
   truthById = Dict{String,Float64}()
   for (k, v) in get(case_provenance, "truth_values", Dict{String,Any}())
-    v isa Real && (truthById[String(k)] = Float64(v))
+    # a case-file set got the ids of the table in measurements.csv
+    v isa Real && (truthById[get(artifact.id_map, String(k), String(k))] = Float64(v))
   end
   for line in (from_case_file ? String[] : eachline(measurement_file))
     startswith(line, "# truth_value,") || continue
@@ -1316,7 +1444,7 @@ function _run_state_estimation_service_body(
   end
   if !isempty(truthById)
     nbyD = _bus_name_by_idx(net)
-    elimD = Set(t.id for t in diag.eliminations)
+    elimD = Set(t.id for t in eliminations)
     residById = Dict{String,Float64}()
     for row in diag.final_diagnostics.measurement_ranking
       residById[String(row.id)] = row.residual
@@ -1326,6 +1454,8 @@ function _run_state_estimation_service_body(
       println(io, join(("kind", "id", "type", "bus", "from_bus", "to_bus", "measured", "truth", "estimated", "delta_meas_truth", "delta_est_truth", "delta_est_meas", "sigma", "t_est", "eliminated"), se_csv_delim))
       fmt(v) = _format_csv_number(round(v; sigdigits = 8), se_csv_format)
       cfD(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
+      # ZI rows solved as equality constraints are listed as constraints
+      zi_constraint = config.state_estimation.zero_injection === :constraint
       for m in net.measurements
         haskey(truthById, m.id) || continue
         tv = truthById[m.id]
@@ -1342,7 +1472,7 @@ function _run_state_estimation_service_body(
         println(
           io,
           join(
-            ("meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / m.sigma), m.id in elimD),
+            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / m.sigma), m.id in elimD),
             se_csv_delim,
           ),
         )
@@ -1376,48 +1506,12 @@ function _run_state_estimation_service_body(
       end
     end
   end
-  # The measurement artifact gets its verdict per row: a reader opens
-  # measurements.csv and wants to see which rows the diagnostics flagged
-  # (suspicious, eliminated, suppressed or down-weighted: `bad_data` = `*`)
-  # and which rows the set cannot afford to lose (`status` = critical
-  # measurement). Both columns sit BEHIND `id`, the reader ignores them, so
-  # the artifact still reads back as the same set. The tap steps of this
-  # run follow as a comment block, so the file also answers whether a tap
-  # position was wrong and got corrected. The set itself is unchanged: the
-  # eliminations worked on a copy.
-  let art = joinpath(output_dir, "measurements.csv")
-    flagged = Set{String}(String(r.id) for r in suspicious)
-    union!(flagged, (String(t.id) for t in diag.eliminations), suppressedIds, downweightedIds)
-    flagged_idx = Set{Int}(r.measurement_index for r in suspicious)
-    union!(flagged_idx, (t.measurement_index for t in diag.eliminations))
-    crit_idx = Set{Int}(crit_num)
-    union!(crit_idx, crit_str)
-    head_c, tail_c = _measurement_csv_comments(art)
-    if res.tapEstimates !== nothing || !isempty(tap_calc_rows)
-      push!(tail_c, "sparlectra-taps-estimated v1")
-      push!(tail_c, "branch,name,mode,model_step,estimated_step,fixed_step,change,status")
-      for t in something(res.tapEstimates, NamedTuple[])
-        model_s, change_s, changed = _se_tap_model_and_change(t)
-        est_s = t.mode == :pst ? string(round(t.electrical_step_2; digits = 3)) : string(round(t.electrical_step_1; digits = 3))
-        fixed_s = t.mode == :pst ? string(t.fixed_step_2) : t.mode == :both ? string(t.fixed_step_1, " / ", t.fixed_step_2) : string(t.fixed_step_1)
-        status_s = t.frozen_reason != :none ? string("frozen (", replace(String(t.frozen_reason), "_" => " "), ")") : t.out_of_range ? "out of range" : changed ? "corrected" : "confirmed"
-        push!(tail_c, join((t.branch, t.name, String(t.mode), model_s, est_s, fixed_s, change_s, status_s), ","))
-      end
-      for c in tap_calc_rows
-        push!(tail_c, join((c["branch"], c["name"], "ratio", "", c["electrical_step"], c["fixed_step"], "", "calculated (machine transformer)"), ","))
-      end
-    end
-    writeMeasurementsCSV(
-      net;
-      file = art,
-      headerComments = head_c,
-      footerComments = tail_c,
-      busReference = format === :cgmes ? :mrid : :name,
-      format = String(config.output.csv_format),
-      extraHeader = ["bad_data", "status"],
-      extraCells = (i, m) -> ((i in flagged_idx || (!isempty(m.id) && m.id in flagged)) ? "*" : "", i in crit_idx ? "critical measurement" : ""),
-    )
-  end
+  # the verdict per row of the measurements.csv artifact, in its own file
+  # next to it (the table stays loadable as it is): residual, normalized
+  # residual, eliminated, constraint and the reason tokens per table row
+  crit_idx = Set{Int}(crit_num)
+  union!(crit_idx, crit_str)
+  verdict_flagged = _se_write_measurement_verdict(joinpath(output_dir, "measurements_verdict.csv"), net, artifact, diag, eliminations, res, crit_idx, config.state_estimation.zero_injection === :constraint, se_csv_format)
   se_phase("writing_artifacts")
   writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"), format = String(config.output.csv_format))
 
@@ -1437,9 +1531,9 @@ function _run_state_estimation_service_body(
       for tf in diag.topology_findings
         println(io, "topology error suspected at station ", tf.location, " (eliminations exhausted, band high; suspects: ", tf.evidence, isempty(tf.notes) ? "" : string("; notes: ", join(tf.notes, ", ")), ")")
       end
-      println(io, "suspicious measurements: ", length(diag.diagnostics.suspicious_measurements), "; eliminations: ", length(diag.eliminations), " (stop: ", diag.stop_reason, ", classified as topology, use the hypothesis test)")
+      println(io, "suspicious measurements: ", length(suspicious), "; eliminations: ", length(eliminations), " (stop: ", diag.stop_reason, ", classified as topology, use the hypothesis test)")
     else
-      println(io, "suspicious measurements: ", length(diag.diagnostics.suspicious_measurements), "; eliminations: ", length(diag.eliminations), " (stop: ", diag.stop_reason, ")")
+      println(io, "suspicious measurements: ", length(suspicious), "; eliminations: ", length(eliminations), " (stop: ", diag.stop_reason, ")")
     end
     effRobustMode = robust_mode === :off && robust ? :staged : robust_mode
     if effRobustMode === :staged
@@ -1459,9 +1553,9 @@ function _run_state_estimation_service_body(
         println(io, "  ", t.name, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", ": electrical step ", round(t.electrical_step_1; digits = 2), " -> fixed step ", t.fixed_step_1, t.mode == :ratio ? "" : string(", shift step ", round(t.electrical_step_2; digits = 2), " -> ", t.fixed_step_2), t.out_of_range ? " (OUT OF RANGE, clamped)" : "", t.frozen_reason == :none ? "" : " (FROZEN: $(t.frozen_reason))")
       end
     end
-    (!isempty(suspicious) || !isempty(diag.eliminations) || !isempty(suppressedIds)) && println(io, "bad data: se_bad_data.csv (", length(suspicious), " suspicious, ", length(diag.eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted, with network locations)")
+    (!isempty(suspicious) || !isempty(eliminations) || !isempty(suppressedIds)) && println(io, "bad data: measurements_verdict.csv (", length(suspicious), " suspicious, ", length(eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted; ", verdict_flagged, " table row(s) flagged)")
     deltas_written && println(io, "deltas: se_deltas.csv (measured vs generator truth vs estimated, per row and per released tap)")
-    println(io, "Artifacts: measurements.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", (!isempty(suspicious) || !isempty(diag.eliminations) || !isempty(suppressedIds)) ? ", se_bad_data.csv" : "", deltas_written ? ", se_deltas.csv" : "")
+    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "")
   end
 
   metadata = merge(
@@ -1481,8 +1575,8 @@ function _run_state_estimation_service_body(
       "se_suppressed_rows" => res.activeObjective === nothing ? 0 : res.activeObjective.suppressed,
       "se_band_reason" => String(verdict.reason),
       "se_j_within_3sigma" => res.jWithin3Sigma,
-      "se_suspicious" => length(diag.diagnostics.suspicious_measurements),
-      "se_eliminations" => length(diag.eliminations),
+      "se_suspicious" => length(suspicious),
+      "se_eliminations" => length(eliminations),
       "se_robust" => robust,
       "se_deltas" => deltas_written,
       "se_robust_mode" => String(robust_mode === :off && robust ? :staged : robust_mode),
@@ -1527,8 +1621,8 @@ function _run_state_estimation_service_body(
     "State estimation completed - ", _se_reported_iterations(res), " iteration(s), J/dof = ",
     res.dof > 0 ? string(round(res.objectiveJ / res.dof; digits = 2)) : "n/a",
     " (J = ", round(res.objectiveJ; digits = 3), ", dof ", res.dof, ", band ", verdict.reason, "), ",
-    length(diag.diagnostics.suspicious_measurements), " suspicious, ",
-    length(diag.eliminations), " eliminated.",
+    length(suspicious), " suspicious, ",
+    length(eliminations), " eliminated.",
     diag.topology_findings === nothing ? "" : string(" Topology error suspected at ", join((tf.location for tf in diag.topology_findings), ", "), "; run the hypothesis test."),
     res.tapFixation === nothing ? "" : string(" Tap fixation (", length(res.tapEstimates), " transformer(s)): J ", round(res.tapFixation.j_before; sigdigits = 3), " -> ", round(res.tapFixation.j_after; sigdigits = 3), res.tapFixation.offgrid_residual ? "; off-grid tap residual, not bad data" : "", "."),
     get(base_metadata, "se_set_tap_deviation", false) == true ? (isempty(get(base_metadata, "se_auto_released_taps", Int[])) ? " Hint: the set documents a tap deviation that could not be released automatically; enable 'estimate taps'." : string(" Tap estimation was released automatically on ", length(get(base_metadata, "se_auto_released_taps", Int[])), " transformer(s) named by the set.")) : "",
