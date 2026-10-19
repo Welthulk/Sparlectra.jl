@@ -13,6 +13,9 @@ Measurement table for the state estimation, `addACLine!` in physical units.
 - Web UI CSV view sorts text columns and hides columns and rows.
 - Web UI: Check for updates in the Info panel; a copy made by the one-line install installs the new release after a confirm and keeps the old copy as Sparlectra.old.
 - Web UI case options follow the case format; the system frequency shows for every format and is greyed where it has no effect.
+- CGMES PowerElectronicsConnection (wind, solar, battery converters) is imported as PQ or voltage-regulating injection (`cgmes_import.map_power_electronics`, default off), exported as EquivalentInjection, and fed into the short circuit as a current source from `maxIFault`.
+- CGMES bank regulators are imported as shunt controllers (`cgmes_import.shunt_control`, default off).
+- Controller priority: a controller of lower rank waits until the higher ranks are in their band or at a limit. Tap controllers get a control range inside the physical tap range.
 ## Changed
 - The measurement table is the one measurement format: the Web UI generator and the shipped sets use it, `convertMeasurementsV1` converts old files.
 - Zero injection rows at passive buses are added in every SE path (`state_estimation.zero_injection`, default `on`).
