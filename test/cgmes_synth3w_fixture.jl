@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # file: test/cgmes_synth3w_fixture.jl
-# purpose: the synthetic three-winding delivery of the importer tests
-#          (written to a temporary directory on demand)
+# purpose: the synthetic three-winding delivery shared by the importer and the
+#          series union tests (written to a temporary directory on demand)
 
 # Synthetic 3-bus star delivery (EQ+SSH+TP+SV): slack ENI at HV, loads at
 # MV/LV, one 3W transformer whose end-2 RatioTapChanger carries an enabled

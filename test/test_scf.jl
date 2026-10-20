@@ -352,10 +352,10 @@ function run_scf_tests()
     @test [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in full_back.measurements] == [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in full.measurements]
     @test read(exportSCF(full_back; file = joinpath(d, "full_b.scf.json")), String) == read(fa, String)
     mtuple(n) = [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in n.measurements]
-    # SCF 1.2: one row per measurement with the table semantics; the shunt
+    # SCF since 1.2: one row per measurement with the table semantics; the shunt
     # bay is a row of its own with the value, current sensors carry ampere
     fdoc = Sparlectra.scf_json_parse(read(fa, String))
-    @test fdoc["sparlectra"]["format_version"] == Sparlectra.SCF_FORMAT_VERSION == "1.2"
+    @test fdoc["sparlectra"]["format_version"] == Sparlectra.SCF_FORMAT_VERSION == "1.3"
     rows = fdoc["sparlectra"]["measurements"]["rows"]
     @test !haskey(fdoc["sparlectra"]["measurements"], "shunt_bay_rows")
     @test length(rows) == length(full.measurements)
@@ -617,6 +617,80 @@ function run_scf_tests()
     # the case configuration is readable without building the network
     cfgkeys = scf_case_config(fixture)
     @test cfgkeys isa Dict{String,Any}
+  end)() end
+
+  # DynamicData on the machines (#506): defaults and rules of the record,
+  # and the block extra.<machine>.dynamics of revision 1.3. A machine with
+  # every field, one with a subset and one without go through write and read
+  # bit for bit; a case without the block writes none, and the same case as
+  # a revision 1.2 file reads to the same network
+  @testset "dynamic unit data and the SCF dynamics block" begin (function ()
+    @test DynamicData().unit_type == GridFollowingUnit
+    @test DynamicData(inertia_s = 4).unit_type == SynchronousUnit
+    local dflt = DynamicData()
+    @test (dflt.inertia_s, dflt.damping_pu, dflt.rating_mva, dflt.droop_pu, dflt.deadband_hz, dflt.primary_reserve_mw, dflt.governor_time_s, dflt.agc_participation, dflt.secondary_reserve_mw, dflt.virtual_inertia_s, dflt.black_start, dflt.min_stable_mw) == (nothing, 0.0, nothing, nothing, 0.0, 0.0, nothing, 0.0, 0.0, nothing, false, nothing)
+    @test DynamicData(damping_pu = -0.0).damping_pu === 0.0
+    # each rule fails with a DynamicDataError naming the field
+    for (field, value) in ((:inertia_s, -1.0), (:virtual_inertia_s, -0.5), (:governor_time_s, -0.1), (:primary_reserve_mw, -1.0), (:secondary_reserve_mw, -2.0), (:deadband_hz, -0.01),
+                           (:droop_pu, 0.0), (:droop_pu, -0.05), (:rating_mva, 0.0), (:agc_participation, 1.5), (:agc_participation, -0.1), (:damping_pu, NaN), (:min_stable_mw, Inf))
+      local kw = NamedTuple{(field,)}((value,))
+      @test_throws DynamicDataError DynamicData(; kw...)
+      @test_throws Regex("^DynamicDataError: $(field) = ") DynamicData(; kw...)
+    end
+
+    local d = mktempdir()
+    # the shipped case written once without start state, so the network
+    # read back from it is the reference of every comparison below
+    local plain = exportSCF(importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))); file = joinpath(d, "plain.scf.json"))
+    # a case without dynamic data writes no block
+    @test !occursin("\"dynamics\"", read(plain, String))
+    local net = importSCF(plain)
+    local gens = [ps for ps in net.prosumpsVec if Sparlectra.isGenerator(ps)]
+    @test length(gens) >= 3
+    # 0.1 + 0.2 and 1/23 have no short decimal form: they test bit identity
+    local full = DynamicData(inertia_s = 0.1 + 0.2, damping_pu = 0.7, rating_mva = 247.5, droop_pu = 0.045, deadband_hz = 0.01, primary_reserve_mw = 12.5, governor_time_s = 0.35,
+                             agc_participation = 0.2, secondary_reserve_mw = 30.0, unit_type = GridFormingUnit, virtual_inertia_s = 2.1, black_start = true, min_stable_mw = 40.0)
+    local part = DynamicData(inertia_s = 4.25, droop_pu = 1 / 23)
+    gens[1].dynamics = full
+    gens[2].dynamics = part
+    # machines are told apart by their source id (several share a name)
+    local id(ps) = ps.comp.cID
+    local f = exportSCF(net; file = joinpath(d, "dyn.scf.json"))
+    local doc = Sparlectra.scf_json_parse(read(f, String))
+    @test doc["sparlectra"]["format_version"] == "1.3"
+    local blocks = Dict(e["external_id"] => e["dynamics"] for e in values(doc["sparlectra"]["extra"]) if e isa AbstractDict && haskey(e, "dynamics"))
+    @test sort(collect(keys(blocks))) == sort([id(gens[1]), id(gens[2])])
+    @test sort(collect(keys(blocks[id(gens[1])]))) == sort(String.(collect(fieldnames(DynamicData))))
+    @test sort(collect(keys(blocks[id(gens[2])]))) == ["agc_participation", "black_start", "damping_pu", "deadband_hz", "droop_pu", "inertia_s", "primary_reserve_mw", "secondary_reserve_mw", "unit_type"]
+    @test (blocks[id(gens[1])]["unit_type"], blocks[id(gens[2])]["unit_type"]) == ("grid_forming", "synchronous")
+    local back = importSCF(f)
+    local by_id = Dict(id(ps) => ps for ps in back.prosumpsVec)
+    @test length(by_id) == length(back.prosumpsVec)
+    # === compares every field bit for bit
+    @test by_id[id(gens[1])].dynamics === full
+    @test by_id[id(gens[2])].dynamics === part
+    @test by_id[id(gens[3])].dynamics === nothing
+    @test count(ps -> ps.dynamics !== nothing, back.prosumpsVec) == 2
+    @test isempty(scf_roundtrip_field_diffs(net, back))
+    @test read(exportSCF(back; file = joinpath(d, "dyn_again.scf.json")), String) == read(f, String)
+    # the round-trip comparison sees the field: a lost block is a difference
+    local lost = importSCF(plain)
+    @test any(m -> startswith(m, "prosumer.dynamics"), scf_roundtrip_field_diffs(net, lost))
+    # the same case as a revision 1.2 file: no block, read unchanged
+    local v12 = joinpath(d, "v12.scf.json")
+    write(v12, replace(read(plain, String), "\"format_version\": \"1.3\"" => "\"format_version\": \"1.2\""; count = 1))
+    @test occursin("\"format_version\": \"1.2\"", read(v12, String))
+    @test isempty(scf_roundtrip_field_diffs(lost, importSCF(v12)))
+    # a broken block is named: unknown key, a value against the rules, an
+    # unknown unit type, a flag that is no Bool, a number given as text
+    local gid = only(k for (k, e) in doc["sparlectra"]["extra"] if e isa AbstractDict && get(e, "external_id", "") == id(gens[2]))
+    for (key, value, msg) in (("inertia", 4.0, "unknown key \"inertia\""), ("inertia_s", -1.0, "inertia_s = -1.0 must be >= 0"),
+                              ("unit_type", "synchron", "unit_type must be"), ("black_start", 1, "black_start"), ("droop_pu", "0.05", "droop_pu"))
+      local bad = deepcopy(doc)
+      bad["sparlectra"]["extra"][gid]["dynamics"][key] = value
+      @test_throws ArgumentError Sparlectra.scf_to_net(bad)
+      @test_throws msg Sparlectra.scf_to_net(bad)
+    end
   end)() end
 
   @testset "system frequency: meta.f_nom, the key, and the MATPOWER path" begin (function ()

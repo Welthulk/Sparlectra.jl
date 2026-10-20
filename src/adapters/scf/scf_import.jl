@@ -97,6 +97,44 @@ function _scf_gencost(v, name::AbstractString)::GenCost
   return GenCost(row(v["p"], "p"), haskey(v, "q") ? row(v["q"], "q") : nothing)
 end
 
+# extra.<machine>.dynamics: the DynamicData fields under their field names
+# (#506, revision 1.3). An unknown key is refused by name: the block is
+# small, and a misspelt field would otherwise vanish without a word. A value
+# that breaks the rule of its field fails with the DynamicDataError text.
+function _scf_dynamics(v, name::AbstractString)::DynamicData
+  v isa AbstractDict || throw(ArgumentError("SCF: extra.dynamics of $(name) must be an object."))
+  known = String.(collect(fieldnames(DynamicData)))
+  kw = Dict{Symbol,Any}()
+  for (k, x) in v
+    key = String(k)
+    key in known || throw(ArgumentError("SCF: extra.dynamics of $(name) has the unknown key \"$(key)\". Known keys: $(join(known, ", "))."))
+    if key == "unit_type"
+      x isa AbstractString || throw(ArgumentError("SCF: extra.dynamics.unit_type of $(name) must be a string, got $(repr(x))."))
+      kw[:unit_type] = try
+        parse_dynamic_unit_type(x)
+      catch e
+        # the one failure parse_dynamic_unit_type has: a value outside the
+        # three spellings
+        e isa ArgumentError || rethrow()
+        throw(ArgumentError("SCF: extra.dynamics of $(name): $(e.msg)."))
+      end
+    elseif key == "black_start"
+      x isa Bool || throw(ArgumentError("SCF: extra.dynamics.black_start of $(name) must be true or false, got $(repr(x))."))
+      kw[:black_start] = x
+    else
+      (x isa Real && !(x isa Bool)) || throw(ArgumentError("SCF: extra.dynamics.$(key) of $(name) must be a number, got $(repr(x))."))
+      kw[Symbol(key)] = Float64(x)
+    end
+  end
+  return try
+    DynamicData(; kw...)
+  catch e
+    # the constructor's own rule check, reported with the machine's name
+    e isa DynamicDataError || rethrow()
+    throw(ArgumentError("SCF: extra.dynamics of $(name): $(sprint(showerror, e))."))
+  end
+end
+
 # extra.<appliance>.reference_priority: a non-negative integer with CGMES
 # semantics (0 = no preference, 1 = strongest); anything else is a broken
 # file and is named, not clamped
@@ -129,8 +167,9 @@ function _scf_require_current_revision(spar::AbstractDict)
   # written in that window are read as 1.0 - rejecting them would cost users
   # their exported cases over a renaming they never saw. 1.0 differs from the
   # current revision only in the unit of the current sensors, which the
-  # measurement reader undoes (_scf_current_divisor). Any other revision is
-  # refused as before.
+  # measurement reader undoes (_scf_current_divisor). 1.2 lacks only the
+  # optional extra.<machine>.dynamics block of 1.3 and reads as written. Any
+  # other revision is refused as before.
   if found == "1.1"
     @info "SCF: file states format revision 1.1, which is the pre-release name of 1.0 (same structure); reading it as 1.0. Re-export to update the file."
   elseif !(found in _SCF_READABLE_REVISIONS)
@@ -141,7 +180,7 @@ end
 
 # Revisions the reader accepts: the current one and the older ones whose only
 # difference it knows how to undo.
-const _SCF_READABLE_REVISIONS = ("1.0", "1.1", SCF_FORMAT_VERSION)
+const _SCF_READABLE_REVISIONS = ("1.0", "1.1", "1.2", SCF_FORMAT_VERSION)
 
 # Divisor from a file's sym_current_sensor numbers to ampere. Revisions 1.0
 # and 1.1 wrote the current as if the estimator held kA (value * 1000) while
@@ -880,6 +919,9 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
       # MATPOWER generator costs (#471): optional, validated like the MATPOWER
       # import (GenCost throws on a row that is not a model 1 or 2 row)
       haskey(e, "gencost") && (ps.gencost = _scf_gencost(e["gencost"], ctrl_name))
+      # dynamic parameters (#506): optional, a file without the block (every
+      # file before revision 1.3) leaves the field at nothing
+      haskey(e, "dynamics") && (ps.dynamics = _scf_dynamics(e["dynamics"], ctrl_name))
       # addProsumer! auto-regulates anything that carries a voltage setpoint,
       # so restoring the setpoint of an UNREGULATED machine would silently
       # promote it to a PV generator. The file knows which it was.

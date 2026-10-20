@@ -138,6 +138,9 @@ function _detect_case_format(case_path::AbstractString; requested::Symbol = :aut
   # a PowSyBl bundle directory or IIDM file comes first: the CGMES probe
   # claims every directory and every .xml
   detect(PowsyblAdapter, case_path) && return :powsybl
+  # an SCF time series is a zip as well; its manifest decides, before the
+  # CGMES probe claims every .zip
+  is_scf_series(case_path) && return :scf_series
   _looks_like_cgmes(case_path) && return :cgmes
   ext = lowercase(splitext(case_path)[2])
   # Sparlectra Case Format (#342): self-describing JSON, recognized by its
@@ -161,7 +164,7 @@ end
     importCGMES(config; path, name, hvdc_mode, ignore_connected) -> CGMESImportResult
 
 Import a CGMES delivery with everything the configuration says about it, in
-one place: the fifteen `cgmes_import` values and the bus shunt model (the
+one place: the sixteen `cgmes_import` values and the bus shunt model (the
 net-parameter stamping lives with the import dispatch:
 once per importer). The four service call sites used
 to unpack the same values by hand, and a new option had to be added in four
@@ -195,6 +198,7 @@ function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::Abstrac
     map_energy_source = cgmes_cfg.map_energy_source,
     map_power_electronics = cgmes_cfg.map_power_electronics,
     shunt_control = cgmes_cfg.shunt_control,
+    read_dynamics = cgmes_cfg.read_dynamics,
     name = String(name),
   )
   return result
@@ -261,6 +265,10 @@ the identical file: the shared context for MATPOWER and the case format
 configured CGMES import with the start-values decision, and the DTF build
 with its DC-line rejection.
 
+An SCF time series (`:scf_series`) imports as its base case, with the
+units the base case parks parked (`build_net(series)`); the steps are not
+applied.
+
 Format policy stays with the caller: a service that does not accept a
 format checks `ImportedCase.format` and words its own refusal, because the
 wording of those refusals is part of each service's contract.
@@ -274,7 +282,7 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
   # overridden keys in its run log
   general_config, flatstart_overrides = _flatstart_profile_config(general_config)
   provenance["flatstart_overrides"] = flatstart_overrides
-  if fmt === :matpower || fmt === :scf
+  if fmt === :matpower || fmt === :scf || fmt === :scf_series
     ctx = _import_sparlectra_context(String(path), nothing, general_config; performance_profile = performance_profile)
     provenance["auto_profile_result"] = ctx.auto_profile_result
     provenance["projected_start_applied"] = ctx.projected_start_applied

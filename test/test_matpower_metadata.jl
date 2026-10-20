@@ -703,7 +703,7 @@ mpc.sparlectra.tap_changers = [
       # file voltages and from a flat start (50 iterations, status 1, as the
       # CGMES MiniGrid did).
       n3 = Sparlectra.Net(name = "star_roundtrip", baseMVA = 100.0)
-      for (b, vn, aux) in (("S10", 10.0, false), ("M110", 110.0, false), ("H380", 380.0, false), ("X1", 380.0, true), ("X2", 380.0, true), ("T1", 30.0, false), ("T2", 30.0, false), ("L10", 10.0, false))
+      for (b, vn, aux) in (("S10", 10.0, false), ("M110", 110.0, false), ("H380", 380.0, false), ("X1", 380.0, true), ("X2", 380.0, true), ("T1", 30.0, false), ("T2", 30.0, false), ("L10", 10.0, false), ("N110", 110.0, false))
         Sparlectra.addBus!(net = n3, busName = b, vn_kV = vn, isAux = aux)
       end
       Sparlectra.addProsumer!(net = n3, busName = "S10", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, vm_pu = 1.0, va_deg = 0.0, referencePri = "S10")
@@ -715,12 +715,15 @@ mpc.sparlectra.tap_changers = [
         Sparlectra.addPIModelTrafo!(net = n3, fromBus = x, toBus = "M110", r_pu = 0.00044, x_pu = 1.0e-5, b_pu = 0.0, status = 1, ratio = 0.9649)
         Sparlectra.addPIModelTrafo!(net = n3, fromBus = x, toBus = t, r_pu = 0.0028, x_pu = 0.14, b_pu = 0.0, status = 1, ratio = 1.0526)
       end
+      # a line beside the star: the exporter must tell it from the ratio
+      # 1.0 legs (a native line carries ratio 0, no metadata on either)
+      Sparlectra.addPIModelACLine!(net = n3, fromBus = "M110", toBus = "N110", r_pu = 0.01, x_pu = 0.05, b_pu = 0.0, status = 1)
       # since 0.50.0 addBus! gives the node its busName, and an isAux bus is
       # auxiliary by its component type whatever it is called (X1, X2 carry
       # no Aux_ prefix)
-      @test [Sparlectra.getCompName(n.comp) for n in n3.nodeVec] == ["S10", "M110", "H380", "X1", "X2", "T1", "T2", "L10"]
+      @test [Sparlectra.getCompName(n.comp) for n in n3.nodeVec] == ["S10", "M110", "H380", "X1", "X2", "T1", "T2", "L10", "N110"]
       aux3 = [Sparlectra._is_aux_node(n) for n in n3.nodeVec]
-      @test aux3 == [false, false, false, true, true, false, false, false]
+      @test aux3 == [false, false, false, true, true, false, false, false, false]
       @test Sparlectra.runpf!(n3, 50, 1e-8, 0; opt_flatstart = true) == (5, 0)
       # the re-read net from the file voltages and from a flat start
       solves_like_n3(net) = for flat in (false, true)
@@ -737,7 +740,14 @@ mpc.sparlectra.tap_changers = [
         @test all(mpc3.bus[stars, 8] .≈ 0.9649)
         # the role travels as the bus list mpc.sparlectra.aux_buses
         @test vec(mpc3.sparlectra.aux_buses) == stars
+        # mpc.branch_kind and TAP row by row: the eight transformers "T"
+        # with their ratio (the 380 kV legs at 1.0), the line "L" with TAP
+        # 0. Judging by ratio != 1 wrote the line as "T" and the legs as
+        # lines with TAP 0, which the re-read then built as lines.
+        @test mpc3.branch_kind == vcat(fill("T", 8), ["L"])
+        @test mpc3.branch[:, 9] == [1.039, 0.9957, 1.0, 0.9649, 1.0526, 1.0, 0.9649, 1.0526, 0.0]
         back3 = Sparlectra.createNetFromMatPowerFile(filename = path3)
+        @test (length(back3.trafos), length(back3.linesAC)) == (8, 1)
         @test [Sparlectra._is_aux_node(n) for n in back3.nodeVec] == aux3
         solves_like_n3(back3)
         # the SCF converter path reads the same role

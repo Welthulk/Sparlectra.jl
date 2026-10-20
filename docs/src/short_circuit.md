@@ -148,7 +148,7 @@ disconnected, out of service) feeds no fault current:
 | `PowerTransformerEnd` | `r0`, `x0`, `grounded`, `rground`, `xground` | zero-sequence transformer model and star-point treatment |
 | `EquivalentInjection` | `r`, `x`, `r0`, `x0`, `r2`, `x2` | boundary equivalents in all three sequence networks |
 | `AsynchronousMachine` | `iaIrRatio`, `rxLockedRotorRatio`, `efficiency`, `ratedMechanicalPower`, `polePairNumber`, `ratedS`, `ratedU`, `ratedPowerFactor` | motor contribution to the maximum current (locked-rotor impedance) |
-| `PowerElectronicsConnection` (CGMES 3.0, mapped ones only) | `maxIFault` (CIM17, per unit of the rated current; in no CGMES 3.0 profile, read where a delivery carries it), `ratedS`, `ratedU` | converter current source in the maximum current |
+| `PowerElectronicsConnection` (CGMES 3.0) | `maxIFault` (CIM17, per unit of the rated current; in no CGMES 3.0 profile, read where a delivery carries it), `ratedS`, `ratedU` | converter current source in the maximum current |
 
 `shortCircuitCoverage(result.shortcircuit)` reports the record count per
 class and the fill rate per attribute; `printShortCircuitCoverage` renders
@@ -286,16 +286,15 @@ feeder without an R/X ratio gets R = 0.1·X; a motor without a locked-rotor
 R/X ratio gets the §6.7.2 guidance value (0.10/0.15 for MV motors, 0.42
 for LV). A motor or feeder whose impedance cannot be formed is skipped and
 its island flagged: the maximum current is then a lower bound, the
-non-conservative direction. Every row of such an island carries
-`lower_bound = true` (CSV column `lower_bound`, count
-`sc_lower_bound_rows` in the run metadata); a row on a default alone is
-flagged but has `lower_bound = false`. A converter without `maxIFault`
-(with `short_circuit.converter_current_factor` off) or without `ratedS`
-(and a converter-connected unit of a network whose source data has no
+non-conservative direction. A converter without `maxIFault` (with
+`short_circuit.converter_current_factor` off) or without `ratedS` (and a converter-connected unit of a network whose source data has no
 record for it, and a machine on a wind or solar unit with the factor off
 or without a size) feeds nothing and flags its island the same way in the
 maximum case; a missing `ratedU` is replaced by the bus nominal voltage
-and flagged. The minimum case needs no flag, because a missing source
+and flagged. Every row of such an island carries `lower_bound = true`
+(CSV column `lower_bound`, count `sc_lower_bound_rows` in the run
+metadata); a row on a default or a substitute alone is flagged but has
+`lower_bound = false`. The minimum case needs no flag, because a missing source
 lowers the current. Buses in islands without any source report
 `status = :no_source` with `NaN` currents; an island with feeding
 converters alone gets their sum (above). A machine without data counts

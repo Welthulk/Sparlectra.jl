@@ -336,9 +336,11 @@ fi
 # Compared by git-tree-sha1, so
 # standard libraries (no hash in the manifest) and the path entries of the
 # two packages are left out. A warning, not a refusal: the run is correct,
-# only slower.
+# only slower. Sort and join both on the first field in the C locale: a
+# whole-line sort in a German locale ignores the blank and puts JSON3
+# before JSON, which join then rejects as unsorted and skips.
 manifest_hashes() {
-  awk '/^\[\[deps\./ { n = $0; gsub(/^\[\[deps\.|\]\]$/, "", n) } /^git-tree-sha1 = / { print n, $3 }' "$1" | sort
+  awk '/^\[\[deps\./ { n = $0; gsub(/^\[\[deps\.|\]\]$/, "", n) } /^git-tree-sha1 = / { print n, $3 }' "$1" | LC_ALL=C sort -k1,1
 }
 drift_envs="app"
 [ "$gate" = "docs" ] && drift_envs="app docs"
@@ -349,7 +351,7 @@ do
     # the two lists go into the lock directory, which the exit trap removes
     manifest_hashes "$run_root/Manifest.toml" > "$lockdir/manifest_root"
     manifest_hashes "$run_root/$other/Manifest.toml" > "$lockdir/manifest_other"
-    drift=$(join "$lockdir/manifest_root" "$lockdir/manifest_other" | awk '$2 != $3 { printf "%s ", $1 }')
+    drift=$(LC_ALL=C join "$lockdir/manifest_root" "$lockdir/manifest_other" | awk '$2 != $3 { printf "%s ", $1 }')
     drift=${drift% }
     if [ -n "$drift" ]
     then

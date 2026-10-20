@@ -205,10 +205,14 @@ end
 Outer-loop orchestration layer around `runpf!` for controller-based network updates.
 It does not replace `runpf!`; it coordinates built-in or user-defined controllers and
 returns a `ControlRunResult`. Within a pass the controllers act by rank
-(`control_priority`): a rank waits while a smaller one still moves. A pass
-in which no controller moves ends the loop with status `:blocked` after one
-closing solve at the final controller state, so the net carries its
-voltages and not those of a probe solve; that solve counts in
+(`control_priority`): a rank waits while a smaller one still moves.
+A controller with a field `locked = true` (the dead time of a sequential
+QSTS run) stays in its rank and is evaluated but proposes nothing; outside
+its band and not at its limit it holds the larger numbers, in its band or
+at its limit it lets them act.
+A pass in which no controller moves ends the loop with status `:blocked`
+after one closing solve at the final controller state, so the net carries
+its voltages and not those of a probe solve; that solve counts in
 `powerflow_solves` and `total_pf_iterations`.
 """
 function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} = collect_outer_controllers(net), pf_config = nothing, control_config::ControlConfig = ControlConfig(), verbose::Int = 0, performance_profile = nothing)
@@ -262,6 +266,13 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
   # single group and the pass below is the loop without ranks
   ranks = sort!(unique(control_priority(controllers[i]) for i in active_ids))
   rank_groups = [filter(i -> control_priority(controllers[i]) == r, active_ids) for r in ranks]
+  # A locked controller (field `locked`, set by the dead time of a
+  # sequential QSTS run) stays in its rank group and is evaluated, but
+  # proposes nothing. While it stands outside its band and not at its limit
+  # it holds the larger numbers like a move would; in its band or at its
+  # limit it lets them act. With enabled = false it would drop out of the
+  # groups and free them while its voltage is still off.
+  locked = BitVector([hasproperty(c, :locked) && getproperty(c, :locked)::Bool for c in controllers])
   # at-limit flag of every controller at the end of the previous pass, read
   # by the rank gate below (no controller is at its limit before pass 1)
   limited_before = falses(length(controllers))
@@ -283,6 +294,10 @@ function run_control!(net::Any; controllers::Vector{<:AbstractOuterController} =
     for group in rank_groups
       holds = false
       for i in group
+        if locked[i]
+          holds = holds || !(control_is_converged(controllers[i], states[i]) || control_is_blocked(controllers[i], states[i]))
+          continue
+        end
         ctx = (pf_config = pf_config_resolved, control_config = control_config, verbose = verbose, performance_profile = performance_profile, outer_iteration = it)
         upd = control_propose_update!(controllers[i], net, states[i], ctx)
         moved_i = control_apply_update!(controllers[i], net, states[i], upd, ctx)

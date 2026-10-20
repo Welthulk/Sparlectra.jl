@@ -28,8 +28,11 @@
 # types and keys, kV/MW/MVAr/A/degrees; shunt-bay rows are rows of their
 # own). Revisions 1.0 and 1.1 wrote the current 1000 times too large and the
 # rows per sensor; the reader still accepts them (see _scf_current_divisor
-# and _scf_read_measurements_v10!).
-const SCF_FORMAT_VERSION = "1.2"
+# and _scf_read_measurements_v10!). 1.3 adds the optional block
+# extra.<machine>.dynamics (DynamicData, #506); a 1.2 reader ignores unknown
+# extra keys without a word and would drop it, so the revision moves. A 1.2
+# file has no such block and reads unchanged.
+const SCF_FORMAT_VERSION = "1.3"
 
 # Configuration groups a case file may NOT carry: they describe the machine
 # and the session, not the network. Logging and result-table shape, benchmark
@@ -1300,6 +1303,9 @@ function _scf_extra(net::Net, ids::ScfIdMap)
       ps.gencost.q === nothing || (gc["q"] = ps.gencost.q)
       d["gencost"] = gc
     end
+    # dynamic parameters (#506), written only where a unit carries them, so
+    # a network without them writes the bytes it wrote before
+    ps.dynamics === nothing || (d["dynamics"] = _scf_dynamics_dict(ps.dynamics))
     ps.isRegulated && (d["regulated"] = true)
     _scf_write_voltage_control!(d, ps, net.baseMVA)
     put(ids.prosumer[i], d)
@@ -1312,6 +1318,20 @@ function _scf_extra(net::Net, ids::ScfIdMap)
     put(ids.shunt[i], Dict{String,Any}("name" => getCompName(sh.comp), "external_id" => sh.comp.cID, "shunt_index" => k))
   end
   return extra
+end
+
+# extra.<machine>.dynamics: one key per DynamicData field under the field
+# name, a field at `nothing` left out, the unit type as its SCF spelling.
+# Fields with a numeric default are written even at the default, so the
+# block states the record as it is.
+function _scf_dynamics_dict(dd::DynamicData)::Dict{String,Any}
+  out = Dict{String,Any}()
+  for f in fieldnames(DynamicData)
+    v = getfield(dd, f)
+    v === nothing && continue
+    out[String(f)] = f === :unit_type ? dynamic_unit_type_name(v) : v
+  end
+  return out
 end
 
 ## --- assembly --------------------------------------------------------------

@@ -44,13 +44,13 @@ object to the element it became (kind and index).
 | retained `Switch`/`Breaker`/… | zero-impedance bus links |
 | `LinearShuntCompensator`, `NonlinearShuntCompensator` | shunts; the nonlinear characteristic sums its per-section points up to the active `sections` count (each point read as one switched group); with `shunt_control = true` a linear bank with a voltage `RegulatingControl` gets a bank regulator ([Bank regulators](@ref cgmes_shunt_control)) |
 | `EnergyConsumer`, `ConformLoad`, `NonConformLoad`, `StationSupply` | loads (SSH values) |
-| `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active; a `SynchronousMachine` or `ExternalNetworkInjection` with SSH `controlEnabled = false` does not regulate and is a PQ injection at its SSH `p`/`q` (absent counts as `true`), it stays a slack candidate by `referencePriority` or SV angle reference and as slack holds its bus at the start voltage (the SV value where present); an `EquivalentInjection` has no `controlEnabled` and regulates only with EQ `regulationCapability = true`, SSH `regulationStatus = true` and a positive `regulationTarget` (absent counts as `false`, one notice counts the capable units without a status); a machine whose voltage `RegulatingControl` points at a *different* bus is held PV at its own bus by default, or becomes an outer-loop remote voltage controller with `machine_control = true`; Q limits from the `ReactiveCapabilityCurve` (evaluated at the scheduled P) where one exists, else the scalar `minQ`/`maxQ` hull; the `minP`/`maxP` of an `ExternalNetworkInjection` or `EquivalentInjection` are read as delivered, in generator sign (a pair 0/0 or with `maxP` below `minP` gives none); a P limit of 9999 MW and above in magnitude (also `GeneratingUnit.minOperatingP`/`maxOperatingP`) is a placeholder and arrives as no limit, so it ranks no unit in the slack choice and weights none in the distributed slack (one notice counts these units per class; Q limits keep their delivered values); a positive `GeneratingUnit.normalPF` arrives as `ProSumer.participationFactor` for the [distributed slack](powerflow_configuration.md) (`p_mode: imported`), zero/absent maps to unknown |
+| `SynchronousMachine`, `ExternalNetworkInjection`, `EquivalentInjection` | injections, PV where a local voltage control is active; a `SynchronousMachine` or `ExternalNetworkInjection` with SSH `controlEnabled = false` does not regulate and is a PQ injection at its SSH `p`/`q` (absent counts as `true`), it stays a slack candidate by `referencePriority` or SV angle reference and as slack holds its bus at the start voltage (the SV value where present); an `EquivalentInjection` has no `controlEnabled` and regulates only with EQ `regulationCapability = true`, SSH `regulationStatus = true` and a positive `regulationTarget` (absent counts as `false`, one notice counts the capable units without a status); a machine whose voltage `RegulatingControl` points at a *different* bus is held PV at its own bus by default, or becomes an outer-loop remote voltage controller with `machine_control = true`; Q limits from the `ReactiveCapabilityCurve` (evaluated at the scheduled P) where one exists, else the scalar `minQ`/`maxQ` hull; the `minP`/`maxP` of an `ExternalNetworkInjection` or `EquivalentInjection` are read as delivered, in generator sign (a pair 0/0 or with `maxP` below `minP` gives none); a P limit of 9999 MW and above in magnitude (also `GeneratingUnit.minOperatingP`/`maxOperatingP` and the `minP`/`maxP` of a `PowerElectronicsUnit`) is a placeholder and arrives as no limit, so it ranks no unit in the slack choice and weights none in the distributed slack (one notice counts these units per class; Q limits keep their delivered values); a positive `GeneratingUnit.normalPF` arrives as `ProSumer.participationFactor` for the [distributed slack](powerflow_configuration.md) (`p_mode: imported`), zero/absent maps to unknown |
 | `StaticVarCompensator` | P = 0 reactive injection, Q limits from the Ω ratings; PQ at its SSH `q` with `controlEnabled = false` |
 | `AsynchronousMachine` | fixed PQ operating point from the SSH `RotatingMachine.p`/`q` (load convention: a motor consumes with `p > 0`); no voltage regulation, no slack candidacy |
 | `EnergySource` | only with `map_energy_source = true`: fixed PQ injection from the SSH `activePower`/`reactivePower`; no voltage regulation, a slack only in an island without other reference ([EnergySource](@ref cgmes_energy_source)) |
-| `EnergySource` | only with `map_energy_source = true`: fixed PQ injection from the SSH `activePower`/`reactivePower`; no voltage regulation, never the import's slack ([EnergySource](@ref cgmes_energy_source)) |
 | `PowerElectronicsConnection` (CGMES 3.0) | only with `map_power_electronics = true`: injection from the SSH `p`/`q`; PV with an enabled voltage `RegulatingControl`, else fixed PQ; a slack only in an island without other reference ([PowerElectronicsConnection](@ref cgmes_power_electronics)) |
 | `SvVoltage`, `SvPowerFlow`, `SvTapStep` | start values and validation reference |
+| DY profile (`SynchronousMachineDynamics` models, `GovSteam0`, `GovSteam1`, `GovHydro1`, `GovHydro2`) | only with `read_dynamics = true`: [`DynamicData`](@ref) of the machines, read by no calculation ([Dynamic data](@ref cgmes_dynamics)) |
 
 Everything else is counted in the coverage report; `summarizeCGMES` shows
 the full class histogram. Short-circuit source data is harvested on every
@@ -94,7 +94,7 @@ of a class the importer maps are skipped on purpose and do not count.
 | Unresolved `TopologicalNode.BaseVoltage` | Cannot be repaired with `require_boundary = false`: real ENTSO-E deliveries keep their base-voltage catalog in the boundary EQ file (see `infer_base_voltages`). |
 | Slack selection | In order: `referencePriority ≥ 1` (a notice on ties), a single `ExternalNetworkInjection`, the largest external injection (by `maxP`, else by `|p|`), the largest synchronous machine by `ratedS` (a rating of 9999 MVA and above is a placeholder and ranks as none; the rating also breaks ties). The `referencePriority` of every machine and network injection also stays on its unit (`ProSumer.referencePriority`) for island references and N-1 ([Reference priority](slack_vs_source.md#Reference-priority)). |
 | Sourceless parts | Components without a source are de-energized (injections zeroed, branches out of service, buses isolated at voltage 0) with one message each and one notice with their number, their buses and the load left unsupplied, instead of aborting the power flow. A source is a generator-type unit with P > 0 (generator sign) or with voltage regulation, also of a remote bus in its island with `machine_control = true` (see Machine remote voltage control below); a unit without regulation that has P = 0 or draws power is none, so an island whose units only draw power is de-energized. A load is never a source, also not one that feeds power in. The unsupplied load includes the power the drawing units drew; the power that loads fed in is reported separately as dropped load infeed. |
-| Islands without a reference | With `multi_slack = true` (default), an energized electrical island with infeed (a unit with P > 0 in generator sign) but without slack and without a voltage-regulating unit gets a slack from the importer. Slack candidates are only units with infeed, `EnergySource` and `PowerElectronicsConnection` included, which the slack choice above passes over; a unit with P = 0 or drawing power is never one, also not by `referencePriority`. Among them: the strongest `referencePriority`, else the largest active power reserve (`maxP` minus P) on a bus of degree greater than 1, else the largest infeed on a bus of degree greater than 1, and only when no such bus carries infeed, the largest infeed on a bus of degree 1 (both buses of a two-bus island have degree 1). Its voltage setpoint is the start (SV) voltage of its bus. Each choice is a `warning:` in the import messages, one notice counts them; for a `PowerElectronicsConnection` the warning adds that its unit type is unknown and that it is assumed grid-following, because a converter that only follows the grid cannot hold an island. Without a slack the island-wise solve would hold a promoted unit at its start voltage, and the result there would depend on the start value only. |
+| Islands without a reference | With `multi_slack = true` (default), an energized electrical island with infeed (a unit with P > 0 in generator sign) but without slack and without a voltage-regulating unit gets a slack from the importer. Slack candidates are only units with infeed, `EnergySource` and `PowerElectronicsConnection` included, which the slack choice above passes over; a unit with P = 0 or drawing power is never one, also not by `referencePriority`. Among them: the strongest `referencePriority`, else the largest active power reserve (`maxP` minus P) on a bus of degree greater than 1, else the largest infeed on a bus of degree greater than 1, and only when no such bus carries infeed, the largest infeed on a bus of degree 1 (both buses of a two-bus island have degree 1). Its voltage setpoint is the start (SV) voltage of its bus. Each choice is a `warning:` in the import messages, one notice counts them; for a `PowerElectronicsConnection` the warning adds that its unit type is unknown and that it is assumed grid-following, because a converter that only follows the grid cannot hold an island. A unit whose [`DynamicData`](@ref) states it grid-following (`unit_type = GridFollowingUnit`) is no candidate; an island whose units are all grid-following is switched off like a sourceless part, with a warning, and one where such units carry all the infeed next to units of other type gets no slack and a warning ([Dynamic Unit Data](@ref dynamic_data)). Without a slack the island-wise solve would hold a promoted unit at its start voltage, and the result there would depend on the start value only. |
 | Bus on a closed switch only | A bus without an in-service branch is marked isolated, also when a closed switch joins it to a bus with one. The solver still merges such a bus with that bus and solves it, and the SV comparison compares it at the voltage of its switch group. The import message counts these buses apart. |
 
 ## [Asymmetric EquivalentBranch](@id cgmes_eb_phase_stamp)
@@ -199,6 +199,7 @@ The keys that steer a CGMES import: where the delivery is, the system base, whet
 | `cgmes_import.map_energy_source` | `false` | Map `EnergySource` objects as fixed PQ injections ([EnergySource](@ref cgmes_energy_source)). Allowed values: `true`, `false`. |
 | `cgmes_import.map_power_electronics` | `false` | Map CGMES 3.0 `PowerElectronicsConnection` objects as PQ or voltage-regulating injections ([PowerElectronicsConnection](@ref cgmes_power_electronics)). Allowed values: `true`, `false`. |
 | `cgmes_import.shunt_control` | `false` | Attach a switched-bank voltage controller to every `LinearShuntCompensator` with `controlEnabled` and a voltage `RegulatingControl` at its own bus ([Bank regulators](@ref cgmes_shunt_control)). Allowed values: `true`, `false`. |
+| `cgmes_import.read_dynamics` | `false` | Read the DY profile and give the machines their `DynamicData`: inertia, damping and rating of the synchronous machine models, droop and governor time constant of some turbine governors ([Dynamic data](@ref cgmes_dynamics)). Off: the DY file is skipped. Allowed values: `true`, `false`. |
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
 | `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island), and a slack to every island with infeed but without reference (see Islands without a reference above). Required for multi-island deliveries; `false` forces the single-reference behavior. Allowed values: `true`, `false`. |
@@ -415,6 +416,51 @@ bank regulator already. A `NonlinearShuntCompensator` with a regulating
 control stays fixed too, as its blocks are not uniform. One notice counts
 the regulators and the banks kept fixed. With the default `false` every
 bank stays at its SSH sections.
+
+## [Dynamic data (DY profile)](@id cgmes_dynamics)
+
+With `read_dynamics = true` the store reads the DY profile as well (profile
+tag `DY`; without the switch the file is skipped and named in the import
+messages) and the machines get their [`DynamicData`](@ref)
+([Dynamic Unit Data](@ref dynamic_data)). No calculation reads it; the
+island slack choice reads the unit type.
+
+| DY class | Fills |
+|---|---|
+| `SynchronousMachineTimeConstantReactance`, `SynchronousMachineEquivalentCircuit`, `SynchronousMachineSimplified` | `inertia_s` from `RotatingMachineDynamics.inertia`, `damping_pu` from `damping` (absent: 0), `rating_mva` from `SynchronousMachine.ratedS` of the EQ (left out at 9999 MVA and above), `unit_type = SynchronousUnit`; the machine is the one of `SynchronousMachineDynamics.SynchronousMachine` |
+| `GovSteam0` | `droop_pu` from `r` (permanent droop) |
+| `GovHydro1`, `GovHydro2` | `droop_pu` from `rperm` (permanent droop) |
+| `GovSteam1` | `droop_pu` as `1/k` (`k` is the reciprocal of the droop), `governor_time_s` from `t1` (governor lag) |
+
+The specification states the droop per unit on `mwbase`; the import
+converts it to the rating of the unit (`R * ratedS / mwbase`). With
+`mwbase` 0 or absent, or without a usable `ratedS`, the droop is left out
+and counted. The other time constants of these classes (steam bowl, gate
+servo, water inertia) are stages of a multi-block model, not the
+first-order governor lag of `DynamicData`, and are not taken. A governor
+counts only on a mapped machine model.
+
+Not mapped, and counted: a function block with `enabled = false`, a second
+machine model or governor on one machine, an object whose machine is not
+part of the network, `SynchronousMachineUserDefined`, and every other DY
+class (excitation systems, stabilizers, voltage compensators, load models,
+wind turbines). The import messages carry one line per DY class:
+
+```text
+notice: DY class GovSteam0: 0 mapped, 1 not mapped, 0 without counterpart in EQ
+```
+
+"Without counterpart in EQ" means: the referenced `SynchronousMachine` is
+not in the delivery, or for a class that is not mapped, no reference path
+leads from the object to an EQ object. Further notices count the reasons.
+A record whose values break the rules of `DynamicData` (a negative
+inertia) is dropped with a `warning:`.
+
+The ENTSO-E MicroGrid carries a DY profile (machine models with inertia
+and damping, `GovSteam0`, `GovSteam1`, `GovHydro1`, `GovHydro2`, all with
+`mwbase` 0, so no droop is taken); SmallGrid, RealGrid, FullGrid and
+ReliCapGrid carry none. An import with the switch, written to SCF and read
+back, keeps every value ([Sparlectra Case Format](@ref scf_dynamics)).
 
 ## Machine remote voltage control
 

@@ -107,6 +107,35 @@ function _scenario_case14()
   return case, net
 end
 
+# A hand-built QSTS index over a built net, as the CGMES series union will
+# carry it: dense ids over buses, branches (ratio 0 is a line), prosumers
+# (the reference unit stands in as the external grid), shunts, links and
+# tap controllers. `ids` maps (group, internal index) to the id, the group
+# being :bus, :branch, :prosumer, :shunt, :link or :tap.
+function _qsts_test_index(net::Sparlectra.Net; parked::Dict{Int,Sparlectra.ProSumer} = Dict{Int,Sparlectra.ProSumer}(), origin::Symbol = :cgmes_series)
+  kinds = Dict{Int,Symbol}()
+  internals = Dict{Int,Int}()
+  names = Dict{Int,String}()
+  mrids = Dict{String,Int}()
+  ids = Dict{Tuple{Symbol,Int},Int}()
+  function add!(group::Symbol, kind::Symbol, internal::Int)
+    id = length(kinds) + 1
+    kinds[id] = kind
+    internals[id] = internal
+    names[id] = string(kind, " ", internal)
+    mrids[string("_", kind, "_", internal)] = id
+    ids[(group, internal)] = id
+    return nothing
+  end
+  foreach(b -> add!(:bus, :bus, b), eachindex(net.nodeVec))
+  foreach(i -> add!(:branch, net.branchVec[i].ratio != 0.0 ? :transformer : :branch, i), eachindex(net.branchVec))
+  foreach(i -> add!(:prosumer, net.prosumpsVec[i].referencePri !== nothing ? :external_grid : Sparlectra.isGenerator(net.prosumpsVec[i]) ? :generator : :load, i), eachindex(net.prosumpsVec))
+  foreach(i -> add!(:shunt, :shunt, i), eachindex(net.shuntVec))
+  foreach(i -> add!(:link, :link, i), eachindex(net.linkVec))
+  foreach(i -> add!(:tap, :tap_controller, i), eachindex(Sparlectra._tap_controllers(net)))
+  return ScenarioIndex(kinds, internals, names, mrids, parked, origin), ids
+end
+
 function run_scenario_patch_tests()
   @testset "scenario patch model" begin (function ()
     case, net = _scenario_case14()
@@ -223,6 +252,58 @@ function run_scenario_patch_tests()
           end
         end
       end
+    end)() end
+
+    @testset "apply! keeps the bus load sums for their readers" begin (function ()
+      # after a load outage the island totals (detect_ac_islands), the
+      # passive-bus test (findPassiveBuses) and the link-flow allocation
+      # (calcLinkFlowsKCL!) read the bus load sums: a patched net must give
+      # what a net built without that load gives, and restore! the base
+      path = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
+      # a load moved to a link end, so the link-flow allocation sees it;
+      # one load scaled and the moved one taken out (the reference case
+      # writes the same change into the case data)
+      function edited(; outage::Bool)
+        c = read_scf_json(path)
+        moved = c.data.sym_load[1]
+        moved.node = first(c.data.link).from_node
+        if outage
+          # the reference drops the row: build_net keeps a sym_load whose
+          # status is 0, so the status alone is no outage of the case data
+          other = c.data.sym_load[2]
+          other.p_specified *= 2.0
+          other.q_specified *= 2.0
+          deleteat!(c.data.sym_load, 1)
+        end
+        return c
+      end
+      # `local` is load-bearing: the enclosing test function holds `case`,
+      # `net` and `index` of case14, and a plain assignment in this nested
+      # function would overwrite them for every later testset
+      local case, ops, idx, base, net, ref, undo, solved
+      case = edited(outage = false)
+      ops = [PatchOp(op = :scale, target = :load, id = case.data.sym_load[2].id, factor = 2.0), PatchOp(op = :status, target = :load, id = case.data.sym_load[1].id, value = 0.0)]
+      idx = ScenarioIndex(case)
+      base = Sparlectra.build_net(case)
+      net = Sparlectra.build_net(case)
+      ref = Sparlectra.build_net(edited(outage = true))
+      undo = apply!(net, ops, idx)
+      sums(n) = [(something(nd._pƩLoad, 0.0), something(nd._qƩLoad, 0.0)) for nd in n.nodeVec]
+      @test all(isapprox.(first.(sums(net)), first.(sums(ref)); atol = 1e-9)) && all(isapprox.(last.(sums(net)), last.(sums(ref)); atol = 1e-9))
+      island_load(n) = sort!([round(r.total_load_p_mw; digits = 9) for r in Sparlectra.detect_ac_islands(n).rows])
+      @test island_load(net) == island_load(ref)
+      @test sort!(collect(Sparlectra.findPassiveBuses(net))) == sort!(collect(Sparlectra.findPassiveBuses(ref)))
+      restore!(net, undo)
+      @test scf_roundtrip_field_diffs(base, net) == String[]
+      # the link flow after a solve: patched copy against the reference
+      solved = Sparlectra.build_net(case)
+      apply!(solved, ops, idx)
+      for n in (solved, ref)
+        redirect_stdout(() -> runpf!(n, 40, 1e-9, 0), devnull)
+        calcLinkFlowsKCL!(n)
+      end
+      @test isapprox(first(solved.linkVec).pFlow_MW, first(ref.linkVec).pFlow_MW; atol = 1e-6)
+      @test isapprox(first(solved.linkVec).qFlow_MVar, first(ref.linkVec).qFlow_MVar; atol = 1e-6)
     end)() end
 
     @testset "apply and restore: tap patch semantics" begin (function ()
@@ -366,6 +447,244 @@ function run_scenario_patch_tests()
       t3p = Scenario(name = "patched", ops = vcat(t3s.ops, [PatchOp(op = :scale, target = staridx.kind_by_id[neutral], id = neutral, factor = 1.0)]))
       rp = only(redirect_stdout(() -> Sparlectra.runScenarios!(starnet, [t3p]; index = staridx), devnull))
       @test _scenario_values_equal(rs, rp)
+    end)() end
+
+    @testset "QSTS vocabulary on a cgmes_series index" begin (function ()
+      # QSTS stage 3: the delta vocabulary of the CGMES series union, run
+      # on the shipped sp_case60 with a hand-built index of origin
+      # :cgmes_series. Every row applies, checks its effect and restores
+      # the net BITWISE. `local` is load-bearing: the enclosing test
+      # function holds `case`, `net` and `index` of the warmup case.
+      local qpath, qcase, base, work, qidx, ids, scfidx, rows, set1, parked, pidx, tmpl, tmpl_ref, undo, mixed, nets, iso_before, applied, edited, eref, patched, plain
+      qpath = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
+      qcase = read_scf_json(qpath)
+      base = Sparlectra.build_net(qcase)
+      work = Sparlectra.build_net(qcase)
+      qidx, ids = _qsts_test_index(work)
+      scfidx, _ = _qsts_test_index(work; origin = :scf)
+      # one tap data record for transformer 70: a table with three ratios
+      # and an impedance per step, as a CGMES snapshot carries it
+      local tsi = Sparlectra.TapStepImpedance(0.01, 0.1, 0.0, 0.0, 0.0, 0.0, [0.9, 1.0, 1.1], [(1.02, 1.03, 1.0, 1.0), (1.0, 1.0, 1.0, 1.0), (0.98, 0.97, 1.0, 1.0)], Float64[], NTuple{4,Float64}[])
+      qidx.tap_data[ids[(:branch, 70)]] = [Sparlectra.BranchTapData(true, 0.9, 1.1, 0.1, [0.9, 1.0, 1.1], false, -30.0, 30.0, 1.25, tsi)]
+      set1(group, i, field, value) = PatchOp(op = :set, target = qidx.kind_by_id[ids[(group, i)]], id = ids[(group, i)], field = field, value = value)
+      # the case: 1 the reference unit (bus 1), 2 a regulated generator
+      # alone at bus 4, 6 the only load at bus 13, 14 a load next to the
+      # unregulated generator 28 at bus 36; branch 1 a line, 70 a
+      # transformer; shunt 1 at bus 13; two tap controllers
+      @test base.prosumpsVec[1].referencePri == 1 && Sparlectra.isGenerator(base.prosumpsVec[2]) && base.nodeVec[4]._nodeType == Sparlectra.PV
+      @test !Sparlectra.isGenerator(base.prosumpsVec[6]) && base.nodeVec[13]._pƩLoad == 25.0 && base.branchVec[70].ratio != 0.0
+      @test length(Sparlectra._tap_controllers(base)) == 2 && isempty(base.isoNodes)
+      parked_state(ps) = ps.proSumptionType == Sparlectra.Consumption && ps.pVal === 0.0 && ps.qVal === 0.0 && !ps.isRegulated &&
+                         ps.referencePri === nothing && ps.referencePriority == 0 && ps.participationFactor === nothing && ps.minQ === nothing && ps.maxQ === nothing &&
+                         all(f -> getfield(ps, f) === nothing, (:vset_adjust, :vstep_pu, :tap_steps_down, :tap_steps_up, :quController, :puController)) &&
+                         !Sparlectra.isGenerator(ps) && !Sparlectra.isRegulating(ps) && !Sparlectra.isSlack(ps)
+      ld(n, b) = (something(n.nodeVec[b]._pƩLoad, 0.0), something(n.nodeVec[b]._qƩLoad, 0.0))
+      rows = [
+        ("bus isolated", [set1(:bus, 13, :isolated, 1.0)],
+          n -> n.nodeVec[13]._nodeType == Sparlectra.Isolated && n.nodeVec[13]._vm_pu === 0.0 && n.nodeVec[13]._va_deg === 0.0 && n.isoNodes == [13]),
+        ("bus start values", [set1(:bus, 20, :vm_start, 1.031), set1(:bus, 20, :va_start, -4.5)],
+          n -> n.nodeVec[20]._vm_pu == 1.031 && n.nodeVec[20]._va_deg == -4.5),
+        ("line status only", [set1(:branch, 1, :status, 0.0)],
+          n -> (n.branchVec[1].status, n.branchVec[1].from_status, n.branchVec[1].to_status) == (0, 1, 1)),
+        ("line terminals", [set1(:branch, 1, :from_status, 0.0), set1(:branch, 1, :to_status, 0.0)],
+          n -> (n.branchVec[1].status, n.branchVec[1].from_status, n.branchVec[1].to_status) == (1, 0, 0)),
+        ("transformer status and terminals", [set1(:branch, 70, :status, 0.0), set1(:branch, 70, :from_status, 0.0), set1(:branch, 70, :to_status, 0.0)],
+          n -> (n.branchVec[70].status, n.branchVec[70].from_status, n.branchVec[70].to_status) == (0, 0, 0)),
+        ("transformer ratio", [set1(:branch, 70, :ratio, 1.05)],
+          n -> n.branchVec[70].ratio == 1.05 && n.branchVec[70].tap_ratio == 1.05),
+        # branch parameters: r and x write the base field too, the terminal
+        # shunt values keep the totals their sums, the shift writes angle
+        # (read by the flows) and phase_shift_deg (read by the solver)
+        ("line impedance", [set1(:branch, 1, :r_pu, 0.07), set1(:branch, 1, :x_pu, -0.02)],
+          n -> (br = n.branchVec[1]; (br.r_pu, br.r_base_pu, br.x_pu, br.x_base_pu) == (0.07, 0.07, -0.02, -0.02))),
+        ("line charging per terminal", [set1(:branch, 1, :b_from_pu, 0.03), set1(:branch, 1, :b_to_pu, 0.01), set1(:branch, 1, :g_from_pu, 0.001)],
+          n -> (br = n.branchVec[1]; (br.b_from_pu, br.b_to_pu, br.b_pu, br.g_from_pu, br.g_to_pu, br.g_pu) == (0.03, 0.01, 0.03 + 0.01, 0.001, 0.0, 0.001))),
+        ("transformer impedance, magnetizing, shift", [set1(:branch, 70, :x_pu, 0.1), set1(:branch, 70, :g_to_pu, 0.002), set1(:branch, 70, :b_to_pu, -0.004), set1(:branch, 70, :shift_deg, -3.5)],
+          # the from arm keeps its nameplate magnetizing (sp_case60 since 0.50.0), so the
+          # sums are that arm plus the new to arm
+          n -> (br = n.branchVec[70]; (br.x_pu, br.x_base_pu, br.r_pu, br.g_to_pu, br.b_to_pu, br.g_pu, br.b_pu, br.angle, br.phase_shift_deg) == (0.1, 0.1, base.branchVec[70].r_pu, 0.002, -0.004, base.branchVec[70].g_from_pu + 0.002, base.branchVec[70].b_from_pu + -0.004, -3.5, -3.5))),
+        ("transformer tap data", [set1(:branch, 70, :tap_data, 1.0)],
+          n -> (br = n.branchVec[70]; (br.tap_min, br.tap_max, br.tap_step, br.tap_ratio_points, br.has_phase_tap, br.tap_step_impedance === tsi) == (0.9, 1.1, 0.1, [0.9, 1.0, 1.1], false, true))),
+        ("shunt conductance", [set1(:shunt, 1, :g_pu, 0.02)],
+          n -> n.shuntVec[1].y_pu_shunt == ComplexF64(0.02, imag(base.shuntVec[1].y_pu_shunt)) && n.shuntVec[1].G_shunt == 0.02),
+        ("generator limits, regulation, reference", [set1(:prosumer, 2, :qmin, -50.0), set1(:prosumer, 2, :qmax, 60.0), set1(:prosumer, 2, :regulated, 0.0),
+            set1(:prosumer, 2, :reference, 1.0), set1(:prosumer, 2, :reference_priority, 2.0), set1(:prosumer, 2, :participation, 0.5)],
+          n -> (ps = n.prosumpsVec[2]; ps.minQ == -50.0 && ps.maxQ == 60.0 && !ps.isRegulated && ps.referencePri == 4 && ps.referencePriority == 2 && ps.participationFactor == 0.5 && 4 in n.slackVec)),
+        ("generator limits to none", [set1(:prosumer, 2, :qmin, nothing), set1(:prosumer, 2, :qmax, nothing), set1(:prosumer, 2, :participation, nothing)],
+          n -> n.prosumpsVec[2].minQ === nothing && n.prosumpsVec[2].maxQ === nothing),
+        ("external grid gives up the reference", [set1(:prosumer, 1, :reference, 0.0)],
+          n -> n.prosumpsVec[1].referencePri === nothing && isempty(n.slackVec)),
+        ("tap controller fields", [set1(:tap, 1, :enabled, 0.0), set1(:tap, 1, :target_vm_pu, 1.02), set1(:tap, 1, :deadband_vm_pu, 0.005), set1(:tap, 1, :p_target_mw, 25.0), set1(:tap, 1, :deadband_p_mw, 2.0), set1(:tap, 2, :target_vm_pu, nothing)],
+          n -> (c = Sparlectra._tap_controllers(n); !c[1].enabled && c[1].target_vm_pu == 1.02 && c[1].deadband_vm_pu == 0.005 && c[1].p_target_mw == 25.0 && c[1].deadband_p_mw == 2.0 && c[2].target_vm_pu === nothing)),
+        ("park a load", [set1(:prosumer, 6, :in_service, 0.0)],
+          n -> parked_state(n.prosumpsVec[6]) && ld(n, 13) == (0.0, 0.0) && length(n.prosumpsVec) == length(base.prosumpsVec)),
+        ("park a load next to a generator", [set1(:prosumer, 14, :in_service, 0.0)],
+          n -> parked_state(n.prosumpsVec[14]) && ld(n, 36) == ld(base, 36) .- (3.0, 0.7) && n.nodeVec[36]._pƩGen == 4.0),
+        ("park a generator", [set1(:prosumer, 2, :in_service, 0.0)],
+          n -> parked_state(n.prosumpsVec[2]) && n.nodeVec[4]._nodeType == Sparlectra.PQ && n.nodeVec[4]._pƩGen === nothing && ld(n, 4) == ld(base, 4)),
+        ("park the external grid", [set1(:prosumer, 1, :in_service, 0.0)],
+          n -> parked_state(n.prosumpsVec[1]) && isempty(n.slackVec)),
+      ]
+      for (label, ops, check) in rows
+        @test validate_scenarios(ScenarioSet(scenarios = [Scenario(name = label, ops = ops)]), qidx) isa ScenarioSet
+        undo = apply!(work, ops, qidx)
+        @test (label, check(work)) == (label, true)
+        restore!(work, undo)
+        @test (label, _qsts_bitwise_diffs(base, work)) == (label, String[])
+        @test (label, scf_roundtrip_field_diffs(base, work)) == (label, String[])
+        # an SCF index rejects every op of the vocabulary with the op named,
+        # and apply! on it keeps today's rejection
+        for op in ops
+          err = try
+            validate_scenarios(ScenarioSet(scenarios = [Scenario(name = label, ops = [op])]), scfidx)
+            ""
+          catch e
+            e isa ArgumentError || rethrow()
+            sprint(showerror, e)
+          end
+          @test (label, op.field, occursin(string("set ", op.field, " is QSTS vocabulary"), err)) == (label, op.field, true)
+          @test_throws ArgumentError apply!(work, [op], scfidx)
+        end
+      end
+      @test _qsts_bitwise_diffs(base, work) == String[]
+
+      # the bus op writes a NEW isoNodes vector: a later markIsolatedBuses!
+      # refills that one in place, and restore! puts the old one back
+      iso_before = work.isoNodes
+      undo = apply!(work, [set1(:bus, 13, :isolated, 1.0)], qidx)
+      @test work.isoNodes !== iso_before
+      Sparlectra.markIsolatedBuses!(net = work)
+      # the op isolates a bus that keeps its branches: the marking leaves
+      # its type alone and only rebuilds isoNodes
+      local b13 = qidx.internal_by_id[ids[(:bus, 13)]]
+      local brs13 = [j for (j, br) in enumerate(work.branchVec) if br.status == 1 && (br.fromBus == b13 || br.toBus == b13)]
+      @test !isempty(brs13) && Sparlectra.isIsolated(work.nodeVec[b13]) && !(b13 in work.isoNodes)
+      restore!(work, undo)
+      @test work.isoNodes === iso_before && isempty(iso_before)
+      @test _qsts_bitwise_diffs(base, work) == String[]
+      # a bus the marking isolated itself is typed back once a branch reaches
+      # it again, unless an op isolated it in between
+      local cut = deepcopy(work)
+      foreach(j -> setBranchStatus!(cut.branchVec[j], false), brs13)
+      @test b13 in Sparlectra.markIsolatedBuses!(net = cut)
+      local undo13 = apply!(cut, [set1(:bus, 13, :isolated, 1.0)], qidx)
+      foreach(j -> setBranchStatus!(cut.branchVec[j], true), brs13)
+      Sparlectra.markIsolatedBuses!(net = cut)
+      @test Sparlectra.isIsolated(cut.nodeVec[b13])
+      restore!(cut, undo13)
+      Sparlectra.markIsolatedBuses!(net = cut)
+      @test !Sparlectra.isIsolated(cut.nodeVec[b13]) && !(b13 in cut.isoNodes)
+
+      # validation of the vocabulary on the QSTS index itself
+      reject(ops) = try
+        validate_scenarios(ScenarioSet(scenarios = [Scenario(name = "bad", ops = ops)]), qidx)
+        ""
+      catch e
+        e isa ArgumentError || rethrow()
+        sprint(showerror, e)
+      end
+      @test occursin("set ratio applies to a transformer, not to a branch", reject([set1(:branch, 1, :ratio, 1.0)]))
+      @test occursin("value must be 0 or 1", reject([set1(:bus, 13, :isolated, 0.5)]))
+      @test occursin("whole number", reject([set1(:prosumer, 2, :reference_priority, 1.5)]))
+      @test occursin("parked values of id", reject([set1(:prosumer, 6, :in_service, 1.0)]))
+      @test occursin("second set qmin", reject([set1(:prosumer, 2, :qmin, -1.0), set1(:prosumer, 2, :qmin, -2.0)]))
+      @test occursin("set x_pu: needs a finite value", reject([set1(:branch, 1, :x_pu, Inf)]))
+      @test occursin("needs tap data record 2 of id", reject([set1(:branch, 70, :tap_data, 2.0)]))
+      @test occursin("record number >= 1", reject([set1(:branch, 70, :tap_data, 0.0)]))
+      @test_throws ArgumentError ScenarioIndex(qidx.kind_by_id, qidx.internal_by_id, qidx.name_by_id, qidx.id_by_mrid, qidx.parked_values, :matpower)
+      # apply! rejects r = x = 0 and an r/x write on a typed tap model
+      # before any write, so the net stays as it was
+      applied(ops) = try
+        apply!(work, ops, qidx)
+        ""
+      catch e
+        e isa ArgumentError || rethrow()
+        sprint(showerror, e)
+      end
+      @test occursin("r_pu and x_pu would both be 0", applied([set1(:branch, 1, :r_pu, 0.0), set1(:branch, 1, :x_pu, 0.0)]))
+      # shift_deg passes the validation on a :branch (a phase-stamped
+      # EquivalentBranch has ratio 1), on a line apply! rejects it
+      @test reject([set1(:branch, 1, :shift_deg, 1.0)]) == ""
+      @test occursin("is a line; shift_deg applies to a transformer", applied([set1(:branch, 1, :shift_deg, 1.0)]))
+      work.branchVec[70].taps_derived = true
+      @test occursin("typed tap model", applied([set1(:branch, 70, :x_pu, 0.1)]))
+      work.branchVec[70].taps_derived = false
+      # a single r or x op, the common case of a series delta, is judged
+      # against the net value of the other field: line 1 (r 0.06, x 0.3)
+      # takes x = 0 alone and r = 0 alone, with x already 0 it rejects r = 0
+      for fz in (:x_pu, :r_pu)
+        undo = apply!(work, [set1(:branch, 1, fz, 0.0)], qidx)
+        @test (fz, getfield(work.branchVec[1], fz)) == (fz, 0.0)
+        restore!(work, undo)
+        @test (fz, _qsts_bitwise_diffs(base, work)) == (fz, String[])
+      end
+      work.branchVec[1].x_pu = 0.0
+      @test occursin("r_pu and x_pu would both be 0", applied([set1(:branch, 1, :r_pu, 0.0)]))
+      @test work.branchVec[1].r_pu == base.branchVec[1].r_pu
+      work.branchVec[1].x_pu = base.branchVec[1].x_pu
+      @test _qsts_bitwise_diffs(base, work) == String[]
+
+      # unpark: the template holds generator 2 and load 6 parked and bus 20
+      # isolated, the index their values from before; the delta brings all
+      # three back, restore! returns the template bitwise
+      tmpl = Sparlectra.build_net(qcase)
+      parked = Dict{Int,Sparlectra.ProSumer}(ids[(:prosumer, i)] => deepcopy(tmpl.prosumpsVec[i]) for i in (2, 6))
+      pidx, _ = _qsts_test_index(tmpl; parked = parked)
+      apply!(tmpl, [set1(:prosumer, 2, :in_service, 0.0), set1(:prosumer, 6, :in_service, 0.0), set1(:bus, 20, :isolated, 1.0)], pidx)
+      @test parked_state(tmpl.prosumpsVec[2]) && parked_state(tmpl.prosumpsVec[6]) && tmpl.isoNodes == [20]
+      tmpl_ref = deepcopy(tmpl)
+      undo = apply!(tmpl, [set1(:prosumer, 2, :in_service, 1.0), set1(:prosumer, 6, :in_service, 1.0), set1(:bus, 20, :isolated, 0.0),
+                           set1(:bus, 20, :vm_start, base.nodeVec[20]._vm_pu), set1(:bus, 20, :va_start, base.nodeVec[20]._va_deg)], pidx)
+      for i in (2, 6), f in (:proSumptionType, :pVal, :qVal, :isRegulated, :referencePri, :referencePriority, :participationFactor, :minQ, :maxQ,
+                             :vset_adjust, :vstep_pu, :tap_steps_down, :tap_steps_up, :quController, :puController)
+        @test (i, f, isequal(getfield(tmpl.prosumpsVec[i], f), getfield(base.prosumpsVec[i], f))) == (i, f, true)
+      end
+      @test all(isapprox.(ld(tmpl, 13), ld(base, 13); atol = 1e-12))
+      @test [tmpl.nodeVec[b]._nodeType for b in (4, 13, 20)] == [base.nodeVec[b]._nodeType for b in (4, 13, 20)]
+      @test isempty(tmpl.isoNodes) && tmpl.nodeVec[4]._pƩGen == base.nodeVec[4]._pƩGen
+      restore!(tmpl, undo)
+      @test _qsts_bitwise_diffs(tmpl_ref, tmpl) == String[]
+      @test scf_roundtrip_field_diffs(tmpl_ref, tmpl) == String[]
+
+      # the order of the ops in a delta does not change the result: QSTS
+      # ops mixed with SCF ops (setpoints, scaling, b_pu, a link, a
+      # generator outage that deletes), a scale and a set q on one load,
+      # a generator vm_pu and a start value on the same bus
+      mixed = [set1(:prosumer, 6, :in_service, 0.0), set1(:prosumer, 14, :in_service, 0.0), set1(:prosumer, 28, :in_service, 0.0),
+               set1(:prosumer, 2, :qmin, -40.0), set1(:prosumer, 2, :vm_pu, 1.02), set1(:bus, 4, :vm_start, 1.015),
+               set1(:bus, 13, :isolated, 1.0), set1(:bus, 20, :vm_start, 0.99), set1(:branch, 1, :status, 0.0), set1(:branch, 70, :ratio, 0.98),
+               set1(:branch, 1, :b_from_pu, 0.02), set1(:branch, 1, :b_to_pu, 0.01), set1(:branch, 70, :x_pu, 0.1), set1(:branch, 70, :shift_deg, 1.5),
+               set1(:shunt, 1, :g_pu, 0.01), set1(:shunt, 1, :b_pu, 0.2), set1(:tap, 1, :enabled, 0.0), set1(:tap, 2, :deadband_vm_pu, 0.002),
+               PatchOp(op = :scale, target = :load, id = ids[(:prosumer, 7)], factor = 1.1), set1(:prosumer, 7, :q, 2.5), set1(:prosumer, 8, :p, 17.0),
+               PatchOp(op = :status, target = :link, id = ids[(:link, 1)], value = 0.0), PatchOp(op = :status, target = :generator, id = ids[(:prosumer, 3)], value = 0.0)]
+      @test validate_scenarios(ScenarioSet(scenarios = [Scenario(name = "mixed", ops = mixed)]), qidx) isa ScenarioSet
+      nets = [Sparlectra.build_net(qcase) for _ in 1:3]
+      apply!(nets[1], mixed, qidx)
+      apply!(nets[2], reverse(mixed), qidx)
+      apply!(nets[3], vcat(mixed[2:2:end], mixed[1:2:end]), qidx)
+      @test length(nets[1].prosumpsVec) == length(base.prosumpsVec) - 1
+      @test nets[1].nodeVec[4]._vm_pu == 1.015 && nets[1].nodeVec[13]._vm_pu === 0.0
+      @test _qsts_bitwise_diffs(nets[1], nets[2]) == String[]
+      @test _qsts_bitwise_diffs(nets[1], nets[3]) == String[]
+
+      # the solver reads what the branch ops write: line 1 with other r, x
+      # and charging, patched, equals the case built with those values
+      # bitwise, and so does its power flow, which differs from the
+      # unpatched one
+      edited = read_scf_json(qpath)
+      let eidx = ScenarioIndex(edited), row = only(r for r in edited.data.line if get(eidx.internal_by_id, r.id, 0) == 1)
+        row.r1 *= 1.2
+        row.x1 *= 1.5
+        row.c1 = 5.0e-7
+      end
+      eref = Sparlectra.build_net(edited)
+      patched = Sparlectra.build_net(qcase)
+      apply!(patched, [set1(:branch, 1, f, getfield(eref.branchVec[1], f)) for f in (:r_pu, :x_pu, :b_from_pu, :b_to_pu)], qidx)
+      @test eref.branchVec[1].b_pu > 0.0 && _qsts_bitwise_diffs(eref, patched) == String[]
+      plain = Sparlectra.build_net(qcase)
+      @test [last(redirect_stdout(() -> runpf!(n, 40, 1e-10, 0), devnull)) for n in (eref, patched, plain)] == [0, 0, 0]
+      @test isequal([(nd._vm_pu, nd._va_deg) for nd in patched.nodeVec], [(nd._vm_pu, nd._va_deg) for nd in eref.nodeVec])
+      @test maximum(abs(patched.nodeVec[b]._vm_pu - plain.nodeVec[b]._vm_pu) for b in eachindex(plain.nodeVec)) > 1e-6
     end)() end
 
   end)() end

@@ -190,7 +190,8 @@ labels/indices** takes one label or index at a time.
 The format-bound options of the Basic set render directly, the rest and
 the DTF diagnostics fold into **Advanced**. A page renders only the options
 the format of the selected case reads (MATPOWER import options for MATPOWER
-cases, the CGMES, PowSyBl and DTF options for their formats); a section that
+cases, the CGMES, PowSyBl and DTF options for their formats, the QSTS mode
+for an SCF time series); a section that
 leaves options out says how many, and their saved values stay in the case
 configuration file. The system frequency is shown for every format and is
 greyed where the format does not read it. Deleting a case removes its
@@ -614,6 +615,40 @@ the state after the elimination, with the suspicious and eliminated
 counts of the verdict file; suppressed rows stay in `J` and surface
 as `J_active`.
 
+### [QSTS](@id webui_qsts)
+
+The case chooser offers every SCF time series (a zip with `series.json`,
+`base.scf.json` and `delta.csv`), recognized by its content; the shipped
+example is `sp_case14_day.qsts.zip` (under `data/qsts`). **QSTS** next to **Contingency (N-1)**
+runs the series step by step ([`runQsts`](@ref)); it is enabled only when
+the selected case is a series. **QSTS mode**, shown for a series only,
+chooses `sequential` (taps
+and banks carried from step to step) or `snapshots` (every step on its
+own). The run sets `qsts.mode` for itself; the configuration keeps its
+value. **Start PowerFlow run** on a series solves its base case.
+
+The controllers come from the companion file `<series>.control.yaml` next
+to the series (for the example `sp_case14_day.control.yaml`, staged with
+it). Its `control` section replaces the one of the run configuration, for
+QSTS runs only; `run.log` names the file. Without it the controllers of
+the case file run alone. A `snapshots` run uses controllers only with
+`qsts.snapshot_controls = true`; otherwise the result page and `run.log`
+say that they are not used. The status page counts the finished steps, and
+**Abort run** stops the run before the next step.
+
+The result page shows solved and failed steps, switches and hunting
+patterns per controller (sequential only), the steps with a voltage
+outside `qsts.vm_min_pu` to `qsts.vm_max_pu` or a loading above
+`qsts.loading_max_pct`, the loss energy and the notes of the run. The time
+series chart opens with the position of the first controller and the
+voltage of its regulated bus with the band dashed; **Element** and
+**Quantity** choose another series, each point carries its value as a
+tooltip. The CSV files open in the CSV view. Artifacts: the files of
+[`writeQstsResults`](@ref), `qsts_view.json` (the element view behind the
+chart), one SVG per element with its main quantity under `qsts_plots/`
+(bus `vm_pu`, branch `loading_pct`, controller `position`) and
+`qsts_overview.html`. Mode, files and metrics: [QSTS](qsts.md).
+
 ## Running jobs
 
 A submission starts a background worker and redirects to the status page
@@ -687,8 +722,10 @@ contain a text in any cell); both stay in the browser tab until
 **Show all rows**.
 
 Other text artifacts (JSON, YAML,
-logs, HTML) open as escaped text, other files download, and every
-artifact page offers a download. **Download all artifacts as ZIP** packs
+logs) open as escaped text with a download. An HTML report (the QSTS
+overview) opens as a page of its own with its charts; the server sends it
+with a policy that allows no script. SVG charts show in the browser, other
+files download. **Download all artifacts as ZIP** packs
 the exposed artifacts into `sparlectra_run_<run_id>_artifacts.zip`.
 
 ### [Output modes](@id webui-output-modes)
@@ -842,4 +879,4 @@ Wayland windows can neither read nor set their screen position. The operation lo
 
 Loopback only, no authentication, no public-server mode, no database.
 No push channel: a running job reports its phase through the page
-refresh. No topology view, no plotting.
+refresh. No topology view, no plotting apart from the QSTS chart.

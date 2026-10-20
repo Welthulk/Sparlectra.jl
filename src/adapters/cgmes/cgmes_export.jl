@@ -813,7 +813,7 @@ function _collectProsumerRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}
   end
   _noticeReferencePriorityConflict!(notices, recs, slackset, idx2busName)
   n_ei = count(r -> r.kind === :ei, recs)
-  n_ei == 0 || push!(notices, "$(n_ei) PowerElectronicsConnection prosumer(s) written as EquivalentInjection with description $(_PEC_EI_DESCRIPTION) (CGMES 2.4.15 has no class for them; a re-import keeps them as converters without the fault current maxIFault and ratedS, so Ik''max in their island is flagged as a lower bound, and does not read their P limits)")
+  n_ei == 0 || push!(notices, "$(n_ei) PowerElectronicsConnection prosumer(s) written as EquivalentInjection with description $(_PEC_EI_DESCRIPTION) (CGMES 2.4.15 has no class for them; a re-import keeps them as converters without the fault current maxIFault and ratedS, so Ik''max in their island is flagged as a lower bound)")
   return recs
 end
 
@@ -1270,9 +1270,9 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         end
         println(io, "  </cim:SynchronousMachine>")
         # the unit keeps the class it was delivered with when that is a wind
-        # or solar unit: the short circuit
-        # treats such a machine as a converter current source, a decision of
-        # the calculation, not of the model
+        # or solar unit: the short circuit treats such a machine as a
+        # converter current source, a decision of the calculation, not of
+        # the model
         gu_class = _exportUnitClass(sm_sc)
         println(io, "  <cim:$(gu_class) rdf:ID=\"_$(rec.guId)\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))_GU</cim:IdentifiedObject.name>")

@@ -49,7 +49,9 @@ function loadCGMES(path; profile_filter::Set{Symbol} = IMPORT_PROFILE_TAGS)::CGM
   # Order: EQ-family first, then TP, then SSH/SV overlays. Classification
   # needs the header, so read it cheaply once per file up front.
   order = collect(eachindex(files))
-  rank = Dict(:EQ => 0, :EQ_OP => 0, :EQ_SC => 0, :EQ_BD => 1, :EQ_BD_OP => 1, :TP_BD => 2, :TP => 2, :SSH => 3, :SV => 4)
+  # DY last: its rdf:about entries (EnergyConsumer.LoadDynamics) overlay EQ
+  # objects, and its own objects point at EQ machines
+  rank = Dict(:EQ => 0, :EQ_OP => 0, :EQ_SC => 0, :EQ_BD => 1, :EQ_BD_OP => 1, :TP_BD => 2, :TP => 2, :SSH => 3, :SV => 4, :DY => 5)
   headers = [readCGMESHeader(f) for f in files]
   sort!(order; by = i -> minimum(get(rank, t, 9) for t in headers[i].profiles; init = 9))
 

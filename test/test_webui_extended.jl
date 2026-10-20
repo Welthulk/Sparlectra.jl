@@ -1290,8 +1290,9 @@ form:
         # pageshow also fires on the first load, and the run form's handler
         # sets the disabled flag of every submit button. Evaluated on the
         # buttons of the rendered page (its expression translated to Julia,
-        # the suite has no browser), it keeps the Short circuit button the
-        # server disabled and enables the others.
+        # the suite has no browser), it keeps each button the server
+        # disabled (Short circuit without data, QSTS without a series) and
+        # enables the others: per button the server's flag => the rule's.
         function pageshow_disabled(case)
           html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(case)"; output_root, runtime = export_runtime).body)
           handler = match(r"window\.addEventListener\('pageshow', function \(\) \{\s*const form = document\.getElementById\('powerflow-run-form'\);(.*?)\n\}\);"s, html).captures[1]
@@ -1301,13 +1302,16 @@ form:
           states = Pair{Bool,Bool}[]
           for tag in eachmatch(r"<button class=\"powerflow-submit[^>]*>", html)
             attrs = Dict(String(a[1]) => something(a[2], "") for a in eachmatch(r"([a-z-]+)(?:=\"([^\"]*)\")?", tag.match))
-            push!(states, haskey(attrs, "data-sc-state") => Base.invokelatest(rule, k -> haskey(attrs, k), k -> get(attrs, k, nothing)))
+            push!(states, haskey(attrs, "disabled") => Base.invokelatest(rule, k -> haskey(attrs, k), k -> get(attrs, k, nothing)))
           end
           return states
         end
         gated = pageshow_disabled("ieee14.xiidm")
-        @test count(first, gated) == 1 && all(p -> last(p) == first(p), gated)
-        @test all(p -> last(p) == false, pageshow_disabled("ieee14_sc.xiidm"))
+        # neither short-circuit data nor a series: Short circuit and QSTS
+        @test count(first, gated) == 2 && all(p -> last(p) == first(p), gated)
+        # with short-circuit data only QSTS stays disabled
+        sc_gated = pageshow_disabled("ieee14_sc.xiidm")
+        @test count(first, sc_gated) == 1 && all(p -> last(p) == first(p), sc_gated)
         # the three exports: the SCF file through its route, the MATPOWER
         # and CGMES artifacts with a run; every export runs again through the
         # service and lands on the voltages of the source run
@@ -3555,7 +3559,164 @@ result = get_powerflow_result(run_id)
       end
     end
   end)() end
+  _webui_qsts_tests()
   _webui_short_circuit_status_tests()
+  return nothing
+end
+
+# T13 (QSTS in the Web UI, 0.60.0): the QSTS button of the Runs page on the
+# shipped example series sp_case14_day.qsts.zip. The run goes through the
+# form route as the browser posts it (casefile, config_file, the select
+# qsts_mode_choice and the submitter qsts_mode), the bundled series is
+# staged with its companion sp_case14_day.control.yaml, and the result
+# carries run_mode "qsts", the files, one SVG per element with a point per
+# solved step, and the chart route draws the same bytes. A case without a
+# series gets a disabled button, and a request with qsts_mode on it fails
+# with qsts_no_series.
+function _webui_qsts_tests()
+  @testset "QSTS run from the run form (T13)" begin (function ()
+    mktempdir() do dir
+      root = joinpath(dir, "out")
+      casedir = joinpath(dir, "cases")
+      mkpath(root)
+      mkpath(casedir)
+      config_path = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+      rt = SparlectraApp._SparlectraWebUIRuntime(nothing, casedir, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      series = "sp_case14_day.qsts.zip"
+      # the case chooser offers the shipped series (by content)
+      case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body)
+      @test occursin("data-case-option=\"$(series)\"", case_page)
+      # the Runs page of the series: the button posts qsts_mode, enabled,
+      # inside the run form, with the mode select next to it
+      page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(series)"; output_root = root, runtime = rt).body)
+      form_html = page[findfirst("<form id=\"powerflow-run-form\"", page)[1]:findnext("</form>", page, findfirst("<form id=\"powerflow-run-form\"", page)[1])[end]]
+      button = match(r"<button[^>]*data-qsts-button[^>]*>", form_html)
+      @test button !== nothing
+      @test occursin("name=\"qsts_mode\"", button.match)
+      @test occursin("data-qsts-state=\"series\"", button.match)
+      @test !occursin(" disabled", button.match)
+      @test occursin("<select name=\"qsts_mode_choice\"", form_html)
+      # a case without a series: the button is disabled, so a browser never
+      # sends qsts_mode for it (a disabled control is not in the form data)
+      cp(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"), joinpath(casedir, "sp_case14.scf.json"))
+      plain_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json"; output_root = root, runtime = rt).body)
+      plain_button = match(r"<button[^>]*data-qsts-button[^>]*>", plain_page)
+      @test plain_button !== nothing && occursin("data-qsts-state=\"no-series\"", plain_button.match) && occursin(" disabled", plain_button.match)
+      # the mode select is format-bound: an SCF file reads no QSTS option,
+      # so the page leaves it out, and a series leaves out the options of
+      # the other formats
+      @test !occursin("name=\"qsts_mode_choice\"", plain_page)
+      @test !occursin("name=\"matpower_import_ratio\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=$(series)"; output_root = root, runtime = rt).body))
+
+      # the POST of the form: the select names the mode, the button marks the run
+      form = Dict{String,Any}("casefile" => series, "config_file" => config_path, "qsts_mode_choice" => "sequential", "qsts_mode" => "sequential")
+      response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", form; output_root = root, runtime = rt)
+      @test response.status == 303
+      run_id = basename(only(h.second for h in response.headers if h.first == "Location"))
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[run_id]["task"])
+      result = get_powerflow_result(run_id)
+      @test result["success"] === true
+      md = result["metadata"]
+      @test md["run_mode"] == "qsts"
+      @test md["qsts_mode"] == "sequential"
+      # staged with its companion, and run.log names it
+      @test isfile(joinpath(casedir, "sp_case14_day.control.yaml"))
+      od = result["output_dir"]
+      @test occursin("control section from sp_case14_day.control.yaml", read(joinpath(od, "run.log"), String))
+      for f in ("qsts_values.csv", "qsts_steps.csv", "qsts_elements.csv", "qsts_switching.csv", "qsts_metrics.csv", "qsts_manifest.json", "qsts_view.json", "qsts_overview.html")
+        @test isfile(joinpath(od, f))
+      end
+      # one SVG per element; the first controller's chart has a point per solved step
+      n_solved = count(l -> occursin(",solved,", l), eachline(joinpath(od, "qsts_steps.csv")))
+      @test n_solved == md["qsts_solved"] > 0
+      default_chart = md["qsts_default_charts"][1]
+      view = Sparlectra.scf_json_parse(read(joinpath(od, "qsts_view.json"), String))
+      ctl = only(el for el in view["elements"] if el["id"] == default_chart[1])
+      @test ctl["kind"] == "controller" && default_chart[2] == "position"
+      svg_text = read(joinpath(od, ctl["plot"]), String)
+      @test count("<circle", svg_text) == n_solved
+      @test count(el -> haskey(el, "plot"), view["elements"]) == md["qsts_plots"] == length(readdir(joinpath(od, "qsts_plots")))
+      # the chart route draws the bytes of the service's SVG
+      chart = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(run_id)/qsts-chart?element=$(SparlectraApp._webui_urlencode(ctl["id"]))&quantity=position"; output_root = root, runtime = rt)
+      @test chart.status == 200
+      @test any(h -> h.first == "Content-Type" && startswith(h.second, "image/svg+xml"), chart.headers)
+      @test String(chart.body) == svg_text
+      @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(run_id)/qsts-chart?element=nobody&quantity=vm_pu"; output_root = root, runtime = rt).status == 400
+      # the result page: the summary row and the inline chart
+      result_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(run_id)"; output_root = root, runtime = rt).body)
+      @test occursin("QSTS result", result_page)
+      @test occursin("data-qsts-chart", result_page) && occursin("<svg", result_page)
+      # the overview link of the result page opens the overview itself as
+      # text/html, not its source in a text panel, and every chart it embeds
+      # resolves relative to it, the way the browser resolves <object data>
+      overview_href = match(r"href=\"([^\"]*/qsts_overview\.html)\"", result_page)
+      @test overview_href !== nothing
+      overview = SparlectraApp.route_sparlectra_webui("GET", overview_href[1]; output_root = root, runtime = rt)
+      @test overview.status == 200
+      @test any(h -> h.first == "Content-Type" && startswith(h.second, "text/html"), overview.headers)
+      # the page policy blocks script, but has to let the charts load:
+      # Chromium checks an <object> document against frame-src
+      policy = only(h.second for h in overview.headers if h.first == "Content-Security-Policy")
+      directives = Dict(String(p[1]) => String.(p[2:end]) for p in (split(strip(d)) for d in split(policy, ';')) if !isempty(p))
+      @test "'self'" in get(directives, "frame-src", String[]) && "'self'" in get(directives, "object-src", String[])
+      @test !haskey(directives, "script-src") && get(directives, "default-src", String[]) == ["'none'"]
+      # String(bytes) takes the vector over, so the body is read once
+      overview_text = String(overview.body)
+      # the response adds a link bar after <body> (the app window has no
+      # back button); without it the document is the file on disk
+      @test occursin("href=\"/powerflow/result/$(run_id)\"", overview_text)
+      @test occursin("href=\"/powerflow/artifacts/$(run_id)\"", overview_text)
+      @test replace(overview_text, r"<nav class=\"artifact-back\".*?</nav>" => "") == read(joinpath(od, "qsts_overview.html"), String)
+      plot_refs = [m[1] for m in eachmatch(r"<object type=\"image/svg\+xml\" data=\"([^\"]+)\"", overview_text)]
+      @test length(plot_refs) == md["qsts_plots"]
+      overview_base = overview_href[1][1:findlast('/', overview_href[1])]
+      plot_responses = [SparlectraApp.route_sparlectra_webui("GET", overview_base * ref; output_root = root, runtime = rt) for ref in plot_refs]
+      @test all(r -> r.status == 200 && any(h -> h.first == "Content-Type" && startswith(h.second, "image/svg+xml"), r.headers), plot_responses)
+      # a chart opened from the artifact list is a Web UI page with a way
+      # back; the bare route (no page=1) stays the SVG the overview embeds
+      list_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/artifacts/$(run_id)"; output_root = root, runtime = rt).body)
+      svg_links = [m[1] for m in eachmatch(r"href=\"(/powerflow/artifact/[^\"]*\.svg[^\"]*)\"", list_html)]
+      @test length(svg_links) == md["qsts_plots"]
+      @test all(l -> endswith(l, "?page=1"), svg_links)
+      chart_page = SparlectraApp.route_sparlectra_webui("GET", first(svg_links); output_root = root, runtime = rt)
+      @test chart_page.status == 200
+      @test any(h -> h.first == "Content-Type" && startswith(h.second, "text/html"), chart_page.headers)
+      chart_html = String(chart_page.body)
+      bare_href = first(svg_links)[1:(end - length("?page=1"))]
+      @test occursin("href=\"/powerflow/artifacts/$(run_id)\"", chart_html)
+      @test occursin("<object type=\"image/svg+xml\" data=\"$(bare_href)\"", chart_html)
+      bare = SparlectraApp.route_sparlectra_webui("GET", bare_href; output_root = root, runtime = rt)
+      @test bare.status == 200 && any(h -> h.first == "Content-Type" && startswith(h.second, "image/svg+xml"), bare.headers)
+      @test startswith(lstrip(String(bare.body)), "<")  && !occursin("<html", String(bare.body))
+      # a QSTS run writes no bus or branch CSV of a single power flow: the
+      # operation log names the detailed CSV export skipped, never failed
+      csv_events = [l for l in eachline(SparlectraApp.webui_operation_log_path(root)) if occursin(run_id, l) && occursin("\"event\":\"detailed_result_csv_export", l)]
+      @test any(l -> occursin("\"event\":\"detailed_result_csv_export_skipped\"", l), csv_events)
+      @test !any(l -> occursin("\"event\":\"detailed_result_csv_export_failed\"", l), csv_events)
+      @test get(md, "qsts_controls_used", nothing) === true
+
+      # mode A without qsts.snapshot_controls: the companion file is there,
+      # but its controllers are not used, and the result page says so
+      snap_form = Dict{String,Any}("casefile" => series, "config_file" => config_path, "qsts_mode_choice" => "snapshots", "qsts_mode" => "snapshots")
+      snap_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", snap_form; output_root = root, runtime = rt)
+      snap_id = basename(only(h.second for h in snap_response.headers if h.first == "Location"))
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[snap_id]["task"])
+      snap_md = get_powerflow_result(snap_id)["metadata"]
+      @test snap_md["qsts_mode"] == "snapshots" && snap_md["qsts_control_file"] == "sp_case14_day.control.yaml"
+      @test get(snap_md, "qsts_controls_used", nothing) === false
+      snap_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(snap_id)"; output_root = root, runtime = rt).body)
+      @test occursin("are not used", snap_page) && !occursin("Controllers from", snap_page)
+
+      # a request with qsts_mode on a case without a series is refused by name
+      plain_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => config_path, "qsts_mode" => "sequential")
+      plain_response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", plain_form; output_root = root, runtime = rt)
+      plain_id = basename(only(h.second for h in plain_response.headers if h.first == "Location"))
+      wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[plain_id]["task"])
+      plain_result = get_powerflow_result(plain_id)
+      @test plain_result["success"] === false
+      @test plain_result["reason"] == "qsts_no_series"
+    end
+  end)() end
   return nothing
 end
 

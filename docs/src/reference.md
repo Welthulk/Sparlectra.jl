@@ -12,11 +12,12 @@ that directory.
 - [DC Power Flow](reference_powerflow_dc.md): the linear DC approximation
 - [Short Circuit](reference_shortcircuit.md): IEC 60909 short-circuit calculation
 - [Format Adapters](reference_adapters.md): MATPOWER, DTF, PowSyBl, PGM, and the Sparlectra Case Format
-- [CGMES Adapter](reference_cgmes.md): CGMES import and export
+- [CGMES Adapter](reference_cgmes.md): CGMES import, export, series check and union
 - [State Estimation and Measurements](reference_stateestimation.md): WLS estimator, measurement model, tap estimation
 - [Configuration Internals](reference_config.md): configuration loading and YAML handling
 - [Controllers](reference_controller.md): the control framework and its controllers
 - [APSLF Bridge](reference_apslf.md): the AnalyticLoadFlow solver bridge
 - [Shared Numerics](reference_numerics.md): condition-number and sparse-inverse utilities
 - [Contingency](reference_contingency.md): N-1/N-k contingency analysis
+- [QSTS](reference_qsts.md): SCF time series and QSTS snapshot runs
 - [Synthetic Grids](reference_synthetic.md): generated tiled test networks

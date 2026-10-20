@@ -414,7 +414,8 @@ writeMatpowerCasefile(net, filepath)                          # configuration de
 | `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). An auxiliary bus (three-winding star point) gets the value of the solver's flat start instead, the voltage at which its stiffest winding carries no current; read back, a bus listed in `mpc.sparlectra.aux_buses` stays auxiliary. |
 
 A unit without an active-power limit is written with `Pmax = 9999` and
-`Pmin = -9999`, the MATPOWER convention for an unlimited unit. The reactive
+`Pmin = -9999`, the MATPOWER convention for an unlimited unit; the CGMES
+import reads limits of 9999 MW and above as no limit as well. The reactive
 limits of a unit without them stay at `±baseMVA`.
 
 Sparlectra writes no OPF columns 18-21. Exported `.m` files with

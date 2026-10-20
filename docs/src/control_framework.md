@@ -87,6 +87,11 @@ Controllers with the same number act together, so the default (all 0) is
 the loop without ranks. Unlike `referencePriority` of a machine, 0 is a
 rank here (the first), not "no preference".
 
+A locked controller (the dead time of a sequential [QSTS](qsts.md) run)
+stays in its rank and is evaluated, but moves nothing. While it stands
+outside its band and not at its limit it holds the larger numbers; in its
+band or at its limit they act.
+
 A controller is at its limit when its actuator stands at the end of its
 range:
 
@@ -131,7 +136,8 @@ takes over. A ratio outside the range goes onto its nearer end in the
 first pass, whatever the voltage error; until then the controller does
 not count as converged. The move logs a warning with the transformer, its
 start ratio and step, the limit and the ratio it goes to, once per
-controller and run. The entry below sets the range of the controller the case file puts
+controller and run; a QSTS run over its base case and all steps is one
+run. The entry below sets the range of the controller the case file puts
 on `T1`; on a transformer without a controller the entry adds one and
 needs `target_bus` and `target_vm_pu` as well:
 

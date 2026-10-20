@@ -176,7 +176,7 @@ same transformer model without controllers.
 | Machine-readable report (`ACPFlowReport`) | ✅ | DataFrame-friendly rows for buses, branches, links, transformer controls, Q-limit events and HVDC links. |
 | GUI-ready programmatic run API | ✅ | `run_sparlectra_api` with stable run IDs, schema-versioned status, controlled overrides and artifact discovery. [Programmatic API](programmatic_api.md). |
 | Local PowerFlow service boundary | ✅ | `start_powerflow_run`, persistent run index, restart recovery, result lookup and safe artifact resolution, no HTTP dependency. [Local PowerFlow Service](powerflow_service.md). |
-| Local browser Web UI | ✅ | Case management, run forms with contextual help, run history, artifact viewing and the state-estimation section. Scope: loopback only, no authentication, no public deployment mode. [Web UI](webui.md). |
+| Local browser Web UI | ✅ | Case management, run forms with contextual help, run history, artifact viewing, the state-estimation section and QSTS runs on an SCF time series with a time series chart. Scope: loopback only, no authentication, no public deployment mode. [Web UI](webui.md). |
 
 ## Useful links
 

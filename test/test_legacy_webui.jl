@@ -315,6 +315,15 @@ function run_legacy_webui_tests()
             rm(qtbl)
             # neither CSV appears in the case selector
             @test !any(endswith(name, ".csv") for name in SparlectraApp._webui_casefile_options_in_directory(cases))
+            # an uploaded SCF time series zip is named a series, not read as a
+            # CGMES delivery (it gave "unreadable CGMES delivery" before), and
+            # it is offered in the case selector
+            series_zip = joinpath(dirname(@__DIR__), "data", "qsts", "sp_case14_day.qsts.zip")
+            upz = SparlectraApp.handle_powerflow_case_import(Dict{String,Any}("casefiles" => [SparlectraApp.WebUICaseUpload("day.qsts.zip", read(series_zip))]); output_root=root, case_directory=cases, operation_log=root)
+            locz = SparlectraApp._webui_urldecode(first(p for (k, p) in upz.headers if k == "Location"))
+            @test occursin("scf_time_series", locz)
+            @test !occursin("CGMES", locz)
+            @test "day.qsts.zip" in SparlectraApp._webui_casefile_options_in_directory(cases)
             # traversal names still rejected by the shared upload checks
             bad = SparlectraApp.handle_powerflow_case_import(Dict{String,Any}("casefiles" => [SparlectraApp.WebUICaseUpload("../evil.csv", bytes(v1))]); output_root=root, case_directory=cases, operation_log=root)
             @test bad.status == 303   # redirect with the rejection message

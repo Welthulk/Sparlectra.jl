@@ -286,7 +286,9 @@ end # writeBusData
 
 # Pmax and Pmin written for a unit without an active-power limit: the
 # MATPOWER convention for "unlimited" (case files carry 9999). Before, such a
-# unit got +-baseMVA, which binds a unit that produces more than baseMVA.
+# unit got +-baseMVA, which binds a unit that produces more than baseMVA. The
+# CGMES import reads 9999 MW and above as no limit (SC_PMAX_PLACEHOLDER_MW),
+# so a round trip keeps "no limit".
 const _MATPOWER_UNLIMITED_P_MW = 9999.0
 
 function writeGeneratorData(sb_mva::Float64, NodeDict::Dict{Int,Node}, ProSumVec::Vector{ProSumer}, file, hasPVBus::Bool, slackIdx::Int, vgSlack::Float64; solved::Bool = true)

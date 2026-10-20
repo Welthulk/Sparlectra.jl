@@ -62,6 +62,7 @@ mutable struct ShuntVoltageControl <: AbstractOuterController
   max_outer_iters::Int
   enabled::Bool
   priority::Int                       # rank in the outer loop, 0 acts first (control_priority)
+  locked::Bool                        # dead time of a sequential QSTS run (run_control!)
   status::Symbol
   converged::Bool
   at_limit::Bool
@@ -213,6 +214,7 @@ function addShuntVoltageControl!(
     max_outer_iters,
     enabled,
     priority,
+    false,
     :idle,
     false,
     false,
@@ -255,9 +257,9 @@ end
 
 # The one write path of the bank susceptance: the shunt element (MATPOWER
 # stamping convention of addShuntMatpower!, y_pu = (Gs + jBs)/baseMVA) and
-# the actuator value of the controller. control_apply_update! and the
-# take-over of an imported shunt in addShuntVoltageControl! both write
-# through it.
+# the actuator value of the controller. control_apply_update!, the
+# take-over of an imported shunt in addShuntVoltageControl! and the carry of
+# a sequential QSTS run (qsts_sequential.jl) all write through it.
 function _set_shunt_susceptance!(net::Net, ctrl::ShuntVoltageControl, bs_mvar::Float64)
   sh = _find_controlled_shunt(net, ctrl)
   sh.y_pu_shunt = ComplexF64(0.0, bs_mvar) / net.baseMVA

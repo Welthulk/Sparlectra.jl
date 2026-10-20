@@ -39,6 +39,8 @@ function _artifact_kind(path::AbstractString)::Symbol
   ext == ".csv" && return :csv
   ext in (".yaml", ".yml") && return :config
   ext in (".txt", ".md", ".html", ".htm", ".pdf") && return :report
+  # the charts of a QSTS run (qsts_plots/)
+  ext == ".svg" && return :chart
   return :other
 end
 
@@ -54,6 +56,7 @@ function _artifact_mime_type(path::AbstractString)::String
   ext == ".md" && return "text/markdown"
   ext in (".html", ".htm") && return "text/html"
   ext == ".pdf" && return "application/pdf"
+  ext == ".svg" && return "image/svg+xml"
   return "application/octet-stream"
 end
 
@@ -70,6 +73,7 @@ function _artifact_description(kind::Symbol, name::String)::String
   kind === :result_json && return "Serialized Sparlectra API result"
   kind === :csv && return "Generated CSV output"
   kind === :report && return "Generated report"
+  kind === :chart && return "Time series chart (SVG)"
   kind === :config && return "Configuration artifact"
   kind === :effective_config && return "Effective configuration used for this run"
   kind === :run_metadata && return "Runtime request and lifecycle metadata for this run"
@@ -80,7 +84,7 @@ end
 ## the run directory with "/" between the parts on every OS. relpath joins the
 ## parts with the OS separator, a backslash on Windows, and
 ## resolve_powerflow_artifact rejects every name with a backslash, so a chart
-## under plots/ would not load there. `separator` defaults to the OS
+## under qsts_plots/ would not load there. `separator` defaults to the OS
 ## separator; a test passes "\\" to check the Windows form on any machine.
 function _artifact_name_from_relpath(relative::AbstractString, separator::AbstractString = Base.Filesystem.path_separator)::String
   return replace(String(relative), separator => "/")

@@ -8,6 +8,8 @@ configurations (package CASv2.0, `SmallGrid/NodeBreaker`):
 
 The test suite uses them as the network of the synthetic measurement
 fixture `test/fixtures/measurements/smallgrid_synthetic.table.csv`
-(built by `tools/gen_smallgrid_measurements.jl`) and in the CGMES importer
-tests (`element_by_mrid`, import from a loaded store). This is the one
-ENTSO-E package checked into the repository.
+(built by `tools/gen_smallgrid_measurements.jl`), in the CGMES importer
+tests (`element_by_mrid`, import from a loaded store) and in the snapshot
+series tests (`test/test_cgmes_series.jl`, and `test/test_cgmes_ssh_series.jl`,
+which builds a 96-step series with `tools/cgmes_ssh_series.jl`). This is the
+one ENTSO-E package checked into the repository.

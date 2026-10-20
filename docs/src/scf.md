@@ -126,6 +126,29 @@ cost row (`MODEL`, `STARTUP`, `SHUTDOWN`, `NCOST`, then points or
 coefficients), `q` optional. No calculation reads them; a MATPOWER export
 writes the block back unchanged ([Generator costs](@ref matpower_gencost)).
 
+### [Dynamic unit data](@id scf_dynamics)
+
+Since revision 1.3 a machine can carry its [`DynamicData`](@ref) as
+`extra.<machine>.dynamics`, one key per field under the field name. A
+field at `nothing` is left out, the fields with a numeric default are
+written with their value, `unit_type` is `"synchronous"`,
+`"grid_following"` or `"grid_forming"`:
+
+```json
+"dynamics": {"inertia_s": 4.25, "damping_pu": 0.0, "droop_pu": 0.05,
+             "deadband_hz": 0.0, "primary_reserve_mw": 0.0,
+             "agc_participation": 0.0, "secondary_reserve_mw": 0.0,
+             "unit_type": "synchronous", "black_start": false}
+```
+
+A machine without dynamic data has no block, and a case without any writes
+the bytes it wrote before. On read a missing key takes the default of
+[Dynamic Unit Data](@ref dynamic_data), a missing `unit_type` follows the
+inertia. An unknown key, a value of the wrong type or a value against the
+rules of its field fails with an `ArgumentError` naming the machine and the
+key. Write and read keep every value bit for bit. No calculation reads the
+block.
+
 ## Importers and the typed case
 
 Every importer builds its network directly (an SCF file through
@@ -232,6 +255,7 @@ keeps every attribute PGM requires.
 | `extra.<machine>.regulated`, `apu_node` | `false` | |
 | `extra.<machine>.reference_priority` | `0` | no reference priority stated |
 | `extra.<machine>.gencost` | absent | no generator cost data |
+| `extra.<machine>.dynamics` | absent | no dynamic data (`ProSumer.dynamics = nothing`) |
 | `extra.<branch>.meta.sn_mva` | absent | no rating recorded |
 | `components.tap_changer[].tap_est_mode` | `"none"` | the tap is not released for estimation |
 | `components.tap_changer[].controllers[].grid` | `"fraction"` | ratio positions on the cascade fraction grid; `"linear"` for a CGMES changer |
@@ -283,7 +307,7 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 
 | Key | Content |
 |---|---|
-| `format_version` | schema version of the block (`1.2`) |
+| `format_version` | schema version of the block (`1.3`) |
 | `meta` | case name, `s_base` in VA, `f_nom` (system frequency in Hz, optional; the writer always states the frequency of the net; on read it sets the frequency of the net and wins over `model.nominal_frequency_hz`, which applies only when `f_nom` is absent, default 50 Hz; a value that is not a positive number is an `ArgumentError` naming `meta.f_nom`; see [System frequency](@ref system_frequency)), source format and reference, producer, and `intended_calculations` as the file's contract |
 | `roles` | what PGM cannot express: `slack.mode` (`single`, `distributed`, `source`) with its nodes or participation factors, auxiliary nodes, isolated nodes |
 | `extra` | per-component annotations keyed by id: `name` (the reference name every other section resolves against), `external_id` (CGMES mRID, MATPOWER index), bus/branch index, node type, ratings |
@@ -504,7 +528,7 @@ the measurement vector (the WLS objective sums in that order):
 | `value` | in kV (`U`), MW, MVAr, A or degrees; written only where the sensor value would not read back bit for bit, and always for a shunt-bay row |
 | `sigma` | in the same unit |
 | `valid` | `false` for an inactive measurement; absent means `true` |
-| `zero_injection` | `true` for a zero-injection row (a `P` or `Q` balance at a node, the source token `zero_injection` of the table); absent means `false`. In 1.2 the id decides nothing; a 1.0 file marks such a row only by the id `ZI_PINJ_bus_<k>` / `ZI_QINJ_bus_<k>` with value 0, and the reader keeps that rule for 1.0 |
+| `zero_injection` | `true` for a zero-injection row (a `P` or `Q` balance at a node, the source token `zero_injection` of the table); absent means `false`. From 1.2 on the id decides nothing; a 1.0 file marks such a row only by the id `ZI_PINJ_bus_<k>` / `ZI_QINJ_bus_<k>` with value 0, and the reader keeps that rule for 1.0 |
 
 Units carry no base, as in the table: only `U` is divided by the rated
 voltage of the node (`u_rated` / 1000) on reading. A `U` value or sigma
@@ -554,6 +578,13 @@ whenever the network carries them. Its `sym_current_sensor` rows are read
 in A, as PGM defines them (`i_measured = 50.0` is 50 A); before 0.50.0
 Sparlectra divided them by 1000.
 
+## Time series
+
+A time series on a case file is a zip with the unchanged case, a manifest
+and one table of patch operations for all steps; see
+[SCF time series](@ref scf_time_series). The case file has no series
+block.
+
 ## Version and compatibility
 
 `sparlectra.format_version` is always written with the current revision.
@@ -564,7 +595,8 @@ version that wrote it.
 
 | SCF revision | Reader behaviour |
 |---|---|
-| `1.2` | the current revision: accepted, written by every export. Current sensors carry A, `measurements.rows` follows the measurement table |
+| `1.3` | the current revision: accepted, written by every export. Adds the optional block `extra.<machine>.dynamics` ([Dynamic unit data](@ref scf_dynamics)) |
+| `1.2` | accepted and read as written: it differs from 1.3 only by the missing `dynamics` block. Current sensors carry A, `measurements.rows` follows the measurement table |
 | `1.0` | accepted; its `i_measured` and `i_sigma` are 1000 times too large and are divided by 1000 on reading, giving the value that was exported; its `measurements.rows` (one entry per sensor with `sparlectra_ids`, `sigmas`, `positions`) and `measurements.shunt_bay_rows` are read as before |
 | `1.1` | the pre-release name of `1.0`: read as `1.0` with an info message asking for a re-export |
 | any other value | refused by name, stating what it found, what it expected, and that the case has to be re-exported |

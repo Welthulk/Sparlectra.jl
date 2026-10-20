@@ -1084,6 +1084,10 @@ function _webui_case_context(;
   # the scenario gate is a NAMING convention, not format detection: only the
   # canonical <case>.scf.json name carries an editable scenarios block
   scen_is_scf = endswith(lowercase(String(selected_casefile)), ".scf.json")
+  # the QSTS button runs an SCF time series only; the format hint read the
+  # content (_detect_case_format), so a renamed series qualifies and a
+  # CGMES zip does not
+  qsts_state = format_hint === :scf_series ? "series" : "no-series"
   # A saved case_format that contradicts the case file is not applied (see
   # _webui_case_form_defaults), and the page says so where the format is
   # chosen; otherwise the user would have to open the case configuration
@@ -1101,16 +1105,20 @@ function _webui_case_context(;
   option_format = _webui_case_option_format(effective_case_value, case_format_value, format_hint)
   # the frequency select renders for every format; only the SCF/PGM import
   # reads the key (line c1), the other formats get it disabled, and so does
-  # an SCF file that states its own meta.f_nom (the file wins on import)
+  # an SCF file that states its own meta.f_nom (the file wins on import).
+  # An SCF time series reads its base case through the same import; its
+  # meta.f_nom inside the zip is not looked at here.
   case_frequency = option_format === :scf ? _webui_case_file_frequency(effective_case_value, effective_case_directory; application_root) : nothing
-  frequency_applies = (option_format === nothing || option_format === :scf) && case_frequency === nothing
-  return (; profile_values, profile_path, profile_notice, case_file_notice, case_format_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf, option_format, frequency_applies, case_frequency)
+  frequency_applies = (option_format === nothing || option_format in (:scf, :scf_series)) && case_frequency === nothing
+  return (; profile_values, profile_path, profile_notice, case_file_notice, case_format_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf, qsts_state, option_format, frequency_applies, case_frequency)
 end
 
 # The case format that decides which format-bound options a page renders:
 # the format chosen in the selector when it names one, else the detected
 # format, else the extension of a case that resolves to no file yet.
-# nothing (no case, or a name that says nothing) renders every option.
+# nothing (no case, or a name that says nothing) renders every option. An
+# SCF time series (:scf_series, detected by content) is a format of its own:
+# its base case reads like an SCF file, and only it reads the QSTS options.
 function _webui_case_option_format(case_value::AbstractString, case_format_value, format_hint::Symbol)::Union{Nothing,Symbol}
   value = strip(String(case_value))
   isempty(value) && return nothing
@@ -1118,7 +1126,7 @@ function _webui_case_option_format(case_value::AbstractString, case_format_value
   chosen in ("matpower", "dtf_for001", "cgmes", "powsybl") && return Symbol(chosen)
   # scf and pgm name the same reader
   chosen in ("scf", "pgm") && return :scf
-  format_hint in (:matpower, :dtf_for001, :cgmes, :powsybl, :scf) && return format_hint
+  format_hint in (:matpower, :dtf_for001, :cgmes, :powsybl, :scf, :scf_series) && return format_hint
   ext = lowercase(splitext(value)[2])
   ext in (".m", ".jl") && return :matpower
   ext == ".json" && return :scf
@@ -1224,7 +1232,11 @@ document.addEventListener('DOMContentLoaded', function () {
     // client-side CGMES markers mirror the server heuristic where the browser
     // can: explicit cgmes: alias input or a .zip delivery (directory paths
     // resolve server-side only)
-    const isCgmesCase = new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue);
+    // an SCF time series is a zip as well; the server read the content of
+    // the case the page was rendered for (data-format-hint), so that case
+    // is no CGMES delivery whatever the extension says
+    const isSeriesCase = caseInput !== null && caseInput.getAttribute('data-format-hint') === 'scf_series' && effectiveValue === caseInputInitial;
+    const isCgmesCase = !isSeriesCase && (new RegExp('^cgmes:', 'i').test(effectiveValue) || new RegExp('\\\\.zip\$', 'i').test(effectiveValue));
     const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm)\$', 'i').test(effectiveValue);
     if (caseFormat !== null) {
       // Auto-set formats must fall BACK to auto when the typed case stops
@@ -1512,7 +1524,8 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
 # file records the model of each shunt); model.tap_changer_model in the
 # MATPOWER and DTF builds; cgmes_import.* and powsybl_import.* in their own
 # adapters; the DTF outage run fields only on the DTF branch of the run
-# (api/run_api.jl). matpower_export.write_solution and the MATPOWER export
+# (api/run_api.jl); the QSTS mode of the Runs page only on an SCF time
+# series (api/run_qsts_service.jl). matpower_export.write_solution and the MATPOWER export
 # artifact act on every format. The system frequency renders for every
 # format and is disabled where the format does not read it
 # (frequency_applies of _webui_case_context).
@@ -1536,6 +1549,7 @@ const _WEBUI_FIELD_CASE_FORMATS = Dict{String,Vector{Symbol}}(
   "matpower_import_apply_bus_names" => [:matpower],
   "matpower_import_bus_shunt_model" => [:matpower, :dtf_for001, :cgmes],
   "transformer_tap_changer_model" => [:matpower, :dtf_for001],
+  "qsts_mode_choice" => [:scf_series],
 )
 
 # the DTF outage run on the Runs page (request fields, not configuration):
@@ -1762,7 +1776,7 @@ function render_case_page(;
     label = has_settings ? "$(casefile) ★" : casefile
     "<li role=\"option\" data-case-option=\"$(_webui_escape(casefile))\" title=\"Right-click to delete this case from the case directory\">$(_webui_escape(label))</li>"
   end for casefile in ctx.casefiles), "")
-  case_input = "<span class=\"case-combobox\" data-case-combobox><input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(_webui_escape(effective_case_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\"><button type=\"button\" id=\"case-combobox-toggle\" class=\"case-combobox-toggle\" aria-label=\"Show available cases\" tabindex=\"-1\">&#9662;</button><ul id=\"case-combobox-list\" class=\"case-combobox-list\" role=\"listbox\" hidden>$(case_options)</ul></span>"
+  case_input = "<span class=\"case-combobox\" data-case-combobox><input id=\"casefile\" name=\"casefile\" autocomplete=\"off\" spellcheck=\"false\" role=\"combobox\" aria-expanded=\"false\" aria-controls=\"case-combobox-list\" data-case-settings-reload=\"true\" value=\"$(_webui_escape(effective_case_value))\" placeholder=\"case14.m or /path/to/FOR001.DAT\" data-format-hint=\"$(ctx.format_hint)\"><button type=\"button\" id=\"case-combobox-toggle\" class=\"case-combobox-toggle\" aria-label=\"Show available cases\" tabindex=\"-1\">&#9662;</button><ul id=\"case-combobox-list\" class=\"case-combobox-list\" role=\"listbox\" hidden>$(case_options)</ul></span>"
   config_default = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   info_menu = _webui_powerflow_info_menu(; output_root, config_file = config_default, case_directory = effective_case_directory, operation_log)
   import_form = """
@@ -2419,6 +2433,19 @@ function render_powerflow_form(;
   scen_loaded = scen_is_scf ? _webui_load_case_scenarios(basename(String(effective_case_value)), effective_case_directory) : nothing
   scen_button_html = _webui_scenarios_runnable(scen_loaded) ?
     "<button class=\"powerflow-submit scenarios-submit\" type=\"submit\" name=\"scenario_run\" value=\"true\" data-scenarios-button title=\"Run the scenarios of the case file (its scenarios block) and nothing else.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Scenarios</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running scenarios...</span></button>" : ""
+  # the QSTS button (26a): enabled for an SCF time series only. A disabled
+  # button is never the submitter, so its qsts_mode never reaches the
+  # server; the mode select next to it is read only when the button posts
+  qsts_ready = ctx.qsts_state == "series"
+  qsts_title = qsts_ready ? "QSTS: run the time series step by step (sequential: taps and banks carried from step to step; snapshots: every step on its own). The controllers come from <series>.control.yaml next to the series." :
+    "QSTS needs an SCF time series (a .qsts.zip with series.json, base.scf.json and delta.csv); the selected case is none."
+  # the mode select is format-bound (_WEBUI_FIELD_CASE_FORMATS): it renders
+  # for a series only; elsewhere the disabled button's title names the reason
+  qsts_mode_html = _webui_field_applies("qsts_mode_choice", ctx.option_format) ?
+    "<label class=\"qsts-mode\" title=\"QSTS mode for this run; the configuration keeps qsts.mode.\">QSTS mode <select name=\"qsts_mode_choice\" data-qsts-mode><option value=\"sequential\">sequential</option><option value=\"snapshots\">snapshots</option></select></label>" : ""
+  qsts_html = string(qsts_mode_html,
+    "<button class=\"powerflow-submit qsts-submit\" type=\"submit\" name=\"qsts_mode\" value=\"sequential\" data-qsts-button data-qsts-state=\"", ctx.qsts_state, "\"", qsts_ready ? "" : " disabled",
+    " title=\"", _webui_escape(qsts_title), "\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">QSTS</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running QSTS...</span></button>")
   scen_editor_html = scen_is_scf ?
     "<a class=\"weights-link scenario-editor-link\" href=\"/powerflow/scenarios?case=$(_webui_urlencode(selected_casefile))\" title=\"Edit the case file's scenarios block (list plus form; saved into the SCF file)\">edit scenarios</a>" :
     "<span class=\"field-hint scenario-scf-hint\">Scenarios need an SCF case; export this case as SCF first (Case export above).</span>"
@@ -2461,7 +2488,7 @@ $(dtf_outage_html)
 <label class="check"><input name="matpower_export_requested" type="hidden" value="false"><input name="matpower_export_requested" type="checkbox" value="true">Write MATPOWER export artifact</label>
 $(dtf_outage_note)
 </details>
-<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Diagnostic mode: evaluate the mismatch at the case's own stored VM/VA without a corrective Newton step and write the report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button><label class=\"contingency-kind\">N-1 kind <select name=\"contingency_kind\" data-contingency-kind><option value=\"branch\">branch</option><option value=\"gen\">generator</option></select></label><label class=\"scenario-source\" title=\"Which outages the N-1 run takes: the N-1 kind, or all branches, branches or generators.\">N-1 list <select name=\"scenario_source\" data-scenario-source><option value=\"\">generated (N-1 kind)</option><option value=\"n1_all\">N-1 all</option><option value=\"n1_branches\">N-1 branches</option><option value=\"n1_generators\">N-1 generators</option></select></label><label class=\"screening-mode\" title=\"Contingency screening on the base factorization: off (default) runs every scenario fully, flag solves only flagged scenarios fully, only reports estimates.\">Screening <select name=\"screening_mode\" data-screening-mode><option value=\"\">configured</option><option value=\"off\">off</option><option value=\"flag\">flag</option><option value=\"only\">only</option></select></label><label class=\"screening-margin\" title=\"Margin in percent (empty means configured, default 10): flag when an estimated loading reaches 100 minus margin or a voltage comes within margin of a limit.\">Margin % <input name=\"screening_margin_pct\" type=\"number\" step=\"any\" min=\"0\" class=\"screening-margin-input\" placeholder=\"cfg\"></label>$(scen_editor_html)<a class=\"weights-link\" href=\"/powerflow/contingency-weights?case=$(_webui_urlencode(selected_casefile))\" title=\"Upload or edit the per-case N-1 weight list\">edit N-1 weights</a><button class=\"powerflow-submit contingency-submit\" type=\"submit\" name=\"contingency_mode\" value=\"true\" data-contingency-button title=\"N-1 analysis: take each in-service branch or generator out one at a time and report convergence, overloads, voltage violations, load shed and severity.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Contingency (N-1)</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running N-1...</span></button>$(scen_button_html)</div></form>
+<div class=\"span-2 actions\"><button class=\"powerflow-submit\" type=\"submit\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Start PowerFlow run</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running PowerFlow…</span></button><button class=\"powerflow-submit diagnose-submit\" type=\"submit\" name=\"diagnose_mode\" value=\"true\" title=\"Diagnostic mode: evaluate the mismatch at the case's own stored VM/VA without a corrective Newton step and write the report to diagnose.log.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Diagnose</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running diagnosis…</span></button><button class=\"powerflow-submit short-circuit-submit\" type=\"submit\" name=\"short_circuit_mode\" value=\"true\" data-short-circuit-button data-sc-state=\"$(sc_state)\"$(sc_disabled_attr) title=\"$(_webui_escape(sc_title))\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Short circuit</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Computing short circuit…</span></button><label class=\"contingency-kind\">N-1 kind <select name=\"contingency_kind\" data-contingency-kind><option value=\"branch\">branch</option><option value=\"gen\">generator</option></select></label><label class=\"scenario-source\" title=\"Which outages the N-1 run takes: the N-1 kind, or all branches, branches or generators.\">N-1 list <select name=\"scenario_source\" data-scenario-source><option value=\"\">generated (N-1 kind)</option><option value=\"n1_all\">N-1 all</option><option value=\"n1_branches\">N-1 branches</option><option value=\"n1_generators\">N-1 generators</option></select></label><label class=\"screening-mode\" title=\"Contingency screening on the base factorization: off (default) runs every scenario fully, flag solves only flagged scenarios fully, only reports estimates.\">Screening <select name=\"screening_mode\" data-screening-mode><option value=\"\">configured</option><option value=\"off\">off</option><option value=\"flag\">flag</option><option value=\"only\">only</option></select></label><label class=\"screening-margin\" title=\"Margin in percent (empty means configured, default 10): flag when an estimated loading reaches 100 minus margin or a voltage comes within margin of a limit.\">Margin % <input name=\"screening_margin_pct\" type=\"number\" step=\"any\" min=\"0\" class=\"screening-margin-input\" placeholder=\"cfg\"></label>$(scen_editor_html)<a class=\"weights-link\" href=\"/powerflow/contingency-weights?case=$(_webui_urlencode(selected_casefile))\" title=\"Upload or edit the per-case N-1 weight list\">edit N-1 weights</a><button class=\"powerflow-submit contingency-submit\" type=\"submit\" name=\"contingency_mode\" value=\"true\" data-contingency-button title=\"N-1 analysis: take each in-service branch or generator out one at a time and report convergence, overloads, voltage violations, load shed and severity.\"><span class=\"submit-spinner\" aria-hidden=\"true\"></span><span class=\"submit-label\">Contingency (N-1)</span><span class=\"submit-progress-label\" role=\"status\" aria-live=\"polite\">Running N-1...</span></button>$(qsts_html)$(scen_button_html)</div></form>
 <script>
 document.addEventListener('DOMContentLoaded', function () {
   const powerflowForm = document.getElementById('powerflow-run-form');
@@ -2512,9 +2539,9 @@ window.addEventListener('pageshow', function () {
   // re-enable after a back navigation, except a button the server rendered
   // disabled for this case: pageshow also fires on the first load, and
   // re-enabled every button there (Short circuit on a case without
-  // short-circuit data)
+  // short-circuit data, QSTS on a case without a series)
   form.querySelectorAll('button[type=submit]').forEach(function (b) {
-    b.disabled = b.hasAttribute('data-sc-state') && b.getAttribute('data-sc-state') !== 'ready';
+    b.disabled = (b.hasAttribute('data-sc-state') && b.getAttribute('data-sc-state') !== 'ready') || b.getAttribute('data-qsts-state') === 'no-series';
   });
   const staleSubmitterValue = form.querySelector('input[type="hidden"][data-submitter-value]');
   if (staleSubmitterValue !== null) staleSubmitterValue.remove();
@@ -3053,6 +3080,7 @@ function _webui_result_page_title(result::AbstractDict)::String
     return string(get(metadata, "contingency_cases_source", "")) == "scenario_file_block" ? "Scenarios result" : "N-1 contingency result"
   end
   mode == "import_analysis" && return "Import analysis result"
+  mode == "qsts" && return "QSTS result"
   mode == "diagnose" && return "Diagnostic result"
   return "PowerFlow result"
 end
@@ -3085,9 +3113,9 @@ function _webui_batch_progress_card(result::AbstractDict)
   total = get(result, "progress_total", nothing)
   done = get(result, "progress_done", nothing)
   (total isa Integer && done isa Integer && total > 0) || return nothing
-  scenarios = get(result, "progress_unit", "outages") == "scenarios"
-  label = scenarios ? "Scenarios done" : "Outages done"
-  text = scenarios ? "Scenarios: $(done) / $(total) scenarios" : "N-1: $(done) / $(total) outages"
+  unit = get(result, "progress_unit", "outages")
+  label = unit == "steps" ? "Steps done" : unit == "scenarios" ? "Scenarios done" : "Outages done"
+  text = unit == "steps" ? "QSTS: $(done) / $(total) steps" : unit == "scenarios" ? "Scenarios: $(done) / $(total) scenarios" : "N-1: $(done) / $(total) outages"
   return (label, "<strong id=\"batch-progress\" data-progress-done=\"$(done)\" data-progress-total=\"$(total)\">$(_webui_escape(text))</strong>")
 end
 
@@ -3143,6 +3171,8 @@ function render_powerflow_result(result::AbstractDict)::String
     ia_summary === nothing || push!(base, ("Import analysis", ia_summary))
     contingency_summary = _webui_contingency_summary(result)
     contingency_summary === nothing || push!(base, ("Contingency (N-1)", contingency_summary))
+    qsts_summary = _webui_qsts_summary(result)
+    qsts_summary === nothing || push!(base, ("QSTS", qsts_summary))
     cgmes_export_summary = _webui_cgmes_export_summary(result)
     cgmes_export_summary === nothing || push!(base, ("CGMES export", cgmes_export_summary))
     auto_summary = _webui_auto_mode_summary(result)
@@ -3184,6 +3214,7 @@ function render_powerflow_result(result::AbstractDict)::String
   se_topology_section = active ? "" : _webui_se_topology_section(result)
   se_chain_section = active ? "" : _webui_se_chain_section(result)
   n1_table_section = active ? "" : _webui_contingency_table_section(result)
+  qsts_section = active ? "" : _webui_qsts_section(result)
   metadata = get(result, "metadata", Dict{String,Any}())
   override_source = String(get(result, "config_override_source", get(metadata, "config_override_source", "")))
   runtime_notice = override_source == "user_yaml" ? "<div class=\"alert warning\"><strong>Web UI settings ignored.</strong> This run used YAML/default configuration values because the run was submitted with Web UI settings ignored.</div>" : ""
@@ -3191,7 +3222,7 @@ function render_powerflow_result(result::AbstractDict)::String
   # reads like a crashed power flow, and the residual it measured (which IS
   # the answer) looks like the symptom of one.
   diagnose_probe && (runtime_notice *= "<div class=\"alert info\"><strong>This is a diagnosis, not a solve.</strong> The self-check takes exactly one step from the case's own stored voltages (<code>max_iter = 1</code>, no rescue, Q-limit handling off), so a remaining residual is the RESULT and not a failure. The numbers below therefore show one iteration and a non-zero mismatch by design; <code>diagnose.log</code> names the worst bus and what to do about it.</div>")
-  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
+  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(qsts_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
 end
 
 # N-1 / scenario result table on the run result page: the browser must show WHICH case was
@@ -3281,6 +3312,141 @@ function _webui_contingency_table_section(result::AbstractDict)::String
   )
 end
 
+# a count or an energy of the QSTS metadata as text
+_webui_qsts_num(x) = x isa Real ? (isinteger(x) ? string(Int(x)) : string(round(Float64(x); sigdigits = 4))) : "n/a"
+
+# The summary row of a QSTS run on the result page: mode, solved and failed
+# steps, switches and hunting (sequential only), steps with a violation and
+# the loss energy, from the metadata the service wrote.
+function _webui_qsts_summary(result::AbstractDict)::Union{Nothing,String}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return nothing
+  get(metadata, "run_mode", "") == "qsts" || return nothing
+  haskey(metadata, "qsts_steps") || return nothing
+  mode = string(get(metadata, "qsts_mode", ""))
+  parts = String[string(mode, ": ", _webui_qsts_num(get(metadata, "qsts_solved", nothing)), "/", _webui_qsts_num(get(metadata, "qsts_steps", nothing)), " steps solved, ",
+                        _webui_qsts_num(get(metadata, "qsts_failed", nothing)), " failed")]
+  if mode == "sequential"
+    push!(parts, string(_webui_qsts_num(get(metadata, "qsts_switch_total", nothing)), " switches"))
+    push!(parts, string(_webui_qsts_num(get(metadata, "qsts_hunting_total", nothing)), " hunting"))
+  end
+  push!(parts, string(_webui_qsts_num(get(metadata, "qsts_violation_steps", nothing)), " steps with violations"))
+  loss = get(metadata, "qsts_loss_energy_mwh", nothing)
+  push!(parts, loss isa Real ? string("loss energy ", _webui_qsts_num(loss), " MWh") : "loss energy n/a")
+  failed = get(metadata, "qsts_failed", 0)
+  badge = failed isa Real && failed > 0 ? " <span class=\"status-badge status-warning\">$(Int(failed)) failed step(s)</span>" : ""
+  return "<code>" * _webui_escape(join(parts, ", ")) * "</code>" * badge
+end
+
+# The QSTS section of the result page: switch counts and hunting per
+# controller, the notes, the time series chart with element and quantity
+# choice, and the result files. The chart data is the element view
+# qsts_view.json of the run (written by the service); the charts are drawn
+# by the renderer of qstsChart, inline so the point tooltips work.
+function _webui_qsts_section(result::AbstractDict)::String
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return ""
+  get(metadata, "run_mode", "") == "qsts" || return ""
+  od = String(get(result, "output_dir", ""))
+  run_id = String(get(result, "run_id", ""))
+  view_path = isempty(od) ? "" : joinpath(od, _QSTS_VIEW_FILE)
+  isfile(view_path) || return ""
+  esc = _webui_escape
+  view = try
+    scf_json_parse(read(view_path, String))
+  catch err
+    # the reader names a broken file with an ArgumentError (byte position)
+    err isa ArgumentError || rethrow()
+    return "<section class=\"panel qsts-result\"><h2>QSTS</h2><p class=\"alert warning\">$(esc(_QSTS_VIEW_FILE)) could not be read: $(esc(sprint(showerror, err)))</p></section>"
+  end
+  # controllers in the order of the run: switch counts and hunting
+  switches = get(metadata, "qsts_switch_counts", Dict{String,Any}())
+  hunting = get(metadata, "qsts_hunting", Dict{String,Any}())
+  ctl_rows = join(("<tr><td>$(esc(string(el["name"])))</td><td><code>$(esc(string(el["id"])))</code></td><td>$(_webui_qsts_num(get(switches, string(el["id"]), nothing)))</td><td>$(_webui_qsts_num(get(hunting, string(el["id"]), nothing)))</td></tr>"
+                   for el in view["elements"] if el["kind"] == "controller"), "")
+  ctl_html = isempty(ctl_rows) ? "<p>No tap or bank controller in this run.</p>" :
+    "<table><thead><tr><th>controller</th><th>id</th><th>switches</th><th>hunting</th></tr></thead><tbody>$(ctl_rows)</tbody></table>"
+  string(get(metadata, "qsts_mode", "")) == "snapshots" && (ctl_html *= "<p>A snapshot run solves every step on its own; it counts no switching.</p>")
+  control_file = string(get(metadata, "qsts_control_file", ""))
+  # a run written before the key existed counts as one with controllers
+  controls_used = get(metadata, "qsts_controls_used", true) !== false
+  control_html = if !controls_used
+    what = isempty(control_file) ? "The controllers of the case file" : "The controllers of <code>$(esc(control_file))</code>"
+    "<p>$(what) are not used: a snapshot run without <code>qsts.snapshot_controls</code> runs without controllers.</p>"
+  elseif isempty(control_file)
+    "<p>No companion control file; the controllers of the case file only.</p>"
+  else
+    "<p>Controllers from <code>$(esc(control_file))</code>.</p>"
+  end
+  notes = get(metadata, "qsts_notes", Any[])
+  notes_html = notes isa AbstractVector && !isempty(notes) ? "<h3>Notes</h3><ul>" * join(("<li>$(esc(string(n)))</li>" for n in notes), "") * "</ul>" : ""
+  # the chart: element and quantity choice, the default charts inline
+  defaults = get(metadata, "qsts_default_charts", Any[])
+  first_chart = defaults isa AbstractVector && !isempty(defaults) ? defaults[1] : nothing
+  sel_element = first_chart === nothing ? "" : string(first_chart[1])
+  sel_quantity = first_chart === nothing ? "" : string(first_chart[2])
+  element_label(el) = begin
+    id = string(el["id"])
+    isempty(id) ? "run (step quantities)" : string(el["kind"], ": ", el["name"], el["name"] == id ? "" : string(" (", id, ")"))
+  end
+  options = join((begin
+    qs = String[string(q) for q in el["quantities"]]
+    "<option value=\"$(esc(string(el["id"])))\" data-quantities=\"$(esc(join(qs, ",")))\"$(string(el["id"]) == sel_element ? " selected" : "")>$(esc(element_label(el)))</option>"
+  end for el in view["elements"] if !isempty(el["quantities"])), "")
+  sel_idx = findfirst(el -> string(el["id"]) == sel_element, view["elements"])
+  sel_quantities = sel_idx === nothing ? String[] : String[string(q) for q in view["elements"][sel_idx]["quantities"]]
+  q_options = join(("<option value=\"$(esc(q))\"$(q == sel_quantity ? " selected" : "")>$(esc(q))</option>" for q in sel_quantities), "")
+  charts = String[]
+  for d in (defaults isa AbstractVector ? defaults : Any[])
+    svg = _qsts_view_chart_svg(view, string(d[1]), string(d[2]))
+    svg === nothing || push!(charts, svg)
+  end
+  chart_route = "/powerflow/result/$(_webui_urlencode(run_id))/qsts-chart"
+  form_html = "<form class=\"qsts-chart-form\" method=\"get\" action=\"$(esc(chart_route))\" data-qsts-chart-form><label>Element <select name=\"element\" data-qsts-element>$(options)</select></label> <label>Quantity <select name=\"quantity\" data-qsts-quantity>$(q_options)</select></label> <button type=\"submit\">Show</button></form>"
+  chart_html = "<div class=\"qsts-chart\" data-qsts-chart>$(join(charts, ""))</div>"
+  # the result files: the CSV files open in the CSV view
+  files = String["qsts_values.csv", "qsts_steps.csv", "qsts_elements.csv", "qsts_switching.csv", "qsts_metrics.csv", "qsts_manifest.json", _QSTS_OVERVIEW_FILE, _QSTS_VIEW_FILE]
+  file_links = join(("<li><a href=\"/powerflow/artifact/$(_webui_urlencode(run_id))/$(_webui_urlencode(f))\">$(esc(f))</a></li>" for f in files if isfile(joinpath(od, f))), "")
+  n_plots = get(metadata, "qsts_plots", 0)
+  plots_link = "<li><a href=\"/powerflow/artifacts/$(_webui_urlencode(run_id))\">$(_webui_qsts_num(n_plots)) charts in $(esc(_QSTS_PLOT_DIR))/</a> (one per element with its main quantity)</li>"
+  script = """
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const form = document.querySelector('[data-qsts-chart-form]');
+  if (form === null) return;
+  const element = form.querySelector('[data-qsts-element]');
+  const quantity = form.querySelector('[data-qsts-quantity]');
+  const chart = document.querySelector('[data-qsts-chart]');
+  // the quantity list follows the element: each option names its quantities
+  element.addEventListener('change', function () {
+    const option = element.options[element.selectedIndex];
+    const names = (option.getAttribute('data-quantities') || '').split(',').filter(function (q) { return q !== ''; });
+    quantity.innerHTML = '';
+    names.forEach(function (q) {
+      const o = document.createElement('option');
+      o.value = q;
+      o.textContent = q;
+      quantity.appendChild(o);
+    });
+  });
+  // the chart arrives as SVG text from the chart route and replaces the
+  // shown charts; without script the form opens the SVG itself
+  form.addEventListener('submit', function (event) {
+    event.preventDefault();
+    const url = form.getAttribute('action') + '?element=' + encodeURIComponent(element.value) + '&quantity=' + encodeURIComponent(quantity.value);
+    fetch(url).then(function (response) { return response.text(); }).then(function (text) { chart.innerHTML = text; });
+  });
+});
+</script>"""
+  return string(
+    "<section class=\"panel qsts-result\"><h2>QSTS: ", esc(string(get(metadata, "qsts_series", ""))), "</h2>",
+    control_html, ctl_html, notes_html,
+    "<h3>Time series</h3>", form_html, chart_html,
+    "<h3>Files</h3><ul class=\"qsts-files\">", file_links, plots_link, "</ul>",
+    script, "</section>",
+  )
+end
+
 function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
   if artifacts isa AbstractDict
     return render_powerflow_result(artifacts)
@@ -3290,6 +3456,8 @@ function render_powerflow_artifacts(run_id::AbstractString, artifacts)::String
       begin
         name = get(artifact, "name", "")
         href = "/powerflow/artifact/$(_webui_urlencode(run_id))/$(_webui_urlencode(name))"
+        # a chart opens inside a Web UI page (Back, Download), not as a bare SVG without navigation
+        get(artifact, "mime_type", "") == "image/svg+xml" && (href *= "?page=1")
         "<tr><td><a href=\"$(href)\">$(_webui_escape(name))</a></td><td>$(_webui_escape(get(artifact, "kind", "")))</td><td>$(_webui_escape(get(artifact, "mime_type", "")))</td><td>$(_webui_escape(get(artifact, "size_bytes", "")))</td><td>$(_webui_escape(get(artifact, "description", "")))</td></tr>"
       end for artifact in artifacts
     ),
@@ -4031,6 +4199,20 @@ function render_powerflow_artifact_page(artifact, preview; raw::Bool = false, cs
   head = isempty(head_line) ? "" : "<p class=\"sc-status-line\"><code>$(_webui_escape(head_line))</code></p>"
   page = "<section class=\"artifact-text-page\"><p>$(toggle)<a class=\"button\" href=\"?download=1\">Download</a></p>$(notice)$(head)$(controls)$(body)</section>"
   return _webui_layout("Artifact: $(artifact.name)", page; show_back = true, main_class = "page artifact-page")
+end
+
+"""
+    render_powerflow_chart_page(run_id, artifact) -> String
+
+Web UI page of an SVG chart artifact: Back, links to the artifact list and
+the run, Download, and the chart embedded as `<object>` from the bare
+artifact route, so its point tooltips keep working. Reached with `?page=1`.
+"""
+function render_powerflow_chart_page(run_id::AbstractString, artifact)::String
+  id = _webui_urlencode(run_id)
+  bare = "/powerflow/artifact/$(id)/$(_webui_urlencode(artifact.name))"
+  page = "<section class=\"artifact-text-page\"><p><a class=\"button secondary\" href=\"/powerflow/artifacts/$(id)\">Artifacts</a> <a class=\"button secondary\" href=\"/powerflow/result/$(id)\">Run</a> <a class=\"button\" href=\"$(bare)?download=1\">Download</a></p><object type=\"image/svg+xml\" data=\"$(bare)\" style=\"max-width:100%\"></object></section>"
+  return _webui_layout("Chart: $(artifact.name)", page; show_back = true, main_class = "page artifact-page")
 end
 
 """

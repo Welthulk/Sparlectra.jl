@@ -56,11 +56,18 @@ struct CGMESFileInfo
   # names which declared dependency (typically the boundary set) is missing.
   model_id::String
   dependent_on::Vector{String}
+  # md:Model.scenarioTime and md:Model.modelingAuthoritySet as written in
+  # the header ("" when absent); the series check orders snapshots by the
+  # scenario time and groups models by the authority set
+  scenario_time::String
+  modeling_authority::String
 end
 
-# Keep the legacy 8-argument construction working for all existing call sites.
+# Keep the legacy 8- and 10-argument constructions working for all existing call sites.
 CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason) =
-  CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason, "", String[])
+  CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason, "", String[], "", "")
+CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason, model_id, dependent_on) =
+  CGMESFileInfo(name, header, profile_uris, profiles, version, object_count, skipped, skip_reason, model_id, dependent_on, "", "")
 
 _strip_urn(v::AbstractString) = String(replace(v, "urn:uuid:" => ""))
 
@@ -109,6 +116,8 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
   keywords = String[]
   model_id = ""
   dependent_on = String[]
+  scenario_time = ""
+  modeling_authority = ""
   for el in EzXML.eachelement(r)
     n = EzXML.nodename(el)
     if n == "FullModel" || n == "DifferenceModel"
@@ -119,6 +128,8 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       for p in EzXML.eachelement(el)
         pn = EzXML.nodename(p)
         pn == "Model.profile" && push!(profile_uris, EzXML.nodecontent(p))
+        pn == "Model.scenarioTime" && (scenario_time = strip(EzXML.nodecontent(p)))
+        pn == "Model.modelingAuthoritySet" && (modeling_authority = strip(EzXML.nodecontent(p)))
         if pn == "Model.DependentOn"
           for a in EzXML.eachattribute(p)
             EzXML.nodename(a) == "resource" && push!(dependent_on, _strip_urn(_strip_mrid(EzXML.nodecontent(a))))
@@ -157,10 +168,10 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
   # (GL/DL, a difference model) still satisfies a md:Model.DependentOn
   # declaration and must not show up as "missing" in the import analysis.
   if header == :DifferenceModel
-    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "difference models are not supported", model_id, dependent_on)
+    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "difference models are not supported", model_id, dependent_on, scenario_time, modeling_authority)
   end
   if !isempty(profiles) && isempty(intersect(profiles, profile_filter))
-    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "profile not in import set", model_id, dependent_on)
+    return CGMESFileInfo(file.name, header, profile_uris, profiles, version, 0, true, "profile not in import set", model_id, dependent_on, scenario_time, modeling_authority)
   end
 
   count = 0
@@ -212,5 +223,5 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       end
     end
   end
-  return CGMESFileInfo(file.name, header, profile_uris, profiles, version, count, false, "", model_id, dependent_on)
+  return CGMESFileInfo(file.name, header, profile_uris, profiles, version, count, false, "", model_id, dependent_on, scenario_time, modeling_authority)
 end

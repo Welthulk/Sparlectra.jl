@@ -170,12 +170,15 @@ const TEST_GROUPS = TestGroup[
     # --- extd: shipped cases, formats, service layer, examples, fixtures
     TestGroup("demo_cases", ["test_demo_cases.jl"], [:run_demo_case_tests]),
     TestGroup("scf", ["test_scf.jl"], [:run_scf_tests]),
+    TestGroup("scf_series", ["test_scf_series.jl"], [:run_scf_series_tests]),
     TestGroup("programmatic_api_extended", ["test_api_extended.jl"], [:run_api_extended_tests]),
     TestGroup("matpower_examples", ["test_matpower_example.jl"], [:run_matpower_example_tests]),
     TestGroup("example_infra", ["test_example_suites.jl"], [:run_example_suite_infra_tests]),
     TestGroup("synthetic_grids", ["test_synthetic_grids.jl"], [:run_synthetic_grid_tests]),
     TestGroup("cgmes_importer", ["test_cgmes_importer.jl"], [:run_cgmes_importer_tests]),
     TestGroup("cgmes_export", ["test_cgmes_export.jl"], [:run_cgmes_export_tests]),
+    TestGroup("cgmes_series", ["test_cgmes_series.jl"], [:run_cgmes_series_tests, :run_cgmes_union_tests]),
+    TestGroup("cgmes_ssh_series", ["test_cgmes_ssh_series.jl"], [:run_cgmes_ssh_series_tests]),
     TestGroup("powsybl_importer", ["test_powsybl_importer.jl"], [:run_powsybl_importer_tests]),
     # --- install: the installation path of a fresh checkout, before a release
     TestGroup("install", ["test_install.jl"], [:run_install_tests]),
@@ -243,8 +246,8 @@ const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     # --- extd: the service layer and the shipped demo cases
     :extd => ["programmatic_api", "programmatic_api_extended", "demo_cases"],
     # --- cgmes and formats: the former adapters profile, by importer family
-    :cgmes => ["cgmes_importer", "cgmes_export"],
-    :formats => ["matpower_metadata", "scf", "matpower_examples", "synthetic_grids", "dtf_extended", "powsybl_importer"],
+    :cgmes => ["cgmes_importer", "cgmes_export", "cgmes_series", "cgmes_ssh_series"],
+    :formats => ["matpower_metadata", "scf", "scf_series", "matpower_examples", "synthetic_grids", "dtf_extended", "powsybl_importer"],
     # --- install: the installation path of a fresh checkout and the tests that start child processes
     :install => ["install", "example_infra"],
     :workshops => ["workshops"],
@@ -267,7 +270,7 @@ end
 
 # The threads profile: the parallel-vs-serial comparisons of every
 # parallel site (short-circuit sweep, island power flow, N-1 batch,
-# island-wise SE), repeated THREAD_REPEATS times in ONE process that
+# island-wise SE, QSTS), repeated THREAD_REPEATS times in ONE process that
 # must run with several threads (tools/run_gates.sh threads starts it with
 # --threads=4). In a single-threaded process every parallel site takes its
 # serial loop, so these comparisons check the serial path against itself;
@@ -279,6 +282,8 @@ const THREAD_GROUPS = TestGroup[
     TestGroup("island_powerflow_parallel", ["test_parallel_foundation.jl"], [:run_parallel_island_tests]),
     TestGroup("contingency_parallel", ["test_contingency.jl"], [:run_contingency_parallel_tests, :run_contingency_extended_tests]),
     TestGroup("state_estimation_parallel", ["test_state_estimation.jl"], [:run_state_estimation_parallel_tests]),
+    TestGroup("qsts_parallel", ["test_scf_series.jl"], [:run_scf_series_parallel_tests]),
+    TestGroup("cgmes_ssh_series_parallel", ["test_cgmes_ssh_series.jl"], [:run_cgmes_ssh_series_parallel_tests]),
 ]
 const THREAD_REPEATS = 5
 

@@ -811,6 +811,10 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   (`ShuntVoltageControl`) to every mapped `LinearShuntCompensator` whose
   `controlEnabled` and voltage `RegulatingControl` are set and regulate its
   own bus. Off by default: the banks stay at their SSH sections.
+- `read_dynamics::Bool`: read the DY profile and give the machines their
+  `DynamicData` (inertia, damping, droop, governor time constant; see
+  `importCGMES`). Off by default: the DY file is skipped. No calculation
+  reads the data; the island slack choice reads the unit type.
 - `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
   `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal
   voltage. A target outside the band is treated as a placeholder: it is ignored
@@ -844,6 +848,7 @@ Base.@kwdef struct CGMESImportConfig
   map_energy_source::Bool = false
   map_power_electronics::Bool = false
   shunt_control::Bool = false
+  read_dynamics::Bool = false
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
@@ -1194,6 +1199,83 @@ Base.@kwdef struct PowsyblImportConfig
 end
 
 """
+    QstsSeriesConfig
+
+Series check of CGMES snapshot deliveries (`qsts.series.*`,
+[`checkCGMESSeries`](@ref)): consecutive snapshots of one model belong to
+one series while their structure agrees.
+
+# Fields
+- `min_structural_overlap::Float64`: share of common mRIDs over the union
+  of the structural classes (lines, transformers and their ends, busbar
+  sections, breakers, disconnectors, connectivity nodes); below it a new
+  series starts (default `0.95`).
+- `max_injection_churn::Union{Nothing,Float64}`: churn (1 minus the share of
+  common injection mRIDs) above which a pair is flagged in the report; it
+  never splits a series (default `nothing`, no limit).
+- `max_gap::Union{Nothing,Float64}`: largest time step between two
+  snapshots in minutes; a larger step starts a new series (default
+  `nothing`, no limit).
+"""
+Base.@kwdef struct QstsSeriesConfig
+  min_structural_overlap::Float64 = 0.95
+  max_injection_churn::Union{Nothing,Float64} = nothing
+  max_gap::Union{Nothing,Float64} = nothing
+end
+
+"""
+    QstsConfig
+
+Quasi-static time series (`qsts.*`).
+
+# Fields
+- `mode::Symbol`: run mode of a QSTS run, `:off` (default, a run is
+  refused), `:snapshots` (every step solved on its own from the solution
+  of the base step) or `:sequential` (the steps in order, the controller
+  state carried from step to step).
+- `base_step::Int`: the step of a CGMES snapshot series whose snapshot is
+  the base case, counted from 1 (default `1`, the first snapshot);
+  `buildCGMESSeriesUnion` takes it unless its `base_step` keyword is given.
+- `snapshot_controls::Bool`: run the outer-loop controllers of the `control`
+  section in the base case and in every step of a snapshot run (default
+  `false`: taps and shunt banks stay at the values of each snapshot).
+- `sequential_start::Symbol`: start voltages of a step in a sequential
+  run, `:previous` (default, the solution of the last solved step) or
+  `:snapshot` (the solution of the same step in a snapshot run without
+  controllers).
+- `resync_every::Int`: in a sequential run, every n-th step (steps 1,
+  n + 1, 2n + 1, ...) puts the taps and banks back on the values of the
+  series instead of the carried ones; `0` (default) resyncs step 1 only.
+- `dead_time_steps::Int`: steps a controller stays locked after a counted
+  move in a sequential run (default `0`, no dead time).
+- `hunting_window::Int`: three net moves of one controller with
+  alternating sign within this many steps count as one hunting pattern
+  (default `3`, at least 3).
+- `vm_min_pu::Float64`, `vm_max_pu::Float64`: voltage band of the
+  violation metrics of a sequential run (defaults `0.9`, `1.1`).
+- `loading_max_pct::Float64`: branch loading above which a sequential run
+  counts an overload (default `100.0`).
+- `series::QstsSeriesConfig`: the series check, a
+  [`QstsSeriesConfig`](@ref).
+"""
+Base.@kwdef struct QstsConfig
+  mode::Symbol = :off
+  base_step::Int = 1
+  snapshot_controls::Bool = false
+  sequential_start::Symbol = :previous
+  resync_every::Int = 0
+  dead_time_steps::Int = 0
+  hunting_window::Int = 3
+  vm_min_pu::Float64 = 0.9
+  vm_max_pu::Float64 = 1.1
+  loading_max_pct::Float64 = 100.0
+  series::QstsSeriesConfig = QstsSeriesConfig()
+end
+
+const QSTS_MODE_VALUES = (:off, :snapshots, :sequential)
+const QSTS_SEQUENTIAL_START_VALUES = (:previous, :snapshot)
+
+"""
     SparlectraConfig
 
 Central typed configuration assembled once at application or example boundaries.
@@ -1212,6 +1294,7 @@ Base.@kwdef struct SparlectraConfig
   performance::PerformanceConfig = PerformanceConfig()
   benchmark::BenchmarkConfig = BenchmarkConfig()
   contingency::ContingencyConfig = ContingencyConfig()
+  qsts::QstsConfig = QstsConfig()
   runtime::RuntimeConfig = RuntimeConfig()
   diagnostics::DiagnosticsConfig = DiagnosticsConfig()
   output::OutputConfig = OutputConfig()
@@ -2268,6 +2351,7 @@ function CGMESImportConfig(raw::AbstractDict)
     map_energy_source = _as_bool_cfg(_raw_get(merged, "map_energy_source", false)),
     map_power_electronics = _as_bool_cfg(_raw_get(merged, "map_power_electronics", false)),
     shunt_control = _as_bool_cfg(_raw_get(merged, "shunt_control", false)),
+    read_dynamics = _as_bool_cfg(_raw_get(merged, "read_dynamics", false)),
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
@@ -2459,6 +2543,48 @@ function ContingencyConfig(raw::AbstractDict)
     events = ContingencyEventsConfig(_raw_section(merged, "events")), pairs = ContingencyPairsConfig(_raw_section(merged, "pairs")))
 end
 
+# qsts.mode is off, snapshots or sequential, qsts.base_step a step number
+# from 1 (the series length is checked where the series is known); the keys
+# of the sequential run: the start a name, resync and dead time counts from
+# 0, the hunting window at least 3 (a pattern is three moves), the band
+# finite with vm_min below vm_max, the loading limit a positive percentage;
+# qsts.series.*: overlap and churn are shares in [0, 1], the gap a positive
+# number of minutes; null keeps "no limit"
+function QstsConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "qsts")
+  dq = QstsConfig()
+  mode = _validate_allowed_symbol("qsts.mode", _as_symbol_cfg(_raw_get(merged, "mode", dq.mode)), QSTS_MODE_VALUES)
+  base_step = _as_int_cfg(_raw_get(merged, "base_step", dq.base_step))
+  base_step >= 1 || throw(ArgumentError("qsts.base_step must be >= 1; got $(base_step)."))
+  snapshot_controls = _as_bool_cfg(_raw_get(merged, "snapshot_controls", dq.snapshot_controls))
+  sequential_start = _validate_allowed_symbol("qsts.sequential_start", _as_symbol_cfg(_raw_get(merged, "sequential_start", dq.sequential_start)), QSTS_SEQUENTIAL_START_VALUES)
+  resync_every = _as_int_cfg(_raw_get(merged, "resync_every", dq.resync_every))
+  resync_every >= 0 || throw(ArgumentError("qsts.resync_every must be >= 0 (0 resyncs step 1 only); got $(resync_every)."))
+  dead_time_steps = _as_int_cfg(_raw_get(merged, "dead_time_steps", dq.dead_time_steps))
+  dead_time_steps >= 0 || throw(ArgumentError("qsts.dead_time_steps must be >= 0 (0 is no dead time); got $(dead_time_steps)."))
+  hunting_window = _as_int_cfg(_raw_get(merged, "hunting_window", dq.hunting_window))
+  hunting_window >= 3 || throw(ArgumentError("qsts.hunting_window must be >= 3 (a hunting pattern is three moves); got $(hunting_window)."))
+  vm_min = Float64(_as_float_cfg(_raw_get(merged, "vm_min_pu", dq.vm_min_pu)))
+  vm_max = Float64(_as_float_cfg(_raw_get(merged, "vm_max_pu", dq.vm_max_pu)))
+  (isfinite(vm_min) && vm_min > 0.0) || throw(ArgumentError("qsts.vm_min_pu must be a finite value > 0; got $(vm_min)."))
+  (isfinite(vm_max) && vm_max > vm_min) || throw(ArgumentError("qsts.vm_max_pu must be finite and above qsts.vm_min_pu = $(vm_min); got $(vm_max)."))
+  loading_max = Float64(_as_float_cfg(_raw_get(merged, "loading_max_pct", dq.loading_max_pct)))
+  (isfinite(loading_max) && loading_max > 0.0) || throw(ArgumentError("qsts.loading_max_pct must be a finite percentage > 0; got $(loading_max)."))
+  series = _raw_section(merged, "series")
+  d = QstsSeriesConfig()
+  overlap = Float64(_as_float_cfg(_raw_get(series, "min_structural_overlap", d.min_structural_overlap)))
+  0.0 <= overlap <= 1.0 || throw(ArgumentError("qsts.series.min_structural_overlap must be in [0, 1]; got $(overlap)."))
+  churn_raw = _raw_get(series, "max_injection_churn", nothing)
+  churn = churn_raw === nothing ? nothing : Float64(_as_float_cfg(churn_raw))
+  (churn === nothing || 0.0 <= churn <= 1.0) || throw(ArgumentError("qsts.series.max_injection_churn must be in [0, 1] or null; got $(churn)."))
+  gap_raw = _raw_get(series, "max_gap", nothing)
+  gap = gap_raw === nothing ? nothing : Float64(_as_float_cfg(gap_raw))
+  (gap === nothing || (isfinite(gap) && gap > 0.0)) || throw(ArgumentError("qsts.series.max_gap must be a positive number of minutes or null; got $(gap)."))
+  return QstsConfig(mode = mode, base_step = base_step, snapshot_controls = snapshot_controls, sequential_start = sequential_start, resync_every = resync_every,
+                    dead_time_steps = dead_time_steps, hunting_window = hunting_window, vm_min_pu = vm_min, vm_max_pu = vm_max, loading_max_pct = loading_max,
+                    series = QstsSeriesConfig(min_structural_overlap = overlap, max_injection_churn = churn, max_gap = gap))
+end
+
 # contingency.events.*: the defaults live in the struct, read once here
 function ContingencyEventsConfig(raw::AbstractDict)
   d = ContingencyEventsConfig()
@@ -2584,6 +2710,7 @@ function SparlectraConfig(raw::AbstractDict)
     performance = PerformanceConfig(raw),
     benchmark = BenchmarkConfig(raw),
     contingency = ContingencyConfig(raw),
+    qsts = QstsConfig(raw),
     runtime = RuntimeConfig(raw),
     diagnostics = DiagnosticsConfig(raw),
     output = OutputConfig(raw),

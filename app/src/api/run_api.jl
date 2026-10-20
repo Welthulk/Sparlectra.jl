@@ -961,14 +961,15 @@ function _run_sparlectra_api_body(
     dtf_metadata["compare_for002_outages"] = compare_for002_outages
     operation_callback("dtf_for001_import_summary"; run_id = run_id, _metadata_kwargs(dtf_metadata)...)
     # Rejoin the normal artifact/finalization path with a native Net result.
-  elseif !(detected_case_format in (:matpower, :scf, :powsybl))
+  elseif !(detected_case_format in (:matpower, :scf, :scf_series, :powsybl))
     return _api_failure("invalid_case_format", "Unsupported detected case format: $(detected_case_format)"; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file)
   end
   # This branch opens the whole execution block below; a Sparlectra Case
   # Format file runs the same way (its own reader replaces the MATPOWER
-  # parse inside the framework import), so both formats enter here.
-  if detected_case_format in (:matpower, :scf, :powsybl)
-    emit_phase(detected_case_format === :scf ? "reading_scf_case" : detected_case_format === :powsybl ? "reading_powsybl_case" : "reading_matpower_case")
+  # parse inside the framework import), so both formats enter here. An SCF
+  # time series enters as its base case.
+  if detected_case_format in (:matpower, :scf, :scf_series, :powsybl)
+    emit_phase(detected_case_format === :scf ? "reading_scf_case" : detected_case_format === :scf_series ? "reading_scf_series" : detected_case_format === :powsybl ? "reading_powsybl_case" : "reading_matpower_case")
   try
     open(logfile, "a") do io
       _write_resolved_q_limit_options(io, qlimit_metadata)

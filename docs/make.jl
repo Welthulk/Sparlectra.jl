@@ -209,6 +209,7 @@ makedocs(
     "Network Model" => [
       "Branch Model" => "branchmodel.md",
       "Component Types" => "component_types.md",
+      "Dynamic Unit Data" => "dynamic_data.md",
       "Component Removal" => "remove_functions.md",
       "Links" => "links.md",
       "Network Reports" => "netreports.md",
@@ -231,6 +232,7 @@ makedocs(
     ],
     "Studies" => [
       "N-1 Contingency Analysis" => "contingency.md",
+      "QSTS: Snapshot Series" => "qsts.md",
       "Short-Circuit Compendium" => "short_circuit.md",
     ],
     "Tests" => "tests.md",
@@ -250,6 +252,7 @@ makedocs(
       "Taps, Phasors and Topology" => "generated/workshop_se_taps.md",
       "TCSC Flow Steering" => "generated/workshop_series_compensation.md",
       "Scenarios and Screening" => "generated/workshop_scenarios.md",
+      "QSTS in Two Modes" => "generated/workshop_qsts.md",
       "APSLF in Sparlectra" => "generated/workshop_apslf.md",
     ],
     "Reference" => [
@@ -270,6 +273,7 @@ makedocs(
       "APSLF Bridge" => "reference_apslf.md",
       "Shared Numerics" => "reference_numerics.md",
       "Contingency" => "reference_contingency.md",
+      "QSTS" => "reference_qsts.md",
       "Synthetic Grids" => "reference_synthetic.md",
     ],
   ],
