@@ -314,6 +314,70 @@ function _webui_window_geometry(config_file::AbstractString)
   end
 end
 
+# Monitors of the desktop as (x, y, width, height) rectangles, for the check
+# that a saved window position is still on a screen. Windows asks
+# System.Windows.Forms.Screen through PowerShell, Linux xrandr (X11 and
+# XWayland). nothing when the platform has no probe or the probe fails: the
+# position is then used as saved, as before.
+function _webui_monitor_rects(platform::Symbol = _webui_platform(); executable_lookup = Sys.which)::Union{Nothing,Vector{NTuple{4,Int}}}
+  if platform == :windows
+    exe = executable_lookup("powershell")
+    exe === nothing && return nothing
+    script = "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { \$b = \$_.Bounds; '{0} {1} {2} {3}' -f \$b.X, \$b.Y, \$b.Width, \$b.Height }"
+    cmd, parse = `$(exe) -NoProfile -NonInteractive -Command $(script)`, _webui_parse_powershell_screens
+  elseif platform == :linux
+    exe = executable_lookup("xrandr")
+    exe === nothing && return nothing
+    cmd, parse = `$(exe) --listactivemonitors`, _webui_parse_xrandr_monitors
+  else
+    return nothing
+  end
+  out = try
+    read(pipeline(cmd; stderr = devnull), String)
+  catch err
+    # the probe exits non-zero (no display, PowerShell policy) or cannot start
+    (err isa ProcessFailedException || err isa Base.IOError) || rethrow()
+    @debug "monitor probe failed, the saved window position is used as is" exception = err
+    return nothing
+  end
+  rects = parse(out)
+  return isempty(rects) ? nothing : rects
+end
+
+# "x y width height" per line, as the PowerShell probe prints the bounds
+function _webui_parse_powershell_screens(out::AbstractString)::Vector{NTuple{4,Int}}
+  rects = NTuple{4,Int}[]
+  for line in eachline(IOBuffer(out))
+    v = tryparse.(Int, split(strip(line)))
+    (length(v) == 4 && all(!isnothing, v)) && push!(rects, (v[1], v[2], v[3], v[4]))
+  end
+  return rects
+end
+
+# xrandr --listactivemonitors: " 0: +*DP-1 2560/597x1440/336+0+0  DP-1"
+function _webui_parse_xrandr_monitors(out::AbstractString)::Vector{NTuple{4,Int}}
+  rects = NTuple{4,Int}[]
+  for m in eachmatch(r"(\d+)/\d+x(\d+)/\d+\+(-?\d+)\+(-?\d+)", out)
+    w, h, x, y = parse.(Int, m.captures)
+    push!(rects, (x, y, w, h))
+  end
+  return rects
+end
+
+# The saved geometry without its position when the position is on no
+# monitor (a monitor of the last session is gone): the browser then opens
+# the window on the main monitor. The test point is a spot of the title bar
+# (60 px right, 20 px down from the corner), so a window that hangs over a
+# screen edge but can still be grabbed keeps its place. rects = nothing
+# (unknown layout) keeps the position.
+function _webui_visible_geometry(geometry, rects)
+  (geometry.x === nothing || geometry.y === nothing || rects === nothing) && return geometry
+  px, py = geometry.x + 60, geometry.y + 20
+  any(r -> r[1] <= px < r[1] + r[3] && r[2] <= py < r[2] + r[4], rects) && return geometry
+  @info "Web UI: the saved window position ($(geometry.x), $(geometry.y)) is on no connected monitor; the window opens on the main monitor"
+  return (width = geometry.width, height = geometry.height, x = nothing, y = nothing)
+end
+
 # Browser profile of the app window, beside the runs (<state>/webui/browser).
 # Set when the server starts; empty = no own profile (headless renders).
 const _WEBUI_BROWSER_PROFILE_DIR = Ref{String}("")
@@ -800,7 +864,10 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   end
   # the app window opens with the size and position of the last stop, in its
   # own browser profile (see _webui_window_arguments)
-  _WEBUI_WINDOW_GEOMETRY[] = _webui_window_geometry(paths.config_file)
+  # a position on a monitor that is gone is dropped (_webui_visible_geometry);
+  # the monitors are probed only when a position was saved
+  saved = _webui_window_geometry(paths.config_file)
+  _WEBUI_WINDOW_GEOMETRY[] = saved.x === nothing ? saved : _webui_visible_geometry(saved, _webui_monitor_rects())
   _WEBUI_BROWSER_PROFILE_DIR[] = joinpath(dirname(root), "browser")
   # Prune once at startup so normal requests keep append-only operation logging
   # unless a size safety cap is reached later. The retention comes from the

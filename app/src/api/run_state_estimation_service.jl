@@ -926,7 +926,8 @@ function _run_state_estimation_service_body(
     # for a different case would fail rows
     # deep in the reader ("bus X not found"); refuse it up front with the
     # actual cause. Sets without a binding (older files) pass with a log note.
-    bound_case = _webui_measurement_set_case(String(measurement_file))
+    set_binding = _webui_measurement_set_binding(String(measurement_file))
+    bound_case = set_binding.case
     # A case exported to SCF keeps the model of its source case, and it records
     # WHICH source it came from. A set bound to that source therefore fits this
     # run; without this the export silently invalidates every set the user
@@ -935,8 +936,19 @@ function _run_state_estimation_service_body(
     if !isempty(bound_case) && bound_case != basename(String(case_path)) && bound_case != source_of_case
       return _api_failure("invalid_measurements", "Measurement set $(basename(String(measurement_file))) is bound to case $(bound_case) (recorded in the file), but this run uses $(basename(String(case_path))). Pick the set generated for this case, or regenerate one.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
-    isempty(bound_case) && open(logfile, "a") do io
-      println(io, "note: the measurement set carries no case binding (# case: comment); older set, association checked by name only")
+    # A table bound by the CGMES model id only (the converter writes it) is
+    # not refused on a mismatch: the import report counts the rows the case
+    # cannot resolve, and that count is the actual test of the binding.
+    if isempty(bound_case) && !isempty(set_binding.models)
+      case_models = format === :cgmes ? _webui_case_cgmes_model_ids(String(case_path)) : String[]
+      matched = any(in(case_models), set_binding.models)
+      open(logfile, "a") do io
+        println(io, "note: the measurement set is bound by CGMES model ", join(set_binding.models, ", "), matched ? "; this is the EQ model of the case" : string("; the EQ model of the case is ", isempty(case_models) ? "unknown" : join(case_models, ", "), ", rows the case cannot resolve are counted in the import report"))
+      end
+    elseif isempty(bound_case)
+      open(logfile, "a") do io
+        println(io, "note: the measurement set carries no case binding (# case: comment); older set, association checked by name only")
+      end
     end
     # a table that lost its version line goes the table way too, so the
     # reader names the missing line (the CSV v1 reader would complain about

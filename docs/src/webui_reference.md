@@ -570,12 +570,19 @@ with an error naming `convertMeasurementsV1`, and the SCF export and
 on both.
 
 The set list offers only the sets of the selected case: a set whose
-`# case:` line names the case (or the case an SCF file was exported from),
-and a set without that line whose file name starts with the case name
+`# case:` line names the case (or the case an SCF file was exported from);
+for a CGMES case a set without that line whose `# cgmes_model:` line names
+the EQ model of the case (see
+[Binding a table to its case](@ref se_table_binding)); and a set without
+either line whose file name starts with the case name
 without its extension, followed by a dot (`sp_case14.measurements.csv`
-for `sp_case14.scf.json`). An uploaded set with no `# case:` line and
-any other file name is offered for no case: add the line or rename the
-file. Each entry names its case. Without a matching
+for `sp_case14.scf.json`). An uploaded set that matches none of these is
+offered for no case. **assign to <case>** next to the upload binds the
+uploaded file to the selected case: its `# case:` line is set to that
+case, whatever the file says, a measurement file of the same name is
+replaced, and the file is armed for the next run. Rows the case cannot
+resolve are counted in the import report of the run. Each entry names its
+case. Without a matching
 set the section says so and points to the generator. The run still
 refuses a set bound to another case. A case file with its own
 measurements offers those first; otherwise `<case>.measurements.csv` is
