@@ -163,6 +163,12 @@ Every run file opens in the browser: CSV as a sortable table, Markdown rendered.
 <a href="assets/webui_artifacts.png"><img src="assets/webui_artifacts.png" alt="Sparlectra Web UI: CSV table, measurement verdict and Markdown report of a run" /></a>
 ```
 
+A QSTS run shows its controllers, switching counts and a time-series chart per element.
+
+```@raw html
+<a href="assets/webui_qsts.png"><img src="assets/webui_qsts.png" alt="Sparlectra Web UI: QSTS run with time-series chart" /></a>
+```
+
 ---
 
 ## Documentation

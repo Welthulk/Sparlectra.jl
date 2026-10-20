@@ -1,3 +1,21 @@
+# Version 0.60.0 - 2026-10-20
+
+Quasi-stationary time series (QSTS), dynamic unit data.
+
+## Breaking
+- SCF 1.3: files written by 0.60.0, including the shipped cases, cannot be read by 0.50.0. 0.60.0 still reads 1.0 to 1.2.
+## Added
+- QSTS on SCF time series (one zip: base case plus step deltas) and on a series of CGMES snapshots: snapshot mode (independent steps, parallel) and sequential mode (tap and bank states carried over), event lists, switching counts and limit violations, a time-series chart per element in the Web UI. See [QSTS](qsts.md).
+- Dynamic unit data `DynamicData` (inertia, droop, reserves, unit type) on generators, carried in SCF and read from the CGMES DY profile (`cgmes_import.read_dynamics`, default off). No calculation reads it yet. See [Dynamic Data](dynamic_data.md).
+- Measurement tables are bound to CGMES cases by the EQ model id instead of the file name; an assign switch at the Web UI upload binds a table to the selected case.
+## Changed
+- CGMES import: a unit whose `DynamicData` says grid-following is no island slack; an island with only such units is switched off with a warning.
+- The Web UI window opens on the main monitor when the saved position is on a monitor that is no longer connected.
+## Fixed
+- The Web UI sysimage rebuild did not find its build script since the package split.
+- Bus powers of coupler clusters and distributed slack shares in reports and bus CSVs.
+- CGMES: P limits of EquivalentInjection and ExternalNetworkInjection read as delivered; 2W transformer magnetizing split over both terminal arms.
+
 # Version 0.50.0 - 2026-10-18
 
 Measurement table for the state estimation, `addACLine!` in physical units.
