@@ -48,8 +48,8 @@ column the admittances of a line), and on a large network genuine small
 singular values drop below a cut measured against the largest column.
 Column normalization removes that dependence, and the verdict becomes
 insensitive to the factor over several orders of magnitude. Rows are not
-divided by their sigma, which would lift zero-injection pseudo-measurements
-(sigma `1e-6`) six orders of magnitude above ordinary rows; they are
+divided by their sigma, which would lift zero-injection rows (sigma
+`ZERO_INJECTION_SIGMA`) orders of magnitude above ordinary rows; they are
 normalized to unit norm, before the columns, because a bus coupler entered
 as a branch with near-zero impedance (`x = 1e-5` pu) otherwise dominates
 the columns of its two buses and pushes the feeding line below the cut.
@@ -171,16 +171,11 @@ the two. Formula, configuration and result fields:
 
 ## How zero-injection buses enter
 
-A passive bus (no generation, no load, no shunt) contributes exact
-knowledge: its injections are zero. Sparlectra models that as tightly
-weighted zero-injection pseudo-measurements, which raise observability
-and redundancy around the bus; they are protected from elimination and
-robust down-weighting, because removing exact knowledge is never the
-right reaction to a residual. The weight is finite, so extreme weights
-trade against conditioning. With `state_estimation.zero_injection =
-constraint` they are exact equality constraints instead; for observability
-nothing changes, they stay rows of H (see
-[State Estimation](state_estimation.md)).
+The zero-injection rows of passive buses are rows of H like measurements
+and raise observability and redundancy around the bus. That holds for
+weighted rows and for equality constraints alike; how the two enter the
+estimate is described in
+[Passive buses and zero injection](@ref se_zero_injection).
 
 ## Reading the diagnostics table
 

@@ -185,7 +185,7 @@ critical measurements are configurable in the Web UI form.
 | | `from run` | adopts the solved voltages of a successful run of the same case from the run history (SE runs through `se_state.csv`, power-flow runs through `bus_voltages_complex.csv`, any CSV export format), bit-exact against the artifact |
 | Flow measurements per branch | `both ends` (default) | measures P/Q (and I) at from and to |
 | | `one end (balance-aware)` | keeps one flow group per branch; the end at a bus with injection telemetry is preferred (`ZI` rows do not count), the from end wins when both or neither qualify; the choice is documented per branch in the set's `# flow_end,...` comments |
-| Passive nodes | checkbox (`state_estimation.zero_injection`, default on; `constraint` shows as checked) | buses without generation, load and shunt (`findPassiveBuses`) are written as protected zero-injection constraints (`addZeroInjectionMeasurements!` rows, prefix `ZI`, excluded from elimination and robust modification, at the configured sigma but never tighter than `ZERO_INJECTION_SIGMA` = 0.001 MW) and no duplicate injection rows |
+| Passive nodes | checkbox (`state_estimation.zero_injection`, default on; `constraint` shows as checked) | passive buses get zero-injection rows (prefix `ZI`, at the configured sigma, at least `ZERO_INJECTION_SIGMA`) and no duplicate injection rows; see [Passive buses and zero injection](@ref se_zero_injection) |
 | | off | explicit zero balance rows `Pinj/Qinj = 0` at the configured sigma (default 0.05 MW/MVar) |
 | | both | the checkbox is the case's `state_estimation.zero_injection`: it is seeded from the configuration, and a generation writes it into the case configuration file, so the SE runs of the case (measurement CSV, case file, measurement table) follow it; see [State-Estimation Configuration](state_estimation_configuration.md) |
 | `critical measurements` | count (0 = off) | thins the set until that many rows are critical; the set comments name the target, the rows that ended critical and the rows removed; when the target is out of reach, the message says how many were reached |
@@ -205,9 +205,6 @@ critical measurements are configurable in the Web UI form.
   critical; above the dense-path size caps it removes the redundant row
   with the smallest `wii`. Zero-injection and passive balance rows are
   never removed; a removal that fails the rank test is undone.
-- The zero-injection sigma floor is 1 kW (`ZERO_INJECTION_SIGMA`); a
-  tighter row, squared in `G = H' W H`, pushes the normal equations past
-  double precision.
 - **Delta file.** An SE run on a set with `# truth_value,...` comments
   writes `se_deltas.csv`: per measurement the measured, truth and estimated
   values with the three deltas, the sigma, the normalized residual and the
