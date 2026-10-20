@@ -215,7 +215,8 @@ end
 # The run status and its reason code from the state of the source data and
 # the rows. A flagged row is a lower bound only where the engine set its
 # typed `lower_bound` (a skipped source in its island); a row on a default
-# is not, so it gets the neutral reason. The service takes status and reason from
+# or on a substitute such as short_circuit.converter_current_factor is not,
+# so it gets the neutral reason. The service takes status and reason from
 # the result (_sc_outcome), so both say the same.
 function _sc_run_status(state, rows::AbstractVector)
   (state.refused || !any(row -> row.status === :ok, rows)) && return (status = :failed, reason = "short_circuit_data_missing")
@@ -243,10 +244,9 @@ const _takahashi_diag = takahashi_diag
 # current in pu of the bus current base, `:max` only), plus per-bus and
 # per-island safety-flag reasons. Islands are flagged as a whole where a
 # skipped contribution affects every fault location fed from that island
-# (motor/feeder/converter skips).
-# `lower_islands` holds the islands in which a skipped source makes Ik''max
-# a lower bound; the rows read their typed `lower_bound` from it, not from
-# the reason text.
+# (motor/feeder/converter skips). `lower_islands` holds the islands in which
+# a skipped source makes Ik''max a lower bound; the rows read their typed
+# `lower_bound` from it, not from the reason text.
 function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64, converter_factor::Float64, bus_island::Dict{Int,Int}, messages::Vector{String})
   y_add = Dict{Int,ComplexF64}()
   i_src = Dict{Int,Float64}()

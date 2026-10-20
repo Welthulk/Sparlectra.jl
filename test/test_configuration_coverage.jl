@@ -152,7 +152,7 @@ function test_configuration_yaml_key_coverage()
       "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
       "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
       "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.auto_profile_max_fit_pu", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses", "model.nominal_frequency_hz",
-      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.equivalent_branch_min_z_pu", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
+      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.equivalent_branch_min_z_pu", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
       "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation",
       "short_circuit.c_factor", "short_circuit.converter_current_factor", "short_circuit.sweep_method", "short_circuit.takahashi_min_buses",
       "matpower_export.write_solution",
@@ -165,6 +165,9 @@ function test_configuration_yaml_key_coverage()
       "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
       "contingency.events.enabled", "contingency.events.double_circuits", "contingency.events.busbars", "contingency.events.substations", "contingency.events.links", "contingency.events.name_groups", "contingency.events.name_stem_pattern", "contingency.events.max_members",
       "contingency.pairs.enabled", "contingency.pairs.rule", "contingency.pairs.max_pairs",
+      "qsts.mode", "qsts.base_step", "qsts.snapshot_controls",
+      "qsts.sequential_start", "qsts.resync_every", "qsts.dead_time_steps", "qsts.hunting_window", "qsts.vm_min_pu", "qsts.vm_max_pu", "qsts.loading_max_pct",
+      "qsts.series.min_structural_overlap", "qsts.series.max_injection_churn", "qsts.series.max_gap",
       "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
       "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.verbose_passes", "control.controllers",
       "webui.show_case_settings_notice", "webui.operation_log_retention_days", "webui.docs_base_url",
@@ -223,6 +226,19 @@ function test_configuration_yaml_key_coverage()
       "contingency.pairs.enabled" => :ContingencyConfig,
       "contingency.pairs.rule" => :ContingencyConfig,
       "contingency.pairs.max_pairs" => :ContingencyConfig,
+      "qsts.mode" => :QstsConfig,
+      "qsts.base_step" => :QstsConfig,
+      "qsts.snapshot_controls" => :QstsConfig,
+      "qsts.sequential_start" => :QstsConfig,
+      "qsts.resync_every" => :QstsConfig,
+      "qsts.dead_time_steps" => :QstsConfig,
+      "qsts.hunting_window" => :QstsConfig,
+      "qsts.vm_min_pu" => :QstsConfig,
+      "qsts.vm_max_pu" => :QstsConfig,
+      "qsts.loading_max_pct" => :QstsConfig,
+      "qsts.series.min_structural_overlap" => :QstsConfig,
+      "qsts.series.max_injection_churn" => :QstsConfig,
+      "qsts.series.max_gap" => :QstsConfig,
       "power_flow.wrong_branch_detection" => :PowerFlowConfig,
       "power_flow.start_mode.angle_mode" => :StartModeConfig,
       "power_flow.start_mode.voltage_mode" => :StartModeConfig,
@@ -397,6 +413,48 @@ function test_configuration_version_scope_and_case_precedence()
     write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  max_iter: 43\n")
     @test Sparlectra.resolve_config(general, scf_case).config.powerflow.max_iter == 43
     @test Sparlectra.resolve_config(general, scf_case, Dict{String,Any}("power_flow.max_iter" => 44)).config.powerflow.max_iter == 44
+    rm(scf_cc)
+    # the QSTS run keys are case scope like qsts.series.*: the general file
+    # reaches a case without a case file, a case file beats it, an override
+    # beats the case file. Each level carries a value the level below does
+    # not, so a level that is not read shows.
+    qsts_keys(r) = (r.config.qsts.mode, r.config.qsts.base_step, r.config.qsts.snapshot_controls)
+    general_text(mode, step, controls) = "config_version: 1\nscope: general\npower_flow:\n  max_iter: 41\noutput:\n  console_max_rows: 33\nqsts:\n  mode: $(mode)\n  base_step: $(step)\n  snapshot_controls: $(controls)\n"
+    write(general, general_text("snapshots", 2, true))
+    @test qsts_keys(Sparlectra.resolve_config(general, scf_case)) == (:snapshots, 2, true)
+    write(general, general_text("off", 2, false))
+    write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\nqsts:\n  mode: snapshots\n  base_step: 3\n  snapshot_controls: true\n")
+    @test qsts_keys(Sparlectra.resolve_config(general, scf_case)) == (:snapshots, 3, true)
+    @test qsts_keys(Sparlectra.resolve_config(general, scf_case, Dict{String,Any}("qsts.mode" => "off", "qsts.base_step" => 4, "qsts.snapshot_controls" => false))) == (:off, 4, false)
+    # the keys of the sequential run, the same three levels: defaults from
+    # the general file, the case file beats it, an override beats the case
+    seq_keys(r) = (r.config.qsts.mode, r.config.qsts.sequential_start, r.config.qsts.resync_every, r.config.qsts.dead_time_steps, r.config.qsts.hunting_window,
+                   r.config.qsts.vm_min_pu, r.config.qsts.vm_max_pu, r.config.qsts.loading_max_pct)
+    rm(scf_cc)
+    @test seq_keys(Sparlectra.resolve_config(general, scf_case)) == (:off, :previous, 0, 0, 3, 0.9, 1.1, 100.0)
+    write(general, general_text("off", 2, false) * "  sequential_start: snapshot\n  resync_every: 4\n  dead_time_steps: 1\n")
+    @test seq_keys(Sparlectra.resolve_config(general, scf_case)) == (:off, :snapshot, 4, 1, 3, 0.9, 1.1, 100.0)
+    write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\nqsts:\n  mode: sequential\n  resync_every: 8\n  dead_time_steps: 2\n  hunting_window: 5\n  vm_min_pu: 0.95\n  vm_max_pu: 1.05\n  loading_max_pct: 80\n")
+    # a case file makes the case self-contained: sequential_start, which it
+    # does not set, is the packaged default again, not the general value
+    @test seq_keys(Sparlectra.resolve_config(general, scf_case)) == (:sequential, :previous, 8, 2, 5, 0.95, 1.05, 80.0)
+    local seq_override = Dict{String,Any}("qsts.sequential_start" => "snapshot", "qsts.resync_every" => 0, "qsts.dead_time_steps" => 3, "qsts.hunting_window" => 4,
+                                          "qsts.vm_min_pu" => 0.92, "qsts.vm_max_pu" => 1.08, "qsts.loading_max_pct" => 90.0)
+    @test seq_keys(Sparlectra.resolve_config(general, scf_case, seq_override)) == (:sequential, :snapshot, 0, 3, 4, 0.92, 1.08, 90.0)
+    # the value domains, on the override path and in the typed parser, each
+    # error with the key named
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("qsts.base_step" => 0))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("qsts.mode" => "parallel"))
+    @test_throws ArgumentError Sparlectra.QstsConfig(Dict{String,Any}("qsts" => Dict{String,Any}("base_step" => 0)))
+    @test_throws ArgumentError Sparlectra.QstsConfig(Dict{String,Any}("qsts" => Dict{String,Any}("mode" => "parallel")))
+    @test Sparlectra.QstsConfig(Dict{String,Any}("qsts" => Dict{String,Any}("mode" => "sequential"))).mode === :sequential
+    for (key, value, words) in [("hunting_window", 2, "qsts.hunting_window must be >= 3"), ("resync_every", -1, "qsts.resync_every must be >= 0"),
+                                ("dead_time_steps", -2, "qsts.dead_time_steps must be >= 0"), ("sequential_start", "base", "qsts.sequential_start must be one of"),
+                                ("vm_min_pu", -0.1, "qsts.vm_min_pu must be"), ("vm_max_pu", 0.85, "qsts.vm_max_pu must be finite and above qsts.vm_min_pu"),
+                                ("loading_max_pct", 0.0, "qsts.loading_max_pct must be")]
+      @test_throws words Sparlectra.QstsConfig(Dict{String,Any}("qsts" => Dict{String,Any}(key => value)))
+      @test_throws string("qsts.", key) Sparlectra.validate_gui_config_overrides(Dict{String,Any}(string("qsts.", key) => value == 0.85 ? -1.0 : value))
+    end
     rm(scf_cc)
     plain = joinpath(dir, "plain57.m")
     write(plain, "% fixture\n")

@@ -365,6 +365,16 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     se_start_run_id isa AbstractString || return _service_failure("invalid_request", "se_start_run_id must be a string.")
     (se_mode || diagnose_mode || short_circuit_mode || import_analysis_mode) && return _service_failure("invalid_request", "se_start_run_id combines only with a plain power flow or contingency_mode.")
   end
+  # QSTS (26a): the request names the mode of the series run
+  # (sequential or snapshots); the run sets qsts.mode for itself, the
+  # configuration file keeps its value. Its own run kind, exclusive with
+  # the others (pattern contingency_mode)
+  qsts_mode = _service_request_value(request, "qsts_mode", nothing)
+  if qsts_mode !== nothing
+    (qsts_mode isa AbstractString && qsts_mode in _QSTS_SERVICE_MODES) || return _service_failure("invalid_request", "qsts_mode must be one of $(join(_QSTS_SERVICE_MODES, ", ")).")
+    (diagnose_mode || short_circuit_mode || import_analysis_mode || contingency_mode || se_mode || se_start_run_id !== nothing) &&
+      return _service_failure("invalid_request", "qsts_mode excludes diagnose_mode, short_circuit_mode, import_analysis_mode, contingency_mode, se_mode and se_start_run_id.")
+  end
   detailed_result_csv = _service_request_value(request, "detailed_result_csv", false)
   detailed_result_csv isa Bool || return _service_failure("invalid_request", "detailed_result_csv must be boolean.")
   export_cgmes = _service_request_value(request, "export_cgmes", false)
@@ -500,6 +510,30 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
     end
     return to_dict(ct_result)
+  end
+  # QSTS runs (26a) bypass the single power-flow pipeline like N-1: read
+  # the series, run it with the companion controllers, write the result
+  # files, the element view and the charts (see _run_qsts_service). Same
+  # result and registry conventions.
+  if qsts_mode !== nothing
+    qs_result = try
+      _run_qsts_service(casefile, config_file, output_dir, run_id, String(qsts_mode); config_overrides = config_overrides, progress = progress_callback)
+    catch err
+      err isa PowerFlowAborted && rethrow()
+      return _service_failure("execution_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    try
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        _POWERFLOW_SERVICE_RUNS[qs_result.run_id] = qs_result
+        _write_powerflow_run_index!(root, qs_result)
+      end
+    catch err
+      lock(_POWERFLOW_SERVICE_LOCK) do
+        delete!(_POWERFLOW_SERVICE_RUNS, qs_result.run_id)
+      end
+      return _service_failure("run_index_error", sprint(showerror, err, catch_backtrace()); run_id = run_id)
+    end
+    return to_dict(qs_result)
   end
   if se_mode
     # state estimation run (SE phase 5): measurement file resolved against the

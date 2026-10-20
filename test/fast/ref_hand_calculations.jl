@@ -49,7 +49,9 @@ _ref_sc_machine(; bus, xdpp = nothing, ratedS = nothing, ratedU = nothing, name 
   (mrid = name, name = name, bus = bus, satDirectSubtransX_pu = xdpp, satDirectTransX_pu = nothing, r0_pu = nothing, x0_pu = nothing, r2_pu = nothing, x2_pu = nothing, earthing = nothing, ratedS_MVA = ratedS, ratedU_kV = ratedU)
 _ref_sc_asm(; bus, ilr = nothing, rx = nothing, ratedS = nothing, ratedU = nothing, p_mech = nothing, efficiency = nothing, cosphi = nothing, pole_pairs = nothing, name = "M1") =
   (mrid = name, name = name, bus = bus, iaIrRatio = ilr, rxLockedRotorRatio = rx, efficiency_percent = efficiency, ratedMechanicalPower_MW = p_mech, polePairNumber = pole_pairs, ratedS_MVA = ratedS, ratedU_kV = ratedU, ratedPowerFactor = cosphi)
-_ref_sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[]) = _REF_SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms, NamedTuple[])
+_ref_sc_pec(; bus, maxIFault = nothing, ratedS = nothing, ratedU = nothing, name = "PEC1") =
+  (mrid = name, name = name, bus = bus, maxIFault_pu = maxIFault, ratedS_MVA = ratedS, ratedU_kV = ratedU)
+_ref_sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[], pecs = NamedTuple[]) = _REF_SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms, pecs)
 
 # Two-bus feeder in per unit, load P + jQ behind R + jX from a stiff source
 # V1 = 1 at angle 0. With I = conj(S / V2) and V1 = V2 + Z I the magnitude
@@ -219,6 +221,27 @@ function run_ref_hand_calculation_tests()
     @test isapprox(ra.rows[1].rx_ratio, 0.1; rtol = 1e-9)
     rp = runShortCircuit!(neta, _ref_sc_data(asms = [_ref_sc_asm(bus = "M1", ilr = 5.0, rx = 0.1, ratedU = 10.0, p_mech = 3.6, efficiency = 90.0, cosphi = 0.8)]); case = :max)
     @test isapprox(rp.rows[1].ik_kA, ra.rows[1].ik_kA; rtol = 1e-12)
+
+    # converter at B2 of the chain B1 - B2 - B3 (feeder at B1, 10 kA, every
+    # impedance R/X 0.1): I_sk = 1.2 20 / (sqrt(3) 110) kA; fault at B1 or B2
+    # takes all of it, at B3 the share |Z_Q + Z_L| / |Z_Q + 2 Z_L|
+    netc = Net(name = "sc_pec", baseMVA = 100.0)
+    for b in ("B1", "B2", "B3")
+      addBus!(net = netc, busName = b, vn_kV = 110.0)
+    end
+    addPIModelACLine!(net = netc, fromBus = "B1", toBus = "B2", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = netc, fromBus = "B2", toBus = "B3", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
+    feeder = _ref_sc_feeder(bus = "B1", ikmax_A = 10_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1)
+    base = runShortCircuit!(netc, _ref_sc_data(enis = [feeder]); case = :max)
+    with = runShortCircuit!(netc, _ref_sc_data(enis = [feeder], pecs = [_ref_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)]); case = :max)
+    isk = 1.2 * 20.0 / (sqrt(3.0) * 110.0)
+    zqc = 0.1 * xq + im * xq
+    zl = (0.05 + 0.5im) * 121.0
+    share = Dict("B1" => 1.0, "B2" => 1.0, "B3" => abs(zqc + zl) / abs(zqc + 2 * zl))
+    for (b0, b1) in zip(base.rows, with.rows)
+      @test isapprox(b1.ik_kA - b0.ik_kA, share[b1.bus] * isk; rtol = 1e-9)
+      @test isapprox(b1.ip_kA, b0.ip_kA + sqrt(2.0) * share[b1.bus] * isk; rtol = 1e-9)
+    end
 
     # source on a switch-only bus (ring A-B-D-A, C on B by a closed link):
     # Z_B = Z_QA + (2/3) Z_L, with the feeder at C Z_B' = Z_QC || Z_B,

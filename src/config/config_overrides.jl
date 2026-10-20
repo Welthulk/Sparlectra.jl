@@ -76,6 +76,19 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "contingency.pairs.enabled",
   "contingency.pairs.rule",
   "contingency.pairs.max_pairs",
+  "qsts.mode",
+  "qsts.base_step",
+  "qsts.snapshot_controls",
+  "qsts.sequential_start",
+  "qsts.resync_every",
+  "qsts.dead_time_steps",
+  "qsts.hunting_window",
+  "qsts.vm_min_pu",
+  "qsts.vm_max_pu",
+  "qsts.loading_max_pct",
+  "qsts.series.min_structural_overlap",
+  "qsts.series.max_injection_churn",
+  "qsts.series.max_gap",
   "power_flow.apslf.order",
   "power_flow.apslf.nr_polish",
   "power_flow.apslf.convergence_radius",
@@ -122,6 +135,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "cgmes_import.map_energy_source",
   "cgmes_import.map_power_electronics",
   "cgmes_import.shunt_control",
+  "cgmes_import.read_dynamics",
   "model.auto_profile",
   "matpower_import.ratio",
   "matpower_import.shift_sign",
@@ -215,7 +229,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "contingency.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -246,6 +260,46 @@ function _validate_gui_override_value(key::String, value)
   elseif key in ("contingency.events.max_members", "contingency.pairs.max_pairs")
     _validate_override_type(key, value, Int)
     value >= 1 || throw(ArgumentError("Override $(key) must be at least 1; got $(value)."))
+  elseif key == "qsts.mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), QSTS_MODE_VALUES)
+  elseif key == "qsts.base_step"
+    # a step number; whether the series has that many steps is checked
+    # where the series is built
+    _validate_override_type(key, value, Int)
+    value >= 1 || throw(ArgumentError("Override $(key) must be at least 1; got $(value)."))
+  elseif key == "qsts.snapshot_controls"
+    _validate_override_type(key, value, Bool)
+  elseif key == "qsts.sequential_start"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), QSTS_SEQUENTIAL_START_VALUES)
+  elseif key in ("qsts.resync_every", "qsts.dead_time_steps")
+    # step counts; 0 is off
+    _validate_override_type(key, value, Int)
+    value >= 0 || throw(ArgumentError("Override $(key) must be 0 (off) or a positive number of steps; got $(value)."))
+  elseif key == "qsts.hunting_window"
+    # a hunting pattern is three moves, so a shorter window finds none
+    _validate_override_type(key, value, Int)
+    value >= 3 || throw(ArgumentError("Override $(key) must be at least 3 (a hunting pattern is three moves); got $(value)."))
+  elseif key in ("qsts.vm_min_pu", "qsts.vm_max_pu", "qsts.loading_max_pct")
+    # the order vm_min < vm_max needs both values and is checked by the
+    # typed parser on the merged configuration
+    _validate_override_type(key, value, Float64)
+    (isfinite(value) && value > 0.0) || throw(ArgumentError("Override $(key) must be a finite positive number; got $(value)."))
+  elseif key in ("qsts.series.min_structural_overlap", "qsts.series.max_injection_churn")
+    # shares; null keeps "no limit" for the churn flag
+    (key == "qsts.series.max_injection_churn" && value === nothing) || begin
+      _validate_override_type(key, value, Float64)
+      0.0 <= value <= 1.0 || throw(ArgumentError("Override $(key) must be in [0, 1]; got $(value)."))
+    end
+  elseif key == "qsts.series.max_gap"
+    # minutes between snapshots; null keeps "no limit"
+    value === nothing || begin
+      _validate_override_type(key, value, Float64)
+      isfinite(value) && value > 0.0 || throw(ArgumentError("Override $(key) must be a positive number of minutes; got $(value)."))
+    end
+  elseif key == "short_circuit.converter_current_factor"
+    # 0.0 is off, as in `ShortCircuitConfig`
+    _validate_override_type(key, value, Float64)
+    isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be 0 (off) or a finite positive number; got $(value)."))
   elseif key == "model.nominal_frequency_hz"
     _validate_override_type(key, value, Float64)
     isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
@@ -253,10 +307,6 @@ function _validate_gui_override_value(key::String, value)
     # 0 switches the check off, so zero is valid here
     _validate_override_type(key, value, Float64)
     isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be finite and non-negative; got $(value)."))
-  elseif key == "short_circuit.converter_current_factor"
-    # 0.0 is off, as in `ShortCircuitConfig`
-    _validate_override_type(key, value, Float64)
-    isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be 0 (off) or a finite positive number; got $(value)."))
   elseif key == "contingency.pairs.rule"
     Symbol(String(value)) in CONTINGENCY_PAIR_RULE_VALUES || throw(ArgumentError("Override $(key) must be one of $(join(CONTINGENCY_PAIR_RULE_VALUES, ", ")); got $(repr(value))."))
   elseif key in ("power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses")
@@ -781,6 +831,19 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "contingency.pairs.enabled",
   "contingency.pairs.rule",
   "contingency.pairs.max_pairs",
+  "qsts.mode",
+  "qsts.base_step",
+  "qsts.snapshot_controls",
+  "qsts.sequential_start",
+  "qsts.resync_every",
+  "qsts.dead_time_steps",
+  "qsts.hunting_window",
+  "qsts.vm_min_pu",
+  "qsts.vm_max_pu",
+  "qsts.loading_max_pct",
+  "qsts.series.min_structural_overlap",
+  "qsts.series.max_injection_churn",
+  "qsts.series.max_gap",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "power_flow.start_mode.ratio_profile",
@@ -804,6 +867,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "cgmes_import.map_energy_source",
   "cgmes_import.map_power_electronics",
   "cgmes_import.shunt_control",
+  "cgmes_import.read_dynamics",
   "powsybl_import.hvdc_mode",
   "powsybl_import.multi_slack",
   "powsybl_import.remote_regulation",

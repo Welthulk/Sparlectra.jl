@@ -513,6 +513,134 @@ end)() end
       @test st_rescue.wrong_branch_rescue_attempted === false
     end)() end
 
+    # #456 class (a setting lost on the way to the solver runs on the
+    # callee's default without any message): every solver option of the
+    # positional runpf! is set once to a value other than its default and
+    # must arrive at the keyword runpf_rectangular! on all three paths (plain
+    # net, merged link cluster, island-wise solve). A new runpf! keyword must
+    # either get a value in the table or be named as local. A process of its
+    # own: the probe replaces the keyword method there and stops the solve
+    # on arrival.
+    @testset "positional runpf! hands every solver option to the solver" begin (function ()
+      script = test_scratch_path(".jl")
+      write(script, raw"""
+      using Sparlectra
+      const S = Sparlectra
+
+      # the keyword lists of the three methods on the path, read before the probe
+      # replaces the keyword method
+      decl(f, sig) = Set(Base.kwarg_decl(only(methods(f, sig))))
+      kw_runpf = decl(S.runpf!, (S.Net, Int, Float64, Int))
+      kw_rect_pos = decl(S.runpf_rectangular!, (S.Net, Int, Float64, Int))
+      kw_rect = decl(S.runpf_rectangular!, (S.Net,))
+
+      # keywords the positional runpf! acts on itself and does not hand on
+      runpf_local = Set([:method, :validate_limits_after_pf, :q_limit_violation_headroom, :auto_slack, :islands_enabled, :islands_mode, :islands_reference_policy,
+        :islands_diagnostic_continue_after_failure, :islands_parallel_enabled, :islands_parallel_max_tasks, :islands_parallel_min_work_items, :islands_parallel_min_buses])
+
+      function feeder!(net, k)
+        a, b, c = "A$(k)", "B$(k)", "C$(k)"
+        foreach(bus -> addBus!(net = net, busName = bus, vn_kV = 110.0), (a, b, c))
+        addProsumer!(net = net, busName = a, type = "EXTERNALNETWORKINJECTION", referencePri = a, vm_pu = 1.0, va_deg = 0.0)
+        addProsumer!(net = net, busName = b, type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+        addProsumer!(net = net, busName = c, type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+        addPIModelACLine!(net = net, fromBus = a, toBus = b, r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+        addPIModelACLine!(net = net, fromBus = b, toBus = c, r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+      end
+      function build(kind)
+        net = Net(name = "probe_$(kind)", baseMVA = 100.0)
+        feeder!(net, 1)
+        kind === :island && feeder!(net, 2)
+        if kind === :merged
+          addBus!(net = net, busName = "C1X", vn_kV = 110.0)
+          addLink!(net = net, fromBus = "C1", toBus = "C1X", status = 1)
+        end
+        validate!(net = net)
+        return net
+      end
+
+      struct ProbeStop <: Exception end
+      const RECEIVED = Ref{Any}(nothing)
+      # the probe takes the place of the keyword method: it records what arrives
+      # and stops the solve
+      Core.eval(S, :(function runpf_rectangular!(net::Net; kw...)
+        Main.RECEIVED[] = NamedTuple(kw)
+        throw(Main.ProbeStop())
+      end))
+      function received(f)
+        RECEIVED[] = nothing
+        try
+          f()
+        catch err
+          err isa ProbeStop || rethrow()
+        end
+        return RECEIVED[]
+      end
+
+      defaults = received(() -> runpf!(build(:plain), 10))
+      profile = Dict{Symbol,Any}()
+      nondefault = (;
+        damp = 0.5, autodamp = true, autodamp_min = 0.07, newton_update = :rectangular, power_mode = true, power_mode_lu = :klu,
+        jacobian_reuse = true, jacobian_reuse_min_reduction = 12.5, jacobian_reuse_max_steps = 4, qlimit_warm_clamps = Dict("G1" => :max),
+        merit_enabled = true, merit_armijo_c1 = 2.0e-4, merit_scale_p = 1.1, merit_scale_q = 1.2, merit_scale_v = 1.3, merit_fallback_max_mismatch = false,
+        trust_region_enabled = true, trust_region_initial_radius = 0.9, trust_region_min_radius = 2.0e-4, trust_region_max_radius = 9.0, trust_region_eta_accept = 0.15,
+        trust_region_shrink_factor = 0.4, trust_region_expand_factor = 2.5, trust_region_expand_threshold = 0.8, trust_region_step_mode = :dogleg,
+        opt_flatstart = !defaults.opt_flatstart, opt_cooldown_iters = 5, opt_q_hyst_pu = 0.03, pv_table_rows = 31,
+        lock_pv_to_pq_buses = [2], qlimit_mode = :adjust_vset, qlimit_max_outer = 7,
+        start_projection = true, start_projection_try_dc_start = false, start_projection_try_blend_scan = false, start_projection_branch_guard = false,
+        start_projection_measure_candidates = false, start_projection_accept_unmeasured_dc_start = true, start_projection_blend_lambdas = [0.3],
+        start_projection_dc_angle_limit_deg = 45.0, start_projection_requested_angle_mode = :dc, start_projection_requested_voltage_mode = :all_bus_vm,
+        start_projection_ratio_profile = true,
+        start_current_iteration_enabled = true, start_current_iteration_max_iter = 11, start_current_iteration_tol = 2.0e-3, start_current_iteration_damping = 0.6,
+        start_current_iteration_accept_only_if_improved = false, start_current_iteration_min_improvement_factor = 0.97, start_current_iteration_vm_min_pu = 0.55,
+        start_current_iteration_vm_max_pu = 1.45, start_current_iteration_max_angle_step_deg = 25.0, start_current_iteration_only_for_large_cases = true,
+        apslf_start_enabled = true, apslf_start_order = 20,
+        qlimit_start_iter = defaults.qlimit_start_iter + 2, qlimit_start_mode = :auto, qlimit_auto_q_delta_pu = 3.0e-4, qlimit_trace_buses = [1], qlimit_lock_reason = :ignore_q_limits,
+        qlimit_guard = !defaults.qlimit_guard, qlimit_guard_min_q_range_pu = 0.03, qlimit_guard_zero_range_mode = :prefer_pq, qlimit_guard_narrow_range_mode = :delayed_switch,
+        qlimit_guard_log = false, qlimit_guard_max_switches = defaults.qlimit_guard_max_switches + 1, qlimit_guard_accept_bounded_violations = true,
+        qlimit_guard_max_remaining_violations = 2, qlimit_guard_freeze_after_repeated_switching = false, qlimit_guard_violation_mode = :ignore,
+        qlimit_guard_violation_threshold_pu = 2.0e-4, qlimits_enabled = false, qlimit_enforcement_mode = :classic_simultaneous,
+        wrong_branch_detection = :fail, wrong_branch_rescue = true, wrong_branch_min_vm_pu = 0.65, wrong_branch_max_vm_pu = 1.35, wrong_branch_max_angle_spread_deg = 170.0,
+        wrong_branch_max_branch_angle_deg = 80.0, wrong_branch_min_low_vm_count = 2, wrong_branch_min_vn_kV = 90.0, wrong_branch_low_vm_share = 0.06,
+        wrong_branch_max_bus_angle_deg = 110.0, wrong_branch_max_plain_steps = 15, wrong_branch_collapse_vm_pu = 0.45, wrong_branch_max_reference_branch_angle_deg = 85.0,
+        wrong_branch_rescue_max_attempts = 3,
+        rectangular_workspace_reuse = false, rectangular_preallocate_workspace = :on, rectangular_workspace_min_buses = 500, linear_solver = :umfpack,
+        performance_profile = profile,
+        distributed_slack_enabled = true, distributed_slack_p_mode = :pmax_weighted, distributed_slack_respect_p_limits = false, distributed_slack_fallback = :ref_only,
+        distributed_slack_weights = Dict("A1" => 1.0),
+      )
+      forwarded = setdiff(kw_runpf, runpf_local)
+      names(s) = isempty(s) ? "none" : join(sort(collect(s)), ", ")
+      # every keyword of runpf! is named as local or has a value in the table, and
+      # the positional and the keyword runpf_rectangular! declare each forwarded one
+      println("unclassified: ", names(symdiff(Set(keys(nondefault)), forwarded)), "; local not declared: ", names(setdiff(runpf_local, kw_runpf)))
+      println("not declared on the path: ", names(union(setdiff(forwarded, kw_rect_pos), setdiff(forwarded, kw_rect))))
+      println("arrive without keywords: ", names(symdiff(Set(keys(defaults)), union(forwarded, Set([:method, :maxiter, :tol, :verbose])))), " extra or missing")
+      println("table values equal to the default: ", names([k for k in keys(nondefault) if isequal(nondefault[k], defaults[k])]))
+      # the island call hands its own values for these four
+      island_override = (; wrong_branch_rescue = false, wrong_branch_rescue_max_attempts = 0, lock_pv_to_pq_buses = [2], performance_profile = profile)
+      for kind in (:plain, :merged, :island)
+        got = received(() -> runpf!(build(kind), 11, 1.0e-5, 1; nondefault..., islands_enabled = kind === :island))
+        expect = kind === :island ? merge(nondefault, island_override) : nondefault
+        lost = [k for k in keys(nondefault) if !haskey(got, k) || !(k === :performance_profile ? got[k] === expect[k] : isequal(got[k], expect[k]))]
+        println("path ", kind, ": ", length(keys(nondefault)) - length(lost), " options arrive, lost: ", names(lost), ", positional ", (got.maxiter, got.tol, got.verbose, got.method) == (11, 1.0e-5, 1, :rectangular))
+      end
+      """)
+      library = normpath(joinpath(@__DIR__, ".."))
+      buffer = IOBuffer()
+      proc = run(pipeline(Cmd(`$(Base.julia_cmd()) --startup-file=no --project=$(library) $(script)`; ignorestatus = true); stdout = buffer, stderr = buffer))
+      out = String(take!(buffer))
+      line(prefix) = (m = match(Regex("^" * prefix * "(.*)\$", "m"), out); m === nothing ? "missing in the child output:\n" * out : String(m.captures[1]))
+      @test success(proc)
+      @test line("unclassified: ") == "none; local not declared: none"
+      @test line("not declared on the path: ") == "none"
+      @test line("arrive without keywords: ") == "none extra or missing"
+      @test line("table values equal to the default: ") == "none"
+      for kind in ("plain", "merged", "island")
+        @test endswith(line("path $(kind): "), " options arrive, lost: none, positional true")
+      end
+    end)() end
+
     @testset "Typed power-flow config entry points" begin (function ()
       @test isdefined(Main, :run_sparlectra)
       @test isdefined(Main, :run_acpflow)

@@ -32,7 +32,7 @@ keeps loading.
 
 Case-scope keys are `matpower_import.*`, `cgmes_import.*`,
 `powsybl_import.*`, `power_flow.*`, `state_estimation.*`,
-`short_circuit.*` and the contingency keys the Settings page edits
+`short_circuit.*`, `qsts.*` and the contingency keys the Settings page edits
 (`scf_is_case_config_key(key)` answers per key; `contingency.rescue_ladder`
 and `contingency.events.name_stem_pattern` are machine scope). When
 a case ships its own configuration file, these keys skip level 2 and
@@ -399,9 +399,9 @@ inside this control range and stands at its limit at either end. A ratio
 outside the range, such as the case ratio when the range leaves it out,
 goes onto the nearer end of the range in the first pass, whatever the
 voltage error, and the run logs a warning naming the transformer, its
-start ratio and step and the limit, once per controller and run. Both
-values must lie inside the physical range, otherwise applying the entry
-fails with an `ArgumentError` naming it.
+start ratio and step and the limit, once per controller and run (a QSTS
+run is one run). Both values must lie inside the physical range,
+otherwise applying the entry fails with an `ArgumentError` naming it.
 
 Unknown types, unknown keys and missing required keys fail at configuration
 load; unresolvable references and invalid limits fail at apply time, naming
@@ -434,6 +434,24 @@ built net.
 | `contingency.pairs.enabled` | `false` | Add N-2 branch pairs to a branch N-1 of an SCF case ([N-2 pairs](@ref contingency_pairs)). |
 | `contingency.pairs.rule` | `all` | Which pairs; `all` is every pair of closed branches. |
 | `contingency.pairs.max_pairs` | `50000` | A run with more pairs stops before solving. |
+
+## Snapshot series keys
+
+| Key | Default | Meaning |
+|---|---|---|
+| `qsts.mode` | `off` | Run mode of a QSTS run: `off` refuses the run, `snapshots` solves every step on its own from the solution of the base step, `sequential` solves the steps in order and carries taps and banks from step to step. Allowed values: `off`, `snapshots`, `sequential`. |
+| `qsts.base_step` | `1` | Step of a CGMES snapshot series that is the base case, counted from 1; `buildCGMESSeriesUnion` takes it unless its `base_step` keyword is given. |
+| `qsts.snapshot_controls` | `false` | Run the controllers of the `control` section in the base case and in every step of a snapshot run. With `false`, taps and shunt banks stay at the values of each snapshot. |
+| `qsts.sequential_start` | `previous` | Start voltages of a step in a sequential run: `previous` takes the solution of the last solved step, `snapshot` the solution of the same step in a snapshot run without controllers. |
+| `qsts.resync_every` | `0` | Sequential run: every n-th step (1, n + 1, 2n + 1, ...) puts taps and banks back on the values of the series. `0` resyncs step 1 only. |
+| `qsts.dead_time_steps` | `0` | Sequential run: steps a controller stays locked after a counted move. `0` is no dead time. |
+| `qsts.hunting_window` | `3` | Sequential run: three net moves of one controller with alternating sign within this many steps count as one hunting pattern. At least 3. |
+| `qsts.vm_min_pu` | `0.9` | Sequential run: lower end of the voltage band of the violation metrics. |
+| `qsts.vm_max_pu` | `1.1` | Sequential run: upper end of the voltage band; above `qsts.vm_min_pu`. |
+| `qsts.loading_max_pct` | `100.0` | Sequential run: branch loading in percent of the rating above which a step counts an overload. |
+| `qsts.series.min_structural_overlap` | `0.95` | Share of common mRIDs over lines, transformers and their ends, busbar sections, breakers, disconnectors and connectivity nodes; below it a new series starts. An object with a new mRID but the same name and connections counts as common. Topological nodes are reported, not counted. |
+| `qsts.series.max_injection_churn` | `null` | Churn of the injections (a share in [0, 1]) above which a pair is flagged in the series report; never splits a series. |
+| `qsts.series.max_gap` | `null` | Largest step between two snapshots in minutes; a larger step starts a new series. |
 
 ## Bookkeeping and console keys
 

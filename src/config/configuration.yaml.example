@@ -587,14 +587,21 @@ cgmes_import:
   # Map CGMES 3.0 PowerElectronicsConnection objects (wind and solar parks,
   # batteries behind a converter) as injections: P and Q from the SSH, sign
   # inverted from the CGMES load convention; PV with an enabled voltage
-  # RegulatingControl, else PQ; never the import's slack. Off by default: they
-  # are left out and counted in one import notice.
+  # RegulatingControl, else PQ; the slack only of an island without other
+  # reference. Off by default: they are left out and counted in one import
+  # notice.
   map_power_electronics: false
   # Attach a switched-bank voltage controller to every LinearShuntCompensator
   # whose controlEnabled and voltage RegulatingControl are set and regulate
   # its own bus (sections of bPerSection between 0 and maximumSections). Off
   # by default: the banks stay at their SSH sections.
   shunt_control: false
+  # Read the DY profile and give the machines their dynamic data: inertia,
+  # damping and rating of the synchronous machine models, droop and governor
+  # time constant of some turbine governors. No calculation reads them; the
+  # island slack choice reads the unit type. Off by default: the DY file is
+  # skipped.
+  read_dynamics: false
   # Plausibility band for a voltage RegulatingControl target, in p.u. of the
   # regulated bus's nominal voltage. Outside the band the target is treated as a
   # placeholder: ignored, unit held PV at the bus voltage derived from the
@@ -936,6 +943,50 @@ contingency:
     enabled: false
     rule: all
     max_pairs: 50000
+
+qsts:
+  # Run mode of a QSTS run: off (a run is refused), snapshots (every step
+  # solved on its own from the solution of the base step) or sequential (the
+  # steps in order, taps and banks carried from step to step).
+  # Allowed values: off, snapshots, sequential
+  mode: off
+  # Step of a CGMES snapshot series that is the base case, counted from 1
+  # (1 = the first snapshot).
+  base_step: 1
+  # Run the controllers of the control section in the base case and in
+  # every step of a snapshot run; false keeps taps and shunt banks at the
+  # values of each snapshot.
+  snapshot_controls: false
+  # Start voltages of a step in a sequential run: previous (the solution of
+  # the last solved step) or snapshot (the solution of the same step in a
+  # snapshot run without controllers).
+  # Allowed values: previous, snapshot
+  sequential_start: previous
+  # Sequential run: every n-th step (1, n + 1, 2n + 1, ...) puts taps and
+  # banks back on the values of the series; 0 resyncs step 1 only.
+  resync_every: 0
+  # Sequential run: steps a controller stays locked after a counted move;
+  # 0 = no dead time.
+  dead_time_steps: 0
+  # Sequential run: three net moves of one controller with alternating sign
+  # within this many steps count as one hunting pattern; at least 3.
+  hunting_window: 3
+  # Sequential run: voltage band and loading limit of the violation metrics.
+  vm_min_pu: 0.9
+  vm_max_pu: 1.1
+  loading_max_pct: 100.0
+  # Series check of CGMES snapshot deliveries (checkCGMESSeries).
+  series:
+    # Share of common mRIDs over lines, transformers and their ends, busbar
+    # sections, breakers, disconnectors and connectivity nodes; below it a
+    # new series starts.
+    min_structural_overlap: 0.95
+    # Injection churn above which a pair is flagged in the report (never
+    # splits a series); null = no limit.
+    max_injection_churn: null
+    # Largest step between two snapshots in minutes; a larger step starts a
+    # new series; null = no limit.
+    max_gap: null
 
 control:
   # Enable the generic outer-loop control framework.

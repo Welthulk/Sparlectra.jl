@@ -320,6 +320,11 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     # dismiss button) renders there
     redirect_target = isempty(casefile) ? "/powerflow/settings" : "/powerflow/settings?casefile=$(_webui_urlencode(casefile))"
     return _webui_redirect(redirect_target)
+  elseif verb == "GET" && startswith(path, "/powerflow/result/") && endswith(path, "/qsts-chart")
+    # one chart of a QSTS run as SVG, from the run's element view (the
+    # element and quantity choice of the result page)
+    encoded_run_id = path[(lastindex("/powerflow/result/") + 1):(lastindex(path) - lastindex("/qsts-chart"))]
+    return handle_qsts_chart(_webui_urldecode(encoded_run_id), get(query, "element", ""), get(query, "quantity", ""))
   elseif verb == "GET" && startswith(path, "/powerflow/result/")
     run_id = _webui_urldecode(path[(lastindex("/powerflow/result/") + 1):end])
     get(query, "autorefresh", "") == "1" || _webui_log_route!(log_root, "powerflow_status_opened", verb, path; status = "opened", run_id)
@@ -368,10 +373,12 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     download = get(query, "download", "") == "1"
     # raw=1 shows a CSV or Markdown artifact as text instead of the rendered view
     raw = get(query, "raw", "") == "1"
+    # page=1 wraps an SVG chart in a Web UI page; without it the bare SVG is sent (embedding)
+    page = get(query, "page", "") == "1"
     # digits=, power=, sort=, order= and hide= set the display of a CSV table
     # (display only, the file stays as written)
     csv_display = _webui_csv_display(query)
-    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name; raw, csv_display)
+    response = download ? handle_powerflow_artifact_download(run_id, artifact_name) : handle_powerflow_artifact(run_id, artifact_name; raw, page, csv_display)
     _webui_log_route!(log_root, download ? "artifact_downloaded" : "artifact_opened", verb, path; status = response.status, run_id, artifact = artifact_name)
     return response
   elseif verb == "GET" && path == "/powerflow/history"

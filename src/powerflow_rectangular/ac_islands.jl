@@ -181,8 +181,8 @@ end
 # `(islands, held, refs)`, per island: the raw bus indices of all members of
 # its merged nodes (switch-only buses included), sorted; whether a merged
 # node is Slack or PV; the members of its Slack nodes. Used by the CGMES
-# importer (island slacks, machine controls, the EnergySource notice) and
-# the SV comparison (angle alignment).
+# importer (island slacks, machine controls, the EnergySource notice), the
+# SV comparison and QSTS (frozen buses, start values, angle alignment).
 function _power_flow_islands(net::Net)
   wnet, reps, merged = _merged_pf_net(net)
   # without a closed link wnet is the net itself: its types are those of

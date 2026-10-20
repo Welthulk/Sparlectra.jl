@@ -726,12 +726,57 @@ _isCGMESSource(ps)::Bool = Sparlectra.isGenerator(ps) && (something(ps.pVal, 0.0
 # de-energized component (load sign P < 0), empty when there is none.
 _droppedLoadInfeed(p::Float64)::String = p > 0.0 ? ", load infeed P = $(round(p; digits = 2)) MW dropped" : ""
 
+# Switch off the buses `buses`: injections zeroed, every branch touching
+# them out of service, the buses typed Isolated. Returns the number of
+# zeroed injections, the unsupplied load P, the dropped load infeed P and
+# the dropped generation P of units that fed in (MW). The caller reports;
+# markIsolatedBuses! sets the voltages to 0.
+function _deEnergizeBuses!(net, buses::Vector{Int})::Tuple{Int,Float64,Float64,Float64}
+  busset = Set(buses)
+  # Zero the injections rather than deleting the prosumers: the components
+  # stay visible in reports, they just no longer contribute to the balance.
+  nload = 0
+  p_load = 0.0
+  p_fed = 0.0
+  p_gen = 0.0
+  for ps in net.prosumpsVec
+    ps.comp.cFrom_bus in busset || continue
+    # unsupplied: what a load consumes, and what a generator-type unit drew
+    # (pVal <= 0). A load that feeds in (pVal < 0) is kept apart: netting it
+    # against the drawn power would report a smaller or even negative
+    # unsupplied load. A unit that fed in (pVal > 0, only in an island
+    # switched off for its unit types) is dropped generation.
+    p = something(ps.pVal, 0.0)
+    if Sparlectra.isGenerator(ps)
+      p > 0.0 ? (p_gen += p) : (p_load -= p)
+    else
+      p >= 0.0 ? (p_load += p) : (p_fed -= p)
+    end
+    ps.pVal = 0.0
+    ps.qVal = 0.0
+    nload += 1
+  end
+  # Any branch touching the buses goes out of service. Testing only one end
+  # is enough -- a branch with one end inside cannot have the other end in
+  # an energized component, or the component would have been connected.
+  for br in net.branchVec
+    (br.fromBus in busset || br.toBus in busset) && (br.status = 0)
+  end
+  for i in buses
+    i in net.isoNodes && continue
+    Sparlectra.setNodeType!(net.nodeVec[i], "Isolated")
+    push!(net.isoNodes, i)
+  end
+  return nload, p_load, p_fed, p_gen
+end
+
 # Real deliveries contain connected component(s) without any source: every
 # generator/injection in them is switched off, or the feeding branches are
 # open (RealGrid: 13 pockets totalling 22 buses). Solving those is impossible
 # — they have no reference — so they are de-energized deliberately: loads
 # zeroed, branches out of service, buses isolated, one message per component.
 # Without this the solver aborts on "island without reference".
+
 """
 De-energize every connected component that contains no source.
 
@@ -817,39 +862,7 @@ function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
     # message log. Anything larger, or a lone bus that does carry an injection,
     # is reported.
     length(buses) == 1 && isempty(filter(ps -> ps.comp.cFrom_bus == buses[1], net.prosumpsVec)) && continue
-    busset = Set(buses)
-    # Zero the injections rather than deleting the prosumers: the components
-    # stay visible in reports, they just no longer contribute to the balance.
-    nload = 0
-    p_load = 0.0
-    p_fed = 0.0
-    for ps in net.prosumpsVec
-      ps.comp.cFrom_bus in busset || continue
-      # unsupplied: what a load consumes, and what a generator-type unit drew
-      # (pVal <= 0 here, a unit with pVal > 0 is a source). A load that feeds
-      # in (pVal < 0) is kept apart: netting it against the drawn power would
-      # report a smaller or even negative unsupplied load.
-      p = something(ps.pVal, 0.0)
-      if Sparlectra.isGenerator(ps)
-        p_load -= p
-      else
-        p >= 0.0 ? (p_load += p) : (p_fed -= p)
-      end
-      ps.pVal = 0.0
-      ps.qVal = 0.0
-      nload += 1
-    end
-    # Any branch touching the component goes out of service. Testing only one
-    # end is enough -- a branch with one end inside cannot have the other end in
-    # an energized component, or the component would have been connected.
-    for br in net.branchVec
-      (br.fromBus in busset || br.toBus in busset) && (br.status = 0)
-    end
-    for i in buses
-      i in net.isoNodes && continue
-      Sparlectra.setNodeType!(net.nodeVec[i], "Isolated")
-      push!(net.isoNodes, i)
-    end
+    nload, p_load, p_fed, _ = _deEnergizeBuses!(net, buses)
     push!(ctx.messages, "notice: de-energized a component of $(length(buses)) bus(es) around $(net.nodeVec[first(buses)].comp.cName): no source inside (no unit with P > 0 or voltage regulation); $(nload) injection(s) zeroed, load P = $(round(p_load; digits = 2)) MW unsupplied$(_droppedLoadInfeed(p_fed))")
     n_comp += 1
     n_bus += length(buses)
@@ -2415,6 +2428,16 @@ bus, `isRegulated`, and as voltage setpoint the start voltage of its bus
 local setpoint exists. Each choice is a `warning:` message naming island,
 unit, reason and setpoint, and one notice counts the islands. Called only
 with `multi_slack = true`.
+
+The unit type of a unit's `DynamicData` (CGMES DY import, see
+`cgmes_import.read_dynamics`) narrows the candidates: a grid-following unit
+cannot hold an island and is never the slack. An island whose units are all
+grid-following is switched off like a part without source (injections
+zeroed, branches out of service, buses isolated) with one `warning:` each
+and one counting notice. When grid-following units carry all the infeed but
+another unit of unknown or other type sits in the island, no slack is chosen
+and a `warning:` says so. Synchronous and grid-forming units, and units
+without `DynamicData`, are candidates as described above.
 """
 function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
   nbus = length(net.nodeVec)
@@ -2457,10 +2480,27 @@ function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
   # a switch-only bus is at 0 pu after the marking; its group voltage sits
   # on the first member that is not isolated
   fed = _linkFedIsolatedBuses(net)
+  n_off = 0
   for (buses, has_ref) in zip(islands, held)
     has_ref && continue
-    ks = reduce(vcat, (get(units, b, Int[]) for b in buses); init = Int[])
-    any(k -> something(net.prosumpsVec[k].pVal, 0.0) > 0.0, ks) || continue
+    ks_all = reduce(vcat, (get(units, b, Int[]) for b in buses); init = Int[])
+    any(k -> something(net.prosumpsVec[k].pVal, 0.0) > 0.0, ks_all) || continue
+    around = something(_busDictName(net, first(buses)), net.nodeVec[first(buses)].comp.cName)
+    # a unit stated grid-following (DynamicData.unit_type) cannot hold an
+    # island and is no candidate; a unit without DynamicData stays one
+    ks = filter(k -> !_isGridFollowingUnit(net.prosumpsVec[k]), ks_all)
+    if !any(k -> something(net.prosumpsVec[k].pVal, 0.0) > 0.0, ks)
+      if isempty(ks)
+        # every unit of the island is grid-following: nothing forms voltage
+        # and frequency, the island cannot stand in operation
+        nload, p_load, p_fed, p_gen = _deEnergizeBuses!(net, buses)
+        n_off += 1
+        push!(ctx.messages, "warning: electrical island of $(length(buses)) bus(es) around $(around) has infeed from grid-following units only and cannot stand in operation; switched off, $(nload) injection(s) zeroed, generation P = $(round(p_gen; digits = 2)) MW dropped, load P = $(round(p_load; digits = 2)) MW unsupplied$(_droppedLoadInfeed(p_fed))")
+      else
+        push!(ctx.messages, "warning: electrical island of $(length(buses)) bus(es) around $(around) has infeed but no reference, and every unit with infeed is grid-following; no slack chosen")
+      end
+      continue
+    end
     k, reason = _islandSlackUnit(net, ks, degree)
     ps = net.prosumpsVec[k]
     bus = Int(ps.comp.cFrom_bus)
@@ -2469,18 +2509,27 @@ function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
     ps.isRegulated = true
     ps.vm_pu = vm
     n_islands += 1
-    around = something(_busDictName(net, first(buses)), net.nodeVec[first(buses)].comp.cName)
     at = something(_busDictName(net, bus), net.nodeVec[bus].comp.cName)
-    # a converter can hold an island only when it forms the grid; CGMES does
-    # not say which kind it is, so the warning states the assumption
-    converter = ps.comp.cTyp == Sparlectra.PowerElectronicsConnection ? "; its unit type is unknown and assumed grid-following, an island of grid-following units only cannot stand in operation" : ""
+    # a converter can hold an island only when it forms the grid; without
+    # DynamicData the delivery does not say which kind it is, so the warning
+    # states the assumption
+    converter = (ps.comp.cTyp == Sparlectra.PowerElectronicsConnection && ps.dynamics === nothing) ? "; its unit type is unknown and assumed grid-following, an island of grid-following units only cannot stand in operation" : ""
     push!(ctx.messages, "warning: electrical island of $(length(buses)) bus(es) around $(around) has infeed but no reference; $(get(name_of, k, "unit $(k)")) at $(at) made its slack ($(reason)), voltage setpoint $(round(vm; digits = 4)) pu from the start voltage of its bus$(converter)")
   end
-  n_islands == 0 && return nothing
+  # the switched-off islands lost their branches: mark them isolated (voltage
+  # 0) with the rule of the import
+  n_off > 0 && Sparlectra.markIsolatedBuses!(net = net)
+  (n_islands == 0 && n_off == 0) && return nothing
   Sparlectra.refreshBusTypesFromProsumers!(net)
-  push!(ctx.messages, "notice: $(n_islands) electrical island(s) without reference got a slack from the importer (one warning each)")
+  n_islands > 0 && push!(ctx.messages, "notice: $(n_islands) electrical island(s) without reference got a slack from the importer (one warning each)")
+  n_off > 0 && push!(ctx.messages, "notice: $(n_off) electrical island(s) with grid-following units only switched off (one warning each)")
   return nothing
 end
+
+# A unit whose DynamicData states it grid-following. A unit without
+# DynamicData is not: its type is unknown and the island rules of the import
+# treat it as before.
+_isGridFollowingUnit(ps)::Bool = ps.dynamics !== nothing && ps.dynamics.unit_type == Sparlectra.GridFollowingUnit
 
 """
 Angle-reference nodes declared by the SV profile: `TopologicalIsland` names
@@ -2962,8 +3011,9 @@ end
 # without other reference it can still become the slack, from the importer
 # (_slackForIslandsWithoutReference!) or, with multi_slack = false, from the
 # island-wise solve (see _noticeEnergySourceOnlyIslands!). Switched off, the
-# objects go to ctx.skipped (not mapped), so compareWithSV leaves their
-# terminals out, and one notice counts them.
+# objects go to ctx.skipped (not mapped), so compareWithSV and the
+# measurement key index leave their terminals out, and one notice counts
+# them.
 function _mapEnergySources!(pending::Vector{NamedTuple}, net, store, topo, created, svmap, ctx::_MapCtx)
   sources = collect(CIMObject, objectsOf(store, :EnergySource))
   if !ctx.map_energy_source
@@ -3033,18 +3083,23 @@ const _PE_UNIT_CLASSES = [:PowerElectronicsUnit, :BatteryUnit, :PhotoVoltaicUnit
 # (PowerElectronicsUnit.minP/maxP in EQ, nameplate values in generator sign
 # like GeneratingUnit.min/maxOperatingP): the sum over the units that
 # reference the connection, `nothing` for a bound that one of them does not
-# state, so a partial sum never reads as the full limit.
-function _powerElectronicsPLimits(store::CGMESStore)::Dict{String,Tuple{Union{Nothing,Float64},Union{Nothing,Float64}}}
+# state, so a partial sum never reads as the full limit. A placeholder bound
+# of a unit (_pLimit) counts as not stated; `placeholder` marks the
+# connections with one for the notice.
+function _powerElectronicsPLimits(store::CGMESStore)::Dict{String,@NamedTuple{lo::Union{Nothing,Float64}, hi::Union{Nothing,Float64}, placeholder::Bool}}
   units = Dict{String,Vector{CIMObject}}()
   for cls in _PE_UNIT_CLASSES, u in objectsOf(store, cls)
     pec = get(u.refs, :PowerElectronicsConnection, nothing)
     pec === nothing || push!(get!(Vector{CIMObject}, units, pec), u)
   end
-  out = Dict{String,Tuple{Union{Nothing,Float64},Union{Nothing,Float64}}}()
+  out = Dict{String,@NamedTuple{lo::Union{Nothing,Float64}, hi::Union{Nothing,Float64}, placeholder::Bool}}()
   for (pec, us) in units
-    lo = [num(u, :minP) for u in us]
-    hi = [num(u, :maxP) for u in us]
-    out[pec] = (any(isnothing, lo) ? nothing : sum(something, lo), any(isnothing, hi) ? nothing : sum(something, hi))
+    raw_lo = [num(u, :minP) for u in us]
+    raw_hi = [num(u, :maxP) for u in us]
+    lo = _pLimit.(raw_lo)
+    hi = _pLimit.(raw_hi)
+    placeholder = count(isnothing, lo) > count(isnothing, raw_lo) || count(isnothing, hi) > count(isnothing, raw_hi)
+    out[pec] = (lo = any(isnothing, lo) ? nothing : sum(something, lo), hi = any(isnothing, hi) ? nothing : sum(something, hi), placeholder = placeholder)
   end
   return out
 end
@@ -3133,7 +3188,9 @@ function _mapPowerElectronicsConnections!(pending::Vector{NamedTuple}, net, stor
         push!(ctx.messages, "notice: PowerElectronicsConnection $(name) regulates voltage and has no usable minQ/maxQ, using ±$(qwide) MVAr")
       end
     end
-    pmin, pmax = get(plimits, pec.mrid, (nothing, nothing))
+    lim = get(plimits, pec.mrid, (lo = nothing, hi = nothing, placeholder = false))
+    pmin, pmax = lim.lo, lim.hi
+    lim.placeholder && (ctx.p_limit_placeholders["PowerElectronicsConnection"] = get(ctx.p_limit_placeholders, "PowerElectronicsConnection", 0) + 1)
     push!(
       pending,
       (
@@ -3235,7 +3292,8 @@ const _SSH_ACTIVE_POWER_ATTR = [
 
 # CGMES classes the importer turns into network elements (the class table in
 # docs/src/cgmes_import.md, the kinds of CGMESImportResult.element_by_mrid).
-# EnergySource joins them only with its switch on, see _unmappedClasses.
+# EnergySource and PowerElectronicsConnection join them only with their
+# switch on, see _unmappedClasses.
 const _MAPPED_EQUIPMENT_CLASSES = [
   :ACLineSegment,
   :SeriesCompensator,
@@ -3847,7 +3905,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     # P limits from EQ minP/maxP as delivered, in generator sign: the CIM
     # names them limits "of the injection" (p in SSH is load sign), PowSyBl
     # takes them unchanged as generator minP/maxP and writes them back so,
-    # and the export of a network injection writes its
+    # and the export of a converter or a network injection writes its
     # prosumer pMin/pMax the same way. Unlike the scalar Q pair (hull, the
     # test sets disagree on its sign) the hull would widen an asymmetric
     # range such as (-5, 15) to (-15, 15). A missing, degenerate (0/0) or
@@ -4173,9 +4231,9 @@ counts the units with `regulationCapability = true` and no
 
 An active power limit of 9999 MW and above in magnitude
 (`GeneratingUnit.minOperatingP`/`maxOperatingP`, `minP`/`maxP` of an
-`ExternalNetworkInjection` or `EquivalentInjection`) is a placeholder and
-arrives as no limit (`nothing`): the unit is not ranked by it in a slack
-choice and gets no weight from it in the distributed slack.
+`ExternalNetworkInjection`, `EquivalentInjection` or `PowerElectronicsUnit`)
+is a placeholder and arrives as no limit (`nothing`): the unit is not ranked
+by it in a slack choice and gets no weight from it in the distributed slack.
 One notice counts these units per class. Q limits keep their delivered
 values.
 
@@ -4241,6 +4299,14 @@ as deadband. A remote target, a target outside the `vset` band, a
 conductance per section, a bus that is not PQ, a second bank on one bus and
 a `NonlinearShuntCompensator` keep the shunt fixed with a notice.
 
+With `read_dynamics = true` the DY profile is read as well and the machines
+get their `DynamicData` (`_mapDynamics!`): inertia, damping and rating from
+the synchronous machine models, droop and governor time constant from the
+turbine governors whose parameter meaning the specification states. One
+`notice:` per DY class counts the objects mapped, not mapped and without
+counterpart in the EQ. Without the switch the DY file is skipped and no
+result changes; a store passed in with DY objects is not read either.
+
 Every class with terminals or with an SSH active power value of which no
 object outside the boundary set is mapped gets one row `class not mapped:`
 with its object count and the sum of its SSH P in MW, below one header
@@ -4278,6 +4344,7 @@ function importCGMES(;
   map_energy_source::Bool = false,
   map_power_electronics::Bool = false,
   shunt_control::Bool = false,
+  read_dynamics::Bool = false,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
@@ -4287,7 +4354,9 @@ function importCGMES(;
   store = if path isa CGMESStore
     _nodeBreakerProcessorApplies(path) ? deepcopy(path) : path
   else
-    loadCGMES(path)
+    # the DY profile only with cgmes_import.read_dynamics; without it the DY
+    # file is skipped as before ("profile not in import set")
+    loadCGMES(path; profile_filter = read_dynamics ? IMPORT_PROFILE_TAGS_WITH_DY : IMPORT_PROFILE_TAGS)
   end
   equivalent_branch_min_z_pu >= 0.0 || throw(ArgumentError("importCGMES: equivalent_branch_min_z_pu must not be negative, got $(equivalent_branch_min_z_pu)"))
   ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, map_power_electronics = map_power_electronics, eb_min_z_pu = equivalent_branch_min_z_pu)
@@ -4366,6 +4435,9 @@ function importCGMES(;
   _mapShunts!(net, store, topo, created, svmap, ctx)
   _mapLoads!(net, store, topo, created, svmap, ctx)
   slack_bus = _mapInjections!(net, store, topo, created, svmap, ctx; multi_slack = multi_slack)
+  # dynamic data onto the mapped machines; before the island slack choice,
+  # which reads the unit type
+  read_dynamics && _mapDynamics!(net, store, ctx)
   # every element is mapped, so the stamps of the star rows are final
   _startStarBuses!(net, ctx, topo, svmap)
   Sparlectra.refreshBusTypesFromProsumers!(net)
@@ -4378,7 +4450,8 @@ function importCGMES(;
   # bus with a branch is marked as well, but the solver merges the switch
   # group onto one node and solves it with that bus (_merged_pf_net), so the
   # message counts such buses apart. They stay marked: N-1, the scenario
-  # steps and the short circuit apply the same branch-only rule.
+  # steps and the short circuit apply the same branch-only rule (QSTS mode A
+  # marks its own steps again with links = true).
   n_iso = length(Sparlectra.markIsolatedBuses!(net = net))
   n_fed = length(_linkFedIsolatedBuses(net))
   n_iso > n_fed && push!(ctx.messages, "notice: $(n_iso - n_fed) isolated bus(es) without any in-service branch: marked isolated, excluded from the power flow")
@@ -4421,16 +4494,14 @@ function importCGMES(;
 
   sc = collectShortCircuitData(store, topo)
   # a source the import did not map (terminal disconnected, out of service,
-  # no node, a boundary side that cancels) is no element of the network and
-  # feeds no fault current. Its record still carries the bus of its node,
-  # and that node can be live through other equipment, so the record goes
-  # here and not in the engine.
+  # no node, a boundary side that cancels, a connection behind its switch)
+  # is no element of the network and feeds no fault current. Its record
+  # still carries the bus of its node, and that node can be live through
+  # other equipment, so the record goes here and not in the engine.
+  filter!(r -> haskey(ctx.prosumer_by_mrid, r.mrid), sc.power_electronics_connections)
   for field in (:external_network_injections, :synchronous_machines, :equivalent_injections, :asynchronous_machines)
     filter!(r -> haskey(ctx.element_by_mrid, r.mrid), getfield(sc, field))
   end
-  # a connection the import did not map (switch off, out of service, no
-  # node) is no element of the network and feeds no fault current
-  filter!(r -> haskey(ctx.prosumer_by_mrid, r.mrid), sc.power_electronics_connections)
   isempty(sc.ac_line_segments) || push!(ctx.messages, "short-circuit data: $(length(sc.ac_line_segments)) lines (read, not evaluated)")
   isempty(sc.synchronous_machines) || push!(ctx.messages, "short-circuit data: $(length(sc.synchronous_machines)) machines (read, not evaluated)")
   isempty(sc.external_network_injections) || push!(ctx.messages, "short-circuit data: $(length(sc.external_network_injections)) external injections (read, not evaluated)")

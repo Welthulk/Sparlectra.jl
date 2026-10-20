@@ -882,6 +882,16 @@ end
 
 ## --- file IO ----------------------------------------------------------------
 
+# the checks and the conversion of read_scf_json on the document text; the
+# SCF series reader hands in the base case it read from its zip
+function _scfcase_from_text(text::AbstractString)::SCFCase
+  root = scf_json_parse(String(text))
+  _scf_validate_schema(root)
+  _scf_validate_studies(root)
+  _scf_validate_references(root)
+  return scfcase_from_root(root)
+end
+
 """
     read_scf_json(path) -> SCFCase
 
@@ -893,11 +903,7 @@ stage runs when the network is built ([`build_net`](@ref)).
 """
 function read_scf_json(path::AbstractString)::SCFCase
   isfile(path) || throw(ArgumentError("SCF: case file not found: $(path)"))
-  root = scf_json_parse(read(String(path), String))
-  _scf_validate_schema(root)
-  _scf_validate_studies(root)
-  _scf_validate_references(root)
-  return scfcase_from_root(root)
+  return _scfcase_from_text(read(String(path), String))
 end
 
 """

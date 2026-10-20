@@ -389,6 +389,9 @@ A mutable structure representing a prosumer in a power system. A prosumer is an 
 - `gencost::Union{Nothing,GenCost}`: MATPOWER generator cost rows of a
   generating unit ([`GenCost`](@ref)), kept for the export; no calculation
   reads it. `nothing` when the source has none.
+- `dynamics::Union{Nothing,DynamicData}`: dynamic parameters of the unit
+  ([`DynamicData`](@ref)): inertia, damping, droop, reserves, unit type. No
+  calculation reads them. `nothing` when the source has none.
 
 # Constructors
 - `ProSumer(comp::AbstractComponent, busIdx::Int, pGen::Float64, qGen::Float64, pLoad::Float64, qLoad::Float64, status::Int)`: Creates a new `ProSumer` instance.
@@ -441,6 +444,10 @@ mutable struct ProSumer
   # MATPOWER mpc.gencost rows of this unit (0.30.3, #471): carried for the
   # MATPOWER and SCF export only, never read by a calculation (no OPF)
   gencost::Union{Nothing,GenCost}
+  # dynamic parameters (#506 part 1): filled by SCF and the CGMES DY import,
+  # never read by a calculation; the CGMES island slack choice reads the
+  # unit type only. An adapter without such data leaves it at nothing.
+  dynamics::Union{Nothing,DynamicData}
   qGenRepl::Union{Nothing,Float64}
   pRes::Union{Nothing,Float64}
   qRes::Union{Nothing,Float64}
@@ -474,6 +481,7 @@ mutable struct ProSumer
     participationFactor::Union{Nothing,Float64} = nothing,
     referencePriority::Integer = 0,
     gencost::Union{Nothing,GenCost} = nothing,
+    dynamics::Union{Nothing,DynamicData} = nothing,
   )
     referencePriority >= 0 || throw(ArgumentError("ProSumer: referencePriority must be >= 0 (0 = no preference, 1 = strongest), got $(referencePriority)"))
     if participationFactor !== nothing
@@ -489,7 +497,7 @@ mutable struct ProSumer
       va_deg = 0.0
     end
 
-    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, Int(referencePriority), gencost, nothing, nothing, nothing)
+    new(comp, ratedS, ratedU, qPercent, p, q, maxP, minP, maxQ, minQ, ratedPowerFactor, referencePri, vm_pu, va_deg, vstep_pu, tap_steps_down, tap_steps_up, vset_adjust, isRegulated, type, isAPUNode, quController, puController, participationFactor, Int(referencePriority), gencost, dynamics, nothing, nothing, nothing)
   end
 
   function Base.show(io::IO, prosumption::ProSumer)
@@ -571,6 +579,9 @@ mutable struct ProSumer
     end
     if !isnothing(prosumption.puController)
       print(io, "puController: yes, ")
+    end
+    if !isnothing(prosumption.dynamics)
+      print(io, "dynamics: ", dynamic_unit_type_name(prosumption.dynamics.unit_type), ", ")
     end
 
     if (!isnothing(prosumption.qGenRepl))

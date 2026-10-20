@@ -60,6 +60,19 @@ function _sc_two_bus_net(; r_pu = 0.05, x_pu = 0.5)
   return net
 end
 
+# 110 kV chain B1 - B2 - B3, both lines (0.05 + j0.5) pu, and the feeder at
+# B1 (10 kA, R/X 0.1) of the converter tests.
+function _sc_pec_chain()
+  net = Net(name = "sc_pec", baseMVA = 100.0)
+  for b in ("B1", "B2", "B3")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
+  feeder = _sc_feeder(bus = "B1", ikmax_A = 10_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1)
+  return net, feeder
+end
+
 # multi-island SC fixture: n feeder-fed rings of m buses with declared Sk''
 function _sc_sweep_net(n, m)
   net = Net(name = "sc_sweep_$(n)x$(m)", baseMVA = 100.0)
@@ -362,13 +375,7 @@ function run_short_circuit_tests()
       # Z_Q + Z_L towards B1 and Z_L + fault towards B3:
       #   fault at B1 or B2: all of I_sk flows into the fault;
       #   fault at B3: |Z_32|/|Z_33| = |Z_Q + Z_L|/|Z_Q + 2·Z_L| of it.
-      net = Net(name = "sc_pec", baseMVA = 100.0)
-      for b in ("B1", "B2", "B3")
-        addBus!(net = net, busName = b, vn_kV = 110.0)
-      end
-      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
-      addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = 0.05, x_pu = 0.5, b_pu = 0.0, status = 1)
-      feeder = _sc_feeder(bus = "B1", ikmax_A = 10_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1)
+      net, feeder = _sc_pec_chain()
       base = runShortCircuit!(net, _sc_data(enis = [feeder]); case = :max)
       with = runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)]); case = :max)
       isk = 1.2 * 20.0 / (sqrt(3.0) * 110.0)
@@ -386,22 +393,12 @@ function run_short_circuit_tests()
         @test (b1.zk_ohm, b1.rx_ratio, b1.kappa) == (b0.zk_ohm, b0.rx_ratio, b0.kappa)
         @test isapprox(b1.ip_kA, b0.ip_kA + sqrt(2.0) * share[b1.bus] * isk; rtol = 1e-9)
       end
-      # the all-bus Takahashi sweep agrees to machine precision; the threaded
-      # sweep only reads the converter sums formed before the spawn and gives
-      # the serial rows bitwise, over repeated runs
+      # the all-bus Takahashi sweep agrees to machine precision (the threaded
+      # sweep against the serial one: run_short_circuit_parallel_tests)
       pec_data = _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)])
       serial = runShortCircuit!(net, pec_data; case = :max, parallel_enabled = false)
       tak = runShortCircuit!(net, pec_data; case = :max, sweep_method = :takahashi, parallel_enabled = false)
       @test all(isapprox(a.ik_kA, b.ik_kA; rtol = 1e-10) for (a, b) in zip(serial.rows, tak.rows))
-      for _ in 1:5
-        par = runShortCircuit!(net, pec_data; case = :max, parallel_enabled = true, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 2)
-        @test isequal(par.rows, serial.rows)
-      end
-      if Threads.nthreads() > 1
-        println("sc converter sweep: RAN parallel with ", Threads.nthreads(), " threads, 5 repeats")
-      else
-        println("sc converter sweep: fallback-only run (single-threaded test process); the threaded path runs in the --threads=4 battery")
-      end
       # the rated current comes from ratedU of the unit; without it the bus
       # nominal voltage stands in, and the row says so
       for (ru, flagged) in ((115.0, false), (nothing, true))
@@ -422,6 +419,7 @@ function run_short_circuit_tests()
         @test isapprox(b1.ik_kA - b0.ik_kA, share[b1.bus] * k * 20.0 / (sqrt(3.0) * 110.0); rtol = 1e-9)
         @test b1.contains_defaulted_data && any(why -> occursin("converter_current_factor 1.5 times the rated current substituted", why), b1.reasons)
         @test !any(why -> occursin("lower bound", why), b1.reasons)
+        @test !b1.lower_bound
       end
       @test isequal(runShortCircuit!(net, pec_data; case = :max, converter_current_factor = k).rows, with.rows)
       # only an absent maxIFault takes the factor; a stated one that is no
@@ -429,6 +427,7 @@ function run_short_circuit_tests()
       zero = run_with_expected_warnings(() -> runShortCircuit!(net, _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 0.0, ratedS = 20.0, ratedU = 110.0)]); case = :max, converter_current_factor = k), ["PowerElectronicsConnection PEC1 has maxIFault 0.0, not a usable current"])
       @test [r.ik_kA for r in zero.rows] == [r.ik_kA for r in base.rows]
       @test all(any(why -> occursin("PEC1 has maxIFault 0.0, not a usable current: contribution skipped; Ik''max in its island is a lower bound", why), r.reasons) for r in zero.rows)
+      @test all(r -> r.lower_bound, zero.rows)
       # the service outcome: rows on the substitute are no lower bound
       ok_state = (total = 1, with_data = 1, without_any = 0, refused = false, defaults_only = false, partial = false, warning = false)
       @test SparlectraApp._sc_outcome(ok_state, fac, "t.csv").reason == "short_circuit_flagged_defaults"
@@ -634,6 +633,19 @@ end
 # them in the pf profile; the threads profile (tools/run_gates.sh threads)
 # repeats them with four threads.
 function run_short_circuit_parallel_tests()
+  @testset "converter sweep: parallel equals serial" begin (function ()
+    # the threaded sweep only reads the converter sums formed before the
+    # spawn and gives the serial rows bitwise, over repeated runs
+    net, feeder = _sc_pec_chain()
+    pec_data = _sc_data(enis = [feeder], pecs = [_sc_pec(bus = "B2", maxIFault = 1.2, ratedS = 20.0, ratedU = 110.0)])
+    serial = runShortCircuit!(net, pec_data; case = :max, parallel_enabled = false)
+    for _ in 1:5
+      par = runShortCircuit!(net, pec_data; case = :max, parallel_enabled = true, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 2)
+      @test isequal(par.rows, serial.rows)
+    end
+    parallel_comparison_report("sc converter sweep (5 repeats)")
+  end)() end
+
   @testset "parallel all-bus sweep identity (Phase 3)" begin (function ()
     net = _sc_sweep_net(3, 40)
     for case in (:max, :min)

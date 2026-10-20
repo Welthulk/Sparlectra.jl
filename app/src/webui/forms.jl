@@ -57,7 +57,8 @@ end
 
 The shipped cases under `data/scf` (every `.scf.json`: the `sp_*` demo
 cases, the PST format fixture, and since 0.12.5 the feeder and Q-limit
-example cases), the plain power-grid-model files under `data/PGM`
+example cases), every SCF time series under `data/qsts` (since 0.60.0,
+recognized by its content), the plain power-grid-model files under `data/PGM`
 (`.json`), the CGMES demo deliveries, and since 0.20.0 the PowSyBl IIDM
 files under `data/powsybl` (`.xiidm`). They are offered in the case
 chooser regardless of the cache directory and staged into the cache on
@@ -68,6 +69,9 @@ function _webui_bundled_scf_options(application_root::AbstractString)::Vector{St
   names = String[]
   scf_dir = joinpath(application_root, "data", "scf")
   isdir(scf_dir) && append!(names, [name for name in readdir(scf_dir) if endswith(lowercase(name), ".scf.json")])
+  # SCF time series (QSTS, 0.60.0), shipped under data/qsts: the content decides, not the name
+  qsts_dir = joinpath(application_root, "data", "qsts")
+  isdir(qsts_dir) && append!(names, [name for name in readdir(qsts_dir) if _webui_is_regular_file(joinpath(qsts_dir, name)) && _webui_is_scf_series_cached(joinpath(qsts_dir, name))])
   pgm_dir = joinpath(application_root, "data", "PGM")
   isdir(pgm_dir) && append!(names, [name for name in readdir(pgm_dir) if endswith(lowercase(name), ".json")])
   # the CGMES deliveries exported by Sparlectra itself (data/cgmes_demo/<case>,
@@ -112,17 +116,6 @@ function _webui_pack_cgmes_demo!(folder::AbstractString, dest::AbstractString)::
   return dest
 end
 
-# the bundled source file behind a bare case name, searched in the order the
-# run stages it (data/mpower, data/scf, data/PGM, data/powsybl), or nothing;
-# the CGMES demo ZIPs are packed on staging and have no single source file
-function _webui_bundled_case_source(application_root::AbstractString, name::AbstractString)::Union{Nothing,String}
-  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "PGM"), joinpath(application_root, "data", "powsybl"))
-    bundled = joinpath(source_dir, String(name))
-    isfile(bundled) && return bundled
-  end
-  return nothing
-end
-
 # The hash list of the shipped files: for every file the Web UI copies into a
 # user's case directory (a case, its companions, a packed CGMES demo ZIP, a
 # warmup workload), the SHA-256 of every committed version of that file. It
@@ -133,7 +126,7 @@ const _WEBUI_SHIPPED_HASHES_FILE = joinpath("data", "shipped_hashes.toml")
 
 # the directories a shipped file is copied from, in the order staging
 # searches them; data/webui holds the warmup workloads of the provisioning
-const _WEBUI_SHIPPED_SOURCE_DIRS = ["mpower", "scf", "PGM", "powsybl", "webui"]
+const _WEBUI_SHIPPED_SOURCE_DIRS = ["mpower", "scf", "qsts", "PGM", "powsybl", "webui"]
 
 # A git checkout with core.autocrlf on Windows writes CRLF into the text
 # files that .gitattributes does not pin (.yaml, .m, .jl, .xiidm), and a copy
@@ -365,7 +358,7 @@ end
     _webui_stage_bundled_case!(application_root, case_directory, requested) -> Union{Nothing,String}
 
 Resolve a bare requested case NAME against the package's bundled sources
-(`data/mpower`, then `data/scf`, then `data/PGM`, then `data/powsybl`) and
+(`data/mpower`, then `data/scf`, then `data/qsts`, then `data/PGM`, then `data/powsybl`) and
 stage it into `case_directory`.
 Returns the staged (or already cached) absolute path, or `nothing` when no
 bundled source carries the name. An SCF demo case is staged WITH its
@@ -401,6 +394,19 @@ function _webui_stage_bundled_case!(application_root::AbstractString, case_direc
     end
   end
   return cached
+end
+
+# The shipped file behind a bare case name (`data/mpower`, then `data/scf`,
+# `data/qsts`, `data/PGM`, `data/powsybl`), or nothing. Staging copies it; the format
+# hint reads its content while the case is not staged yet. The CGMES demo
+# ZIPs are packed on staging and have no single source file.
+function _webui_bundled_case_source(application_root::AbstractString, name::AbstractString)::Union{Nothing,String}
+  (isabspath(name) || occursin('/', name) || occursin('\\', name)) && return nothing
+  for source_dir in (joinpath(application_root, "data", "mpower"), joinpath(application_root, "data", "scf"), joinpath(application_root, "data", "qsts"), joinpath(application_root, "data", "PGM"), joinpath(application_root, "data", "powsybl"))
+    bundled = joinpath(source_dir, String(name))
+    isfile(bundled) && return bundled
+  end
+  return nothing
 end
 
 """Return the effective Web UI case directory used for selection and imports."""
@@ -703,6 +709,21 @@ end
 
 _webui_is_case_json_cached(path::AbstractString)::Bool = _webui_file_scan_memo(_webui_is_case_json, path)
 
+# Whether a file is an SCF time series (QSTS), by content. is_scf_series
+# raises the ArgumentError of the zip reader for a file that ends like a zip
+# naming series.json but is none; such a file is no series for the selector
+# (as a .zip it is still offered, and a run names the reader's error).
+function _webui_is_scf_series(path::AbstractString)::Bool
+  try
+    return is_scf_series(path)
+  catch err
+    err isa ArgumentError || rethrow()
+    return false
+  end
+end
+
+_webui_is_scf_series_cached(path::AbstractString)::Bool = _webui_file_scan_memo(_webui_is_scf_series, path)
+
 """
     _webui_is_user_selectable_case(name) -> Bool
 
@@ -723,6 +744,9 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   # per-case configuration files travel next to their case and are not cases
   endswith(lowered_name, ".config.yaml") && return false
   endswith(lowered_name, ".contingency-weights.csv") && return false
+  # an SCF time series (QSTS) is a case whatever it is called: the content
+  # decides (a zip naming series.json)
+  (isfile(name) && _webui_is_scf_series_cached(name)) && return true
   # the bundled precompile workloads are .jl files (warmup_case3/case118);
   # a regular MATPOWER case may legitimately carry the prefix
   # (warmup_casePST.m) and must stay selectable
@@ -948,7 +972,8 @@ end
 
 The SINGLE definition of which files belong to one case: the case
 configuration file, the legacy settings sidecar, the
-per-case N-1 weights list, and the measurement CSVs including the
+per-case N-1 weights list, the controller file `<series>.control.yaml` of
+an SCF time series, and the measurement CSVs including the
 baddata and noisy variants (both stem conventions occur in the wild: the
 bundled sets use the short stem, generated sets the splitext stem; the
 in-file binding comment stays authoritative, the name is only the copy
@@ -970,6 +995,9 @@ function case_companion_files(case_path::AbstractString)::Vector{String}
   isfile(legacy) && push!(companions, legacy)
   weights = joinpath(dir, _webui_case_weights_filename(name))
   isfile(weights) && push!(companions, weights)
+  # the controllers of a QSTS series (<series>.control.yaml)
+  control = _qsts_control_file_path(src)
+  (control != src && isfile(control) && _webui_is_scf_series_cached(src)) && push!(companions, control)
   for f in readdir(dir)
     f == name && continue
     startswith(f, string(short_stem, ".")) || continue
@@ -1638,6 +1666,12 @@ function _webui_case_format_hint(casefile::AbstractString; case_directory::Union
   catch
     ""
   end
+  # a shipped case that is not staged yet has its content in the package
+  # (an SCF series zip would otherwise be taken for CGMES by its extension)
+  if !isempty(resolved) && !ispath(resolved)
+    bundled = _webui_bundled_case_source(_webui_application_root(), value)
+    bundled === nothing || (resolved = bundled)
+  end
   if !isempty(resolved) && (isfile(resolved) || isdir(resolved))
     return try
       _detect_case_format(resolved)
@@ -1882,6 +1916,17 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
   # the Scenarios button (shown for a case file with a scenarios block) is a
   # contingency run on the file's block and nothing else
   scenario_run = _webui_parse_form_value(_webui_form_value(form, "scenario_run", "false"), Bool, "scenario_run")
+  # The QSTS button posts qsts_mode (only when it is the submitter; a
+  # disabled button, the case without a series, never does). The mode
+  # comes from the select next to it; the button's own value is the
+  # fallback when the select is missing. The service checks the value.
+  qsts_button = _webui_form_value(form, "qsts_mode", nothing)
+  qsts_mode = if qsts_button === nothing || isempty(strip(String(qsts_button)))
+    nothing
+  else
+    choice = strip(String(something(_webui_form_value(form, "qsts_mode_choice", ""), "")))
+    isempty(choice) ? strip(String(qsts_button)) : choice
+  end
   return Dict{String,Any}(
     "casefile" => casefile,
     "case_format" => case_format,
@@ -1906,6 +1951,7 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "diagnose_mode" => _webui_parse_form_value(_webui_form_value(form, "diagnose_mode", "false"), Bool, "diagnose_mode"),
     "short_circuit_mode" => _webui_parse_form_value(_webui_form_value(form, "short_circuit_mode", "false"), Bool, "short_circuit_mode"),
     "import_analysis_mode" => _webui_parse_form_value(_webui_form_value(form, "import_analysis_mode", "false"), Bool, "import_analysis_mode"),
+    "qsts_mode" => qsts_mode === nothing ? nothing : String(qsts_mode),
     "contingency_mode" => scenario_run || _webui_parse_form_value(_webui_form_value(form, "contingency_mode", "false"), Bool, "contingency_mode"),
     # N-1 outage kind is a RUN parameter (branch / generator), read as a plain
     # request key like dtf_outage_selection, not a config override

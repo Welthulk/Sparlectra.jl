@@ -200,6 +200,9 @@ import Sparlectra:
   _sigma_max,
   _solver_elapsed_from_profile,
   _sparlectra_config_with,
+  _struct_with,
+  _qsts_chart_svg,
+  _qsts_step_durations,
   _tap_controllers,
   _tap_r1_at,
   _tap_r1_position,
@@ -227,6 +230,7 @@ import Sparlectra:
   snapshotPVQLimits!,
   sparlectra_arm_abort_token!,
   sparlectra_disarm_abort_token!,
+  scf_json_string,
   write_case_config,
   write_csv_row_direct!,
   write_matpower_import_auto_profile,
@@ -242,6 +246,7 @@ include("api/powerflow_service.jl")
 include("api/run_short_circuit_service.jl")
 include("api/run_import_analysis_service.jl")
 include("api/run_contingency_service.jl")
+include("api/run_qsts_service.jl")
 include("api/run_state_estimation_service.jl")
 include("api/se_measurement_generator.jl")
 

@@ -98,6 +98,15 @@ offered when the case carries source data; a run is `succeeded` only when
 every source carries its data
 ([Short-Circuit Analysis](short_circuit.md)).
 
+### QSTS
+
+**QSTS** runs an SCF time series step by step, `sequential` (taps and
+banks carried from step to step) or `snapshots`; the button is offered
+when the case is a series. The controllers come from
+`<series>.control.yaml` next to the series. The result page shows the
+switching, the steps with violations and a time series chart
+([QSTS](@ref webui_qsts)).
+
 ## Results
 
 Every finished run has a result page with status, iterations, final
@@ -125,4 +134,4 @@ and the **?** next to a control opens its help.
 ## Limits
 
 One user, the own machine, no login, no public-server mode, no topology
-view, no plotting. Technical limits: [reference](webui_reference.md#Limits).
+view, no plotting apart from the QSTS chart. Technical limits: [reference](webui_reference.md#Limits).

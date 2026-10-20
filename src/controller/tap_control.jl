@@ -151,6 +151,15 @@ function get_branch_q_from_to_mvar(net::Net, from_bus::String, to_bus::String)
 end
 
 @inline _controller_mode_label(mode::Symbol) = String(mode)
+
+# the at-limit flag of a tap controller: ratio or shift at an end of its
+# control range, a model step or table point at the edge of the window
+function _tap_at_range_end(ctrl::PowerTransformerControl, br)::Bool
+  lo, hi = _tap_control_range(ctrl, br)
+  (isapprox(br.tap_ratio, lo; atol = 1e-12) || isapprox(br.tap_ratio, hi; atol = 1e-12)) && return true
+  (_model_step_at_window_edge(ctrl, br) || _table_point_at_window_edge(ctrl, br)) && return true
+  return isapprox(br.phase_shift_deg, br.phase_min_deg; atol = 1e-12) || isapprox(br.phase_shift_deg, br.phase_max_deg; atol = 1e-12)
+end
 function control_name(ctrl::PowerTransformerControl)
   base = strip(ctrl.trafo)
   mode = ctrl.mode == :voltage ? "OLTC" : (ctrl.mode == :branch_active_power ? "PST" : "SCHRAEG")
@@ -180,6 +189,9 @@ function control_evaluate!(ctrl::PowerTransformerControl, net::Net, ::AbstractCo
   # a ratio outside the control range (the case ratio left out by a
   # narrowed range) holds the controller open until it stands inside
   ctrl.converged = ctrl.converged && !_ratio_outside_control_range(ctrl, br)
+  # a locked controller (QSTS dead time) proposes nothing, so apply never
+  # sets its flag; the rank gate of run_control! reads it from here
+  ctrl.locked && (ctrl.at_limit = _tap_at_range_end(ctrl, br))
   ctrl.status = ctrl.converged ? :converged : :active
   ctrl.outer_iters = context.outer_iteration
   return nothing
@@ -203,7 +215,7 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
     # whatever the voltage error, without a probe, and the phase waits
     # for the next pass
     lo, hi = _tap_control_range(ctrl, br)
-    _warn_start_outside_control_range(br, lo, hi)
+    _warn_start_outside_control_range(ctrl, br, lo, hi)
     return (old_ratio = old_ratio, new_ratio = _ratio_toward_control_range(br, lo, hi), old_phase = old_phase, new_phase = old_phase)
   end
   if !ctrl.converged && ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power)
@@ -425,14 +437,37 @@ function _model_step_toward_window(br::Branch, which::Symbol, window::Tuple{Floa
   return best
 end
 
+# Controllers whose start outside the control range a run has reported. A
+# QSTS run solves its base case and every step on its own copy of the same
+# net, each with its own control loop, so every step would report the same
+# start again; the run sets one shared record here for all of them (its
+# parallel steps see it through the scope). A run_control! outside such a
+# scope has none and reports once anyway, as its first pass moves the
+# ratio into the range.
+struct _TapStartWarnings
+  seen::Set{String}
+  lock::ReentrantLock
+end
+_TapStartWarnings() = _TapStartWarnings(Set{String}(), ReentrantLock())
+const _TAP_START_WARNINGS = Base.ScopedValues.ScopedValue{Union{Nothing,_TapStartWarnings}}(nothing)
+
+# true when the warning for controller `key` is the first of the run
+function _first_tap_start_warning!(key::String)::Bool
+  w = _TAP_START_WARNINGS[]
+  w === nothing && return true
+  return lock(w.lock) do
+    key in w.seen ? false : (push!(w.seen, key); true)
+  end
+end
+
 # Warning for a ratio that starts outside the control range and goes onto
 # its nearer end in this pass: transformer, start ratio and step, the limit
-# it lies beyond and the ratio and step it goes to. It comes once per
-# controller and run, as the first pass moves the ratio into the range.
-# The plain step grid counts positions from the ratio 1.0, as the report
-# rows do; a modelled transformer names its model step, a tabular changer
-# the table point.
-function _warn_start_outside_control_range(br::Branch, lo::Float64, hi::Float64)
+# it lies beyond and the ratio and step it goes to, once per controller and
+# run. The plain step grid counts positions from the ratio 1.0, as the
+# report rows do; a modelled transformer names its model step, a tabular
+# changer the table point.
+function _warn_start_outside_control_range(ctrl::PowerTransformerControl, br::Branch, lo::Float64, hi::Float64)
+  _first_tap_start_warning!(control_name(ctrl)) || return nothing
   m = _derived_tap_model(br, :ratio)
   position = function (ratio::Float64, step::Union{Nothing,Int})
     step !== nothing && return string("model step ", step)
@@ -493,6 +528,40 @@ function _ratio_toward_control_range(br::Branch, lo::Float64, hi::Float64)::Floa
   return best
 end
 
+# The absolute write paths of a tap position on a branch without a tap
+# model: the ratio goes to both ratio fields (the solver reads tap_ratio, the
+# branch flows read ratio), the shift to both angle fields with the X(alpha)
+# of the controller's phase tap model where it has one (the next solve
+# re-stamps the Y-bus from x_pu). A modelled branch moves its model steps
+# instead (_set_model_tap_steps!). control_apply_update! and the carry of a
+# sequential QSTS run (qsts_sequential.jl) write through these.
+function _set_ratio_tap!(br::Branch, ratio::Float64)
+  br.tap_ratio = ratio
+  br.ratio = ratio
+  return nothing
+end
+function _set_phase_shift!(net::Net, ctrl::PowerTransformerControl, br::Branch, shift_deg::Float64)
+  br.phase_shift_deg = shift_deg
+  br.angle = shift_deg
+  x_new = _phase_tap_reactance_at(net, ctrl, shift_deg)
+  x_new === nothing || (br.x_pu = x_new)
+  return nothing
+end
+# the model steps of a derived branch (typemin(Int) keeps an actuator as it
+# is), re-resolved once through the resolver as _move_model_step! does
+function _set_model_tap_steps!(br::Branch, ratio_step::Int, phase_step::Int)
+  changed = false
+  for (which, step) in ((:ratio, ratio_step), (:phase, phase_step))
+    step == typemin(Int) && continue
+    m = _derived_tap_model(br, which)
+    m === nothing && continue
+    m.step = step
+    changed = true
+  end
+  changed && resolve_branch_taps!(br, br.tap_winding; tap_changer_model = br.tap_correction)
+  return changed
+end
+
 function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::AbstractControlState, update::NamedTuple, context)::Bool
   br = _find_trafo_branch(net, ctrl.trafo)
   moved = false
@@ -500,8 +569,7 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
     if _derived_tap_model(br, :ratio) !== nothing
       moved = _move_model_step!(br, :ratio, update.new_ratio; window = _tap_control_range(ctrl, br)) || moved
     else
-      br.tap_ratio = update.new_ratio
-      br.ratio = update.new_ratio
+      _set_ratio_tap!(br, update.new_ratio)
       moved = true
     end
     # master/slave group (#322): mirror the master's move onto every
@@ -529,8 +597,7 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
       else
         fnew = clamp(fbr.tap_ratio + (update.new_ratio - update.old_ratio), fbr.tap_min, fbr.tap_max)
       end
-      fbr.tap_ratio = fnew
-      fbr.ratio = fnew
+      _set_ratio_tap!(fbr, fnew)
     end
   end
   if update.new_phase != update.old_phase
@@ -538,12 +605,8 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
       # the resolver applies the model's X(alpha) with the step
       moved = _move_model_step!(br, :phase, update.new_phase) || moved
     else
-      br.phase_shift_deg = update.new_phase
-      br.angle = update.new_phase
-      # tap-dependent reactance X(α): the next outer-loop solve re-stamps the
-      # Y-bus from br.x_pu, so assigning here is all the coupling needed
-      x_new = _phase_tap_reactance_at(net, ctrl, update.new_phase)
-      x_new === nothing || (br.x_pu = x_new)
+      # tap-dependent reactance X(α) with the angle
+      _set_phase_shift!(net, ctrl, br, update.new_phase)
       moved = true
     end
   end
@@ -556,10 +619,7 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
       _apply_tap_step_impedance!(_find_trafo_branch(net, fname))
     end
   end
-  lo, hi = _tap_control_range(ctrl, br)
-  ctrl.at_limit = isapprox(br.tap_ratio, lo; atol = 1e-12) || isapprox(br.tap_ratio, hi; atol = 1e-12)
-  ctrl.at_limit = ctrl.at_limit || _model_step_at_window_edge(ctrl, br) || _table_point_at_window_edge(ctrl, br)
-  ctrl.at_limit = ctrl.at_limit || isapprox(br.phase_shift_deg, br.phase_min_deg; atol = 1e-12) || isapprox(br.phase_shift_deg, br.phase_max_deg; atol = 1e-12)
+  ctrl.at_limit = _tap_at_range_end(ctrl, br)
   ctrl.status = ctrl.at_limit ? :at_limit : ctrl.status
   return moved
 end
@@ -745,7 +805,8 @@ whatever the voltage error, and the controller does not count as converged
 until it is inside; on a modelled transformer it goes to the model step
 nearest the range, on a tabular changer to the table point nearest it.
 That move logs a warning naming the transformer, the start ratio and
-step, the limit and the ratio it goes to, once per controller and run. The
+step, the limit and the ratio it goes to, once per controller and run; a
+QSTS run (`runQsts`) is one run over its base case and all steps. The
 probe that finds
 the direction of a step still uses the physical range; followers of a
 group keep their own physical range.

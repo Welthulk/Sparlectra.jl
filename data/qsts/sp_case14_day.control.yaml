@@ -1,0 +1,63 @@
+# Copyright 2023-2026 Udo Schmitz
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# file: data/qsts/sp_case14_day.control.yaml
+# purpose: controllers for the example series sp_case14_day.qsts.zip. A
+#          partial configuration file (load_sparlectra_config), every key
+#          it does not set keeps its default. The case file stays as it is
+#          and the series does not address the controllers.
+#
+# A configuration names a transformer by its branch index in the built net
+# (16 Moorau_110_20, 17 Wehrden_110_20); the names of the case file do not
+# resolve here.
+# - tap_Moorau_110_20: the case file already carries this tap controller
+#   (Moorau_20 at 1.0 pu, deadband 0.01 pu), so the entry adds nothing but
+#   its control range: tap_min 1.0, the neutral ratio, so the tap does not
+#   go below neutral. In the evening peak (18:00 to 20:30) it stands there.
+# - tap_Wehrden_110_20: the second transformer, same target and deadband
+#   for Wehrden_20.
+# - msc_Moorau_20: the shunt at Moorau_20 as a switched bank behind the
+#   Moorau tap (priority 1, the tap keeps 0), target 1.01 pu with a
+#   deadband of 0.02 pu: the band 0.99 to 1.03 pu contains the band of the
+#   tap, so the bank acts only once the tap is at its limit and the voltage
+#   below 0.99 pu. The controller adds its own shunt next to the 5 MVAr of
+#   the case file; its range of -5 to 5 MVAr in blocks of 2.5 MVAr gives 0
+#   to 10 MVAr in total, starting from the case value. On this day it
+#   switches in one block in the base case and from 18:00 to 20:30 and
+#   stays off in the other steps.
+config_version: 1
+scope: general
+control:
+  controllers:
+    tap_Moorau_110_20:
+      type: power_transformer
+      trafo: 16
+      mode: voltage
+      tap_min: 1.0
+    msc_Moorau_20:
+      type: shunt_voltage
+      bus: Moorau_20
+      target_vm_pu: 1.01
+      bs_min_mvar: -5.0
+      bs_max_mvar: 5.0
+      step_mvar: 2.5
+      deadband_vm_pu: 0.02
+      priority: 1
+    tap_Wehrden_110_20:
+      type: power_transformer
+      trafo: 17
+      mode: voltage
+      target_bus: Wehrden_20
+      target_vm_pu: 1.0
+      deadband_vm_pu: 0.01

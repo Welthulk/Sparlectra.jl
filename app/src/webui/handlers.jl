@@ -264,7 +264,9 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
       role = if ext == ".dat"
         _webui_dat_role_label(_webui_classify_dat_content(destination))
       elseif ext == ".zip"
-        _webui_cgmes_upload_role(destination, directory)
+        # an SCF time series (QSTS) is a zip too; the content decides, as in
+        # the case chooser, before the zip is read as a CGMES delivery
+        _webui_is_scf_series_cached(destination) ? "scf_time_series" : _webui_cgmes_upload_role(destination, directory)
       elseif ext == ".json"
         "sparlectra_case"
       elseif ext == ".csv"
@@ -1957,6 +1959,41 @@ end
 const _WEBUI_TEXT_MIME_TYPES = Set(("text/plain", "application/json", "application/x-yaml", "text/csv", "text/html", "text/markdown"))
 const _WEBUI_ARTIFACT_PREVIEW_BYTES = 64 * 1024
 
+# An HTML artifact the run wrote, sent as the page itself. The file was
+# resolved by resolve_powerflow_artifact (name from the run's artifact list,
+# path inside the run directory). It is served from the Web UI origin, so
+# the policy allows no script, no form, no network request and no framing;
+# only its inline style and the files of this server (the charts it embeds
+# with <object>, which are SVG documents of their own) load. Chromium checks
+# an <object> that shows a document against frame-src, not object-src, so
+# both name 'self' (without frame-src the charts stay empty).
+const _WEBUI_ARTIFACT_HTML_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; object-src 'self'; frame-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'"
+
+# The document is sent as it is on disk, plus a plain link bar right after
+# <body>: the Web UI often runs in an app window without a back button, and
+# the report has no navigation of its own. Plain links need no script, so the
+# strict policy stays.
+function _webui_artifact_html_document(path::AbstractString, run_id::AbstractString = "")::SparlectraWebUIResponse
+  headers = Pair{String,String}[
+    "Content-Type" => "text/html; charset=utf-8",
+    "Content-Security-Policy" => _WEBUI_ARTIFACT_HTML_POLICY,
+    "X-Content-Type-Options" => "nosniff",
+  ]
+  body = read(path)
+  if !isempty(run_id)
+    text = String(body)
+    m = match(r"<body[^>]*>", text)
+    if m !== nothing
+      id = _webui_urlencode(run_id)
+      bar = "<nav class=\"artifact-back\" style=\"font:14px sans-serif;padding:6px 10px;background:#eef;border-bottom:1px solid #99c\"><a href=\"/powerflow/result/$(id)\">← Back to the run</a> · <a href=\"/powerflow/artifacts/$(id)\">Artifacts</a></nav>"
+      cut = m.offset + ncodeunits(m.match)
+      text = string(text[1:(cut - 1)], bar, text[cut:end])
+      body = Vector{UInt8}(text)
+    end
+  end
+  return SparlectraWebUIResponse(200, headers, body)
+end
+
 function _read_webui_artifact_preview(path::AbstractString; max_bytes::Integer = _WEBUI_ARTIFACT_PREVIEW_BYTES)::NamedTuple
   open(path, "r") do io
     bytes = read(io, max_bytes + 1)
@@ -1967,11 +2004,15 @@ function _read_webui_artifact_preview(path::AbstractString; max_bytes::Integer =
 end
 
 """
-    handle_powerflow_artifact(run_id, artifact_name; raw = false, csv_display = _WebUICsvDisplay())
+    handle_powerflow_artifact(run_id, artifact_name; raw = false, page = false, csv_display = _WebUICsvDisplay())
 
 The artifact viewer. Text artifacts open as a page (CSV as a table, Markdown
 rendered, everything else as escaped text; `raw = true` forces the text
-panel), other types are sent as a download. `csv_display` is the number display
+panel). An HTML artifact (the QSTS overview) is sent as the page itself,
+with a policy that blocks script, so its relative chart paths resolve under
+this route. SVG charts show in the browser as the bare SVG (the overview embeds them
+that way), or with `page = true` inside a Web UI page with Back and Download
+(`render_powerflow_chart_page`); other types are sent as a download. `csv_display` is the number display
 of a CSV table (from the query, `_webui_csv_display`); a CSV page also links
 the other CSV artifacts of the run. The two short-circuit tables
 (`short_circuit_max.csv`, `short_circuit_min.csv`) carry the head line of
@@ -1979,13 +2020,17 @@ their case from the run metadata (`sc_status_line_max`/`_min`: run status,
 flagged rows, lower-bound rows) above the table. See
 `render_powerflow_artifact_page`.
 """
-function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString; raw::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay())::SparlectraWebUIResponse
+function handle_powerflow_artifact(run_id::AbstractString, artifact_name::AbstractString; raw::Bool = false, page::Bool = false, csv_display::_WebUICsvDisplay = _WebUICsvDisplay())::SparlectraWebUIResponse
   artifact = resolve_powerflow_artifact(run_id, artifact_name)
   if artifact isa AbstractDict
     reason = get(artifact, "reason", "artifact_error")
     status = reason in ("unsafe_artifact_name", "artifact_not_found") ? 400 : 404
     return _webui_html(render_webui_error(status, get(artifact, "message", reason)); status = status)
   end
+  # an HTML report of the run (the QSTS overview) opens as itself, so the
+  # relative paths of its charts (qsts_plots/<name>.svg) resolve under this
+  # route; raw=1 still shows the source
+  artifact.mime_type == "text/html" && !raw && return _webui_artifact_html_document(artifact.path, run_id)
   if artifact.mime_type in _WEBUI_TEXT_MIME_TYPES
     preview = _read_webui_artifact_preview(artifact.path)
     csv_siblings = String[]
@@ -2006,8 +2051,39 @@ function handle_powerflow_artifact(run_id::AbstractString, artifact_name::Abstra
     return _webui_html(render_powerflow_artifact_page(artifact, preview; raw, csv_display, csv_siblings, head_line))
   end
   bytes = read(artifact.path)
+  # a chart of a QSTS run shows in the browser (its point tooltips need the
+  # SVG itself, not a download); every other binary artifact downloads
+  artifact.mime_type == "image/svg+xml" && page && return _webui_html(render_powerflow_chart_page(run_id, artifact))
+  artifact.mime_type == "image/svg+xml" && return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => "image/svg+xml; charset=utf-8"], bytes)
   headers = ["Content-Disposition" => "attachment; filename=\"$(replace(basename(artifact.name), '"' => '_'))\""]
   return SparlectraWebUIResponse(200, Pair{String,String}["Content-Type" => artifact.mime_type; headers], bytes)
+end
+
+"""
+    handle_qsts_chart(run_id, element, quantity) -> SparlectraWebUIResponse
+
+`GET /powerflow/result/<run_id>/qsts-chart?element=&quantity=`: one
+quantity of one element of a QSTS run as SVG (`image/svg+xml`), drawn from
+the run's element view `qsts_view.json` by the renderer of `qstsChart`
+with the band of the run. An empty `element` selects a step quantity.
+404 when the run has no view, 400 for an element or quantity the view does
+not hold.
+"""
+function handle_qsts_chart(run_id::AbstractString, element::AbstractString, quantity::AbstractString)::SparlectraWebUIResponse
+  artifact = resolve_powerflow_artifact(run_id, _QSTS_VIEW_FILE)
+  if artifact isa AbstractDict
+    return SparlectraWebUIResponse(404, string("No QSTS view for run ", run_id, ": ", get(artifact, "message", "unknown reason")); content_type = "text/plain; charset=utf-8")
+  end
+  view = try
+    scf_json_parse(read(artifact.path, String))
+  catch err
+    # the reader names a broken file with an ArgumentError (byte position)
+    err isa ArgumentError || rethrow()
+    return SparlectraWebUIResponse(500, string(_QSTS_VIEW_FILE, " could not be read: ", sprint(showerror, err)); content_type = "text/plain; charset=utf-8")
+  end
+  svg = _qsts_view_chart_svg(view, element, quantity)
+  svg === nothing && return SparlectraWebUIResponse(400, string("The QSTS view of run ", run_id, " holds no quantity ", repr(String(quantity)), " for element ", repr(String(element)), "."); content_type = "text/plain; charset=utf-8")
+  return SparlectraWebUIResponse(200, svg; content_type = "image/svg+xml; charset=utf-8")
 end
 
 function handle_powerflow_artifact_download(run_id::AbstractString, artifact_name::AbstractString)::SparlectraWebUIResponse

@@ -341,6 +341,39 @@ function _cgmes_synth_store()::CGMESStore
   return loadCGMES(dir)
 end
 
+# A copy of a loaded SmallGrid store with DY objects added in memory under
+# a file of profile DY (SmallGrid ships no DY):
+#   TwinBrch SM (200 MVA): SynchronousMachineTimeConstantReactance with
+#     inertia 4.25 and damping 0.5, GovSteam1 with k 25, t1 0.4, mwbase 100,
+#     an ExcIEEEAC4A on that machine model
+#   Breed SM (750 MVA): SynchronousMachineSimplified with inertia 6, no
+#     damping, GovSteam0 with r 0.05 and mwbase 0
+#   DeerCrk SM: a disabled SynchronousMachineTimeConstantReactance
+#   a SynchronousMachineEquivalentCircuit and a GovHydro1 on a machine the
+#   delivery does not have
+#   a LoadAggregate with a LoadStatic, referred to by an EQ EnergyConsumer,
+#   and a LoadAggregate nothing refers to
+function _cgmes_dy_store(loaded::CGMESStore)::CGMESStore
+  CI = Sparlectra.CGMESImporter
+  s = deepcopy(loaded)
+  add!(mrid, class, attrs, refs = Dict{Symbol,String}()) = (s.objects[mrid] = CI.CIMObject(mrid, class, Dict{Symbol,String}(attrs), Dict{Symbol,String}(refs), "dy_test.xml"); push!(get!(Vector{String}, s.byclass, class), mrid))
+  sm(name) = only(o for o in objectsOf(s, :SynchronousMachine) if str(o, :name) == name).mrid
+  add!("_dy_m1", :SynchronousMachineTimeConstantReactance, Dict(:enabled => "true", :inertia => "4.25", :damping => "0.5"), Dict(:SynchronousMachine => sm("TwinBrch SM")))
+  add!("_dy_g1", :GovSteam1, Dict(:enabled => "true", :k => "25", :t1 => "0.4", :mwbase => "100"), Dict(:SynchronousMachineDynamics => "_dy_m1"))
+  add!("_dy_x1", :ExcIEEEAC4A, Dict(:enabled => "true", :ka => "200"), Dict(:SynchronousMachineDynamics => "_dy_m1"))
+  add!("_dy_m2", :SynchronousMachineSimplified, Dict(:enabled => "true", :inertia => "6"), Dict(:SynchronousMachine => sm("Breed SM")))
+  add!("_dy_g2", :GovSteam0, Dict(:enabled => "true", :r => "0.05", :t1 => "0.3", :mwbase => "0"), Dict(:SynchronousMachineDynamics => "_dy_m2"))
+  add!("_dy_m3", :SynchronousMachineTimeConstantReactance, Dict(:enabled => "false", :inertia => "3"), Dict(:SynchronousMachine => sm("DeerCrk SM")))
+  add!("_dy_m4", :SynchronousMachineEquivalentCircuit, Dict(:enabled => "true", :inertia => "5"), Dict(:SynchronousMachine => "_dy_no_such_machine"))
+  add!("_dy_g4", :GovHydro1, Dict(:enabled => "true", :rperm => "0.04", :mwbase => "100"), Dict(:SynchronousMachineDynamics => "_dy_m4"))
+  add!("_dy_la", :LoadAggregate, Dict(:name => "LA"))
+  add!("_dy_ls", :LoadStatic, Dict(:name => "LS"), Dict(:LoadAggregate => "_dy_la"))
+  add!("_dy_la_orphan", :LoadAggregate, Dict(:name => "LA2"))
+  first(objectsOf(s, :EnergyConsumer)).refs[:LoadDynamics] = "_dy_la"
+  push!(s.files, CI.CGMESFileInfo("dy_test.xml", :FullModel, ["http://entsoe.eu/CIM/Dynamics/3/1"], Set([:DY]), "2.4.15", 11, false, ""))
+  return s
+end
+
 # A copy of a loaded SmallGrid store with small islands on new nodes, each
 # node with an SvVoltage of 1.03 pu, for the islands without a slack:
 #   A: a2 - a1, a load of 11.3 MW and an EquivalentInjection with P = 0 and
@@ -1600,6 +1633,7 @@ function run_cgmes_importer_tests()
           push!(es_store.byclass[:Terminal], t_mrid)
           push!(es_store.byclass[:SvPowerFlow], sv_mrid)
         end
+        local es_key = Sparlectra._measurement_key("_es_test_1_t")
 
         # off (the default): no prosumer, both listed as not mapped, one notice
         # that names the switch and carries no number of its own
@@ -1609,6 +1643,7 @@ function run_cgmes_importer_tests()
         @test count(m -> startswith(m, "notice: EnergySource not mapped"), es_off.messages) == 1
         @test "notice: EnergySource not mapped, switch cgmes_import.map_energy_source (count and SSH P sum in the table of classes not mapped)" in es_off.messages
         @test !any(r -> r.kind == :units && occursin("ES_TEST", r.name), compareWithSV(es_off).flows.rows)
+        @test CI.cgmesMeasurementKeys(es_off).terminals[es_key].kind == :not_modelled
         # the report has one row per class with SSH active power and no
         # object in the network: here EnergySource, count and SSH P sum, below
         # one header that states the load sign. SmallGrid itself maps every
@@ -1635,6 +1670,7 @@ function run_cgmes_importer_tests()
         @test es_ps.minQ === nothing && es_ps.maxQ === nothing
         @test es_on.slack_bus == res.slack_bus
         @test any(r -> r.kind == :units && occursin("ES_TEST_1", r.name), compareWithSV(es_on).flows.rows)
+        @test CI.cgmesMeasurementKeys(es_on).terminals[es_key].kind == :injection
         # inService = false: skipped with its own message and counted
         @test !haskey(es_on.element_by_mrid, "_es_test_2") && "_es_test_2" in es_on.skipped_equipment
         @test any(m -> startswith(m, "skip: EnergySource ES_TEST_2 (out of service"), es_on.messages)
@@ -1927,7 +1963,6 @@ function run_cgmes_importer_tests()
         @test row_ifault.reasons == row_without.reasons
         @test (row_ifault.zk_ohm, row_ifault.kappa) == (row_without.zk_ohm, row_without.kappa)
         @test (sc_row(sc_ifault, false).ik_kA) == row_without.ik_kA
-
         # the configured import forwards the switch, and the YAML loader reads it
         @test !SparlectraConfig().cgmes.map_power_electronics
         local pe_cfg = SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(map_power_electronics = true))
@@ -1935,42 +1970,6 @@ function run_cgmes_importer_tests()
         local yaml_path = joinpath(mktempdir(), "pec.yaml")
         write(yaml_path, "cgmes_import:\n  map_power_electronics: true\n")
         @test Sparlectra.CGMESImportConfig(Sparlectra.load_yaml_dict(yaml_path)).map_power_electronics
-      end)() end
-
-      # The short-circuit harvest keeps the sources the import mapped. A
-      # machine of SmallGrid without ratedS and maxOperatingP is the live
-      # source at its bus (its row rests on defaults). A machine with a
-      # disconnected terminal and a network injection out of service, both
-      # with full short-circuit data on that bus, are skipped and leave no
-      # record, so Ik'' and the reasons there stay as without them; their
-      # records, put back, would feed that bus.
-      @testset "short-circuit harvest keeps only mapped sources" begin (function ()
-        local add!(s, mrid, class, attrs, refs) = (s.objects[mrid] = CI.CIMObject(mrid, class, attrs, refs, "sc_test"); push!(get!(Vector{String}, s.byclass, class), mrid))
-        local tn_of(t) = t.refs[:TopologicalNode]
-        local sc_base = deepcopy(loaded)
-        local sm = first(objectsOf(sc_base, :SynchronousMachine))
-        delete!(sm.attrs, :ratedS)
-        local gu = get(sm.refs, :GeneratingUnit, nothing)
-        gu === nothing || delete!(sc_base.objects[gu].attrs, :maxOperatingP)
-        local sm_t = only(t for t in objectsOf(sc_base, :Terminal) if get(t.refs, :ConductingEquipment, "") == sm.mrid)
-        local sc_bus = topo.bus_name[tn_of(sm_t)]
-        local row_without = only(run_with_expected_warnings(() -> runShortCircuit!(importCGMES(path = sc_base, name = "sg_sc_base"); buses = [sc_bus], case = :max), ["short-circuit: "]).rows)
-        local sc_skip = deepcopy(sc_base)
-        add!(sc_skip, "_sm_off", :SynchronousMachine, Dict{Symbol,String}(:name => "SM_OFF", :p => "-10", :q => "0", :satDirectSubtransX => "0.2", :ratedS => "100", :ratedU => string(topo.vn_kV[tn_of(sm_t)])), Dict{Symbol,String}())
-        add!(sc_skip, "_sm_off_t", :Terminal, Dict{Symbol,String}(:sequenceNumber => "1", :connected => "false"), Dict{Symbol,String}(:ConductingEquipment => "_sm_off", :TopologicalNode => tn_of(sm_t)))
-        add!(sc_skip, "_eni_off", :ExternalNetworkInjection, Dict{Symbol,String}(:name => "ENI_OFF", :p => "0", :q => "0", :inService => "false", :maxInitialSymShCCurrent => "20000", :maxR1ToX1Ratio => "0.1"), Dict{Symbol,String}())
-        add!(sc_skip, "_eni_off_t", :Terminal, Dict{Symbol,String}(:sequenceNumber => "1", :connected => "true"), Dict{Symbol,String}(:ConductingEquipment => "_eni_off", :TopologicalNode => tn_of(sm_t)))
-        local skip_res = importCGMES(path = sc_skip, name = "sg_sc_skip")
-        @test "_sm_off" in skip_res.skipped_equipment && "_eni_off" in skip_res.skipped_equipment
-        @test !any(r -> r.mrid in ("_sm_off", "_eni_off"), vcat(skip_res.shortcircuit.synchronous_machines, skip_res.shortcircuit.external_network_injections))
-        @test skip_res.net.sc_sources.synchronous_machines == skip_res.shortcircuit.synchronous_machines
-        @test skip_res.net.sc_sources.external_network_injections == skip_res.shortcircuit.external_network_injections
-        local row_skip = only(run_with_expected_warnings(() -> runShortCircuit!(skip_res; buses = [sc_bus], case = :max), ["short-circuit: "]).rows)
-        @test (row_skip.ik_kA, row_skip.reasons) == (row_without.ik_kA, row_without.reasons)
-        local all_recs = CI.collectShortCircuitData(sc_skip, skip_res.topo)
-        local sc_back = CI.CGMESShortCircuitData(all_recs.external_network_injections, all_recs.synchronous_machines, skip_res.shortcircuit.ac_line_segments, skip_res.shortcircuit.transformer_ends, skip_res.shortcircuit.equivalent_injections, skip_res.shortcircuit.asynchronous_machines, skip_res.shortcircuit.power_electronics_connections)
-        @test any(r -> r.mrid == "_sm_off" && r.bus == sc_bus, sc_back.synchronous_machines)
-        @test only(run_with_expected_warnings(() -> runShortCircuit!(skip_res.net, sc_back; buses = [sc_bus], case = :max), ["short-circuit: "]).rows).ik_kA > row_without.ik_kA + 1.0
       end)() end
 
       # A SynchronousMachine on a WindGeneratingUnit or SolarGeneratingUnit
@@ -2043,8 +2042,8 @@ function run_cgmes_importer_tests()
         @test only(r for r in back.sc_sources.synchronous_machines if r.mrid == sm.mrid).converter_unit == "WindGeneratingUnit"
         local back_row = only(run_with_expected_warnings(() -> runShortCircuit!(back; buses = [sm_bus], case = :max, converter_current_factor = 1.2), ["short-circuit: "]).rows)
         @test back_row.ik_kA ≈ with_rated.ik_kA rtol = 1e-9
-        # the CGMES export keeps the class as delivered:
-        # one machine on an offshore WindGeneratingUnit, another
+        # the CGMES export keeps the class as delivered: one machine on an
+        # offshore WindGeneratingUnit, another
         # on a SolarGeneratingUnit come back with the same class, the same
         # unit mRID and windGenUnitType, and as current sources again
         local sm2 = collect(objectsOf(loaded, :SynchronousMachine))[2]
@@ -2117,6 +2116,145 @@ function run_cgmes_importer_tests()
         # a start between two blocks is snapped and written to the shunt
         local c = add(bus = olive_bus, shunt_idx = 3)
         @test c.shunt_idx == 3 && c.bs_mvar == 40.0 && imag(net.shuntVec[3].y_pu_shunt) == 40.0 / net.baseMVA && length(net.shuntVec) == 14
+      end)() end
+
+      # the DY profile behind cgmes_import.read_dynamics (#506), on the
+      # store copy of _cgmes_dy_store and on a DY file next to the SmallGrid
+      # zips: off, nothing is read and the network is the plain one; on,
+      # inertia, damping, rating and droop land on the right machines, the
+      # report counts every DY class, and the data survive SCF
+      @testset "dynamic data from the DY profile" begin (function ()
+        local plain = importCGMES(path = loaded, name = "sg_dy_plain")
+        local dys = _cgmes_dy_store(loaded)
+        local ps_of(r, name) = r.net.prosumpsVec[last(r.element_by_mrid[only(o for o in objectsOf(loaded, :SynchronousMachine) if str(o, :name) == name).mrid])]
+        # off: no DynamicData, no DY line, the network of the plain import
+        local off = importCGMES(path = dys, name = "sg_dy_off")
+        @test all(ps -> ps.dynamics === nothing, off.net.prosumpsVec)
+        @test !any(m -> startswith(m, "notice: DY"), off.messages)
+        @test isempty(scf_roundtrip_field_diffs(plain.net, off.net))
+        # on: TwinBrch carries inertia, damping, its EQ rating and the droop
+        # of GovSteam1 (1/k on mwbase 100, converted to 200 MVA) with its t1
+        local on = importCGMES(path = dys, name = "sg_dy_on", read_dynamics = true)
+        local tw = ps_of(on, "TwinBrch SM").dynamics
+        @test tw === DynamicData(inertia_s = 4.25, damping_pu = 0.5, rating_mva = 200.0, droop_pu = (1 / 25) * 200.0 / 100.0, governor_time_s = 0.4, unit_type = SynchronousUnit)
+        # Breed: inertia without damping; the droop of GovSteam0 is left out
+        # (mwbase 0), and its t1 is a steam bowl, not the governor lag
+        @test ps_of(on, "Breed SM").dynamics === DynamicData(inertia_s = 6.0, rating_mva = 750.0)
+        @test ps_of(on, "DeerCrk SM").dynamics === nothing
+        @test count(ps -> ps.dynamics !== nothing, on.net.prosumpsVec) == 2
+        # nothing else of the network changed
+        @test all(m -> startswith(m, "prosumer.dynamics"), scf_roundtrip_field_diffs(plain.net, on.net))
+        for line in ("notice: DY profile read (cgmes_import.read_dynamics): 2 unit(s) with dynamic data",
+                     "notice: DY class SynchronousMachineTimeConstantReactance: 1 mapped, 1 not mapped, 0 without counterpart in EQ",
+                     "notice: DY class SynchronousMachineSimplified: 1 mapped, 0 not mapped, 0 without counterpart in EQ",
+                     "notice: DY class SynchronousMachineEquivalentCircuit: 0 mapped, 0 not mapped, 1 without counterpart in EQ",
+                     "notice: DY class GovSteam1: 1 mapped, 0 not mapped, 0 without counterpart in EQ",
+                     "notice: DY class GovSteam0: 0 mapped, 1 not mapped, 0 without counterpart in EQ",
+                     "notice: DY class GovHydro1: 0 mapped, 0 not mapped, 1 without counterpart in EQ",
+                     "notice: DY class ExcIEEEAC4A: 0 mapped, 1 not mapped, 0 without counterpart in EQ",
+                     "notice: DY class LoadAggregate: 0 mapped, 1 not mapped, 1 without counterpart in EQ",
+                     "notice: DY class LoadStatic: 0 mapped, 1 not mapped, 0 without counterpart in EQ",
+                     "notice: DY SynchronousMachineTimeConstantReactance: 1 object(s), function block disabled",
+                     "notice: DY GovSteam0: 1 object(s), droop left out: mwbase 0 or absent, the base of the droop is not stated",
+                     "notice: DY GovSteam0: 1 object(s), neither a usable droop nor a governor time constant")
+          @test line in on.messages
+        end
+        @test count(m -> startswith(m, "notice: DY class "), on.messages) == 9
+        # a record against the DynamicData rules is dropped with a warning
+        local neg = deepcopy(dys)
+        neg.objects["_dy_m2"].attrs[:inertia] = "-6"
+        local on_neg = @test_logs (:warn, r"^CGMES import: 1 data defect") importCGMES(path = neg, name = "sg_dy_neg", read_dynamics = true)
+        @test ps_of(on_neg, "Breed SM").dynamics === nothing
+        @test "warning: DY data of $(Sparlectra.getCompName(ps_of(on_neg, "Breed SM").comp)) not taken: DynamicDataError: inertia_s = -6.0 must be >= 0" in on_neg.messages
+        @test "notice: DY class SynchronousMachineSimplified: 0 mapped, 1 not mapped, 0 without counterpart in EQ" in on_neg.messages
+        # a machine model without inertia still makes the unit synchronous
+        # (the keyword default would say grid-following), and GovHydro1 on
+        # it gives rperm 0.04 on mwbase 100 converted to 750 MVA: 0.3 pu
+        local hyd = deepcopy(dys)
+        delete!(hyd.objects["_dy_m2"].attrs, :inertia)
+        hyd.objects["_dy_g4"].refs[:SynchronousMachineDynamics] = "_dy_m2"
+        local on_hyd = importCGMES(path = hyd, name = "sg_dy_hyd", read_dynamics = true)
+        @test ps_of(on_hyd, "Breed SM").dynamics === DynamicData(rating_mva = 750.0, droop_pu = 0.04 * 750.0 / 100.0, unit_type = SynchronousUnit)
+        @test "notice: DY class GovHydro1: 1 mapped, 0 not mapped, 0 without counterpart in EQ" in on_hyd.messages
+        # CGMES with DY to SCF and back: every value bit for bit
+        local f = exportSCF(on.net; file = joinpath(mktempdir(), "sg_dy.scf.json"))
+        local back = importSCF(f)
+        @test [ps.dynamics for ps in back.prosumpsVec] == [ps.dynamics for ps in on.net.prosumpsVec]
+        @test all(k -> back.prosumpsVec[k].dynamics === on.net.prosumpsVec[k].dynamics, eachindex(on.net.prosumpsVec))
+        # from files: off, the DY file is skipped by name; on, it is read
+        local dir = mktempdir()
+        local tw_mrid = only(o for o in objectsOf(loaded, :SynchronousMachine) if str(o, :name) == "TwinBrch SM").mrid
+        local ec_mrid = first(objectsOf(loaded, :EnergyConsumer)).mrid
+        write(joinpath(dir, "sg_DY.xml"), """<?xml version="1.0" encoding="UTF-8"?>
+        <rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+          <md:FullModel rdf:about="urn:uuid:5f0e4c1a-0000-4000-8000-000000000506">
+            <md:Model.profile>http://entsoe.eu/CIM/Dynamics/3/1</md:Model.profile>
+          </md:FullModel>
+          <cim:SynchronousMachineTimeConstantReactance rdf:ID="_dyf_m1">
+            <cim:DynamicsFunctionBlock.enabled>true</cim:DynamicsFunctionBlock.enabled>
+            <cim:RotatingMachineDynamics.inertia>4.25</cim:RotatingMachineDynamics.inertia>
+            <cim:RotatingMachineDynamics.damping>0.5</cim:RotatingMachineDynamics.damping>
+            <cim:SynchronousMachineDynamics.SynchronousMachine rdf:resource="#$(tw_mrid)"/>
+          </cim:SynchronousMachineTimeConstantReactance>
+          <cim:EnergyConsumer rdf:about="#$(ec_mrid)">
+            <cim:EnergyConsumer.LoadDynamics rdf:resource="#_dyf_la"/>
+          </cim:EnergyConsumer>
+          <cim:LoadAggregate rdf:ID="_dyf_la">
+            <cim:IdentifiedObject.name>LA</cim:IdentifiedObject.name>
+          </cim:LoadAggregate>
+        </rdf:RDF>
+        """)
+        local paths = vcat(sort!(filter(f -> endswith(f, ".zip"), readdir(joinpath(@__DIR__, "fixtures", "cgmes_smallgrid"); join = true))), [joinpath(dir, "sg_DY.xml")])
+        local f_off = importCGMES(path = paths, name = "sg_dyf_off")
+        @test count(m -> startswith(m, "file skipped: sg_DY.xml") && endswith(m, "profile not in import set"), f_off.messages) == 1
+        @test !any(o -> o.source == "sg_DY.xml", values(f_off.store.objects))
+        @test isempty(scf_roundtrip_field_diffs(plain.net, f_off.net))
+        local f_on = importCGMES(path = paths, name = "sg_dyf_on", read_dynamics = true)
+        @test ps_of(f_on, "TwinBrch SM").dynamics === DynamicData(inertia_s = 4.25, damping_pu = 0.5, rating_mva = 200.0)
+        @test "notice: DY class LoadAggregate: 0 mapped, 1 not mapped, 0 without counterpart in EQ" in f_on.messages
+        @test all(m -> startswith(m, "prosumer.dynamics"), scf_roundtrip_field_diffs(plain.net, f_on.net))
+        # the configured import, the YAML loader and the adapter options
+        # forward the switch
+        @test !SparlectraConfig().cgmes.read_dynamics
+        @test ps_of(importCGMES(SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(read_dynamics = true)); path = dys, name = "sg_dy_cfg"), "TwinBrch SM").dynamics === tw
+        @test Sparlectra.CGMESImportConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("read_dynamics" => true))).read_dynamics
+        @test Sparlectra.cgmes_adapter_options(SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(read_dynamics = true))).read_dynamics
+      end)() end
+
+      # The short-circuit harvest keeps the sources the import mapped. A
+      # machine of SmallGrid without ratedS and maxOperatingP is the live
+      # source at its bus (its row rests on defaults). A machine with a
+      # disconnected terminal and a network injection out of service, both
+      # with full short-circuit data on that bus, are skipped and leave no
+      # record, so Ik'' and the reasons there stay as without them; their
+      # records, put back, would feed that bus.
+      @testset "short-circuit harvest keeps only mapped sources" begin (function ()
+        local add!(s, mrid, class, attrs, refs) = (s.objects[mrid] = CI.CIMObject(mrid, class, attrs, refs, "sc_test"); push!(get!(Vector{String}, s.byclass, class), mrid))
+        local tn_of(t) = t.refs[:TopologicalNode]
+        local sc_base = deepcopy(loaded)
+        local sm = first(objectsOf(sc_base, :SynchronousMachine))
+        delete!(sm.attrs, :ratedS)
+        local gu = get(sm.refs, :GeneratingUnit, nothing)
+        gu === nothing || delete!(sc_base.objects[gu].attrs, :maxOperatingP)
+        local sm_t = only(t for t in objectsOf(sc_base, :Terminal) if get(t.refs, :ConductingEquipment, "") == sm.mrid)
+        local sc_bus = topo.bus_name[tn_of(sm_t)]
+        local row_without = only(run_with_expected_warnings(() -> runShortCircuit!(importCGMES(path = sc_base, name = "sg_sc_base"); buses = [sc_bus], case = :max), ["short-circuit: "]).rows)
+        local sc_skip = deepcopy(sc_base)
+        add!(sc_skip, "_sm_off", :SynchronousMachine, Dict{Symbol,String}(:name => "SM_OFF", :p => "-10", :q => "0", :satDirectSubtransX => "0.2", :ratedS => "100", :ratedU => string(topo.vn_kV[tn_of(sm_t)])), Dict{Symbol,String}())
+        add!(sc_skip, "_sm_off_t", :Terminal, Dict{Symbol,String}(:sequenceNumber => "1", :connected => "false"), Dict{Symbol,String}(:ConductingEquipment => "_sm_off", :TopologicalNode => tn_of(sm_t)))
+        add!(sc_skip, "_eni_off", :ExternalNetworkInjection, Dict{Symbol,String}(:name => "ENI_OFF", :p => "0", :q => "0", :inService => "false", :maxInitialSymShCCurrent => "20000", :maxR1ToX1Ratio => "0.1"), Dict{Symbol,String}())
+        add!(sc_skip, "_eni_off_t", :Terminal, Dict{Symbol,String}(:sequenceNumber => "1", :connected => "true"), Dict{Symbol,String}(:ConductingEquipment => "_eni_off", :TopologicalNode => tn_of(sm_t)))
+        local skip_res = importCGMES(path = sc_skip, name = "sg_sc_skip")
+        @test "_sm_off" in skip_res.skipped_equipment && "_eni_off" in skip_res.skipped_equipment
+        @test !any(r -> r.mrid in ("_sm_off", "_eni_off"), vcat(skip_res.shortcircuit.synchronous_machines, skip_res.shortcircuit.external_network_injections))
+        @test skip_res.net.sc_sources.synchronous_machines == skip_res.shortcircuit.synchronous_machines
+        @test skip_res.net.sc_sources.external_network_injections == skip_res.shortcircuit.external_network_injections
+        local row_skip = only(run_with_expected_warnings(() -> runShortCircuit!(skip_res; buses = [sc_bus], case = :max), ["short-circuit: "]).rows)
+        @test (row_skip.ik_kA, row_skip.reasons) == (row_without.ik_kA, row_without.reasons)
+        local all_recs = CI.collectShortCircuitData(sc_skip, skip_res.topo)
+        local sc_back = CI.CGMESShortCircuitData(all_recs.external_network_injections, all_recs.synchronous_machines, skip_res.shortcircuit.ac_line_segments, skip_res.shortcircuit.transformer_ends, skip_res.shortcircuit.equivalent_injections, skip_res.shortcircuit.asynchronous_machines, skip_res.shortcircuit.power_electronics_connections)
+        @test any(r -> r.mrid == "_sm_off" && r.bus == sc_bus, sc_back.synchronous_machines)
+        @test only(run_with_expected_warnings(() -> runShortCircuit!(skip_res.net, sc_back; buses = [sc_bus], case = :max), ["short-circuit: "]).rows).ik_kA > row_without.ik_kA + 1.0
       end)() end
 
       # islands without a slack, on new nodes next to SmallGrid
@@ -2223,6 +2361,56 @@ function run_cgmes_importer_tests()
         local fj_net = deepcopy(fj.net)
         @test last(redirect_stdout(() -> runpf!(fj_net, 50, 1e-8, 0; islands_enabled = true), devnull)) == 0
         @test fj_net.nodeVec[fj_bus("_f2_jx")]._vm_pu == fj_net.nodeVec[fj_bus("_f2_j2")]._vm_pu == fj_net.nodeVec[fj_bus("_f2_j3")]._vm_pu
+      end)() end
+
+      # The island slack choice reads DynamicData.unit_type (#506): a unit
+      # stated grid-following is no candidate, an island of grid-following
+      # units only is switched off, synchronous and grid-forming units stay
+      # candidates. The import fills only the synchronous type (DY profile),
+      # so the types are set on an import without island slacks and the
+      # island step runs on that net.
+      @testset "island slack choice reads the unit type" begin (function ()
+        local CI = Sparlectra.CGMESImporter
+        local base = importCGMES(path = _cgmes_f2_island_store(loaded), name = "sg_f2_types", multi_slack = false)
+        local net = deepcopy(base.net)
+        local ps(m) = net.prosumpsVec[last(base.element_by_mrid[m])]
+        local bus(tn) = net.busDict[base.topo.bus_name[tn]]
+        # B: the machine with referencePriority 7 is grid-following, the
+        # EquivalentInjection synchronous; C: both units grid-following; D:
+        # the unit with the largest reserve grid-forming; E: the unit with
+        # infeed grid-following, the one drawing power of unknown type
+        ps("_f2_sm_b").dynamics = DynamicData(unit_type = GridFollowingUnit)
+        ps("_f2_ei_b").dynamics = DynamicData(inertia_s = 3.0)
+        ps("_f2_ei_c1").dynamics = DynamicData(unit_type = GridFollowingUnit)
+        ps("_f2_ei_c2").dynamics = DynamicData(unit_type = GridFollowingUnit)
+        ps("_f2_eni_d2").dynamics = DynamicData(virtual_inertia_s = 2.0, unit_type = GridFormingUnit)
+        ps("_f2_ei_e1").dynamics = DynamicData(unit_type = GridFollowingUnit)
+        local ctx = CI._MapCtx()
+        merge!(ctx.element_by_mrid, base.element_by_mrid)
+        CI._slackForIslandsWithoutReference!(net, base.store, ctx)
+        local warns = filter(m -> startswith(m, "warning: electrical island of "), ctx.messages)
+        @test length(warns) == 4
+        # B: the synchronous unit takes the slack, not the stronger priority
+        @test Sparlectra.isSlack(ps("_f2_ei_b")) && !Sparlectra.isSlack(ps("_f2_sm_b"))
+        @test count(m -> occursin("_F2_EI_B at ", m) && occursin("(largest infeed, P = 20.0 MW, only degree-1 buses carry infeed)", m), warns) == 1
+        # D: the grid-forming unit stays the candidate it was
+        @test Sparlectra.isSlack(ps("_f2_eni_d2"))
+        @test count(m -> occursin("_F2_ENI_D2 at ", m) && occursin("(largest active power reserve off the degree-1 buses, 30.0 MW)", m), warns) == 1
+        # C: switched off, buses isolated at 0 pu, the line out of service,
+        # the 10 MW infeed dropped and the 70.3 MW drawn unsupplied
+        for tn in ("_f2_c1", "_f2_c2")
+          @test bus(tn) in net.isoNodes
+          @test net.nodeVec[bus(tn)]._vm_pu == 0.0
+        end
+        @test all(m -> (ps(m).pVal, ps(m).qVal) == (0.0, 0.0) && !Sparlectra.isSlack(ps(m)), ("_f2_ei_c1", "_f2_ei_c2"))
+        @test net.branchVec[last(base.element_by_mrid["_f2_lc"])].status == 0
+        @test count(m -> occursin("has infeed from grid-following units only and cannot stand in operation; switched off, 2 injection(s) zeroed, generation P = 10.0 MW dropped, load P = 70.3 MW unsupplied", m), warns) == 1
+        # E: no candidate left, no slack, the island stays energized
+        @test !Sparlectra.isSlack(ps("_f2_ei_e1")) && !Sparlectra.isSlack(ps("_f2_ei_e2"))
+        @test !(bus("_f2_e1") in net.isoNodes)
+        @test count(m -> endswith(m, "has infeed but no reference, and every unit with infeed is grid-following; no slack chosen"), warns) == 1
+        @test "notice: 2 electrical island(s) without reference got a slack from the importer (one warning each)" in ctx.messages
+        @test "notice: 1 electrical island(s) with grid-following units only switched off (one warning each)" in ctx.messages
       end)() end
 
       @testset "SV angle alignment on the islands of the power flow" begin (function ()

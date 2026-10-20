@@ -57,6 +57,8 @@ and a capacitive shunt. Three N-1 outages island the load-only feeder
 (14 of 17 converge). The fixture carries the controller PARAMETERS next
 to the result numbers. Reference: 1.68 MW losses, SE J 78.4 at dof 83.
 
+The QSTS example series `sp_case14_day.qsts.zip` and its control file live in `data/qsts`.
+
 ## sp_case60 (60 buses, the feature-dense operated grid)
 
 Three voltage levels: a 220 kV double ring feeds the meshed 110 kV zone

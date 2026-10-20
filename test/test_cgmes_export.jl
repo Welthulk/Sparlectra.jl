@@ -444,7 +444,7 @@ function run_cgmes_export_tests()
     notes = String[]
     files = writeCGMESFiles(net; path = dir, created = _EXPORT_STAMP, notices = notes)
     # the class change is the one line of the export report
-    @test notes == ["2 PowerElectronicsConnection prosumer(s) written as EquivalentInjection with description PowerElectronicsConnection (CGMES 2.4.15 has no class for them; a re-import keeps them as converters without the fault current maxIFault and ratedS, so Ik''max in their island is flagged as a lower bound, and does not read their P limits)"]
+    @test notes == ["2 PowerElectronicsConnection prosumer(s) written as EquivalentInjection with description PowerElectronicsConnection (CGMES 2.4.15 has no class for them; a re-import keeps them as converters without the fault current maxIFault and ratedS, so Ik''max in their island is flagged as a lower bound)"]
     eq = read(files[1], String)
     ssh = read(files[3], String)
     @test count("<cim:EquivalentInjection rdf:ID", eq) == 2
@@ -469,6 +469,8 @@ function run_cgmes_export_tests()
     for b in ("B", "C")
       @test (back[b].pVal, back[b].qVal) == (orig[b].pVal, orig[b].qVal)
       @test (back[b].minQ, back[b].maxQ) == (orig[b].minQ, orig[b].maxQ)
+      # minP/maxP in generator sign come back as written, (-5, 15) at B
+      @test (back[b].minP, back[b].maxP) == (orig[b].minP, orig[b].maxP)
       @test Sparlectra.isRegulating(back[b]) == Sparlectra.isRegulating(orig[b])
       # the description brings the converter type back
       @test back[b].comp.cTyp == Sparlectra.PowerElectronicsConnection

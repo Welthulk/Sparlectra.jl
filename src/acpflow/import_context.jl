@@ -23,6 +23,9 @@ function _resolve_sparlectra_casefile(casefile::String, path::Union{Nothing,Stri
   # a PowSyBl source (a .powsybl bundle directory or an IIDM file) is
   # handed to its adapter as given; the content decides, not the suffix
   detect(PowsyblAdapter, c) && return abspath(c)
+  # an SCF time series zip, decided by its manifest
+  series = path === nothing ? c : joinpath(path, c)
+  is_scf_series(series) && return abspath(series)
   # a DTF deck is taken by what it holds: the same detection as for the
   # services, which refuses a .DAT file without the marks of the format
   # (a result report, any other text) with the reason
@@ -32,7 +35,7 @@ function _resolve_sparlectra_casefile(casefile::String, path::Union{Nothing,Stri
     _detect_case_format(deck) === :dtf_for001 && return abspath(deck)
   end
   # .json is the Sparlectra Case Format (#342), handled by its own reader
-  ext in (".m", ".jl", ".json") || throw(ArgumentError("run_sparlectra: file extension $(ext) is not supported; use .m, .jl, .json (Sparlectra Case Format), a DTF deck (.DAT), a .powsybl bundle directory or an .xiidm file."))
+  ext in (".m", ".jl", ".json") || throw(ArgumentError("run_sparlectra: file extension $(ext) is not supported; use .m, .jl, .json (Sparlectra Case Format), an SCF time series (.zip with series.json), a DTF deck (.DAT), a .powsybl bundle directory or an .xiidm file."))
   if path !== nothing
     filename = joinpath(path, c)
     isfile(filename) || error("File $(filename) not found")
@@ -234,6 +237,21 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
       _import_powsybl(filename, powsybl_adapter_options(cfg); name = basename(filename))
     end
     _apply_config_net_parameters!(net, cfg)
+    return (net = net, config = cfg, projected_start_applied = false, auto_profile_result = nothing, auto_profile_overrides = Dict{String,Any}())
+  end
+
+  # SCF time series: the power flow runs the base case, with the units the
+  # base case parks parked; build_net stamps the net parameters as for SCF.
+  # The line names the series in the console and in run.log.
+  if is_scf_series(filename)
+    phase_callback("reading_scf_series")
+    series = _perf_profile_time!(performance_profile, :scf_case_read) do
+      read_scf_series(filename)
+    end
+    println(stdout, "SCF time series ", series.name, ": ", length(series.steps), " steps; the power flow runs the base case")
+    net = _perf_profile_time!(performance_profile, :scf_case_build) do
+      build_net(series; config = cfg)
+    end
     return (net = net, config = cfg, projected_start_applied = false, auto_profile_result = nothing, auto_profile_overrides = Dict{String,Any}())
   end
 

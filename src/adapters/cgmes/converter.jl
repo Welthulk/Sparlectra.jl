@@ -48,6 +48,8 @@ Base.@kwdef struct CGMESAdapterOptions
   map_power_electronics::Bool = false
   # bank regulators from the delivery (cgmes_import.shunt_control)
   shunt_control::Bool = false
+  # the DY profile onto the machines (cgmes_import.read_dynamics)
+  read_dynamics::Bool = false
   run_kind::Symbol = :powerflow
   name::String = ""
   f_nom::Float64 = model_config().nominal_frequency_hz
@@ -69,11 +71,11 @@ The CGMES importer of the adapter contract: the
 delivery builds natively through importCGMES. The method maps the
 adapter options that the importer consumes; the SV start-value
 decision and the run-kind gating live in the config-rich service
-layer (_import_cgmes carries the fifteen cgmes_import values), which
+layer (_import_cgmes carries the sixteen cgmes_import values), which
 stays the path the services use.
 """
 function import_net(::CGMESAdapter, path::AbstractString, opts::CGMESAdapterOptions; config::SparlectraConfig = active_sparlectra_config())::Net
-  net = createNetFromCGMES(path = String(path), require_boundary = opts.require_boundary, infer_base_voltages = opts.infer_base_voltages, hvdc_mode = opts.hvdc_mode, map_energy_source = opts.map_energy_source, map_power_electronics = opts.map_power_electronics, shunt_control = opts.shunt_control, bus_shunt_model = config.model.bus_shunt_model, name = isempty(opts.name) ? basename(String(path)) : opts.name)
+  net = createNetFromCGMES(path = String(path), require_boundary = opts.require_boundary, infer_base_voltages = opts.infer_base_voltages, hvdc_mode = opts.hvdc_mode, map_energy_source = opts.map_energy_source, map_power_electronics = opts.map_power_electronics, shunt_control = opts.shunt_control, read_dynamics = opts.read_dynamics, bus_shunt_model = config.model.bus_shunt_model, name = isempty(opts.name) ? basename(String(path)) : opts.name)
   _apply_config_net_parameters!(net, config)
   return net
 end
@@ -93,6 +95,7 @@ function cgmes_adapter_options(cfg::SparlectraConfig; run_kind::Symbol = :powerf
     map_energy_source = cg.map_energy_source,
     map_power_electronics = cg.map_power_electronics,
     shunt_control = cg.shunt_control,
+    read_dynamics = cg.read_dynamics,
     run_kind = run_kind,
     name = String(name),
     f_nom = cfg.model.nominal_frequency_hz,
@@ -129,6 +132,7 @@ function convert_case(::CGMESAdapter, source::AbstractString, opts::CGMESAdapter
       "map_energy_source" => opts.map_energy_source,
       "map_power_electronics" => opts.map_power_electronics,
       "shunt_control" => opts.shunt_control,
+      "read_dynamics" => opts.read_dynamics,
     ),
     # the conversion builds under its own configuration: without the
     # frequency here the net (and meta.f_nom, c1) would take the default

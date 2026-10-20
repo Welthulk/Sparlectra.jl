@@ -844,6 +844,25 @@ function run_tap_controller_tests()
       @test bank.bs_mvar == bank_after_one_pass
     end
 
+    # dead time of a sequential QSTS run: the locked tap (rank 0) stays in
+    # its rank, is evaluated and moves nothing. Out of its band (Load at
+    # 0.895 pu, target 1.0 +/- 0.005) and not at its limit it holds the bank
+    # at rank 1; in its band or at tap_min the bank acts. Before the rule a
+    # locked tap dropped out of the ranks and the bank went to 30 MVAr.
+    for (case, prep, bank_acts) in (("out of band", (_, _) -> nothing, false),
+                                    ("in its band", (t, _) -> (t.deadband_vm_pu = 0.15), true),
+                                    ("at its limit", (_, br) -> Sparlectra._set_ratio_tap!(br, br.tap_min), true))
+      net, tbr, bank = build(1)
+      tap = only(Sparlectra._tap_controllers(net))
+      prep(tap, tbr)
+      ratio_before = tbr.tap_ratio
+      tap.locked = true
+      res = run_control!(net)
+      @test (case, tbr.tap_ratio == ratio_before, bank.bs_mvar > 0.0) == (case, true, bank_acts)
+      @test !any(r -> r.controller_type == "PowerTransformerControl", res.trace)
+      bank_acts || @test res.status === :blocked && get_bus_vm_pu(net, "Load") < 0.995
+    end
+
     # full run: the bank acts first in a pass in which the tap stands at
     # tap_min, and then lifts the voltage the tap cannot reach
     net, tbr, bank = build(1)
@@ -927,6 +946,64 @@ function run_tap_controller_tests()
     @test all(r -> r.tap_ratio in ptbr.tap_ratio_points && r.tap_ratio >= 0.975, ptaps)
     @test pbank.bs_mvar > 0.0
     @test minimum(r.outer_iteration for r in pres.trace if r.controller_type == "ShuntVoltageControl") == minimum(r.outer_iteration for r in ptaps if r.at_limit) + 1
+
+    # B7: a bank at rank 0 on its top block (as carried over from a step
+    # before), target 0.972 pu below the tap band 0.975 .. 0.985 pu. The
+    # bus starts below the bank band, so the bank stands at its limit while
+    # the tap at rank 1 steps up. The last tap step lifts the bus from
+    # 0.965 pu over the bank band (0.967 .. 0.977 pu) to 0.981 pu. The bank
+    # is then not at its limit any more (the error points inward) and has
+    # to switch back. Before the fix the flag of the earlier pass stayed
+    # set and the run ended :converged with the bank on its top block.
+    b7net = Net(name = "b7", baseMVA = 100.0)
+    for bus in ("Slack", "Mid", "Load")
+      addBus!(net = b7net, busName = bus, vn_kV = 110.0)
+    end
+    addProsumer!(net = b7net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+    addProsumer!(net = b7net, busName = "Load", type = "LOAD", p = 90.0, q = 35.0)
+    addPIModelTrafo!(net = b7net, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.00, ratio = 1.0, shift_deg = 0.0, status = 1)
+    addPIModelACLine!(net = b7net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+    b7tbr = getNetBranch(net = b7net, fromBus = "Slack", toBus = "Mid")
+    b7tbr.has_ratio_tap = true
+    (b7tbr.tap_min, b7tbr.tap_max, b7tbr.tap_step) = (0.90, 1.10, 0.0125)
+    addPowerTransformerControl!(b7net; trafo = string(b7tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.98, deadband_vm_pu = 0.005, priority = 1)
+    b7bank = @test_logs (:warn, r"already regulates the voltage of bus Load") addShuntVoltageControl!(b7net; bus = "Load", target_vm_pu = 0.972, bs_min_mvar = 0.0, bs_max_mvar = 10.0, step_mvar = 5.0, deadband_vm_pu = 0.005, bs_start_mvar = 10.0, priority = 0)
+    b7res = run_control!(b7net)
+    b7rows = filter(r -> r.controller_type == "ShuntVoltageControl", b7res.trace)
+    # the bank switched back from its top block
+    @test b7bank.bs_mvar < 10.0
+    # the flag stands only on an outer block with the error pointing out:
+    # on the top block with the bus below the band, on block 0 above it
+    @test any(r -> r.at_limit, b7rows)
+    @test all(r -> !r.at_limit || (r.bs_mvar == 10.0 && r.achieved_vm_pu < 0.967) || (r.bs_mvar == 0.0 && r.achieved_vm_pu > 0.977), b7rows)
+    # no :converged with the bank outside its band
+    @test !(b7res.status === :converged && abs(get_bus_vm_pu(b7net, "Load") - 0.972) > 0.005)
+    # the same with parked: bank band 0.95 .. 0.97 pu, tap at 1.0 pu. The
+    # bank starts at 0 and climbs to its top block itself, or starts there;
+    # the tap then lifts the bus far above the bank band. A flag kept from
+    # an earlier pass, or a secant over the bank's own step with the tap's
+    # moves mixed in, left the bank parked there and the run :converged.
+    # The tap swings between two steps afterwards (its band is narrower
+    # than one step), so its status is not checked.
+    for start in (0.0, 10.0)
+      pknet = Net(name = "park", baseMVA = 100.0)
+      for bus in ("Slack", "Mid", "Load")
+        addBus!(net = pknet, busName = bus, vn_kV = 110.0)
+      end
+      addProsumer!(net = pknet, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
+      addProsumer!(net = pknet, busName = "Load", type = "LOAD", p = 90.0, q = 35.0)
+      addPIModelTrafo!(net = pknet, fromBus = "Slack", toBus = "Mid", r_pu = 0.01, x_pu = 0.08, b_pu = 0.00, ratio = 1.0, shift_deg = 0.0, status = 1)
+      addPIModelACLine!(net = pknet, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
+      pktbr = getNetBranch(net = pknet, fromBus = "Slack", toBus = "Mid")
+      pktbr.has_ratio_tap = true
+      (pktbr.tap_min, pktbr.tap_max, pktbr.tap_step) = (0.90, 1.10, 0.0125)
+      addPowerTransformerControl!(pknet; trafo = string(pktbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, deadband_vm_pu = 0.005, priority = 1)
+      pkbank = @test_logs (:warn, r"already regulates the voltage of bus Load") addShuntVoltageControl!(pknet; bus = "Load", target_vm_pu = 0.96, bs_min_mvar = 0.0, bs_max_mvar = 10.0, step_mvar = 5.0, deadband_vm_pu = 0.01, bs_start_mvar = start, priority = 0)
+      pkres = run_control!(pknet)
+      pkrows = filter(r -> r.controller_type == "ShuntVoltageControl", pkres.trace)
+      @test any(r -> r.bs_mvar == 10.0, pkrows)
+      @test !(pkres.status === :converged && pkbank.parked && abs(get_bus_vm_pu(pknet, "Load") - 0.96) > 0.01)
+    end
 
     # config surface: an entry for a transformer that already carries a tap
     # controller adds nothing but sets that controller's range, a side the

@@ -359,6 +359,9 @@ mutable struct PowerTransformerControl <: AbstractOuterController
   enabled::Bool
   # rank in the outer loop, 0 acts first (control_priority)
   priority::Int
+  # dead time of a sequential QSTS run: evaluated, proposes nothing, holds
+  # the larger ranks while out of band and not at its limit (run_control!)
+  locked::Bool
   # control range of the ratio tap inside the branch's tap_min/tap_max;
   # nothing on a side means the physical limit (_tap_control_range)
   tap_min::Union{Nothing,Float64}
@@ -378,7 +381,7 @@ function PowerTransformerControl(; trafo::String, followers::Vector{String} = St
   voltage_error_metric in (:vm, :vm2) || error("PowerTransformerControl: unsupported voltage_error_metric=$(voltage_error_metric). Use :vm or :vm2.")
   _check_control_priority(priority, "PowerTransformerControl")
   return PowerTransformerControl(trafo, followers, mode, target_bus, target_branch, target_vm_pu, p_target_mw, q_target_mvar, control_ratio, control_phase, is_discrete,
-    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, priority, nothing, nothing, false, false, :idle, nothing, nothing, 0)
+    deadband_vm_pu, deadband_p_mw, voltage_error_metric, max_outer_iters, enabled, priority, false, nothing, nothing, false, false, :idle, nothing, nothing, 0)
 end
 
 @inline function expected_controller_count(trafoTyp::TrafoTyp)::Int

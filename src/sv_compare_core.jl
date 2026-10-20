@@ -50,7 +50,7 @@ function _sv_median(v::Vector{Float64})::Float64
 end
 
 """
-    _sv_align_angles(dva, island_of) -> (aligned = Vector{Float64}, offset_deg = Float64)
+    _sv_align_angles(dva, island_of) -> (aligned = Vector{Float64}, offset_deg = Float64, offsets = Dict{Int,Float64})
 
 Remove one angle offset per island from the angle differences `dva`
 (degrees, model minus SV, one entry per compared bus). `island_of[i]` is
@@ -65,7 +65,10 @@ The offset of an island is the median of its finite differences, and
 `aligned[i]` is `dva[i]` minus the offset of its island. `offset_deg` is
 the offset of the island with the most finite differences, the reference
 offset of the delivery as a whole; an entry whose island has no finite
-difference is aligned with it.
+difference is aligned with it. `offsets` maps every island with a finite
+difference to its offset, so a caller can align further values of the
+same islands (`get(offsets, island, offset_deg)`) with exactly the offsets
+the entries got.
 """
 function _sv_align_angles(dva::Vector{Float64}, island_of::Vector{Int})
   length(dva) == length(island_of) || throw(DimensionMismatch("_sv_align_angles: $(length(dva)) angle differences but $(length(island_of)) island numbers"))
@@ -78,5 +81,5 @@ function _sv_align_angles(dva::Vector{Float64}, island_of::Vector{Int})
   main_island = isempty(per_island) ? 0 : argmax(Dict(id => length(v) for (id, v) in per_island))
   offset_deg = get(offset_of, main_island, 0.0)
   aligned = Float64[d - get(offset_of, island, offset_deg) for (d, island) in zip(dva, island_of)]
-  return (aligned = aligned, offset_deg = offset_deg)
+  return (aligned = aligned, offset_deg = offset_deg, offsets = offset_of)
 end
