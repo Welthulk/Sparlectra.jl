@@ -300,6 +300,17 @@ function _write_sysimage_build_progress(output_root::AbstractString; state::Abst
   return nothing
 end
 
+# The build script of the repository: tools/build_sysimage.jl next to app/,
+# not inside it. pkgdir of this module is the application package (app/)
+# since the package split; 0.50.0 looked for app/tools/ and the Web UI
+# rebuild button failed with "build script is missing". nothing when the
+# package directory is unknown.
+function _sysimage_build_script()::Union{Nothing,String}
+  approot = pkgdir(@__MODULE__)
+  approot === nothing && return nothing
+  return joinpath(dirname(approot), "tools", "build_sysimage.jl")
+end
+
 """
     start_sysimage_rebuild!(; output_root) -> NamedTuple
 
@@ -322,7 +333,7 @@ function start_sysimage_rebuild!(; output_root::AbstractString = default_webui_o
   sysimage_build_active(; output_root) && return (started = false, message = "A sysimage build is already running.", log = log)
   pkgroot = pkgdir(@__MODULE__)
   pkgroot === nothing && return (started = false, message = "Cannot locate the Sparlectra package directory.", log = log)
-  script = joinpath(pkgroot, "tools", "build_sysimage.jl")
+  script = _sysimage_build_script()
   isfile(script) || return (started = false, message = "The build script is missing at $(script); a registry installation without tools/ cannot rebuild the image.", log = log)
   exe = joinpath(Sys.BINDIR, Base.julia_exename())
   cmd = Cmd(`$(exe) --startup-file=no --project=$(pkgroot) $(script)`; dir = pkgroot)

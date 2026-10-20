@@ -81,7 +81,7 @@ function _dyn_value(field::Symbol, x::Float64)::Float64
   isfinite(x) || throw(DynamicDataError(field, x, "must be finite"))
   return x + 0.0
 end
-_dyn_value(field::Symbol, x::Nothing)::Nothing = nothing
+_dyn_value(::Symbol, ::Nothing)::Nothing = nothing
 
 function _dyn_nonnegative(field::Symbol, x::Union{Nothing,Float64})::Union{Nothing,Float64}
   v = _dyn_value(field, x)
@@ -184,7 +184,7 @@ end
 
 # keyword form with the documented defaults; integers and other reals are
 # taken as Float64, the unit type follows the inertia when not given
-_dyn_float(x::Nothing) = nothing
+_dyn_float(::Nothing) = nothing
 _dyn_float(x::Real) = Float64(x)
 
 function DynamicData(;

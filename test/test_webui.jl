@@ -1643,6 +1643,9 @@ function run_webui_fast_tests()
                 # wiring (route reaches the handler, handler redirects back with a
                 # message) and the guard that stops a second build. The spawn itself
                 # is covered by running a build, not by the suite.
+                # the button starts the repository build script; 0.50.0 looked
+                # for it inside app/ and failed
+                @test isfile(SparlectraApp._sysimage_build_script())
                 _progress_file("running", round(time(); digits=1))
                 rebuild = SparlectraApp.route_sparlectra_webui("POST", "/webui/sysimage/rebuild"; output_root=out)
                 @test rebuild.status == 303
