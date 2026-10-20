@@ -266,8 +266,8 @@ function run_legacy_webui_tests()
             write(joinpath(listdir, "crlf_set.csv"), replace(sethead("sp_case14.scf.json"), "\n" => "\r\n"))
             write(joinpath(listdir, "blank_set.csv"), replace(sethead("sp_case14.scf.json"), "v1\n" => "v1\n\n"; count = 1))
             list_for = (c; kw...) -> SparlectraApp._webui_measurement_sets_for_case(listdir, c; kw...)
-            @test list_for("sp_case14.scf.json") == [(name = n, case = c) for (n, c) in (("blank_set.csv", "sp_case14.scf.json"), ("bom_set.csv", "sp_case14.scf.json"), ("crlf_set.csv", "sp_case14.scf.json"), ("demo_clean.csv", "sp_case14.scf.json"), ("sp_case14.measurements.csv", "sp_case14.scf.json"), ("sp_case14.old.csv", ""))]
-            @test list_for("case14.scf.json") == [(name = "case14.scf.measurements.csv", case = "case14.scf.json"), (name = "sp_case14.foreign.csv", case = "case14.scf.json")]
+            @test list_for("sp_case14.scf.json") == [(name = n, case = c, model = "") for (n, c) in (("blank_set.csv", "sp_case14.scf.json"), ("bom_set.csv", "sp_case14.scf.json"), ("crlf_set.csv", "sp_case14.scf.json"), ("demo_clean.csv", "sp_case14.scf.json"), ("sp_case14.measurements.csv", "sp_case14.scf.json"), ("sp_case14.old.csv", ""))]
+            @test list_for("case14.scf.json") == [(name = "case14.scf.measurements.csv", case = "case14.scf.json", model = ""), (name = "sp_case14.foreign.csv", case = "case14.scf.json", model = "")]
             @test isempty(list_for("case57.m"))
             # an SCF case exported from case14.scf.json accepts that source's sets
             @test [s.name for s in list_for("case14_copy.scf.json"; also_bound_to = ["case14.scf.json"])] == ["case14.scf.measurements.csv", "sp_case14.foreign.csv"]

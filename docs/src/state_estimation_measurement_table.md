@@ -378,6 +378,30 @@ case (upload, selection, row counts per type, text and value editor,
 download, delete); the run goes through the same service. See
 [Web UI Reference](webui_reference.md).
 
+### [Binding a table to its case](@id se_table_binding)
+
+Two comment lines tie a table to a case:
+
+    # case: sp_case14.scf.json
+    # cgmes_model: 0b6f1c2e-5a7d-4e8f-9c3b-2d1e4f5a6b7c
+
+`# case:` names the case file. The generator writes it, and the run
+refuses a table whose line names another case. `# cgmes_model:` names the
+model id (`rdf:about` of the md:FullModel header) of the EQ file the
+table's mRIDs come from; a table may carry several. The Web UI offers such
+a table for every CGMES case whose EQ header carries one of these ids, so
+the binding does not depend on the file name, and several scenarios built
+on one EQ all offer the table. The id is compared without `urn:uuid:`, a
+leading `_` and case (`cgmesModelKey`); `cgmesEquipmentModelIds(path)`
+reads the ids of a delivery from the file headers without importing it.
+A `# case:` line outranks the model line. A table without either line is
+offered for a case when its file name starts with the case name and a dot.
+`# cgmes_description:` is free text for the reader.
+
+The run does not refuse a table bound by the model id alone: it notes in
+the run log whether the id is the EQ model of the case, and rows the case
+cannot resolve are counted in `measurement_import.txt`.
+
 In a script, `readMeasurementTable!(net; file)` does the read, the import
 with `nameMeasurementKeys(net)` (or the `index` given, for example
 `cgmesMeasurementKeys(result)`) and `applyMeasurementSet!` in one call and

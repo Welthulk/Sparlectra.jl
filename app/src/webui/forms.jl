@@ -2091,26 +2091,59 @@ function _webui_measurement_set_provenance(path::AbstractString)::Dict{String,An
   return out
 end
 
-function _webui_measurement_set_case(path::AbstractString)::String
-  isfile(path) || return ""
-  result = ""
+"""
+    _webui_measurement_set_binding(path) -> NamedTuple{(:case, :models)}
+
+The binding lines in the header comments of a measurement file: `case` from
+`# case: <case file name>` (empty without one) and `models` from every
+`# cgmes_model: <id>` line, each in the form of `cgmesModelKey` (empty
+without any). A leading BOM goes first, blank lines before or between the
+header comments are skipped, CRLF is taken; reading stops at the first line
+that is no comment, after at most 50 lines.
+"""
+function _webui_measurement_set_binding(path::AbstractString)::NamedTuple{(:case, :models),Tuple{String,Vector{String}}}
+  case = ""
+  models = String[]
+  isfile(path) || return (case = case, models = models)
   open(path, "r") do io
     for i = 1:50
       eof(io) && break
-      # a leading BOM goes first (strip keeps U+FEFF), blank lines before
-      # or between the header comments are skipped; readline drops a CRLF
-      line = strip(i == 1 ? lstrip(readline(io), '\ufeff') : readline(io))
+      # strip keeps U+FEFF, so the BOM is removed explicitly
+      line = strip(i == 1 ? lstrip(readline(io), '﻿') : readline(io))
       isempty(line) && continue
       startswith(line, "#") || break
       m = match(r"^#\s*case:\s*(.+)$", line)
       if m !== nothing
-        result = String(strip(m.captures[1]))
-        break
+        isempty(case) && (case = String(strip(m.captures[1])))
+        continue
       end
+      m = match(r"^#\s*cgmes_model:\s*(\S+)", line)
+      m === nothing || push!(models, CGMESImporter.cgmesModelKey(m.captures[1]))
     end
   end
-  return result
+  return (case = case, models = unique!(models))
 end
+
+## the explicit case binding of a measurement file (`# case:` line), empty
+## without one; the SE service checks it before a run
+_webui_measurement_set_case(path::AbstractString)::String = _webui_measurement_set_binding(path).case
+
+# The EQ model ids of a CGMES case in the case directory, read from the file
+# headers. The ArgumentError is the ZIP reader's refusal of a file that ends
+# in .zip but is no ZIP (a placeholder, a broken download): such a case has no
+# model id, and its run names the reader's error.
+function _webui_case_cgmes_model_ids(path::AbstractString)::Vector{String}
+  lowercase(splitext(path)[2]) == ".zip" || return String[]
+  isfile(path) || return String[]
+  try
+    return CGMESImporter.cgmesEquipmentModelIds(path)
+  catch err
+    err isa ArgumentError || rethrow()
+    return String[]
+  end
+end
+
+_webui_case_cgmes_model_ids_cached(path::AbstractString)::Vector{String} = _webui_file_scan_memo(_webui_case_cgmes_model_ids, path)
 
 ## the stems a measurement set name may start with to belong to a case: the
 ## case name without its extension, and for a compound extension
@@ -2126,28 +2159,43 @@ function _webui_case_stems(casefile::AbstractString)::Vector{String}
 end
 
 """
-    _webui_measurement_sets_for_case(directory, casefile; also_bound_to) -> Vector{NamedTuple{(:name, :case)}}
+    _webui_measurement_sets_for_case(directory, casefile; also_bound_to) -> Vector{NamedTuple{(:name, :case, :model)}}
 
 The measurement sets in `directory` that belong to `casefile`, sorted by
-name. A set belongs to the case when its `# case:` line names the case or
-one of `also_bound_to` (the source an SCF case was exported from, which the
-SE service accepts as well). A set without a `# case:` line belongs to the
-case when its file name starts with a case stem followed by a dot
-(`sp_case14.measurements.csv` for `sp_case14.scf.json`). `case` is the case
-named in the file, empty for a set matched by its name. Only the header
-lines of each file are read.
+name. In this order:
+
+1. A set with a `# case:` line belongs to the case when the line names the
+   case or one of `also_bound_to` (the source an SCF case was exported
+   from, which the SE service accepts as well); `case` is that name. The
+   line wins over everything else, so the assign switch of the upload can
+   bind any table to any case.
+2. A set without a `# case:` line but with `# cgmes_model:` lines belongs to
+   a CGMES case (a ZIP in `directory`) whose EQ header carries one of these
+   model ids; `model` is the matching id. Several scenarios built on the
+   same EQ all list the set.
+3. A set without either line belongs to the case when its file name starts
+   with a case stem followed by a dot (`sp_case14.measurements.csv` for
+   `sp_case14.scf.json`).
+
+Only the header lines of each file and the header of each EQ file are read.
 """
 function _webui_measurement_sets_for_case(directory::AbstractString, casefile::AbstractString; also_bound_to::AbstractVector{<:AbstractString} = String[])
-  out = NamedTuple{(:name, :case),Tuple{String,String}}[]
+  out = NamedTuple{(:name, :case, :model),Tuple{String,String,String}}[]
   isempty(casefile) && return out
   accepted = Set{String}(vcat([basename(String(casefile))], [String(c) for c in also_bound_to if !isempty(c)]))
   stems = _webui_case_stems(casefile)
+  # read lazily: only a set with a model line needs the case's EQ ids
+  case_models = nothing
   for name in _webui_measurement_options_in_directory(directory)
-    bound = _webui_measurement_set_case(joinpath(directory, name))
-    if isempty(bound)
-      any(s -> startswith(name, s * "."), stems) && push!(out, (name = name, case = ""))
-    elseif bound in accepted
-      push!(out, (name = name, case = bound))
+    binding = _webui_measurement_set_binding(joinpath(directory, name))
+    if !isempty(binding.case)
+      binding.case in accepted && push!(out, (name = name, case = binding.case, model = ""))
+    elseif !isempty(binding.models)
+      case_models === nothing && (case_models = _webui_case_cgmes_model_ids_cached(joinpath(directory, basename(String(casefile)))))
+      hit = findfirst(in(case_models), binding.models)
+      hit === nothing || push!(out, (name = name, case = "", model = binding.models[hit]))
+    elseif any(s -> startswith(name, s * "."), stems)
+      push!(out, (name = name, case = "", model = ""))
     end
   end
   return out
