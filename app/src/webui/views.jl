@@ -4984,7 +4984,7 @@ from a solved PF, and the run action posting to `/powerflow/run` with
 `se_mode`. Composed from small string pieces like the contingency-weights
 editor; no onsubmit button-disabling.
 """
-function render_se_form(; cases::Vector{String} = String[], measurements::Vector{String} = String[], case_measurement_rows::Integer = 0, case_measurement_noise::Union{Nothing,Bool} = nothing, selected_case::AbstractString = "", selected_measurement::AbstractString = "", config_file::AbstractString = "", message::AbstractString = "", set_info::Vector{String} = String[], set_provenance::Vector{String} = String[], set_counts::Vector{Tuple{String,Int}} = Tuple{String,Int}[], set_v1::Bool = false, meas_case::AbstractDict = Dict{String,String}(), meas_name_matched::AbstractSet = Set{String}(), starred::AbstractSet = Set{String}(), set_case::AbstractString = "", set_text::AbstractString = "", set_rows::Vector{NamedTuple} = NamedTuple[], gen_values::AbstractDict = Dict{String,String}(), truth_runs::Vector{NamedTuple} = NamedTuple[], active_run = nothing, sigma_levels = (rows = NamedTuple[], error = "", editable = true, stored = false))
+function render_se_form(; cases::Vector{String} = String[], measurements::Vector{String} = String[], case_measurement_rows::Integer = 0, case_measurement_noise::Union{Nothing,Bool} = nothing, selected_case::AbstractString = "", selected_measurement::AbstractString = "", config_file::AbstractString = "", message::AbstractString = "", set_info::Vector{String} = String[], set_provenance::Vector{String} = String[], set_counts::Vector{Tuple{String,Int}} = Tuple{String,Int}[], set_v1::Bool = false, meas_case::AbstractDict = Dict{String,String}(), meas_name_matched::AbstractSet = Set{String}(), meas_model_matched::AbstractDict = Dict{String,String}(), starred::AbstractSet = Set{String}(), set_case::AbstractString = "", set_model::AbstractString = "", set_text::AbstractString = "", set_rows::Vector{NamedTuple} = NamedTuple[], gen_values::AbstractDict = Dict{String,String}(), truth_runs::Vector{NamedTuple} = NamedTuple[], active_run = nothing, sigma_levels = (rows = NamedTuple[], error = "", editable = true, stored = false))
   esc = _webui_escape
   # sticky generator inputs: after a generate the redirect carries the
   # submitted values back; the form re-renders with them, not the defaults
@@ -4997,6 +4997,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   # line, or a note for a set without one that matched by its file name
   meas_label = function (name)
     name in meas_name_matched && return string(name, " (no case line, name matches ", selected_case, ")")
+    haskey(meas_model_matched, name) && return string(name, " (CGMES model matches)")
     bound = String(get(meas_case, name, ""))
     isempty(bound) && return name
     return string(name, " (case ", bound, ")")
@@ -5025,7 +5026,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   counts_html = v1_html * counts_html
   info_html = ""
   # binding line + inline editor shared by both info-panel variants
-  bind_html = isempty(selected_measurement) ? "" : isempty(set_case) ? "<p><strong>Case binding:</strong> none (older set; the file carries no <code># case:</code> comment). Regenerate or add the line in the editor below.</p>" : "<p><strong>Case binding:</strong> this set belongs to <code>$(esc(set_case))</code> (recorded in the file).</p>"
+  bind_html = isempty(selected_measurement) ? "" : !isempty(set_model) ? "<p><strong>Case binding:</strong> by the CGMES model <code>$(esc(set_model))</code>, which is the EQ model of this case (recorded in the file).</p>" : isempty(set_case) ? "<p><strong>Case binding:</strong> none (older set; the file carries no <code># case:</code> comment). Regenerate or add the line in the editor below.</p>" : "<p><strong>Case binding:</strong> this set belongs to <code>$(esc(set_case))</code> (recorded in the file).</p>"
   # structured value editor: every measurement kind (voltages, flows,
   # balances, currents) editable in place; value/sigma/active only, the
   # identity columns stay read-only. Large sets fall back to text/download.
@@ -5094,7 +5095,8 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<form method=\"post\" action=\"/powerflow/import-cases\" enctype=\"multipart/form-data\">",
     "<input type=\"hidden\" name=\"return_to\" value=\"stateestimation\">",
     "<input type=\"hidden\" name=\"return_case\" value=\"$(esc(selected_case))\">",
-    "<label title=\"Measurement table or CSV v1. Offered for a case when its # case: line names it, or its file name starts with the case name and a dot; otherwise for no case.\">Upload measurement file $(_webui_file_input("casefiles"; accept = ".csv", id = "measurements"))</label> ",
+    "<label title=\"Measurement table or CSV v1. Offered for a case when its # case: line names it, when its # cgmes_model: line names the EQ model of a CGMES case, or when its file name starts with the case name and a dot; otherwise for no case.\">Upload measurement file $(_webui_file_input("casefiles"; accept = ".csv", id = "measurements"))</label> ",
+    isempty(selected_case) ? "" : "<label class=\"check\" title=\"Binds the uploaded file to the selected case: its # case: line is set to this case, whatever the file says. A measurement file of the same name is replaced. Rows the case cannot resolve are counted in the import report of the run.\"><input type=\"checkbox\" name=\"assign_to_case\" value=\"true\">assign to $(esc(selected_case))</label> ",
     "<button type=\"submit\">Upload</button>",
     "</form>",
   )
@@ -5173,7 +5175,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<input type=\"hidden\" name=\"se_mode\" value=\"true\">",
     "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
     "<input type=\"hidden\" name=\"config_file\" value=\"$(esc(config_file))\">",
-    "<p class=\"se-recommend\">The list shows only the measurement sets of the selected case (their <code># case:</code> line names it); the matching set (&lt;case&gt;.measurements.csv) is preselected.$(isempty(measurements) ? " No set in the case directory belongs to this case; generate one with the measurement generator above." : "")</p><label title=\"Measurement CSV v1 or measurement table (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
+    "<p class=\"se-recommend\">The list shows only the measurement sets of the selected case (their <code># case:</code> line names it, or their <code># cgmes_model:</code> line the EQ model of a CGMES case); the matching set (&lt;case&gt;.measurements.csv) is preselected.$(isempty(measurements) ? " No set in the case directory belongs to this case; generate one with the measurement generator above." : "")</p><label title=\"Measurement CSV v1 or measurement table (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
     "<fieldset class=\"se-options\"><legend>Estimator options</legend>",
     "<label title=\"Start from a flat voltage profile\">$(_webui_field_label("se_flatstart", "flatstart"))<input type=\"checkbox\" name=\"se_flatstart\" value=\"true\"$(gchk2("se_flatstart", true))></label> ",
     "<label title=\"WLS convergence tolerance on the state step. The default 1e-6 is the noise floor of the finite-difference Jacobian; a tighter value is raised with a log line.\">$(_webui_field_label("se_tol", "tol"))<input type=\"text\" name=\"se_tol\" value=\"$(gv("se_tol", "1e-6"))\" size=\"8\"></label> ",

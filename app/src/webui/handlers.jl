@@ -194,6 +194,77 @@ function _webui_pack_cgmes_uploads!(uploads::AbstractVector{WebUICaseUpload}, di
   return (ok = true, name = zip_name, reason = "")
 end
 
+"""
+    _webui_bind_measurement_text(text, case) -> String
+
+The text of a measurement file with its header bound to `case`: every
+`# case:` line of the header comments is removed and one `# case: <case>`
+line goes in directly after the version line (measurement table or CSV v1),
+or at the top when the version line is not among the header comments. The
+line ends of the file are kept (CRLF stays CRLF), a leading BOM stays.
+Everything else, the `# cgmes_model:` lines included, is left as it is; the
+`# case:` line outranks them when the Web UI lists the sets of a case.
+"""
+function _webui_bind_measurement_text(text::AbstractString, case::AbstractString)::String
+  eol = occursin("\r\n", text) ? "\r\n" : "\n"
+  lines = split(String(text), "\n")
+  keep = trues(length(lines))
+  version_at = 0
+  for (i, raw) in enumerate(lines)
+    line = strip(rstrip(i == 1 ? lstrip(raw, '﻿') : raw, '\r'))
+    isempty(line) && continue
+    startswith(line, "#") || break
+    if match(r"^#\s*case:", line) !== nothing
+      keep[i] = false
+    elseif version_at == 0 && (match(r"^#\s*sparlectra-measurement-table\b", line) !== nothing || line == "# sparlectra-measurements v1")
+      version_at = i
+    end
+  end
+  kept = String[]
+  insert_after = 0
+  for (i, l) in enumerate(lines)
+    keep[i] || continue
+    push!(kept, String(l))
+    i == version_at && (insert_after = length(kept))
+  end
+  bom = !isempty(kept) && startswith(kept[1], "﻿")
+  if insert_after == 0 && bom
+    # the BOM stays the first character of the file
+    kept[1] = String(chopprefix(kept[1], "﻿"))
+    insert!(kept, 1, string("﻿# case: ", case, eol == "\r\n" ? "\r" : ""))
+  else
+    insert!(kept, insert_after + 1, string("# case: ", case, eol == "\r\n" ? "\r" : ""))
+  end
+  return join(kept, "\n")
+end
+
+# The assign switch of the SE upload: the uploaded measurement file is stored
+# bound to `case` (see _webui_bind_measurement_text), whatever its own
+# `# case:` or `# cgmes_model:` lines say. A measurement file of the same
+# name is replaced, because assigning it is the user's explicit request; any
+# other file of that name stays. Returns the reason of a refusal, or "".
+# The IOError/SystemError is a failed write (disk full, permissions); the
+# temporary file goes and the case directory stays as it was.
+function _webui_store_assigned_measurement!(destination::AbstractString, data::Vector{UInt8}, case::AbstractString)::String
+  ispath(destination) && !_webui_is_measurement_file(destination) && return "already exists"
+  temp = tempname(dirname(destination))
+  try
+    write(temp, data)
+    if !_webui_is_measurement_file(temp)
+      reason = _measurement_table_without_version(temp) ? "no measurement table (the version line $(MEASUREMENT_TABLE_VERSION_LINE) is missing)" : "no measurement table (the assign switch binds measurement files only)"
+      rm(temp; force = true)
+      return reason
+    end
+    write(temp, _webui_bind_measurement_text(String(copy(data)), case))
+    mv(temp, destination; force = true)
+  catch err
+    rm(temp; force = true)
+    (err isa Base.IOError || err isa SystemError) || rethrow()
+    return "write failure"
+  end
+  return ""
+end
+
 function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractString = "results/powerflow_service", application_root::AbstractString = _webui_application_root(), case_directory::Union{Nothing,AbstractString} = nothing, operation_log::AbstractString = output_root, max_file_bytes::Integer = WEBUI_CASE_IMPORT_MAX_FILE_BYTES, max_request_bytes::Integer = WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES)::SparlectraWebUIResponse
   directory = _webui_case_directory(; case_directory, application_root, output_root)
   mkpath(directory)
@@ -207,6 +278,10 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
   total_bytes = sum((length(upload.data) for upload in uploads); init = 0)
   total_bytes > max_request_bytes && (rejected = [basename(upload.filename) => "oversized" for upload in uploads])
   uploads_to_process = total_bytes > max_request_bytes ? WebUICaseUpload[] : uploads
+  # the assign switch of the SE upload form: bind each uploaded measurement
+  # file to the case selected there, whatever the file says itself
+  assign_case = String(_webui_form_value(form, "return_to", "")) == "stateestimation" && String(_webui_form_value(form, "assign_to_case", "")) == "true" ? basename(String(_webui_form_value(form, "return_case", ""))) : ""
+  assigned = String[]
   # CGMES profile files (EQ, SSH, TP, SV of one delivery) arrive as several
   # .xml uploads and become one ZIP delivery; the file picker cannot hand
   # over a folder, and the shipped demo deliveries are folders
@@ -252,6 +327,16 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
     root = string(normpath(directory), Base.Filesystem.path_separator)
     if destination != normpath(joinpath(directory, basename(destination))) || !startswith(string(destination, Base.Filesystem.path_separator), root)
       push!(rejected, name => "invalid filename")
+      continue
+    elseif !isempty(assign_case) && lowercase(splitext(name)[2]) == ".csv"
+      reason = _webui_store_assigned_measurement!(destination, upload.data, assign_case)
+      if isempty(reason)
+        push!(imported, name)
+        push!(assigned, name)
+        imported_roles[name] = string(isMeasurementTable(destination) ? "measurement_table" : "measurement_set", ", assigned to ", assign_case)
+      else
+        push!(rejected, name => reason)
+      end
       continue
     elseif ispath(destination)
       push!(rejected, name => "already exists")
@@ -306,7 +391,9 @@ function handle_powerflow_case_import(form::AbstractDict; output_root::AbstractS
   # the SE section hosts its own upload form for measurement sets; return
   # to the Runs page's SE anchor (with its case selection preserved)
   if String(_webui_form_value(form, "return_to", "")) == "stateestimation"
-    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(String(_webui_form_value(form, "return_case", ""))))&message=$(message)#state-estimation")
+    # an assigned file is armed for the next run, as a generated set is
+    armed = isempty(assigned) ? "" : string("&measurement_file=", _webui_urlencode(last(assigned)))
+    return _webui_redirect("/powerflow?casefile=$(_webui_urlencode(String(_webui_form_value(form, "return_case", ""))))&message=$(message)$(armed)#state-estimation")
   end
   query = isempty(selected) ? "" : "?casefile=$(_webui_urlencode(selected))"
   separator = isempty(query) ? "?" : "&"
@@ -2280,17 +2367,28 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # per-set case binding: the in-file `# case:` comment decides; the stem
   # convention <case>.measurements.csv only fills in for older files
   meas_case = Dict{String,String}()
+  # model ids of the sets bound by `# cgmes_model:` only (no `# case:` line)
+  set_models = Set{String}()
   for name in measurements
-    bound = _webui_measurement_set_case(joinpath(directory, name))
-    if isempty(bound) && endswith(name, ".measurements.csv")
+    binding = _webui_measurement_set_binding(joinpath(directory, name))
+    bound = binding.case
+    isempty(bound) && union!(set_models, binding.models)
+    if isempty(bound) && isempty(binding.models) && endswith(name, ".measurements.csv")
       stem = String(name[1:(end - length(".measurements.csv"))])
       hits = [c for c in cases if first(splitext(c)) == stem]
       length(hits) == 1 && (bound = hits[1])
     end
     isempty(bound) || (meas_case[name] = bound)
   end
-  # a case with at least one bound set gets the star in the selector
+  # a case with at least one bound set gets the star in the selector, a
+  # CGMES case also for a set that names its EQ model
   starred = Set{String}(values(meas_case))
+  if !isempty(set_models)
+    for c in cases
+      lowercase(splitext(c)[2]) == ".zip" || continue
+      any(in(set_models), _webui_case_cgmes_model_ids_cached(joinpath(directory, c))) && push!(starred, c)
+    end
+  end
   # preselect a set BOUND to the selected case; a foreign set fails the SE
   # run with per-row resolution errors, so it must never be a silent
   # default. WITHOUT a selected case nothing is preselected and no set
@@ -2328,11 +2426,14 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # the picker offers only the sets that belong to the selected case: a set
   # of another case can only fail the binding check of the SE service. The
   # full directory list stays for the stars of the case selector.
-  case_sets = isempty(selected) ? NamedTuple{(:name, :case),Tuple{String,String}}[] : _webui_measurement_sets_for_case(directory, selected; also_bound_to = [case_source])
+  case_sets = isempty(selected) ? NamedTuple{(:name, :case, :model),Tuple{String,String,String}}[] : _webui_measurement_sets_for_case(directory, selected; also_bound_to = [case_source])
   measurements = [s.name for s in case_sets]
   # sets without a `# case:` line that are offered because of their name;
   # the picker labels them as such
-  meas_name_matched = Set{String}(s.name for s in case_sets if isempty(s.case))
+  meas_name_matched = Set{String}(s.name for s in case_sets if isempty(s.case) && isempty(s.model))
+  # sets offered because their `# cgmes_model:` line names the EQ model of
+  # the selected CGMES case, with the matching model id
+  meas_model_matched = Dict{String,String}(s.name => s.model for s in case_sets if !isempty(s.model))
   bound_sets = measurements
   # Precedence: a set BOUND to this case wins, because generating one is a
   # deliberate act and the newer data. Among several bound sets the
@@ -2379,6 +2480,7 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   set_info = isempty(selected_meas) ? String[] : _webui_measurement_set_comments(joinpath(directory, selected_meas))
   # the case-binding comment renders as its own line, not inside the table
   set_case = isempty(selected_meas) ? "" : get(meas_case, selected_meas, "")
+  set_model = isempty(selected_meas) ? "" : get(meas_model_matched, selected_meas, "")
   set_info = [l for l in set_info if !startswith(l, "case:")]
   # generator v2 provenance: show the summary lines compactly, drop the
   # bulky per-row truth_value block, and keep the taps table at the front
@@ -2461,7 +2563,7 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   sigma_levels = isempty(selected) ? (rows = NamedTuple[], error = "", editable = true, stored = false) : _webui_sigma_level_table(selected, directory, config_file)
   # a case file brings its measurements along; the section then offers the
   # run without any CSV in the cache
-  return (sigma_levels = sigma_levels, cases = cases, measurements = measurements, case_measurement_rows = case_measurement_rows, case_measurement_noise = case_measurement_noise, selected_case = selected, selected_measurement = selected_meas, config_file = config_file, message = message, set_info = set_info, set_provenance = set_provenance, set_counts = set_counts, set_v1 = set_v1, meas_case = meas_case, meas_name_matched = meas_name_matched, starred = starred, set_case = set_case, set_text = set_text, set_rows = set_rows, gen_values = gen_values, truth_runs = truth_runs)
+  return (sigma_levels = sigma_levels, cases = cases, measurements = measurements, case_measurement_rows = case_measurement_rows, case_measurement_noise = case_measurement_noise, selected_case = selected, selected_measurement = selected_meas, config_file = config_file, message = message, set_info = set_info, set_provenance = set_provenance, set_counts = set_counts, set_v1 = set_v1, meas_case = meas_case, meas_name_matched = meas_name_matched, meas_model_matched = meas_model_matched, starred = starred, set_case = set_case, set_model = set_model, set_text = set_text, set_rows = set_rows, gen_values = gen_values, truth_runs = truth_runs)
 end
 
 """

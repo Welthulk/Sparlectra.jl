@@ -36,7 +36,7 @@ import Downloads
 import ..Sparlectra
 
 export CGMESFile, CIMObject, CGMESFileInfo, CGMESStore, CGMESSummary
-export collectCGMESFiles, loadCGMES, summarizeCGMES
+export collectCGMESFiles, loadCGMES, summarizeCGMES, cgmesEquipmentModelIds, cgmesModelKey
 export objectsOf, countOf, num, str, boolval, enumval, ref, refsAll, unresolvedReferences
 export analyzeCGMES, importFailureAnalysis
 export CGMESTopology, buildTopology

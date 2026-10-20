@@ -901,6 +901,17 @@ function run_webui_fast_tests()
             @test "--user-data-dir=/state/browser" in mac_cmd.exec
             @test !("--ozone-platform=x11" in mac_cmd.exec)
 
+            # a saved position on a monitor that is gone is dropped, so the
+            # window opens on the main monitor; unknown layout keeps it
+            screens = SparlectraApp._webui_parse_powershell_screens("0 0 1920 1080\r\n1920 0 2560 1440\r\n")
+            @test screens == [(0, 0, 1920, 1080), (1920, 0, 2560, 1440)]
+            @test SparlectraApp._webui_parse_xrandr_monitors("Monitors: 2\n 0: +*DP-1 2560/597x1440/336+0+0  DP-1\n 1: +HDMI-1 1920/510x1080/290+-1920+0  HDMI-1\n") == [(0, 0, 2560, 1440), (-1920, 0, 1920, 1080)]
+            on_second = (width=1200, height=800, x=2000, y=100)
+            @test SparlectraApp._webui_visible_geometry(on_second, screens) == on_second
+            @test (@test_logs (:info, r"on no connected monitor") SparlectraApp._webui_visible_geometry(on_second, screens[1:1])) == (width=1200, height=800, x=nothing, y=nothing)
+            @test SparlectraApp._webui_visible_geometry(on_second, nothing) == on_second
+            @test SparlectraApp._webui_monitor_rects(:linux; executable_lookup=(_ -> nothing)) === nothing
+
             # the template carries the defaults, the loader validates
             cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
             @test (cfg.webui.window_width, cfg.webui.window_height, cfg.webui.window_x, cfg.webui.window_y) == (1500, 950, nothing, nothing)
@@ -1819,6 +1830,63 @@ function run_webui_fast_tests()
                     @test (line, occursin(line, bat)) == (line, true)
                 end
             end
+        end)() end
+
+        @testset "measurement tables bound by CGMES model id and by the assign switch" begin (function ()
+            # The SmallGrid fixture is the CGMES case. The full RDF reader
+            # (summarizeCGMES) gives the EQ model id the header-only reader
+            # has to find.
+            C = Sparlectra.CGMESImporter
+            sg = joinpath(@__DIR__, "fixtures", "cgmes_smallgrid", "CGMES_v2.4.15_SmallGridTestConfiguration_BaseCase_Complete_v3.0.0.zip")
+            eq = [C.cgmesModelKey(f.model_id) for f in C.summarizeCGMES(path = sg).files if :EQ in f.profiles]
+            @test length(eq) == 1 && C.cgmesEquipmentModelIds(sg) == eq
+            root = mktempdir()
+            cases = joinpath(root, "cases")
+            mkpath(cases)
+            cp(sg, joinpath(cases, "smallgrid.zip"))
+            # a second scenario on the same EQ lists the same tables
+            cp(sg, joinpath(cases, "smallgrid_scenario2.zip"))
+            # a .zip that is no ZIP has no model id and lists no model-bound table
+            write(joinpath(cases, "broken.zip"), "no zip")
+            head = "# sparlectra-measurement-table v1\n"
+            body = string(join(Sparlectra.MEASUREMENT_TABLE_HEADER, ","), "\n,,,n1,U,110.0,,measured,true\n")
+            # the id as a converter may write it: urn:uuid prefix, upper case
+            write(joinpath(cases, "by_model.csv"), string(head, "# cgmes_model: urn:uuid:", uppercase(eq[1]), "\n", body))
+            write(joinpath(cases, "other_model.csv"), string(head, "# cgmes_model: 00000000-0000-0000-0000-000000000001\n", body))
+            # a `# case:` line outranks the model line
+            write(joinpath(cases, "case_line.csv"), string(head, "# case: broken.zip\n# cgmes_model: ", eq[1], "\n", body))
+            listed = c -> [s.name for s in SparlectraApp._webui_measurement_sets_for_case(cases, c)]
+            @test listed("smallgrid.zip") == ["by_model.csv"]
+            @test listed("smallgrid_scenario2.zip") == ["by_model.csv"]
+            @test listed("broken.zip") == ["case_line.csv"]
+            @test only(SparlectraApp._webui_measurement_sets_for_case(cases, "smallgrid.zip")).model == eq[1]
+
+            # assign switch of the SE upload: the stored copy is bound to the
+            # case of the form, whatever the file says; CRLF stays CRLF
+            upload = (name, text) -> SparlectraApp.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
+            assign_form = (case, files) -> Dict{String,Any}("return_to" => "stateestimation", "return_case" => case, "assign_to_case" => "true", "casefiles" => files)
+            foreign = replace(string(head, "# case: broken.zip\n# cgmes_model: 00000000-0000-0000-0000-000000000001\n", body), "\n" => "\r\n")
+            r = SparlectraApp.handle_powerflow_case_import(assign_form("smallgrid.zip", [upload("assigned.csv", foreign)]); output_root = root, case_directory = cases, operation_log = root)
+            loc = SparlectraApp._webui_urldecode(Dict(r.headers)["Location"])
+            # the assigned file is armed for the next run
+            @test occursin("measurement_file=assigned.csv", loc)
+            stored = read(joinpath(cases, "assigned.csv"), String)
+            @test startswith(stored, "# sparlectra-measurement-table v1\r\n# case: smallgrid.zip\r\n") && count("# case:", stored) == 1
+            @test Sparlectra.readMeasurementTable(joinpath(cases, "assigned.csv"))[1].value == 110.0
+            @test listed("smallgrid.zip") == ["assigned.csv", "by_model.csv"]
+            @test !("assigned.csv" in listed("broken.zip"))
+            # assigning again replaces the measurement file of that name
+            SparlectraApp.handle_powerflow_case_import(assign_form("smallgrid_scenario2.zip", [upload("assigned.csv", foreign)]); output_root = root, case_directory = cases, operation_log = root)
+            @test "assigned.csv" in listed("smallgrid_scenario2.zip") && !("assigned.csv" in listed("smallgrid.zip"))
+            # without the switch the file keeps its own binding and an
+            # existing name is refused
+            plain = Dict{String,Any}("return_to" => "stateestimation", "return_case" => "smallgrid.zip", "casefiles" => [upload("assigned.csv", foreign), upload("plain.csv", foreign)])
+            SparlectraApp.handle_powerflow_case_import(plain; output_root = root, case_directory = cases, operation_log = root)
+            @test "assigned.csv" in listed("smallgrid_scenario2.zip") && listed("broken.zip") == ["case_line.csv", "plain.csv"]
+            # the switch binds measurement files only: a CSV without the
+            # version line is refused and not stored
+            SparlectraApp.handle_powerflow_case_import(assign_form("smallgrid.zip", [upload("notes.csv", body)]); output_root = root, case_directory = cases, operation_log = root)
+            @test !isfile(joinpath(cases, "notes.csv"))
         end)() end
 
         @testset "case-scan memo cache" begin (function ()
