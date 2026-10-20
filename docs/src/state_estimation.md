@@ -191,25 +191,58 @@ the model susceptance, the sigma from first-order error propagation
 (`sigmaFloor` sets a minimum); `SHDERIV` rows are protected from
 elimination like `ZI` rows.
 
-### Passive / transit buses
+### [Passive buses and zero injection](@id se_zero_injection)
 
-Buses without load, generation or shunt inject nothing. By default they
-enter as zero-injection pseudo-measurements `Pinj = 0` and `Qinj = 0` of
-small variance: `findPassiveBuses(net)` finds the buses,
-`addZeroInjectionMeasurements!(meas; net, sigma=...)` appends the rows (id
-prefix `ZI`); see
-[Observability](observability.md#How-zero-injection-buses-enter).
+Buses without load, generation or shunt inject nothing: $P_k(x) = 0$ and
+$Q_k(x) = 0$ is exact network knowledge. `findPassiveBuses(net)` finds the
+buses (not the slack, no isolated bus),
+`addZeroInjectionMeasurements!(meas; net, sigma=...)` appends the
+two rows per bus (id prefix `ZI`). Zero-injection rows are never
+eliminated and never down-weighted by the robust modes, because removing
+exact knowledge is never the right reaction to a residual.
 
-`state_estimation.zero_injection` (default `on`) does this in every SE
-path that builds a set: the measurement generator, the SE service on the
-measurements of a case file and on a measurement table, and `applyMeasurementSet!` for a table in a script. A
-passive bus gets the pair only when the set has no injection row for it,
-so a generated set, which already covers every passive bus, is estimated
-as before. `off` adds no such rows anywhere. The run log and the result
-metadata (`se_zero_injection_rows`) give the number of rows added. See
+`state_estimation.zero_injection` (default `on`) adds these rows in every
+SE path that builds a set: the measurement generator, the SE service on the
+measurements of a case file and on a measurement table, and
+`applyMeasurementSet!` for a table in a script. A passive bus gets the pair
+only when the set has no injection row for it, so a generated set, which
+already covers every passive bus, is estimated as before. `off` adds no
+such rows anywhere. The run log and the result metadata
+(`se_zero_injection_rows`) give the number of rows added. See
 [State-Estimation Configuration](state_estimation_configuration.md).
 
-### [Zero injection as equality constraint](@id se_zero_injection_constraint)
+Which rows are zero injections is decided by their origin, the
+`zero_injection` field of `Measurement` (set by
+`addZeroInjectionMeasurements!`, by the `zero_injection` source token of a
+measurement table, by the `zero_injection` key of an SCF 1.2 measurement
+row, and for the formats without such a field (the measurement CSV v1 in
+the converter, SCF 1.0 files) on the exact rows
+`addZeroInjectionMeasurements!` writes), never by the id alone.
+
+The switch decides how the rows enter the estimate: as weighted rows
+(`on`) or as equality constraints (`constraint`).
+
+#### Weighted rows (`on`)
+
+The rows are ordinary WLS rows with
+$\sigma_C$ = `ZERO_INJECTION_SIGMA` = 0.001 MW (1 kW, 1 kvar) and the
+weight $w_C = 1/\sigma_C^2$. With $C = \partial c / \partial x$ the
+Jacobian of the zero-injection rows and $r_C = -c(x)$, the Gauss-Newton
+step is
+
+```math
+\left( G + w_C \, C^T C \right) \Delta x = H_M^T W r_M + w_C \, C^T r_C ,
+\qquad G = H_M^T W H_M .
+```
+
+The rows count in $J$ and in the redundancy and appear in the residual
+ranking like a measurement. The weight is finite, so the estimate leaves
+an injection of the order of $\sigma_C$ at the bus. A smaller sigma does
+not make the balance exact, it makes the matrix worse conditioned: at
+$\sigma_C = 10^{-6}$ a 25000-bus case did not converge in 30 iterations,
+at $10^{-3}$ it converged in 7.
+
+#### [Equality constraint (`constraint`)](@id se_zero_injection_constraint)
 
 With `state_estimation.zero_injection = constraint` the zero-injection rows
 are equality constraints instead of weighted rows. The rows split into
@@ -268,19 +301,6 @@ a = \frac{\max_k G_{kk}}{\max_{ij} |C_{ij}|} .
 $\Delta x$ is the same for every $a > 0$, only the condition number
 changes: with this $a$ the KKT matrix is conditioned like $G$ alone.
 
-**Against weighted rows.** With `on` the same rows enter $G$ with the
-weight $w_C = 1/\sigma_C^2$:
-
-```math
-\left( G + w_C \, C^T C \right) \Delta x = H_M^T W r_M + w_C \, C^T r_C .
-```
-
-For $\sigma_C \to 0$ this step tends to the constrained one, but the
-condition number grows with $w_C$. Measured with weighted rows at 1 kW
-against the scaled KKT matrix: higher by half a decade (`sp_case60`) to
-three and a half decades (`sp_case14`), and by four decades on the
-SmallGrid fixture.
-
 **Objective and redundancy.** A constraint has no statistical residual,
 so $J$ sums the measurement rows only:
 
@@ -306,7 +326,7 @@ r_{n,i} = \frac{r_i}{\sqrt{\Omega_{ii}}},
 
 with $W_d$ the measurement weights and every constraint row at
 $\max(w_i, 1/\sigma_{ZI}^2)$, $\sigma_{ZI}$ = `ZERO_INJECTION_SIGMA`
-($10^{-3}$ pu). That is the limit the constraint stands for, with an error
+(0.001 MW). That is the limit the constraint stands for, with an error
 of the order $w_i / w_{ZI}$ on $\Omega$, and the dense, Takahashi and
 blockwise paths work unchanged. A constraint row gets $r_{n,i} = 0$: it
 sorts last in the ranking, is marked as a constraint, is never suspicious
@@ -316,20 +336,29 @@ and never eliminated.
 the error moves into the neighbouring measurements, and convergence can
 take as many iterations as a very small sigma would.
 
-**Which rows.** Which rows are zero injections is decided by their origin,
-the `zero_injection` field of `Measurement` (set by
-`addZeroInjectionMeasurements!`, by the `zero_injection` source token of a
-measurement table, by the `zero_injection` key of an SCF 1.2 measurement
-row, and for the formats without such a field (the measurement CSV v1 in
-the converter, SCF 1.0 files) on the exact rows
-`addZeroInjectionMeasurements!` writes), never by the id alone.
-
 **Singular KKT matrix.** If the KKT matrix is singular, the step falls
 back to sparse least squares and the run warns with the reason: either
 the constraint rows are dependent (two rows state the same balance; the
 warning gives how many of the $p$ rows, from the rank of $C^T$), or the
 measurements and the constraints do not fix every state (an unobservable
 part, such as an island only zero injections touch).
+
+#### Weighted rows or constraint
+
+| | `on` (weighted rows) | `constraint` (Lagrange) |
+|---|---|---|
+| Injection left at the passive bus | of the order of 1 kW / 1 kvar | zero to the solver tolerance |
+| Linear system | $G + w_C C^T C$, symmetric positive definite, Cholesky | KKT matrix, indefinite, LU |
+| Condition number | grows with $w_C$ | like $G$ alone after scaling |
+| In $J$ and the ranking | yes, with its own residual, can be suspicious | no, $r_n = 0$, never suspicious |
+| Bus that does inject | large residual on its `ZI` row points at the bus | no residual, the error moves into the neighbouring measurements |
+
+Measured with weighted rows at 1 kW against the scaled KKT matrix, the
+condition number is higher by half a decade (`sp_case60`) to three and a
+half decades (`sp_case14`), and by four decades on the SmallGrid fixture.
+`on` is the default and suits sets whose passive buses are not certain.
+`constraint` suits sets where the balance must hold exactly, or where the
+weighted rows make the solve ill-conditioned.
 
 Example: `examples/state_estimation/state_estimation_zero_injection_constraint.jl`.
 

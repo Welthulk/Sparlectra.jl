@@ -183,7 +183,7 @@ base.
   exist, the balance and the prosumer sum enter the set as two redundant
   measurements.
 - A bus balance row whose `source` carries the token `zero_injection` is
-  a zero-injection constraint: it gets the id `ZI_PINJ_bus_<k>` or
+  a zero-injection row: it gets the id `ZI_PINJ_bus_<k>` or
   `ZI_QINJ_bus_<k>` and is protected from bad-data elimination like the
   rows `state_estimation.zero_injection` adds. Its sigma is the one of the
   row.
@@ -316,10 +316,9 @@ for all 125 members.
 
 A real delivery is never complete. Two kinds of rows close the gaps:
 
-- Zero injection at passive buses (no generation, load or shunt) is exact
-  network information, a constraint and not a measurement. With
-  `state_estimation.zero_injection: on` the run adds it where the set has
-  no injection row; see [Use in the SE service and the Web UI](#Use-in-the-SE-service-and-the-Web-UI).
+- Zero injection at passive buses: the run adds it where the set has no
+  injection row, see
+  [Passive buses and zero injection](@ref se_zero_injection).
 - Pseudo measurements from the schedule (the SSH setpoints, see above)
   carry a large sigma. They restore observability where the gaps are and
   lose against every real meter.
@@ -358,10 +357,9 @@ The SE service reads a table while `state_estimation.measurement_table` is
 is named. The format of the case picks the index: mRIDs for a CGMES case,
 names for every other format. The run estimates the first set of the file
 and writes the import report of all sets to `measurement_import.txt`.
-With `state_estimation.zero_injection: on` (the default) every passive
-bus without an injection row in the set gets a zero-injection pair at
-`ZERO_INJECTION_SIGMA`, the rows the measurement generator writes for
-passive buses; `measurement_import.txt` and the run log give the count
+The run adds the zero-injection rows of
+[Passive buses and zero injection](@ref se_zero_injection) to the set;
+`measurement_import.txt` and the run log give the count
 (`zero-injection rows N`). `applyMeasurementSet!` does the same for a
 table in a script and stores the count in `set.counts[:zero_injection]`;
 its keyword `zero_injection` overrides the configured switch. The switch is
