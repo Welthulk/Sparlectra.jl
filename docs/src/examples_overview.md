@@ -76,6 +76,7 @@ the extended test profile.
 | `exp_cgmes_infer_base_voltages.jl` | `cgmes_import.infer_base_voltages` from the SV state | others |
 | `exp_cgmes_energy_source.jl` | `cgmes_import.map_energy_source`: EnergySource generation off and on; the same park as CGMES 3.0 `PowerElectronicsConnection` with `cgmes_import.map_power_electronics`, exported to CGMES 2.4.15 as `EquivalentInjection` and imported again | others |
 | `exp_cgmes_shunt_control.jl` | `cgmes_import.shunt_control`: SmallGrid banks as switched-bank regulators; a raised target switches blocks | others |
+| `exp_dynamic_data.jl` | `DynamicData` on sp_case14 generators: unit type, validation error, SCF round trip; a CGMES DY profile fills it with `cgmes_import.read_dynamics` | others |
 | `exp_cgmes_topology_processor.jl` | node-breaker import without a TP profile (MiniGrid) | others |
 | `machine_remote_voltage_control.jl` | remote voltage control via machine reactive power ([theory](remote_voltage_control.md)) | others |
 | `using_links.jl` | busbar coupler as bus link, open/close behavior | others |
