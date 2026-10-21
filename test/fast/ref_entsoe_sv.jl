@@ -15,7 +15,8 @@
 # file: test/fast/ref_entsoe_sv.jl
 # purpose: profile `fast`: the ENTSO-E SmallGrid
 #          conformity set (test/fixtures/cgmes_smallgrid) against its own SV
-#          profile, and MicroGrid BE and NL from the CGMES cache when present;
+#          profile, and MicroGrid BE and NL and ReliCapGrid Galia from the
+#          CGMES cache when present;
 #          the SmallGrid state estimation with a noise-free table.
 using Sparlectra
 using Test
@@ -71,6 +72,24 @@ function run_ref_entsoe_sv_tests()
     println("      entsoe_sv: ", m.alias, " against the SV profile RAN")
     @testset "ENTSO-E $(m.alias) power flow against the SV profile" begin (function ()
       _ref_check_against_sv(redirect_stdout(() -> importCGMES(path = [zip], name = m.alias), devnull), m.bands)
+    end)() end
+  end
+
+  # ReliCapGrid Galia (CGMES 3.0) from the CGMES cache, alone with its border
+  # to Belgovia open. Its phase shifter GA-TR2_1 (PhaseTapChangerLinear,
+  # xMin 27.9674, xMax 29.7154 ohm) sits at step 3, 6 of at most 40 degrees,
+  # and the SV state carries the reactance of the xMin/xMax curve:
+  # max dvm 6.9e-6 pu with the curve, 2.6e-5 pu with the end reactance.
+  galia_files = Sparlectra.CGMESImporter._rcgMemberFiles("galia")
+  if !all(f -> isfile(joinpath(f[3], f[1])), galia_files)
+    println("      entsoe_sv: relicap galia against the SV profile SKIPPED (member files not in the CGMES cache)")
+  else
+    println("      entsoe_sv: relicap galia against the SV profile RAN")
+    @testset "ReliCapGrid Galia power flow against the SV profile" begin (function ()
+      zip = Sparlectra.CGMESImporter.fetchReliCapGridSet("galia"; outdir = mktempdir())
+      res = redirect_stdout(() -> importCGMES(path = [zip], name = "galia", require_boundary = false), devnull)
+      @test any(m -> occursin("GA-TR2_1", m) && occursin("xMin/xMax curve", m), res.messages)
+      _ref_check_against_sv(res, (n = 12, dvm = 1.5e-5, dva = 0.01, dp = 0.05, dq = 0.05, units = 9))
     end)() end
   end
 

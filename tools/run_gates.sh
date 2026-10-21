@@ -26,8 +26,10 @@
 #          deliberate local check; the lock is never skipped.
 #          --threads=N starts the test process with N threads (default: one;
 #          the threads profile always runs with four), so a profile also runs
-#          every parallel-vs-serial comparison threaded. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]
+#          every parallel-vs-serial comparison threaded. --strands=2 runs
+#          extended as two processes at once (profiles extended_a and
+#          extended_b), about a third less wall time. Plain sh.
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--strands=2] [--allow-dirty]
 #          sh tools/run_gates.sh map [--since <ref>] [<path>...]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 #          `map` runs nothing: it prints the profiles a change to the given
@@ -117,14 +119,17 @@ $a"
 fi
 allow_dirty=
 julia_threads=
+strands=1
 for arg in "$@"
 do
   case "$arg" in
     --allow-dirty) allow_dirty=--allow-dirty ;;
     --threads=[1-9]*) julia_threads=$arg ;;
+    --strands=1) strands=1 ;;
+    --strands=2) strands=2 ;;
     *)
       echo "run_gates: unknown option $arg" >&2
-      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--allow-dirty]" >&2
+      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--strands=2] [--allow-dirty]" >&2
       exit 2
       ;;
   esac
@@ -140,13 +145,18 @@ fi
 case "$gate" in
   fast | pf | se | config | webui | extd | cgmes | formats | legacy | install | workshops | extended | all | threads | docs) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--strands=2] [--allow-dirty]" >&2
     exit 2
     ;;
 esac
 if [ "$gate" = "docs" ] && [ -n "$julia_threads" ]
 then
   echo "run_gates: --threads applies to test profiles, not to the docs build" >&2
+  exit 2
+fi
+if [ "$strands" = "2" ] && [ "$gate" != "extended" ]
+then
+  echo "run_gates: --strands=2 applies to the extended profile only" >&2
   exit 2
 fi
 if [ "$gate" = "threads" ] && [ -z "$julia_threads" ]
@@ -412,7 +422,39 @@ else
   # site takes its serial loop and a parallel-vs-serial comparison checks
   # nothing threaded; the threads profile defaults to four threads (above)
   [ -n "$julia_threads" ] && echo "run_gates: test process with $julia_threads"
-  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"
-  status=$?
+  if [ "$strands" = "2" ]
+  then
+    # extended as two processes at once (profiles extended_a and
+    # extended_b of test/runtests.jl), on the same tree under this one
+    # lock; each strand writes into the lock directory and is printed
+    # after both ended, then one summary line over both. Exit status: the
+    # first non-zero of the two. A killed gate takes both strands along.
+    echo "run_gates: extended as two strands (extended_a, extended_b) at once"
+    t0=$(date +%s)
+    SPARLECTRA_TEST_PROFILE=extended_a julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/strand_a.log" 2>&1 &
+    pid_a=$!
+    SPARLECTRA_TEST_PROFILE=extended_b julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/strand_b.log" 2>&1 &
+    pid_b=$!
+    trap 'kill $pid_a $pid_b 2>/dev/null; rm -rf "$lockdir"' INT TERM
+    wait $pid_a
+    status_a=$?
+    wait $pid_b
+    status_b=$?
+    wall=$(( $(date +%s) - t0 ))
+    for s in a b
+    do
+      echo "===== strand extended_$s ====="
+      cat "$lockdir/strand_$s.log"
+    done
+    echo "run_gates: strand extended_a rc=$status_a, extended_b rc=$status_b, wall ${wall} s"
+    status=$status_a
+    [ "$status" -eq 0 ] && status=$status_b
+    # the summary lines of both strands, added up; nothing when a strand
+    # ended without one (a crash shows in its output above)
+    grep -h "^Sparlectra.jl extended_[ab] profile |" "$lockdir/strand_a.log" "$lockdir/strand_b.log" | awk -v wall="$wall" '{ for (i = 1; i <= NF; i++) if ($i == "|") { p += $(i + 1); t += $(NF - 1); n++ } } END { if (n == 2) printf "Sparlectra.jl extended profile (2 strands) | %d %d %ds\n", p, t, wall }'
+  else
+    SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"
+    status=$?
+  fi
 fi
 exit $status

@@ -557,20 +557,22 @@ function _name_measurement_targets(net::Net)
     push!(cand, (k, target, el, target.kind === kind ? (kind, bus) : nothing))
   end
 
-  # bus links (switches, couplers): their ends are keys so a row on them
-  # is reported as :not_modelled with the reason, not as an unknown key. A
-  # link is no branch of the model (it joins two buses outside the Y-bus),
-  # so its flow is not estimated. A link key never shadows a branch or
-  # prosumer key of the same text.
+  # bus links (switches, couplers): a link is no branch of the model (it
+  # joins two buses outside the Y-bus); P and Q at its ends are link flow
+  # measurements for the flow split after the estimate (:link targets,
+  # branchIdx = the link's position in net.linkVec). An open link resolves
+  # to :not_modelled. A link key never shadows a branch or prosumer key of
+  # the same text.
   taken = Set{String}(k for (k, _, _, _) in cand)
-  for l in net.linkVec
+  for (li, l) in enumerate(net.linkVec)
     name = key(l.cName)
     isempty(name) && continue
     for (dir, bus) in ((:from, Int(l.fromBus)), (:to, Int(l.toBus)))
       k = string(name, ":", dir)
       k in taken && continue
       push!(taken, k)
-      push!(cand, (k, MeasurementTarget(:not_modelled, bus, 0, :none, "bus link $(name) is no branch of the model; link flows are not estimated"), l, nothing))
+      target = l.status == 1 ? MeasurementTarget(:link, bus, li, dir, "bus link $(name)") : MeasurementTarget(:not_modelled, bus, 0, :none, "bus link $(name) is open")
+      push!(cand, (k, target, l, nothing))
     end
   end
 
@@ -617,9 +619,12 @@ its header; its key columns hold element names:
   no key, so its bus sum is always partial.
 - `measurement_mrid` does not apply (the index has no Analogs); a row with
   it is reported as `:unknown_key`.
-- A bus link has the keys `<link name>:from` and `<link name>:to`; they
-  resolve to `:not_modelled` (a link is no branch of the model), unless a
-  branch or prosumer already holds that key.
+- A bus link has the keys `<link name>:from` and `<link name>:to`; P and Q
+  rows on them are link flow measurements (positive from the link's from
+  bus to its to bus), which the estimator leaves out of the WLS and
+  `calcLinkFlowsSE!` uses for the flow split. An open link resolves to
+  `:not_modelled`, and a branch or prosumer that already holds the key
+  keeps it.
 
 Names are compared as written, without surrounding whitespace; the mRID
 canonical form (no leading `_`, no `urn:uuid:`) does not apply, so `_B9`
@@ -1262,8 +1267,8 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
   # (kind, bus, type) -> the member rows of a group sum with their terminal
   group_rows = Dict{Tuple{Symbol,Int,String},Vector{Tuple{MeasurementRow,String,Float64,Symbol}}}()
 
-  function add!(r::MeasurementRow, typ::MeasurementType, value::Float64, sigma::Float64, origin::Symbol; busIdx = nothing, branchIdx = nothing, direction = :none, id::String, zero_injection::Bool = false)
-    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = id, zero_injection = zero_injection))
+  function add!(r::MeasurementRow, typ::MeasurementType, value::Float64, sigma::Float64, origin::Symbol; busIdx = nothing, branchIdx = nothing, linkIdx = nothing, direction = :none, id::String, zero_injection::Bool = false)
+    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, linkIdx = linkIdx, direction = direction, id = id, zero_injection = zero_injection))
     sources[id] = [r.line]
     origins[id] = origin
     bump!(r.valid ? :active : :inactive)
@@ -1407,6 +1412,23 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
       s_row, origin = row_sigma(r, typ, t.busIdx)
       sigma = s_row === nothing ? default_sigma(mt) : lift(s_row)
       add!(r, mt, r.value, sigma, origin; branchIdx = t.branchIdx, direction = t.direction, id = id)
+      filled!(r, string(something(s_row, default_sigma(mt))), origin)
+      continue
+    end
+    # bus link end: P and Q become a link flow measurement, positive from
+    # link.fromBus to link.toBus (a row at the to end flows into the link
+    # from the to bus, so its sign turns). It never enters the WLS; the
+    # flow split after the estimate uses it (calcLinkFlowsSE!)
+    if t.kind === :link
+      if !(typ in ("P", "Q"))
+        problem!(r, :unsupported, "$(typ) at a bus link terminal ($(t.detail)) is not a modelled quantity")
+        continue
+      end
+      r.valid || bump!(:invalid_rows)
+      mt = typ == "P" ? PflowMeas : QflowMeas
+      s_row, origin = row_sigma(r, typ, t.busIdx)
+      sigma = s_row === nothing ? default_sigma(mt) : lift(s_row)
+      add!(r, mt, t.direction === :to ? -r.value : r.value, sigma, origin; linkIdx = t.branchIdx, direction = :from, id = id)
       filled!(r, string(something(s_row, default_sigma(mt))), origin)
       continue
     end

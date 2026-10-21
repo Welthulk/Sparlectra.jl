@@ -609,7 +609,8 @@ A row without `value` or `sigma` takes it from its sensor; a sensor no row
 names is read after the rows with the id `Vm_<node id>` (`Pinj_<node id>`,
 `Imag_<branch id>`, ... with the ids of the file). A bus link flow has no row:
 the link is no branch of the model, the export names such rows as
-`not_modelled` in a warning, as the table import does.
+`not_modelled` in a warning (the measurement table carries them on the
+terminals of the link).
 
 Two places where the block differs from the table: it is keyed by the ids
 of the file instead of names or mRIDs, and the shunt bay is keyed by its

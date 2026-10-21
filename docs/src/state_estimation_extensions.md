@@ -36,8 +36,8 @@ separations. Link flow measurements are allocation inputs, never WLS rows.
 
 | | |
 |---|---|
-| Link flow measurement | `addPflowMeasurement!(net; linkNr = ...)` (positive from `link.fromBus` to `link.toBus`); constrains only the flow split |
-| Allocation | `calcLinkFlowsSE!(net)` after `with_state_estimation_config(() -> runse!(...); update_net = true)`; the returned rows carry `source = :kcl` or `:measured_ls` plus the residual per link |
+| Link flow measurement | `addPflowMeasurement!(net; linkNr = ...)` (positive from `link.fromBus` to `link.toBus`), or a `P`/`Q` row on a link terminal of the measurement table; constrains only the flow split |
+| Allocation | `calcLinkFlowsSE!(net)` after `with_state_estimation_config(() -> runse!(...); update_net = true)`; the returned rows carry `source = :kcl` or `:measured_ls` plus the residual per link. The SE service calls it and writes `se_link_flows.csv` |
 | Write-back | `updateNet = true` gives all cluster members the representative's estimated voltage |
 | Diagnostics | `LINKAGG` rows appear with `measurement_index = 0` and are never eliminated |
 

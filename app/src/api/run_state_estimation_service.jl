@@ -402,7 +402,8 @@ end
 # (state_estimation.zero_injection) and a set carried by a case file are
 # written through the converter's row builder (source se_run or case_file,
 # zero-injection rows with the token zero_injection). Measurements without
-# a place in the table (a link flow, a row the table cannot key) are not
+# a place in the table (a row the table cannot key, such as a flow on an
+# unnamed link) are not
 # written: they are named as comment lines and in run.log and stay in the
 # estimate behind the table set. Returns the artifact rows for the verdict
 # file: per data row its file line, key, type and the index of its
@@ -1382,6 +1383,11 @@ function _run_state_estimation_service_body(
       println(io, "\nFindings are advisory: nothing was switched or excluded. Use the hypothesis test on the result page for ranked recommendations.")
     end
   end
+  # bus links are no WLS rows (no Ybus entry): their flows come from the
+  # nodal balance of the estimated state, split by the link flow
+  # measurements of the set where a link component carries one (a coupler
+  # ring has no unique split without them). nothing when no link is closed.
+  link_rows = calcLinkFlowsSE!(net)
   view = se_view(net)
   open(joinpath(output_dir, "se_view.md"), "w") do io
     print_se_view(io, view; format = :markdown)
@@ -1390,6 +1396,20 @@ function _run_state_estimation_service_body(
   # same config key the PowerFlow API uses for its own artifacts.
   se_csv_format = _resolve_detailed_csv_format(String(config.output.csv_format))
   se_csv_delim = se_csv_format.delimiter
+  n_link_measured = 0
+  if link_rows !== nothing
+    nbyL = _bus_name_by_idx(net)
+    open(joinpath(output_dir, "se_link_flows.csv"), "w") do io
+      println(io, join(("link", "name", "from_bus", "to_bus", "p_mw", "q_mvar", "source", "p_residual_mw", "q_residual_mvar"), se_csv_delim))
+      cfL(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
+      fmtL(v) = isnan(v) ? "" : _format_csv_number(round(v; sigdigits = 8), se_csv_format)
+      for r in link_rows
+        l = net.linkVec[r.linkIdx]
+        r.source === :measured_ls && (n_link_measured += 1)
+        println(io, join((r.linkIdx, cfL(r.name), cfL(get(nbyL, l.fromBus, string(l.fromBus))), cfL(get(nbyL, l.toBus, string(l.toBus))), fmtL(r.pFlow_MW), fmtL(r.qFlow_MVar), r.source, fmtL(r.p_meas_residual), fmtL(r.q_meas_residual)), se_csv_delim))
+      end
+    end
+  end
   if res.shuntEstimates !== nothing
     open(joinpath(output_dir, "shunt_estimates.csv"), "w") do io
       println(io, join(("bus", "bus_name", "B_model_pu", "B_est_pu", "delta_pu", "frozen"), se_csv_delim))
@@ -1569,7 +1589,8 @@ function _run_state_estimation_service_body(
     end
     (!isempty(suspicious) || !isempty(eliminations) || !isempty(suppressedIds)) && println(io, "bad data: measurements_verdict.csv (", length(suspicious), " suspicious, ", length(eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted; ", verdict_flagged, " table row(s) flagged)")
     deltas_written && println(io, "deltas: se_deltas.csv (measured vs generator truth vs estimated, per row and per released tap)")
-    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "")
+    link_rows !== nothing && println(io, "link flows: se_link_flows.csv (", length(link_rows), " closed link(s), ", n_link_measured, " split by link flow measurements)")
+    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "", link_rows !== nothing ? ", se_link_flows.csv" : "")
   end
 
   metadata = merge(
@@ -1593,6 +1614,8 @@ function _run_state_estimation_service_body(
       "se_eliminations" => length(eliminations),
       "se_robust" => robust,
       "se_deltas" => deltas_written,
+      "se_link_flows" => link_rows === nothing ? 0 : length(link_rows),
+      "se_link_flows_measured" => n_link_measured,
       "se_robust_mode" => String(robust_mode === :off && robust ? :staged : robust_mode),
       # the numbers that DECIDED this run, so a result can be read without
       # guessing which of configuration, service or form won (the reason

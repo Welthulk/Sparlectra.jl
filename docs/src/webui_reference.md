@@ -633,7 +633,7 @@ rarely reach the elimination.
 
 Artifacts (`measurements.csv`, `measurements_verdict.csv`,
 `se_diagnostics.md`, `se_view.md`, `se_state.csv`, `shunt_estimates.csv`,
-`se_tap_estimates.csv`, `se_deltas.csv`) land in the run history with kind
+`se_tap_estimates.csv`, `se_deltas.csv`, `se_link_flows.csv`) land in the run history with kind
 `se`. `measurements.csv` is the estimated set as a measurement table and
 can be picked as the measurement set of a new run; the verdict per row
 (residual, normalized residual, eliminated, reason) is in

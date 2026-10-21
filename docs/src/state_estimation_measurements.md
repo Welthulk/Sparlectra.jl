@@ -36,8 +36,8 @@ the set this file reads back to.
   configuration.
 - Zero-injection rows the run added are bus balance rows with source
   `se_run;zero_injection`; a set carried by a case file is written with
-  source `case_file`. A measurement the table cannot carry (a link flow)
-  is named as a comment line and stays in the estimate.
+  source `case_file`. A measurement the table cannot carry (a flow on a link
+  without a key) is named as a comment line and stays in the estimate.
 - The comments of the input table are carried over (case binding,
   generator provenance, tap table, truth values).
 
