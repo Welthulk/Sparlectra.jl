@@ -162,6 +162,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   start_decision === nothing || open(logfile, "a") do io
     println(io, start_decision)
   end
+  _record_network_frequency!(base_metadata, net, logfile)
 
   # SE-started base case (SE phase 5 chain): restore the estimated state
   # before the base solve. The service net is a throwaway import, so the

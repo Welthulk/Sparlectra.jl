@@ -1164,6 +1164,7 @@ function _run_sparlectra_api_body(
     _write_api_timing_summary(io, raw_result, config, phases)
     println(io, "Case file format: ", lowercase(splitext(case_path)[2]))
     println(io, "Case file size: ", filesize(case_path), " bytes")
+    raw_result.net === nothing || println(io, "System frequency: ", nominal_frequency_line(raw_result.net))
     println(io)
     _write_service_phase_summary(io, phase_recorder.timings)
     _write_large_case_timing_summary(io, case_path, phase_recorder.timings, raw_result)

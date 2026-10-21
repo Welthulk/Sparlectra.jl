@@ -110,6 +110,7 @@ function _write_cgmes_import_report(path::AbstractString, case_path::AbstractStr
     _md_key(io, "Machine control", cgmes_cfg.machine_control)
     _md_key(io, "Base MVA", cgmes_cfg.base_mva)
     _md_key(io, "Read dynamics", cgmes_cfg.read_dynamics)
+    _md_key(io, "Equivalent injections as source", cgmes_cfg.equivalent_injection_as_source)
     # the decision line starts with its own label ("CGMES start values: ...")
     println(io, "- ", _md_text(start_decision))
     println(io)

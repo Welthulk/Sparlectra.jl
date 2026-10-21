@@ -155,6 +155,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("cgmes_import.require_boundary", "cgmes_require_boundary", Bool, :checkbox, true, (), :basic, :adapter, true),
   WebUIOptionSpec("cgmes_import.infer_base_voltages", "cgmes_infer_base_voltages", Bool, :checkbox, false, (), :expert, :adapter, true),
   WebUIOptionSpec("cgmes_import.read_dynamics", "cgmes_read_dynamics", Bool, :checkbox, false, (), :expert, :adapter, true),
+  WebUIOptionSpec("cgmes_import.equivalent_injection_as_source", "cgmes_equivalent_injection_as_source", Bool, :checkbox, false, (), :expert, :adapter, true),
   WebUIOptionSpec("cgmes_import.hvdc_mode", "cgmes_hvdc_mode", String, :select, "injections", CGMES_HVDC_MODE_VALUES, :basic, :adapter, true),
   # PowSyBl (IIDM) import: the field names carry the config prefix so the
   # form map and the help registry read the same way as the CGMES keys

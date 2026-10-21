@@ -311,6 +311,8 @@ function _se_service_import(case_path, config, run_id, config_file, output_dir, 
   decision === nothing || open(logfile, "a") do io
     println(io, decision)
   end
+  # the line susceptances from c1 carry the frequency into the estimator
+  _record_network_frequency!(base_metadata, imported.net, logfile)
   return imported, format, nothing
 end
 

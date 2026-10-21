@@ -52,3 +52,16 @@ struct NativeShortCircuitData
 end
 
 NativeShortCircuitData() = NativeShortCircuitData(NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[], NamedTuple[])
+
+# The feeder an EquivalentInjection record states through its internal
+# impedance r + jx in ohm at the nominal voltage `vn_kV` of its bus:
+# Sk = Un^2/|r + jx| in MVA and R/X = r/x. Nothing without a usable x
+# (missing or not positive); a missing resistance counts as 0, as in the
+# short circuit. Read by the SCF writer (source sk) and by
+# _declared_slack_feeder (power_flow.external_grid, source auto).
+function _ei_record_sk_rx(e, vn_kV::Real)::Union{Nothing,NamedTuple{(:sk_MVA, :rx),Tuple{Float64,Float64}}}
+  x = e.x_ohm
+  (x === nothing || !isfinite(Float64(x)) || Float64(x) <= 0.0) && return nothing
+  r = (e.r_ohm === nothing || !isfinite(Float64(e.r_ohm)) || Float64(e.r_ohm) < 0.0) ? 0.0 : Float64(e.r_ohm)
+  return (sk_MVA = Float64(vn_kV)^2 / hypot(r, Float64(x)), rx = r / Float64(x))
+end

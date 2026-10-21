@@ -1051,6 +1051,9 @@ function printACPFlowResults(
   end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
+  # the frequency only matters where a capacitance was converted; a pu
+  # network says so instead of naming a value it never read
+  println(io, "Frequency      : ", nominal_frequency_line(net))
   # sources appear in the count only when present, keeping the common
   # no-source header unchanged
   slack_part = nsource > 0 ? @sprintf("Slack: %d Source: %d", nslack, nsource) : @sprintf("Slack: %d", nslack)

@@ -307,6 +307,11 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
     # wins over model.nominal_frequency_hz, so effective_config.yaml (the
     # key) can name another value than the one the run used
     "network_nominal_frequency_hz" => raw_result.net === nothing ? nothing : raw_result.net.nominal_frequency_hz,
+    # whether that frequency entered the model at all (case_file,
+    # configuration, not_used) and the header line run.log and the result
+    # page show
+    "frequency_source" => raw_result.net === nothing ? nothing : nominal_frequency_source(raw_result.net),
+    "frequency_line" => raw_result.net === nothing ? nothing : nominal_frequency_line(raw_result.net),
     "webui_request_settings" => merge(Dict{String,Any}(String(key) => value for (key, value) in config_overrides), Dict{String,Any}(
       "casefile" => casefile,
       "config_file" => config_file,
@@ -321,4 +326,17 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])
   return metadata
+end
+
+# the system frequency for the services that do not build their metadata
+# with _build_success_lifecycle_metadata (state estimation, the SE-started
+# power flow, N-1): the same three keys and the same run.log line as a
+# power-flow run, written right after the import so a later failure keeps them
+function _record_network_frequency!(metadata::Dict{String,Any}, net::Net, logfile::AbstractString)
+  line = nominal_frequency_line(net)
+  metadata["network_nominal_frequency_hz"] = net.nominal_frequency_hz
+  metadata["frequency_source"] = nominal_frequency_source(net)
+  metadata["frequency_line"] = line
+  open(io -> println(io, "System frequency: ", line), logfile, "a")
+  return nothing
 end

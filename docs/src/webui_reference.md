@@ -322,7 +322,12 @@ ends as a failed run with reason `import_analysis_not_importable`) or
 `analyzeCGMES`. **Require boundary set** (CGMES section, saved per case)
 submits `cgmes_import.require_boundary`; unchecked, an incomplete delivery
 imports where possible, but buses without a resolvable `BaseVoltage` still
-abort.
+abort. **Equivalent injections as source** (CGMES section, saved per case,
+default off) submits `cgmes_import.equivalent_injection_as_source`: an
+`EquivalentInjection` on the SV angle reference or a boundary node becomes
+a voltage-regulating source at the SV voltage of its node, the one on the
+SV angle reference is the slack
+([CGMES import configuration](cgmes_import.md#cgmes-import-config)).
 
 ### Long actions on a case
 
@@ -392,13 +397,14 @@ The settings and run forms offer:
   `apply`) plus transformer ratio, phase shift, bus shunt, PV voltage source
   and comparison reference;
 - **Network model** (Case page, every format): the system frequency, 50 or
-  60 Hz (`model.nominal_frequency_hz`). An SCF file that states `f_nom`
-  greys the field at that value, because the file wins over the key; the
-  field is editable only for an SCF or PGM case without `f_nom`. For
-  MATPOWER, DTF, CGMES and PowSyBl cases the field is greyed as well: it
-  shows the value in effect, which acts only as the `meta.f_nom` of an SCF
-  export ([System frequency](@ref system_frequency)). A greyed field is not
-  saved;
+  60 Hz (`model.nominal_frequency_hz`). The field is editable only for an
+  SCF or PGM case (or the base case of a time series) without `f_nom` and
+  with a line `c1` in farad. A file that states `f_nom` greys it at that
+  value, because the file wins over the key. A case without capacitance in
+  farad greys it as "not used": MATPOWER, DTF, CGMES and PowSyBl give line
+  charging as susceptance, and an SCF file in `pu` or with `c1 = 0` has
+  none ([System frequency](@ref system_frequency)). For a greyed field the
+  save stores no value and removes one stored before;
 - logfile output mode, performance timing and post-run diagnostics.
 
 Only keys in `GUI_EDITABLE_CONFIG_KEYS` are submitted, and each run writes
@@ -713,7 +719,9 @@ popup; recent errors stay listed on the **Last errors** page.
 
 Every finished run gets a result page: run ID, schema version, status,
 convergence and solution flags, iterations, final mismatch, reason and
-message, input paths, output directory and a **Solver** entry. A CSV artifact opens as a table
+message, input paths, output directory and a **Solver** entry. **System
+frequency** names the frequency with its source, or `not used` when no
+capacitance in farad entered the model ([System frequency](@ref system_frequency)). A CSV artifact opens as a table
 (delimiter taken from the header line), a Markdown report rendered;
 **Raw text** shows the file as written. The CGMES import report of a run
 is the Markdown artifact `cgmes_import_report.md`; a delivery with a DY profile gets a section **Dynamic data

@@ -478,7 +478,12 @@ end
 
 # The feeder record of a bus, as the (sk in VA, R/X) pair a PGM `source`
 # states. Sparlectra keeps this in the short-circuit source data, which both
-# the CGMES import and addExternalGrid! fill.
+# the CGMES import and addExternalGrid! fill. A network injection record
+# states the initial short-circuit current; an EquivalentInjection record
+# (a CGMES EquivalentInjection imported as source, or the slack on an
+# X-node) states its internal impedance r + jx in ohm, and then
+# sk = Un^2 / |r + jx| and R/X = r / x. The short circuit stamps that record
+# itself; the file only states it on the source as well.
 function _scf_feeder_for_bus(net::Net, busIdx::Int)
   sc = net.sc_sources
   sc === nothing && return nothing
@@ -493,6 +498,12 @@ function _scf_feeder_for_bus(net::Net, busIdx::Int)
     rx = f.maxR1ToX1Ratio
     z01 = f.maxZ0ToZ1Ratio
     return (sk_va = sqrt(3.0) * vn * 1.0e3 * Float64(ik), rx = (rx === nothing || !isfinite(Float64(rx))) ? 0.1 : Float64(rx), z01 = z01 === nothing ? nothing : Float64(z01))
+  end
+  for e in sc.equivalent_injections
+    (e.bus !== nothing && String(e.bus) == bus) || continue
+    f = _ei_record_sk_rx(e, vn)
+    f === nothing && continue
+    return (sk_va = f.sk_MVA * 1.0e6, rx = f.rx, z01 = nothing)
   end
   return nothing
 end
@@ -515,7 +526,10 @@ function _scf_appliances(net::Net, ids::ScfIdMap)
     # says Injection or Consumption; see _scf_is_pgm_source)
     if _scf_is_pgm_source(ps)
       row = Dict{String,Any}("id" => id, "node" => node, "status" => 1, "u_ref" => ps.vm_pu === nothing ? 1.0 : ps.vm_pu)
-      ps.va_deg === nothing || (row["u_ref_angle"] = deg2rad(ps.va_deg))
+      # the radian value that reads back to the same degrees: a source at a
+      # nonzero angle (a CGMES slack at its SV angle) would otherwise move by
+      # one ulp per write-read cycle and the file would not be a fixed point
+      ps.va_deg === nothing || (row["u_ref_angle"] = _scf_stable(ps.va_deg, deg2rad, rad2deg))
       # PGM's source is a voltage source BEHIND its impedance, so a complete
       # source states sk and rx_ratio. The values are the feeder's own
       # short-circuit data, which is where Sparlectra keeps them.

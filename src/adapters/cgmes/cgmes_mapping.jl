@@ -196,9 +196,14 @@ struct _MapCtx
   # mapped units per class whose P limit was a placeholder read as no limit
   # (_pLimitsRead!); one notice in _mapInjections! counts them
   p_limit_placeholders::Dict{String,Int}
+  # cgmes_import.equivalent_injection_as_source: an EquivalentInjection on
+  # the SV angle reference node or on a boundary node becomes a
+  # voltage-regulating source at the SV voltage of its node (the slack when
+  # it holds the SV angle reference)
+  ei_as_source::Bool
 end
-_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false, map_energy_source::Bool = false, map_power_electronics::Bool = false, eb_min_z_pu::Float64 = 1e-6) =
-  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, map_power_electronics, Int[], eb_min_z_pu, Dict{String,Int}())
+_MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_control::Bool = false, vset_min_pu::Float64 = CGMES_VSET_MIN_PU, vset_max_pu::Float64 = CGMES_VSET_MAX_PU, strict_guards::Bool = false, map_energy_source::Bool = false, map_power_electronics::Bool = false, eb_min_z_pu::Float64 = 1e-6, ei_as_source::Bool = false) =
+  _MapCtx(String[], Dict{String,Tuple{Int,Symbol}}(), Set{String}(), tap_control, machine_control, ignore_connected, vset_min_pu, vset_max_pu, Dict{String,Dict{String,String}}(), NamedTuple[], Dict{Tuple{String,String},Int}(), strict_guards, Dict{String,Int}(), Dict{String,Any}(), Dict{String,Tuple{Symbol,Int}}(), Pair{String,Sparlectra.PowerTransformerControl}[], map_energy_source, map_power_electronics, Int[], eb_min_z_pu, Dict{String,Int}(), ei_as_source)
 
 # SSH `Terminal.connected` through the ctx switch: `ignore_connected = true`
 # treats everything as connected (diagnostic mode for snapshots whose SSH
@@ -2256,42 +2261,57 @@ _cgmesReferencePriority(prio::Float64)::Int = (isfinite(prio) && prio >= 1.0) ? 
 
 # slack candidate bookkeeping for the slack selection
 #
-# The tuples are laid out so that plain ascending `sort!` implements the ranking:
-# priority ascending (lower referencePriority = stronger, 0.0 is reserved for the
-# SV angle reference and therefore always wins), then -rating so the larger unit
-# comes first, then bus name as a deterministic last resort.
+# The tuples are laid out so that plain ascending `sort!` implements the ranking.
+# SV angle references: class rank first (0 for a machine or a network
+# injection, 1 for an EquivalentInjection or a source made of one, so the
+# order among the units the importer took before stays as it was), then
+# -rating so the larger unit comes first, then the bus name as a
+# deterministic last resort. referencePriority markers: priority ascending
+# (lower referencePriority = stronger), then -rating, then bus name.
 mutable struct _SlackScan
+  sv_refs::Vector{Tuple{Int,Float64,String}}           # (class rank, -rating, bus)
   by_priority::Vector{Tuple{Float64,Float64,String}}   # (priority, -rating, bus)
   enis::Vector{Tuple{Float64,String}}                  # (maxP/rating, bus)
-  machines::Vector{Tuple{Float64,String}}              # (ratedS, bus)
+  machines::Vector{Tuple{Float64,String,String}}       # (ratedS, bus, machine name)
 end
-_SlackScan() = _SlackScan([], [], [])
+_SlackScan() = _SlackScan([], [], [], [])
 
 """
 Pick the primary slack bus from the collected candidates.
 
 Fallback chain, strongest evidence first:
- 1. `referencePriority` markers, including the SV angle reference, which is
-    injected at priority 0.0 because it is the reference the exporting tool
-    actually used;
- 2. the only / the largest `ExternalNetworkInjection`: a network equivalent is
+ 1. the SV angle reference (`TopologicalIsland.AngleRefTopologicalNode`) on
+    a node that carries a `SynchronousMachine`, an
+    `ExternalNetworkInjection` or an `EquivalentInjection`: it is the
+    reference the exporting tool actually used;
+ 2. SSH `referencePriority` markers;
+ 3. the only / the largest `ExternalNetworkInjection`: a network equivalent is
     the natural reference;
- 3. the largest `SynchronousMachine`.
+ 4. the largest `SynchronousMachine`.
 
-Errors out when a delivery offers none of the three: an angle reference cannot
+`island_label(bus)` names the island of a bus for the messages (the
+`TopologicalIsland` name from the SV, else the electrical island number);
+`has_sv_ref` says whether the SV declares any angle reference at all, so the
+message of step 4 does not claim there is none when the declared one
+carries no injection.
+
+Errors out when a delivery offers none of them: an angle reference cannot
 be invented.
 """
-function _chooseSlack(scan::_SlackScan, messages::Vector{String})::String
-  if !isempty(scan.by_priority)
+function _chooseSlack(scan::_SlackScan, messages::Vector{String}, island_label::Function, has_sv_ref::Bool)::String
+  if !isempty(scan.sv_refs)
     # Ascending sort ranks by the tuple layout documented at _SlackScan.
+    sort!(scan.sv_refs)
+    bus = scan.sv_refs[1][3]
+    push!(messages, "notice: $(island_label(bus)): angle reference $(bus) taken from SV")
+    return bus
+  end
+  if !isempty(scan.by_priority)
     sort!(scan.by_priority)
     bus = scan.by_priority[1][3]
     top = scan.by_priority[1][1]
     ties = count(t -> t[1] == top, scan.by_priority)
-    # Priority 0.0 is the sentinel for "came from the SV angle reference", not
-    # a value read out of the delivery.
-    top == 0.0 && push!(messages, "slack: taken from the SV angle reference")
-    if ties > 1 && top != 0.0
+    if ties > 1
       # CGMES leaves the winner undefined when several units share the
       # highest referencePriority; we break the tie by rating, then by name,
       # which need not match the exporting tool's choice (RealGrid: two
@@ -2313,36 +2333,52 @@ function _chooseSlack(scan::_SlackScan, messages::Vector{String})::String
     push!(messages, "slack: largest ExternalNetworkInjection → $(scan.enis[1][2])")
     return scan.enis[1][2]
   end
-  isempty(scan.machines) && error("CGMES import: no slack candidate found (no referencePriority, no ExternalNetworkInjection, no SynchronousMachine)")
+  isempty(scan.machines) && error("CGMES import: no slack candidate found (no SV angle reference with an injection, no referencePriority, no ExternalNetworkInjection, no SynchronousMachine)")
   sort!(scan.machines; by = t -> -t[1])
-  push!(messages, "slack: largest SynchronousMachine → $(scan.machines[1][2])")
-  return scan.machines[1][2]
+  _, bus, mname = scan.machines[1]
+  if has_sv_ref
+    push!(messages, "slack: largest SynchronousMachine → $(bus)")
+  else
+    push!(messages, "notice: $(island_label(bus)): no angle reference in SV or SSH, largest machine $(mname) at $(bus) as slack")
+  end
+  return bus
 end
+
+# A pending tuple that can hold the angle reference: a SynchronousMachine,
+# an ExternalNetworkInjection, or an EquivalentInjection (also one imported
+# as a source). The type string of the last two is EXTERNALNETWORKINJECTION.
+# An HVDC converter shares that type string but is a fixed PCC injection
+# (`hvdc_converter = true`); EnergySource and PowerElectronicsConnection
+# tuples carry `slack_candidate = false`; a StaticVarCompensator has no
+# active power. None of these can be the reference.
+_isReferenceUnit(inj)::Bool = inj.type in ("SYNCHRONOUSMACHINE", "EXTERNALNETWORKINJECTION") && get(inj, :slack_candidate, true) && !get(inj, :hvdc_converter, false)
 
 """
 Decide the slack bus set. With `multi_slack` every **electrical** island (in
 the sense of `electricalIslandComponents`, i.e. closed links count as
-connections) receives at most one reference: the candidate with the highest
-`referencePriority` wins, further SV angle references in the same island are
-not promoted and keep the bus type their own injection produces (PV for a
-regulating machine, PQ otherwise: their voltage setpoint comes from the SV
-state anyway). Two references in one island would be physically wrong. On
+connections) receives at most one reference: the island of the primary
+slack (`_chooseSlack`) keeps it, and every other island takes its SV angle
+reference. A further SV angle reference in an island that already has one
+is not promoted, and every injection other than the reference keeps the
+bus type its own control gives it (PV for a regulating unit, PQ
+otherwise). Two references in one island would be physically wrong. On
 clean data the guard is a no-op (Svedala's two references sit in two
 electrical islands once `Equipment.inService` is honored), but it protects
 against deliveries whose island declarations and switch states disagree.
+
+`island_label(bus)` names the island of a bus for the messages.
 
 An island that has a source but neither an angle reference here nor a
 voltage-regulating unit gets its slack later, from
 `_slackForIslandsWithoutReference!`, once de-energization and isolation have
 decided which islands exist.
 """
-function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::Set{String}, pending, multi_slack::Bool)::Set{String}
+function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::Set{String}, pending, multi_slack::Bool, island_label::Function)::Set{String}
   chosen = Set{String}([primary])
-  # Only angle references that actually carry an injection are candidates: a
-  # reference node without a source cannot hold a voltage and would produce a
-  # slack bus with nothing behind it. A fixed PQ source (EnergySource,
-  # `slack_candidate = false`) does not count.
-  candidates = [b for b in angle_ref_buses if b != primary && any(inj -> inj.bus == b && get(inj, :slack_candidate, true), pending)]
+  # Only angle references that carry a unit able to hold the reference are
+  # candidates (_isReferenceUnit): a reference node without one cannot hold
+  # a voltage and would produce a slack bus with nothing behind it.
+  candidates = [b for b in angle_ref_buses if b != primary && any(inj -> inj.bus == b && _isReferenceUnit(inj), pending)]
   isempty(candidates) && return chosen
   if !multi_slack
     push!(ctx.messages, "notice: the SV declares further angle reference(s) ($(join(sort(candidates), ", "))), not promoted to slack; pass multi_slack = true to give separate electrical islands their own reference")
@@ -2353,19 +2389,26 @@ function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::
   # counting only branches, retained switches would split one island into
   # several and we would hand out a second slack inside a single island.
   island_of = Sparlectra.electricalIslandOfBus(net)
-  taken = Set{Int}()
+  # electrical island -> the bus holding its reference
+  holder = Dict{Int,String}()
   pi = get(island_of, get(net.busDict, primary, 0), 0)
   # Island 0 means "bus unknown/isolated", nothing to reserve in that case.
-  pi == 0 || push!(taken, pi)
+  pi == 0 || (holder[pi] = primary)
   # Sorted so the outcome does not depend on Set iteration order.
   for b in sort(candidates)
     isl = get(island_of, get(net.busDict, b, 0), 0)
-    if isl == 0 || isl in taken
-      push!(ctx.messages, "notice: angle reference $(b) shares its electrical island with $(primary), not promoted to slack (a second reference in one island would be physically wrong)")
+    if isl == 0 || haskey(holder, isl)
+      # the line names the holder's island; b may come from another SV
+      # TopologicalIsland, then its own island is named as well
+      h = get(holder, isl, primary)
+      h_isl, b_isl = island_label(h), island_label(b)
+      b_of = b_isl == h_isl ? "" : " of $(b_isl)"
+      push!(ctx.messages, "notice: $(h_isl): angle reference $(h), other injections keep their own bus type; the SV angle reference $(b)$(b_of) lies in the same electrical island and is not promoted to slack")
       continue
     end
-    push!(taken, isl)
+    holder[isl] = b
     push!(chosen, b)
+    push!(ctx.messages, "notice: $(island_label(b)): angle reference $(b) taken from SV")
     push!(ctx.messages, "slack: additional reference $(b) for electrical island $(isl)")
   end
   return chosen
@@ -2526,6 +2569,8 @@ function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
     ps.referencePri = bus
     ps.isRegulated = true
     ps.vm_pu = vm
+    # the reference angle as for the slack of the flush in _mapInjections!
+    ps.va_deg = something(net.nodeVec[get(fed, bus, bus)]._va_deg, 0.0)
     n_islands += 1
     at = something(_busDictName(net, bus), net.nodeVec[bus].comp.cName)
     # a converter can hold an island only when it forms the grid; without
@@ -2567,12 +2612,15 @@ ships two islands).
     two islands. With `inService` honored, the electrical view agrees with the
     delivery's two `TopologicalIsland`s exactly. The cross-check stays: it
     costs little and catches deliveries where the disagreement is real.
+
+Returns `TopologicalNode` mRID => island name (`IdentifiedObject.name` of the
+`TopologicalIsland`, its mRID when it has none), for the slack messages.
 """
-function _svAngleRefNodes(store::CGMESStore)::Set{String}
-  out = Set{String}()
+function _svAngleRefNodes(store::CGMESStore)::Dict{String,String}
+  out = Dict{String,String}()
   for isl in objectsOf(store, :TopologicalIsland)
     tn = get(isl.refs, :AngleRefTopologicalNode, nothing)
-    tn === nothing || push!(out, tn)
+    tn === nothing || (out[tn] = something(str(isl, :name), isl.mrid))
   end
   return out
 end
@@ -2605,6 +2653,26 @@ function _eiBoundaryNode(store::CGMESStore, topo::CGMESTopology, ei::CIMObject):
   (tn !== nothing && tn in store.boundary) && return tn
   return nothing
 end
+
+# Does an EquivalentInjection sit on a boundary node? Its node comes from a
+# boundary file (_eiBoundaryNode), or the delivery marks the terminal's
+# ConnectivityNode or TopologicalNode with `boundaryPoint = true` (a delivery
+# that ships the boundary nodes without the boundary profiles).
+function _eiOnBoundary(store::CGMESStore, topo::CGMESTopology, ei::CIMObject)::Bool
+  _eiBoundaryNode(store, topo, ei) === nothing || return true
+  ts = get(topo.terminals, ei.mrid, nothing)
+  (ts === nothing || isempty(ts)) && return false
+  t = ts[1]
+  for node in (get(t.refs, :ConnectivityNode, nothing), tnOfTerminal(t))
+    node === nothing && continue
+    o = get(store.objects, node, nothing)
+    (o !== nothing && something(boolval(o, :boundaryPoint), false)) && return true
+  end
+  return false
+end
+
+# names for a notice: up to five, then an ellipsis
+_shortList(names::Vector{String})::String = length(names) <= 5 ? join(names, ", ") : join(names[1:5], ", ") * ", ..."
 
 """
 Decide which remote machine-control plans survive (#294 point 3).
@@ -3458,7 +3526,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   scan = _SlackScan()
   curve_pts = _reactiveCapabilityCurvePoints(store)
   angle_refs = _svAngleRefNodes(store)
-  angle_ref_buses = Set{String}(topo.bus_name[tn] for tn in angle_refs if haskey(topo.bus_name, tn))
+  # bus name -> name of the SV TopologicalIsland whose angle reference it is
+  angle_ref_island = Dict{String,String}(topo.bus_name[tn] => isl for (tn, isl) in angle_refs if haskey(topo.bus_name, tn))
+  angle_ref_buses = Set{String}(keys(angle_ref_island))
   isempty(angle_ref_buses) || push!(ctx.messages, "notice: SV declares $(length(angle_ref_buses)) angle-reference node(s), used as slack candidate(s): $(join(sort(collect(angle_ref_buses)), ", "))")
   pending = NamedTuple[]
 
@@ -3537,9 +3607,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     rank_s = ratedS >= Sparlectra.SC_RATEDS_PLACEHOLDER_MVA ? 0.0 : ratedS
     # an SV angle reference outranks referencePriority: it is what the
     # exporting tool actually used
-    bus in angle_ref_buses && push!(scan.by_priority, (0.0, -rank_s, bus))
+    bus in angle_ref_buses && push!(scan.sv_refs, (0, -rank_s, bus))
     prio >= 1.0 && push!(scan.by_priority, (prio, -rank_s, bus))
-    push!(scan.machines, (rank_s, bus))
+    push!(scan.machines, (rank_s, bus, name))
     # RegulatingCondEq.controlEnabled (SSH) switches the machine's voltage
     # regulation off: no PV bus, no remote plan, a PQ injection at the SSH
     # p/q with the Q limits above (_regulationEnabled). The flag concerns the
@@ -3652,7 +3722,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     prio = num(eni, :referencePriority, 0.0)
     # the size for the ranking: maxP, a placeholder (_pLimit) read as none
     maxP = abs(something(_pLimit(num(eni, :maxP)), num(eni, :p, 0.0)))
-    bus in angle_ref_buses && push!(scan.by_priority, (0.0, -maxP, bus))
+    bus in angle_ref_buses && push!(scan.sv_refs, (0, -maxP, bus))
     prio >= 1.0 && push!(scan.by_priority, (prio, -maxP, bus))
     push!(scan.enis, (maxP, bus))
     # controlEnabled = false: a PQ injection at the SSH p/q, as for the
@@ -3843,6 +3913,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
           isRegulated = false,
           # the mRID lets the HVDC pair attachment find this exact prosumer
           mrid = conv.mrid,
+          # a fixed PCC injection, never the angle reference (_isReferenceUnit)
+          hvdc_converter = true,
         ),
       )
       push!(ctx.messages, "notice: $(cls) $(name), HVDC converter: fixed PCC injection at $(bus) (p=$(round(-p_ssh; digits = 1)) MW, q=$(round(-q_ssh; digits = 1)) MVAr from SSH; DC side not mapped, no angle coupling)")
@@ -3863,6 +3935,11 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   # mapped EquivalentInjections with regulationCapability = true and no SSH
   # regulationStatus: counted for one notice below
   n_ei_status_missing = 0
+  # EquivalentInjections imported as sources (equivalent_injection_as_source),
+  # and those of them without a usable internal impedance (x missing or not
+  # positive), for one notice each below
+  ei_sources = String[]
+  ei_sources_no_z = String[]
   for ei in objectsOf(store, :EquivalentInjection)
     t = busOfEquipment(topo, ei, 1)
     name = something(str(ei, :name), ei.mrid)
@@ -3932,6 +4009,24 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     # the P-limit check) and the slack ranking read them.
     plo, phi = _pLimitsRead!(ctx, "EquivalentInjection", num(ei, :minP), num(ei, :maxP))
     (plo === nothing || phi === nothing || (phi - plo) < 1e-6) && (plo = phi = nothing)
+    # An EquivalentInjection on the SV angle reference node can hold the
+    # reference (MicroGrid BE: the X-node TN_Border_ST23 carries only its
+    # EquivalentInjection). It ranks behind a machine or a network injection
+    # on an SV angle reference, so the slack of every delivery the importer
+    # solved before stays where it was.
+    bus in angle_ref_buses && push!(scan.sv_refs, (1, -abs(something(phi, num(ei, :p, 0.0))), bus))
+    # equivalent_injection_as_source: the injection stands for the grid
+    # behind a boundary node (or the reference node) and becomes a source
+    # that holds the SV voltage of its node (PV at its SSH P); the flush
+    # gives it the SV angle as reference angle (u_ref_angle in an SCF
+    # export), which only the slack among them holds in the solve. Its Q
+    # limits stay as read above.
+    as_source = ctx.ei_as_source && (bus in angle_ref_buses || _eiOnBoundary(store, topo, ei))
+    if as_source
+      push!(ei_sources, name)
+      x_ei = num(ei, :x)
+      (x_ei === nothing || !(x_ei > 0.0)) && push!(ei_sources_no_z, name)
+    end
     push!(
       pending,
       (
@@ -3943,8 +4038,9 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         pMax = phi,
         qMin = qlo,
         qMax = qhi,
-        vm_pu = vset,
-        isRegulated = vset !== nothing,
+        vm_pu = as_source ? _pvVoltage(net, bus, nothing) : vset,
+        isRegulated = as_source || vset !== nothing,
+        source = as_source,
         # no `mrid` on purpose (export identity, see the flush below); the
         # source mRID only feeds element_by_mrid
         src_mrid = ei.mrid,
@@ -3953,24 +4049,39 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     )
   end
   n_ei_status_missing > 0 && push!(ctx.messages, "notice: $(n_ei_status_missing) EquivalentInjection(s) with regulationCapability = true and no SSH regulationStatus, no voltage regulation")
+  isempty(ei_sources) || push!(ctx.messages, "notice: $(length(ei_sources)) EquivalentInjection(s) imported as source at the SV voltage of their node (cgmes_import.equivalent_injection_as_source): $(_shortList(ei_sources))")
+  isempty(ei_sources_no_z) || push!(ctx.messages, "notice: $(length(ei_sources_no_z)) EquivalentInjection(s) imported as source without internal impedance (r/x missing or x not positive, no short-circuit power): $(_shortList(ei_sources_no_z))")
 
   _mapEnergySources!(pending, net, store, topo, created, svmap, ctx)
   _mapPowerElectronicsConnections!(pending, net, store, topo, created, svmap, ctx)
 
-  slack_bus = _chooseSlack(scan, ctx.messages)
+  # island names for the slack messages: the SV TopologicalIsland of an
+  # angle reference, else the electrical island number of the bus (computed
+  # once, only when a message needs it)
+  island_of = Ref{Union{Nothing,Dict{Int,Int}}}(nothing)
+  island_label = function (bus::String)
+    haskey(angle_ref_island, bus) && return "island $(angle_ref_island[bus])"
+    island_of[] === nothing && (island_of[] = Sparlectra.electricalIslandOfBus(net))
+    return "electrical island $(get(island_of[], get(net.busDict, bus, 0), 0))"
+  end
+  slack_bus = _chooseSlack(scan, ctx.messages, island_label, !isempty(angle_ref_buses))
   # One slack per island: every SV angle-reference bus that carries a unit
   # becomes a reference, not just the primary one. A multi-island delivery
   # (ReliCapGrid/Svedala: two islands) is otherwise unsolvable, each island
   # needs its own angle reference.
-  slack_buses = _selectSlackBuses(net, ctx, slack_bus, angle_ref_buses, pending, multi_slack)
+  slack_buses = _selectSlackBuses(net, ctx, slack_bus, angle_ref_buses, pending, multi_slack, island_label)
   ctx.machine_control && _resolveMachineControlPlans!(pending, net, slack_buses, ctx.messages)
   marked = Set{String}()
   for inj in pending
-    # an EnergySource or PowerElectronicsConnection tuple carries
-    # slack_candidate = false: the importer never gives it the reference
-    # role, even on the slack bus
-    is_slack = get(inj, :slack_candidate, true) && inj.bus in slack_buses && !(inj.bus in marked)
+    # only a machine, a network injection or an EquivalentInjection takes
+    # the reference role (_isReferenceUnit), never an EnergySource, a
+    # PowerElectronicsConnection, an SVC or an HVDC converter on the slack bus
+    is_slack = _isReferenceUnit(inj) && inj.bus in slack_buses && !(inj.bus in marked)
     is_slack && push!(marked, inj.bus)
+    # the slack and a source hold the start angle of their bus (the SV angle
+    # where present) as reference angle, so an SCF export (u_ref_angle) and
+    # a conversion to an external grid keep it
+    va = (is_slack || get(inj, :source, false)) ? something(net.nodeVec[Sparlectra.geNetBusIdx(net = net, busName = inj.bus)]._va_deg, 0.0) : nothing
     vm = inj.vm_pu
     if is_slack && vm === nothing
       # slack needs a voltage target: use the SV/start value of its bus
@@ -3992,6 +4103,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       qMin = inj.qMin,
       qMax = inj.qMax,
       vm_pu = vm,
+      va_deg = va,
       referencePri = is_slack ? inj.bus : nothing,
       isRegulated = inj.isRegulated || is_slack,
       # only machine tuples carry a participation factor; every other pending
@@ -4325,6 +4437,20 @@ turbine governors whose parameter meaning the specification states. One
 counterpart in the EQ. Without the switch the DY file is skipped and no
 result changes; a store passed in with DY objects is not read either.
 
+The SV angle reference (`TopologicalIsland.AngleRefTopologicalNode`) also
+takes an `EquivalentInjection` as slack, ranked behind a
+`SynchronousMachine` or `ExternalNetworkInjection` on an SV angle
+reference (MicroGrid BE: the X-node of the boundary). With
+`equivalent_injection_as_source = true` an `EquivalentInjection` on the SV
+angle reference node or on a boundary node (boundary set or
+`boundaryPoint = true`) becomes a voltage-regulating source at the SV
+voltage of its node with its SSH P; the one on the SV angle reference is
+the slack and holds the SV angle as well, the others carry it as reference
+angle for an SCF export. `r`/`x` with `x > 0` give its short-circuit
+record; one notice counts the sources and one names those without
+impedance. Off, the injection stays as mapped (PQ at the SSH p and q, PV
+with `regulationStatus`, slack when it holds the SV angle reference).
+
 Every class with terminals or with an SSH active power value of which no
 object outside the boundary set is mapped gets one row `class not mapped:`
 with its object count and the sum of its SSH P in MW, below one header
@@ -4363,6 +4489,7 @@ function importCGMES(;
   map_power_electronics::Bool = false,
   shunt_control::Bool = false,
   read_dynamics::Bool = false,
+  equivalent_injection_as_source::Bool = false,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
@@ -4377,7 +4504,7 @@ function importCGMES(;
     loadCGMES(path; profile_filter = read_dynamics ? IMPORT_PROFILE_TAGS_WITH_DY : IMPORT_PROFILE_TAGS)
   end
   equivalent_branch_min_z_pu >= 0.0 || throw(ArgumentError("importCGMES: equivalent_branch_min_z_pu must not be negative, got $(equivalent_branch_min_z_pu)"))
-  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, map_power_electronics = map_power_electronics, eb_min_z_pu = equivalent_branch_min_z_pu)
+  ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, map_power_electronics = map_power_electronics, eb_min_z_pu = equivalent_branch_min_z_pu, ei_as_source = equivalent_injection_as_source)
   ignore_connected && push!(ctx.messages, "notice: ignore_connected = true, SSH Terminal.connected flags are overridden, everything is treated as in service")
   messages = ctx.messages
   unresolved = unresolvedReferences(store)

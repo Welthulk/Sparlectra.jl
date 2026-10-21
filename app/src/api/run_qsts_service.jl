@@ -206,7 +206,7 @@ _qsts_fmt(x) = x === nothing ? "n/a" : (isinteger(x) ? string(Int(x)) : @sprintf
 # the overview: summary, notes, metrics and switching counts, then the SVG
 # of every element grouped by kind (embedded with <object>, so the
 # tooltips of the points work when the run folder or its ZIP is opened)
-function _qsts_overview_html(r::QstsResult, view::AbstractDict, summary, control_note::AbstractString)::String
+function _qsts_overview_html(r::QstsResult, view::AbstractDict, summary, control_note::AbstractString, freq_line::AbstractString)::String
   io = IOBuffer()
   title = string("QSTS overview: ", r.name)
   println(io, "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<title>", _qsts_html_escape(title), "</title>")
@@ -215,7 +215,8 @@ function _qsts_overview_html(r::QstsResult, view::AbstractDict, summary, control
   println(io, "<table>")
   rows = [("Mode", String(r.mode)), ("Steps", string(summary.n_steps)), ("Solved", string(summary.n_solved)), ("Failed", string(summary.n_failed)),
           ("Base case", summary.base_status), ("Switches", _qsts_fmt(summary.switch_total)), ("Hunting patterns", _qsts_fmt(summary.hunting_total)),
-          ("Steps with violations", string(summary.violation_steps)), ("Loss energy [MWh]", _qsts_fmt(summary.loss_energy_mwh)), ("Controllers", control_note)]
+          ("Steps with violations", string(summary.violation_steps)), ("Loss energy [MWh]", _qsts_fmt(summary.loss_energy_mwh)), ("Controllers", control_note),
+          ("System frequency", freq_line)]
   for (k, v) in rows
     println(io, "<tr><th>", _qsts_html_escape(k), "</th><td>", _qsts_html_escape(v), "</td></tr>")
   end
@@ -343,10 +344,14 @@ function _run_qsts_service(case_path::AbstractString, config_file::AbstractStrin
     n_plots += 1
   end
   summary = _qsts_run_summary(r)
-  write(joinpath(output_dir, _QSTS_OVERVIEW_FILE), _qsts_overview_html(r, view, summary, control_note))
+  # the frequency the base case is built with, from the case itself: a
+  # series in pu or with c1 = 0 never reads it, whatever the key says
+  freq_line = nominal_frequency_line(series.base, config)
+  write(joinpath(output_dir, _QSTS_OVERVIEW_FILE), _qsts_overview_html(r, view, summary, control_note, freq_line))
 
   open(logfile, "a") do io
     println(io, "QSTS run (", mode, ") on ", basename(String(case_path)), ": ", r.name, ", ", summary.n_steps, " steps")
+    println(io, "System frequency: ", freq_line)
     println(io, "control file: ", control_note)
     println(io, "base case: ", summary.base_status)
     println(io, "steps: ", summary.n_solved, " solved, ", summary.n_failed, " failed")
@@ -368,6 +373,9 @@ function _run_qsts_service(case_path::AbstractString, config_file::AbstractStrin
     "input_format_detected" => "scf_series",
     "qsts_series" => r.name,
     "qsts_control_file" => isfile(control_path) ? basename(control_path) : "",
+    "network_nominal_frequency_hz" => _scf_case_frequency(series.base, config).f,
+    "frequency_source" => nominal_frequency_source(series.base, config),
+    "frequency_line" => freq_line,
     "qsts_controls_used" => controls_used,
     "qsts_steps" => summary.n_steps,
     "qsts_solved" => summary.n_solved,

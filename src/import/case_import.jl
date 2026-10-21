@@ -164,7 +164,7 @@ end
     importCGMES(config; path, name, hvdc_mode, ignore_connected) -> CGMESImportResult
 
 Import a CGMES delivery with everything the configuration says about it, in
-one place: the sixteen `cgmes_import` values and the bus shunt model (the
+one place: the seventeen `cgmes_import` values and the bus shunt model (the
 net-parameter stamping lives with the import dispatch:
 once per importer). The four service call sites used
 to unpack the same values by hand, and a new option had to be added in four
@@ -199,6 +199,7 @@ function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::Abstrac
     map_power_electronics = cgmes_cfg.map_power_electronics,
     shunt_control = cgmes_cfg.shunt_control,
     read_dynamics = cgmes_cfg.read_dynamics,
+    equivalent_injection_as_source = cgmes_cfg.equivalent_injection_as_source,
     name = String(name),
   )
   return result
@@ -360,15 +361,29 @@ function _cgmes_delivery_paths(case_path::AbstractString, cgmes_cfg)::Tuple{Vect
   catch
     String[]
   end
+  candidates = String[]
   for n in neighbours
     occursin(r"(?i)boundary|_bd_|_bd\.", n) || continue
     cand = joinpath(dirname(abspath(case_path)), n)
     cand == abspath(case_path) && continue
     (isdir(cand) || endswith(lowercase(n), ".zip")) || continue
-    push!(paths, cand)
-    return paths, true
+    push!(candidates, cand)
   end
-  return paths, false
+  isempty(candidates) && return paths, false
+  # Several boundary sets in one directory (the MicroGrid and the MiniGrid
+  # test configurations side by side): take the first one that resolves the
+  # topology references of this case. The first by name alone paired MiniGrid
+  # with the MicroGrid boundary and the import failed. None resolves: keep the
+  # first, the import then reports what is missing.
+  if length(candidates) > 1
+    for cand in candidates
+      CGMESImporter.summarizeCGMES(path = [String(case_path), cand]).boundary_missing_hint && continue
+      push!(paths, cand)
+      return paths, true
+    end
+  end
+  push!(paths, first(candidates))
+  return paths, true
 end
 
 function _reject_dtf_dcline_like_content!(case_path::AbstractString)

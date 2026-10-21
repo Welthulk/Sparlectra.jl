@@ -188,6 +188,21 @@ function run_external_grid_tests()
     @test erg == 0
     @test getNodeVm(net.nodeVec[geNetBusIdx(net = net, busName = "B1")]) < 1.02
 
+    # A slack that already carries short-circuit records (an imported
+    # external network injection and equivalent injection on B1): the new
+    # source replaces them, so Ik'' at B1 is the same as without them. Left
+    # behind, both were stamped and the source counted twice.
+    plain = _eg_fixture()
+    convertSlackToExternalGrid!(net = plain, sk_max_MVA = 500.0, rx_max = 0.1)
+    declared = _eg_fixture()
+    push!(declared.sc_sources.external_network_injections, (mrid = "eni-B1", name = "B1 feeder", bus = "B1", maxInitialSymShCCurrent_A = 2000.0, minInitialSymShCCurrent_A = nothing, maxR1ToX1Ratio = 0.1, minR1ToX1Ratio = nothing, maxR0ToX0Ratio = nothing, maxZ0ToZ1Ratio = nothing, ikSecond = nothing, governorSCD = nothing))
+    push!(declared.sc_sources.equivalent_injections, (mrid = "ei-B1", name = "B1 X-node", bus = "B1", r_ohm = 1.0, x_ohm = 10.0, r0_ohm = nothing, x0_ohm = nothing, r2_ohm = nothing, x2_ohm = nothing))
+    convertSlackToExternalGrid!(net = declared, sk_max_MVA = 500.0, rx_max = 0.1)
+    @test count(e -> e.bus == "B1", declared.sc_sources.external_network_injections) == 1
+    @test !any(e -> e.bus == "B1", declared.sc_sources.equivalent_injections)
+    ik_b1(n) = only(r for r in runShortCircuit!(n; case = :max).rows if r.bus == "B1").ik_kA
+    @test ik_b1(declared) ≈ ik_b1(plain) rtol = 1e-12
+
     @test_throws ArgumentError convertSlackToExternalGrid!(net = Net(name = "noslack", baseMVA = 100.0), sk_max_MVA = 100.0)
     net2 = _eg_fixture()
     @test_throws ArgumentError convertSlackToExternalGrid!(net = net2, busName = "B2", sk_max_MVA = 100.0)
@@ -202,6 +217,8 @@ function run_external_grid_tests()
       printACPFlowResults(plain, 0.0, 3, 1e-8, true, dir)
       txt = read(joinpath(dir, "result_$(plain.name).txt"), String)
       @test occursin("Grid connection: slack bus B1", txt)
+      # lines in pu: the header says the frequency was not used
+      @test occursin("Frequency      : not used (no capacitance in farad)\n", txt)
       @test !occursin("external-grid source", txt)
     end
 

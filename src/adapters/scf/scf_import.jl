@@ -583,6 +583,9 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
       b_s = row.c1 === nothing ? 0.0 : row.c1 * w_nom
       tan1 = row.tan1 === nothing ? 0.0 : row.tan1
       line_pu = units === :pu ? pu_block(id) : nothing
+      # the frequency counts as used only where a capacitance enters the
+      # model: a pu file reads b_pu as it stands
+      line_pu === nothing && b_s != 0.0 && (net._frequency_used = true)
       addPIModelACLine!(
         net = net,
         fromBus = bus_by_id[row.from_node],
@@ -1050,8 +1053,16 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   # declared case data in the same shape addExternalGrid! produces, so the
   # short circuit sees the feeder and `power_flow.external_grid` (source:
   # auto) computes with the file's own numbers instead of config defaults.
-  # Our own files carry the richer components.sc_source block; that one wins.
+  # Our own files carry the richer components.sc_source block; that one wins:
+  # a bus with a network injection or EquivalentInjection record there gets
+  # no second record from the source's sk (the writer states sk from that
+  # record, and the short circuit would stamp the feeder twice).
   declared_buses = Set(String(f.bus) for f in net.sc_sources.external_network_injections if f.bus !== nothing)
+  for row in comps.sc_source
+    row.kind in ("external_network_injection", "equivalent_injection") || continue
+    b = get(row.fields, "bus", nothing)
+    b isa AbstractString && push!(declared_buses, String(b))
+  end
   for row in data.source
     row.sk === nothing && continue
     something(row.status, 1) == 0 && continue
@@ -1785,6 +1796,38 @@ function scf_case_units(case::SCFCase)::Symbol
     end
   end
   return u
+end
+
+# the three facts build_net decides the frequency from, without building:
+# the stated meta.f_nom, else the configured key; used when a line c1 > 0
+# is read in an si file (the condition that sets net._frequency_used)
+function _scf_case_frequency(case::SCFCase, config::SparlectraConfig)
+  stated = case.sparlectra === nothing ? nothing : _scf_meta_f_nom(case.sparlectra.meta)
+  used = scf_case_units(case) === :si && any(row -> row.c1 !== nothing && row.c1 != 0.0, case.data.line)
+  return (f = something(stated, config.model.nominal_frequency_hz), used = used, from_case = stated !== nothing)
+end
+
+"""
+    nominal_frequency_source(case::SCFCase, config::SparlectraConfig) -> String
+
+`nominal_frequency_source(net)` for a
+case before it is built, for example the base case of a QSTS series:
+the same answer the network `build_net(case; config)` returns would give.
+"""
+function nominal_frequency_source(case::SCFCase, config::SparlectraConfig)::String
+  fr = _scf_case_frequency(case, config)
+  return _frequency_source_name(fr.used, fr.from_case)
+end
+
+"""
+    nominal_frequency_line(case::SCFCase, config::SparlectraConfig) -> String
+
+The run header line of `nominal_frequency_line(net)`
+for a case before it is built (the base case of a QSTS series).
+"""
+function nominal_frequency_line(case::SCFCase, config::SparlectraConfig)::String
+  fr = _scf_case_frequency(case, config)
+  return _frequency_line_text(fr.f, fr.used, fr.from_case)
 end
 
 # Files written by Sparlectra releases before this one carried the whole

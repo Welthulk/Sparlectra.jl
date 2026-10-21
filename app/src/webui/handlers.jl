@@ -1490,18 +1490,24 @@ end
 function _webui_case_save_plan(config_file::AbstractString, source::AbstractString, config_updates::AbstractDict, form_updates::AbstractDict; default_measurement_file = nothing)
   has_case_file = isfile(case_config_path(source))
   inherited = _webui_case_inherited_raw(config_file, source; case_scope_from_defaults = has_case_file)
-  # an SCF file's meta.f_nom outranks an unset frequency key at import,
-  # so the file's frequency is what that key inherits for this case
-  file_f = _webui_case_file_frequency(source, nothing)
-  is_inherited(key, value, raw) = key == "model.nominal_frequency_hz" && file_f !== nothing ? _webui_same_config_value(value, file_f) : _webui_posted_equals_inherited(key, value, raw)
+  # The system frequency key is locked for a case whose file states
+  # meta.f_nom (it wins on import) or uses no capacitance in farad (every
+  # format but an SCF/PGM file with a line c1 in an si file): the Case page
+  # renders the select disabled, and a posted value is not saved. A value
+  # stored before is removed by the save, so the case file never holds a
+  # frequency that cannot act (or only raises the mismatch warning).
+  freq_key = "model.nominal_frequency_hz"
+  freq_locked = _webui_case_frequency_locked(source, nothing)
   keep = Dict{String,Any}()
   remove = String[]
   dropped = String[]
   for (key, value) in config_updates
     key = String(key)
-    if !scf_is_case_config_key(key)
+    if key == freq_key && freq_locked
+      continue
+    elseif !scf_is_case_config_key(key)
       push!(dropped, key)
-    elseif is_inherited(key, value, inherited)
+    elseif _webui_posted_equals_inherited(key, value, inherited)
       push!(remove, key)
     else
       keep[key] = value
@@ -1534,6 +1540,11 @@ function _webui_case_save_plan(config_file::AbstractString, source::AbstractStri
     end
     sort!(adopted)
   end
+  if freq_locked
+    delete!(keep, freq_key)
+    filter!(!=(freq_key), adopted)
+    freq_key in remove || push!(remove, freq_key)
+  end
   # the merged case configuration must build NOW: an incompatible pair
   # saved today failed the next run instead (a Web UI run: apslf_start
   # kept from an earlier save under a newly chosen apslf solver)
@@ -1557,7 +1568,9 @@ function _webui_case_save_plan(config_file::AbstractString, source::AbstractStri
   if has_case_file && isempty(candidate) && isempty(stored_form) && isempty(form_kept) && !isempty(remove)
     general_chain = _webui_case_inherited_raw(config_file, source; case_scope_from_defaults = false)
     for key in copy(remove)
-      is_inherited(key, config_updates[key], general_chain) && continue
+      # the locked frequency key is removed whatever the chain says
+      (key == freq_key && freq_locked) && continue
+      _webui_posted_equals_inherited(key, config_updates[key], general_chain) && continue
       keep[key] = candidate[key] = config_updates[key]
       filter!(!=(key), remove)
     end

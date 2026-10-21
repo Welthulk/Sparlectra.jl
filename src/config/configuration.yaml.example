@@ -608,6 +608,13 @@ cgmes_import:
   # island slack choice reads the unit type. Off by default: the DY file is
   # skipped.
   read_dynamics: false
+  # Import an EquivalentInjection on the SV angle reference node or on a
+  # boundary node as a voltage-regulating source at the SV voltage of its
+  # node (the one on the SV angle reference is the slack), with the
+  # short-circuit power from its r/x where the EQ states them. Off by
+  # default: the injection stays as mapped (PQ at the SSH p and q, PV with
+  # regulationStatus, slack when it holds the SV angle reference).
+  equivalent_injection_as_source: false
   # Plausibility band for a voltage RegulatingControl target, in p.u. of the
   # regulated bus's nominal voltage. Outside the band the target is treated as a
   # placeholder: ignored, unit held PV at the bus voltage derived from the

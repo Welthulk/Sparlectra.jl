@@ -115,6 +115,15 @@ function run_piline_g_tests()
     @test n60cfg.nominal_frequency_hz == 60.0
     addACLinePerKm!(net = n60cfg, fromBus = "B1", toBus = "B2", length_km = len, r_ohm_per_km = r_km, x_ohm_per_km = x_km, c_nf_per_km = c_km)
     @test n60cfg.branchVec[end].b_pu == n60.branchVec[end].b_pu
+    # the run header names the frequency only where a capacitance became a
+    # susceptance: a line in ohm and siemens and a per-km line with c = 0
+    # never read it
+    @test Sparlectra.nominal_frequency_line(noloss) == "50 Hz (configuration)"
+    @test Sparlectra.nominal_frequency_line(n60cfg) == "60 Hz (configuration)"
+    @test Sparlectra.nominal_frequency_source(phys) == "not_used"
+    zero_c = newnet()
+    addACLinePerKm!(net = zero_c, fromBus = "B1", toBus = "B2", length_km = len, r_ohm_per_km = r_km, x_ohm_per_km = x_km, c_nf_per_km = 0.0)
+    @test Sparlectra.nominal_frequency_line(zero_c) == "not used (no capacitance in farad)"
     @test_throws ArgumentError Net(name = "f0", baseMVA = sbase, nominal_frequency_hz = 0.0)
     @test_throws ArgumentError Net(name = "fneg", baseMVA = sbase, nominal_frequency_hz = -50.0)
     @test Sparlectra.ModelConfig(Dict{String,Any}("model" => Dict{String,Any}("nominal_frequency_hz" => 60))).nominal_frequency_hz == 60.0

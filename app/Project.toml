@@ -26,7 +26,7 @@ ZipArchives = "49080126-0e18-4c2a-b176-c102e4b3760c"
 Sparlectra = {path = ".."}
 
 [compat]
-AnalyticLoadFlow = "0.10.2"
+AnalyticLoadFlow = "0.10.3"
 Dates = "1"
 Downloads = "1"
 KLU = "0.6"

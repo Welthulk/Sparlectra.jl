@@ -1376,6 +1376,10 @@ mpc.branch = [
     @test SparlectraApp.to_dict(res)["status"] == "succeeded"
     @test md["contingency_cases_source"] == "scenario_file_block"
     @test md["contingency_cases"] == 3                       # the file's list, not every branch
+    # N-1 names the system frequency like a power-flow run: the export wrote
+    # the line charging as c1 in farad together with meta.f_nom
+    @test md["frequency_source"] == "case_file"
+    @test count(==("System frequency: " * md["frequency_line"]), eachline(joinpath(d, "run_explicit", "run.log"))) == 1
     csv_text = read(joinpath(d, "run_explicit", "contingency_n1.csv"), String)
     @test occursin("loss of $(n1)", csv_text)
     @test occursin("common mode", csv_text)
@@ -1659,6 +1663,10 @@ mpc.branch = [
     se_req = start_powerflow_run(Dict{String,Any}("casefile" => joinpath(scf_dir, "sp_case5.scf.json"), "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(d, "se_req_root"), "se_mode" => true, "measurement_file" => joinpath(scf_dir, "sp_case5.measurements.csv"), "detailed_result_csv_format" => "excel_de"))
     @test se_req["status"] == "succeeded"
     se_dir = se_req["output_dir"]
+    # the estimator names the frequency too; sp_case5 has c1 = 0 on every line
+    se_md = Sparlectra.scf_json_parse(read(joinpath(se_dir, "result.json"), String))["metadata"]
+    @test se_md["frequency_source"] == "not_used"
+    @test count(==("System frequency: not used (no capacitance in farad); case file states 50 Hz"), eachline(joinpath(se_dir, "run.log"))) == 1
     for f in ("measurements_verdict.csv", "se_state.csv", "se_deltas.csv")
       isfile(joinpath(se_dir, f)) || continue
       se_lines = filter(l -> !startswith(l, "#"), readlines(joinpath(se_dir, f)))

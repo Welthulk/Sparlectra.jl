@@ -1105,12 +1105,15 @@ function _webui_case_context(;
   # which format-bound options the pages render (see _WEBUI_FIELD_CASE_FORMATS)
   option_format = _webui_case_option_format(effective_case_value, case_format_value, format_hint)
   # the frequency select renders for every format; only the SCF/PGM import
-  # reads the key (line c1), the other formats get it disabled, and so does
-  # an SCF file that states its own meta.f_nom (the file wins on import).
-  # An SCF time series reads its base case through the same import; its
-  # meta.f_nom inside the zip is not looked at here.
-  case_frequency = option_format === :scf ? _webui_case_file_frequency(effective_case_value, effective_case_directory; application_root) : nothing
-  frequency_applies = (option_format === nothing || option_format in (:scf, :scf_series)) && case_frequency === nothing
+  # reads the key (line c1 in farad), the other formats get it disabled.
+  # An SCF/PGM file or the base case of an SCF time series locks it too
+  # when it states its own meta.f_nom (the file wins on import) or has no
+  # line c1 the frequency could turn into a susceptance. Decided by file
+  # content, not by option_format, so the page locks exactly when the
+  # save (_webui_case_save_plan) drops the key; a chosen case_format that
+  # does not fit the file would otherwise split the two.
+  case_frequency, frequency_usable = _webui_case_frequency_state(effective_case_value, effective_case_directory; application_root)
+  frequency_applies = frequency_usable && case_frequency === nothing
   return (; profile_values, profile_path, profile_notice, case_file_notice, case_format_notice, casefiles, effective_case_directory, for002_candidates, existing_value, manual_value, effective_case_value, format_hint, case_format_value, dat_case_assistance, sc_state, scen_is_scf, qsts_state, option_format, frequency_applies, case_frequency)
 end
 
@@ -1496,6 +1499,7 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "cgmes_start_values" => (label = "CGMES start values", title = "auto uses the delivery's own SvVoltage state when it carries one and falls back to the flat start otherwise; sv and flat force one of the two.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("auto" => "Automatic (SV state when available, default)", "sv" => "Imported SV state", "flat" => "Flat start")),
   "cgmes_require_boundary" => (label = "Require boundary set", title = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_infer_base_voltages" => (label = "Infer missing base voltages", title = "Reconstruct missing nominal voltages from SV voltages and transformer ratings when the delivery has no BaseVoltage catalog. Pair with an unchecked boundary set.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
+  "cgmes_equivalent_injection_as_source" => (label = "Equivalent injections as source", title = "Import an EquivalentInjection on the SV angle reference node or on a boundary node as a voltage-regulating source at the SV voltage of its node, with the short-circuit power from its r/x; the one on the SV angle reference is the slack. Off, the injection stays as mapped.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_read_dynamics" => (label = "Read dynamic data (DY profile)", title = "Read the DY profile and give the machines their dynamic data (inertia, damping, rating, droop). No calculation reads it; off, the DY file is skipped.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model: fixed injections reproduce the delivery snapshot; a paired controller couples both converters of a link and makes the transfer steerable.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("injections" => "Fixed injections (Stage 0, default)", "paired_control" => "Paired controller (steerable link)")),
   "powsybl_import_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model of a PowSyBl network: fixed injections reproduce the OpenLoadFlow snapshot (rectifier draw and inverter delivery with the loss factors); a paired controller is not implemented yet and is rejected at import.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("fixed_injection" => "Fixed injections (default)", "paired_control" => "Paired controller (not implemented)")),
@@ -1536,6 +1540,7 @@ const _WEBUI_FIELD_CASE_FORMATS = Dict{String,Vector{Symbol}}(
   "cgmes_require_boundary" => [:cgmes],
   "cgmes_infer_base_voltages" => [:cgmes],
   "cgmes_read_dynamics" => [:cgmes],
+  "cgmes_equivalent_injection_as_source" => [:cgmes],
   "cgmes_hvdc_mode" => [:cgmes],
   "powsybl_import_hvdc_mode" => [:powsybl],
   "powsybl_import_remote_regulation" => [:powsybl],
@@ -1580,7 +1585,7 @@ end
 # convention; each is an :adapter-scope spec without a same-named struct
 # field
 const _WEBUI_ADAPTER_SECTIONS = (
-  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_read_dynamics", "cgmes_hvdc_mode"), extras = ()),
+  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_read_dynamics", "cgmes_equivalent_injection_as_source", "cgmes_hvdc_mode"), extras = ()),
   (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva"), extras = ()),
   (adapter = MatpowerAdapter(), key = :matpower, prefix = "matpower_import.", order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
   (adapter = DTFAdapter(), key = :dtf, prefix = "", order = (), extras = ()),
@@ -1696,34 +1701,43 @@ function _webui_adapter_hidden_count(key::Symbol, option_format::Union{Nothing,S
 end
 
 # The system frequency select of the Case page: its own section, rendered
-# for every case format. `applies` (SCF/PGM, or no case) leaves it enabled;
-# for MATPOWER, DTF, CGMES and PowSyBl it is disabled, shows the value in
-# effect and says it has no effect there. An SCF file stating meta.f_nom
-# (`file_value`) gets it disabled at the file's value. A disabled select is not posted,
-# so a save leaves the stored key as it is. The value comes from the form
-# state, which takes an SCF file's meta.f_nom over the configuration
-# (webui_form_state), so an unchanged form never posts a value against the
-# file.
+# for every case format. `applies` leaves it enabled (an SCF/PGM case with a
+# line c1 in farad and no meta.f_nom, or no case). Otherwise it is disabled
+# and holds one option: the file's frequency (`file_value`, an SCF file
+# stating meta.f_nom) or "not used" (no capacitance in farad: MATPOWER,
+# DTF, CGMES, PowSyBl, an SCF file without line c1 or in pu). A disabled
+# select is not posted, and the case save drops the key for such a case
+# (_webui_case_save_plan). The value comes from the form state, which takes
+# an SCF file's meta.f_nom over the configuration (webui_form_state).
 function _webui_system_frequency_html(profile_values; applies::Bool = true, file_value::Union{Nothing,Float64} = nothing)::String
   field = "model_nominal_frequency_hz"
   spec = _webui_option_spec(field)
   selected = file_value === nothing ? _webui_selected(profile_values, field, spec.default) : file_value
-  values = collect(Any, spec.allowed_values)
-  # a case file may state another frequency (meta.f_nom = 59.5, say); it is
-  # listed, or the browser would preselect 50 and post it against the file
-  sel = tryparse(Float64, _webui_form_string(selected))
-  sel === nothing || any(v -> v == sel, values) || push!(values, sel)
   label(v) = isinteger(v) ? string(round(Int, v), " Hz") : string(v, " Hz")
-  opts = join((_webui_option(v, label(v), selected) for v in values), "")
-  hint = file_value !== nothing ? "Taken from the case file (<code>meta.f_nom</code>); saving does not change the configured key." : applies ?
+  opts = if file_value !== nothing
+    _webui_option(file_value, string(label(file_value), " from the case file"), selected)
+  elseif !applies
+    sel = tryparse(Float64, _webui_form_string(selected))
+    _webui_option(something(sel, spec.default), "not used", something(sel, spec.default))
+  else
+    values = collect(Any, spec.allowed_values)
+    # a configuration may hold another frequency (59.5, say); it is listed,
+    # or the browser would preselect 50 and post it
+    sel = tryparse(Float64, _webui_form_string(selected))
+    sel === nothing || any(v -> v == sel, values) || push!(values, sel)
+    join((_webui_option(v, label(v), selected) for v in values), "")
+  end
+  stored = applies ? "" : field in get(profile_values, "_case_file_fields", String[]) ?
+    " The case settings store a value for this key; it has no effect, and the next save of the case options removes it." : ""
+  hint = file_value !== nothing ? "Taken from the case file (<code>meta.f_nom</code>), which wins over the key on import; the key is not saved for this case." : applies ?
     "Turns the <code>c1</code> of SCF and PGM lines into susceptance where the file states no frequency of its own. The short circuit does not depend on it." :
-    "Has no effect for this case format; an SCF export of the case writes it as <code>meta.f_nom</code>."
+    "No line of this case gives a capacitance in farad (SCF/PGM <code>c1</code>); MATPOWER, DTF, CGMES and PowSyBl give line charging as susceptance. The key changes nothing here and is not saved for this case."
   return string(
     "<fieldset class=\"model-section\" data-model-section>",
     "<legend>Network model</legend>",
     "<label", applies ? "" : " class=\"disabled\"", ">", _webui_field_label(field, "System frequency"),
     "<select id=\"", field, "\" name=\"", field, "\"", applies ? "" : " disabled", ">", opts, "</select></label>",
-    "<p class=\"field-hint span-2\">", hint, "</p>",
+    "<p class=\"field-hint span-2\">", hint, stored, "</p>",
     "</fieldset>")
 end
 
@@ -2638,6 +2652,7 @@ const _WEBUI_RESULT_FIELDS = String[
   "Final Q-limit check",
   "Q-V characteristic",
   "Runtime casefile",
+  "System frequency",
   "config_file",
   "started_at",
   "elapsed_seconds",
@@ -2677,6 +2692,11 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
     # setpoint means the point is non-physical, however the modes switched
     metadata = get(result, "metadata", Dict{String,Any}())
     line = get(metadata, "qv_characteristic_line", nothing)
+    return line isa AbstractString && !isempty(line) ? line : "n/a"
+  elseif field == "System frequency"
+    # the run.log line: the frequency with its source, or "not used" when
+    # the network was given in pu
+    line = get(get(result, "metadata", Dict{String,Any}()), "frequency_line", nothing)
     return line isa AbstractString && !isempty(line) ? line : "n/a"
   elseif field == "Runtime casefile"
     return get(result, "runtime_casefile", get(get(result, "metadata", Dict{String,Any}()), "runtime_casefile", "n/a"))
