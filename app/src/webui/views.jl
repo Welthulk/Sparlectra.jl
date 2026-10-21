@@ -1496,6 +1496,7 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "cgmes_start_values" => (label = "CGMES start values", title = "auto uses the delivery's own SvVoltage state when it carries one and falls back to the flat start otherwise; sv and flat force one of the two.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("auto" => "Automatic (SV state when available, default)", "sv" => "Imported SV state", "flat" => "Flat start")),
   "cgmes_require_boundary" => (label = "Require boundary set", title = "Fail the CGMES import when topology references stay unresolved (boundary set missing). Uncheck to import an incomplete delivery anyway.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_infer_base_voltages" => (label = "Infer missing base voltages", title = "Reconstruct missing nominal voltages from SV voltages and transformer ratings when the delivery has no BaseVoltage catalog. Pair with an unchecked boundary set.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
+  "cgmes_read_dynamics" => (label = "Read dynamic data (DY profile)", title = "Read the DY profile and give the machines their dynamic data (inertia, damping, rating, droop). No calculation reads it; off, the DY file is skipped.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model: fixed injections reproduce the delivery snapshot; a paired controller couples both converters of a link and makes the transfer steerable.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("injections" => "Fixed injections (Stage 0, default)", "paired_control" => "Paired controller (steerable link)")),
   "powsybl_import_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model of a PowSyBl network: fixed injections reproduce the OpenLoadFlow snapshot (rectifier draw and inverter delivery with the loss factors); a paired controller is not implemented yet and is rejected at import.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("fixed_injection" => "Fixed injections (default)", "paired_control" => "Paired controller (not implemented)")),
   "powsybl_import_remote_regulation" => (label = "Remote voltage regulation", title = "A generator that regulates another bus: hold_local keeps it PV at its own bus with the target voltage, pq makes it a fixed injection, remote attaches an outer-loop machine voltage control on the regulated bus (reproduces OpenLoadFlow).", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("hold_local" => "Hold the target at the unit's own bus (default)", "pq" => "Fixed P and Q", "remote" => "Outer-loop control of the regulated bus")),
@@ -1534,6 +1535,7 @@ const _WEBUI_FIELD_CASE_FORMATS = Dict{String,Vector{Symbol}}(
   "cgmes_start_values" => [:cgmes],
   "cgmes_require_boundary" => [:cgmes],
   "cgmes_infer_base_voltages" => [:cgmes],
+  "cgmes_read_dynamics" => [:cgmes],
   "cgmes_hvdc_mode" => [:cgmes],
   "powsybl_import_hvdc_mode" => [:powsybl],
   "powsybl_import_remote_regulation" => [:powsybl],
@@ -1578,7 +1580,7 @@ end
 # convention; each is an :adapter-scope spec without a same-named struct
 # field
 const _WEBUI_ADAPTER_SECTIONS = (
-  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_hvdc_mode"), extras = ()),
+  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_read_dynamics", "cgmes_hvdc_mode"), extras = ()),
   (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva"), extras = ()),
   (adapter = MatpowerAdapter(), key = :matpower, prefix = "matpower_import.", order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
   (adapter = DTFAdapter(), key = :dtf, prefix = "", order = (), extras = ()),

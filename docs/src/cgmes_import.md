@@ -423,7 +423,9 @@ With `read_dynamics = true` the store reads the DY profile as well (profile
 tag `DY`; without the switch the file is skipped, and one import notice
 says that a DY profile is present and not read) and the machines get their [`DynamicData`](@ref)
 ([Dynamic Unit Data](@ref dynamic_data)). No calculation reads it; the
-island slack choice reads the unit type.
+island slack choice reads the unit type. In the Web UI the switch is
+**Read dynamic data (DY profile)** in the CGMES section of the Case page,
+saved per case.
 
 | DY class | Fills |
 |---|---|

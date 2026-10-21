@@ -719,7 +719,10 @@ message, input paths, output directory and a **Solver** entry. A CSV artifact op
 is the Markdown artifact `cgmes_import_report.md`; a delivery with a DY profile gets a section **Dynamic data
 (DY profile)** there, with the counts of `cgmes_import.read_dynamics` or
 one line saying that the profile was not read
-([Dynamic data](@ref cgmes_dynamics)).
+([Dynamic data](@ref cgmes_dynamics)). **Read dynamic data (DY profile)**
+in the CGMES section of the Case page switches the key per case (default
+off); unchecking it again removes the key from the case file, so the
+default applies.
 
 Above a CSV table, **Significant digits** (default 5) rounds every decimal
 cell, and **Power columns** (W, kW or MW) shows power columns in whole

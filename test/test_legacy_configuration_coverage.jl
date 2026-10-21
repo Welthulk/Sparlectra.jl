@@ -340,7 +340,6 @@ function test_configuration_webui_keys_both_directions()
       "cgmes_import.map_energy_source" => "CGMES import switch for deliveries that carry generation as EnergySource; set via configuration.yaml or the case sidecar",
       "cgmes_import.map_power_electronics" => "CGMES import switch for CGMES 3.0 deliveries with PowerElectronicsConnection; set via configuration.yaml or the case sidecar",
       "cgmes_import.shunt_control" => "CGMES import switch for the bank regulators of a delivery; set via configuration.yaml or the case sidecar",
-      "cgmes_import.read_dynamics" => "CGMES import switch for the DY profile (dynamic unit data, read by no calculation); set via configuration.yaml or the case sidecar",
       "power_flow.plausibility.vmin_warn" => "threshold of the plausibility warning after a converged run; set via configuration.yaml or the case sidecar",
       "state_estimation.sigma_by_voltage_level" => "a table, not a scalar field: the sigma table of the State Estimation section posts it (se_sigma_lvl_* fields), the run takes it as an override and Save settings writes it into the case configuration",
     )
