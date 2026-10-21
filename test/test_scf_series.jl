@@ -350,7 +350,7 @@ function run_scf_series_tests()
       end
       local manifest = Sparlectra.scf_json_parse(read(serial_files[4], String))
       @test (manifest["format"], manifest["format_version"], manifest["n_steps"]) == ("sparlectra-qsts-result", "1.0", 96)
-      @test readline(serial_files[1]) == "step,element_id,quantity,value"
+      @test run_csv(serial_files[1]).header == ["step", "element_id", "quantity", "value"]
 
       @testset "mode A unchanged" begin (function ()
         # mode B adds step quantities, controller elements and two files;
@@ -360,9 +360,9 @@ function run_scf_series_tests()
         @test isempty(serial.switching) && isempty(serial.metrics) && size(serial.controller_values) == (0, length(QSTS_CONTROLLER_QUANTITIES), 96)
         @test isempty(serial.elements.controller_ids) && serial.mode === :snapshots
         local mode_b_only = Set(vcat(QSTS_STEP_QUANTITIES[(findfirst(==("resync"), QSTS_STEP_QUANTITIES)):end], QSTS_CONTROLLER_QUANTITIES))
-        local written = Set(split(line, ',')[3] for line in Iterators.drop(eachline(serial_files[1]), 1))
+        local written = Set(row[3] for row in run_csv(serial_files[1]).rows)
         @test isempty(intersect(written, mode_b_only))
-        @test !any(line -> occursin(",controller,", line), eachline(serial_files[3]))
+        @test !any(row -> "controller" in row, run_csv(serial_files[3]).rows)
         @test !haskey(manifest, "n_failed") && collect(keys(manifest["qsts"])) == ["snapshot_controls"]
       end)() end
     end)() end
@@ -606,8 +606,9 @@ function run_scf_series_tests()
       # the files: two more than mode A, the manifest with the mode B keys
       local files = writeQstsResults(mktempdir(), r)
       @test basename.(files) == ["qsts_values.csv", "qsts_steps.csv", "qsts_elements.csv", "qsts_switching.csv", "qsts_metrics.csv", "qsts_manifest.json"]
-      @test readline(files[4]) == "step,element_id,old,new,steps,trigger" && countlines(files[4]) == 7
-      @test count(line -> occursin(",controller,", line), eachline(files[3])) == 3
+      local switching = run_csv(files[4])
+      @test switching.header == ["step", "element_id", "old", "new", "steps", "trigger"] && length(switching.rows) == 6
+      @test count(row -> "controller" in row, run_csv(files[3]).rows) == 3
       local manifest = Sparlectra.scf_json_parse(read(files[6], String))
       @test (manifest["mode"], manifest["n_failed"], manifest["qsts"]["sequential_start"], manifest["qsts"]["hunting_window"]) == ("sequential", 0, "previous", 3)
       # the long table holds the controller rows, the mode A checks apply

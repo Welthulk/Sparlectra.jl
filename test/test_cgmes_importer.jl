@@ -1225,11 +1225,11 @@ function run_cgmes_importer_tests()
       m = match(r"start_state_residual_inf: ([0-9.eE+-]+)", summary)
       @test m !== nothing
       @test parse(Float64, m.captures[1]) < 1e-8
-      residuals = readlines(joinpath(out, "self_check_residuals.csv"))
-      @test residuals[1] == "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts"
-      @test length(residuals) - 1 == 9
-      @test all(split(l, ',')[9] == "true" for l in residuals[2:end])
-      @test any(parse(Int, split(l, ',')[10]) > 0 for l in residuals[2:end])
+      residuals = run_csv(joinpath(out, "self_check_residuals.csv"))
+      @test residuals.header == ["bus_id", "bus_name", "vn_kV", "bus_type", "vm_pu_start", "va_deg_start", "p_residual", "q_residual", "has_sv", "n_transformer_terminals", "n_shunts"]
+      @test length(residuals.rows) == 9
+      @test all(row[9] == "true" for row in residuals.rows)
+      @test any(residuals.number(row[10]) > 0 for row in residuals.rows)
       @test occursin("No-SV buses: 0", cgmes_report_plain(out))
       # a delivery without DY profile gets no DY section
       @test !occursin("Dynamic data (DY profile)", cgmes_report_plain(out))

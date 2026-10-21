@@ -100,7 +100,8 @@ function run_legacy_island_diagnostics_tests()
           # Solved island keeps its true record (regression guard).
           @test row1[col["island_id"]] == "1"
           @test row1[col["iterations"]] == "80"
-          @test row1[col["final_mismatch"]] == "240324.326723385"   # 15 significant digits, the result-CSV writer (#386)
+          # 15 significant digits, the result-CSV writer (#386), in technical or excel_de
+          @test row1[col["final_mismatch"]] in ("240324.326723385", "240.324,326723385")
           @test row1[col["final_status"]] == "not_converged"
           @test row1[col["failure_reason"]] == "nr_mismatch_not_converged_active_set_unstable"
           @test row1[col["stage"]] == "newton_iteration"
@@ -117,7 +118,8 @@ function run_legacy_island_diagnostics_tests()
           @test row2[col["initial_mismatch"]] == "unavailable"
           @test row2[col["mismatch_status"]] == "unavailable"
           @test row2[col["pv_pq_switching_events"]] == "0"
-          @test !occursin("240324", join(row2, ','))
+          # the island 1 mismatch in technical or excel_de notation
+          @test !any(cell -> occursin("240324", replace(cell, "." => "")), row2)
 
           # Attempted islands keep their per-island artifacts; never-attempted
           # islands are represented in the summary CSV only (open design
@@ -126,8 +128,10 @@ function run_legacy_island_diagnostics_tests()
           @test isfile(joinpath(dir, "ac_island_1_mismatch_history.csv"))
           @test !isfile(joinpath(dir, "ac_island_2_solver.log"))
           @test !isfile(joinpath(dir, "ac_island_2_mismatch_history.csv"))
-          history = read(joinpath(dir, "ac_island_1_mismatch_history.csv"), String)
-          @test occursin("1,2220.61451058444", history)
+          history = run_csv(joinpath(dir, "ac_island_1_mismatch_history.csv"))
+          @test history.header == ["iteration", "max_mismatch"]
+          # 15 significant digits in either format, so the parsed value is exact
+          @test any(row -> history.number(row[1]) == 1 && history.number(row[2]) == 2220.61451058444, history.rows)
 
           # Bug C: q_limit_processing_status must not alias failure_reason.
           @test row1[col["qlimits_enabled"]] == "true"

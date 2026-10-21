@@ -665,9 +665,9 @@ function run_legacy_cgmes_importer_tests()
           @test occursin("overrides: power_flow.flatstart=" * hostile_flatstart, run_log)
           @test rm_.metadata["cgmes_start_values"] == mode
           @test rm_.metadata["cgmes_sv_compare_max_dvm"] < 1e-6
-          sv_rows = readlines(joinpath(out_m, "sv_compare.csv"))
-          @test sv_rows[1] == "bus,vm_pu,sv_vm_pu,dvm,va_deg,sv_va_deg,dva,dva_aligned"
-          @test length(sv_rows) - 1 == 14
+          sv_rows = run_csv(joinpath(out_m, "sv_compare.csv"))
+          @test sv_rows.header == ["bus", "vm_pu", "sv_vm_pu", "dvm", "va_deg", "sv_va_deg", "dva", "dva_aligned"]
+          @test length(sv_rows.rows) == 14
         end
 
         # under auto, power_flow.flatstart asks for the flat start although the
@@ -764,16 +764,16 @@ function run_legacy_cgmes_importer_tests()
         @test sc["metadata"]["sc_flagged_rows"] == 14
         @test sc["metadata"]["sc_max_ik_kA"] > 0.0
         rid = sc["run_id"]
-        max_rows = readlines(joinpath(root, rid, "short_circuit_max.csv"))
-        @test max_rows[1] == "bus,vn_kV,island,status,c,zk_ohm,rx_ratio,ik_kA,sk_MVA,kappa,ip_kA,flagged,reasons,lower_bound"
-        @test length(max_rows) - 1 == 14
-        @test all(occursin("true", split(l, ',')[12]) for l in max_rows[2:end])
+        max_rows = run_csv(joinpath(root, rid, "short_circuit_max.csv"))
+        @test max_rows.header == ["bus", "vn_kV", "island", "status", "c", "zk_ohm", "rx_ratio", "ik_kA", "sk_MVA", "kappa", "ip_kA", "flagged", "reasons", "lower_bound"]
+        @test length(max_rows.rows) == 14
+        @test all(occursin("true", row[12]) for row in max_rows.rows)
         # the delivery and the case file it was written from give the same
         # currents: the reference values of the case file hold here as well
         case_reference = Sparlectra.scf_json_parse(read(joinpath(@__DIR__, "fixtures", "demo_cases", "sp_case14.json"), String))["short_circuit"]
         for (bus, reference) in case_reference
-          row = split(only(l for l in max_rows[2:end] if startswith(l, bus * ",")), ',')
-          @test isapprox(parse(Float64, row[8]), reference["ik_kA"]; atol = 1e-4)
+          row = only(r for r in max_rows.rows if first(r) == bus)
+          @test isapprox(max_rows.number(row[8]), reference["ik_kA"]; atol = 1e-4)
         end
         @test isfile(joinpath(root, rid, "short_circuit_min.csv"))
         run_log = read(joinpath(root, rid, "run.log"), String)

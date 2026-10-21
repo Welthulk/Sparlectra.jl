@@ -71,14 +71,15 @@ function run_ref_api_smoke_tests()
         bad5 = joinpath(dirname(meas5), "sp_case5.measurements.baddata.csv")
         se_bad = start_powerflow_run(Dict{String,Any}("casefile" => scf5, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs"), "se_mode" => true, "measurement_file" => bad5))
         @test se_bad["status"] == "succeeded"
-        vbad = [split(l, ",") for l in readlines(joinpath(se_bad["output_dir"], "measurements_verdict.csv"))[2:end]]
+        vcsv = run_csv(joinpath(se_bad["output_dir"], "measurements_verdict.csv"))
+        vbad = vcsv.rows
         elim = filter(v -> v[9] == "true", vbad)
         @test length(elim) == se_bad["metadata"]["se_eliminations"] == 1
         art_bad = readlines(joinpath(se_bad["output_dir"], "measurements.csv"))
         gross = findall(((a, b),) -> a.value != b.value, collect(zip(readMeasurementTable(meas5), readMeasurementTable(bad5))))
         @test length(gross) == 1
-        @test parse(Int, elim[1][1]) == findfirst(l -> startswith(l, "timestamp"), art_bad) + only(gross)
-        @test abs(parse(Float64, elim[1][6])) >= se_bad["metadata"]["se_k_eliminate"]
+        @test Int(vcsv.number(elim[1][1])) == findfirst(l -> startswith(l, "timestamp"), art_bad) + only(gross)
+        @test abs(vcsv.number(elim[1][6])) >= se_bad["metadata"]["se_k_eliminate"]
         @test elim[1][11] == "eliminated"
         @test occursin(elim[1][4], read(joinpath(se_bad["output_dir"], "se_diagnostics.md"), String))
       end

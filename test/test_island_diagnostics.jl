@@ -64,13 +64,12 @@ function _island_diag_testnet()
   return net
 end
 
-# Split a summary CSV into a header-name => column-index map plus data rows.
+# Split a summary CSV into a header-name => column-index map plus data rows
+# (delimiter from the header line, see run_csv).
 function _island_diag_read_summary(path::AbstractString)
-  lines = split(strip(read(path, String)), '\n')
-  header = split(lines[1], ',')
-  col = Dict(String(name) => i for (i, name) in enumerate(header))
-  rows = [split(line, ',') for line in lines[2:end]]
-  return col, rows
+  csv = run_csv(path)
+  col = Dict(name => i for (i, name) in enumerate(csv.header))
+  return col, csv.rows
 end
 
 function run_island_diagnostics_tests()

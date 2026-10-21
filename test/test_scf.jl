@@ -1484,7 +1484,7 @@ mpc.branch = [
     # the deviation reaches the run, and the truth value reaches the deltas
     @test occursin("documents a tap deviation", read(joinpath(d, "run_prov", "run.log"), String))
     @test isfile(joinpath(d, "run_prov", "se_deltas.csv"))
-    @test count(l -> startswith(l, "meas,"), readlines(joinpath(d, "run_prov", "se_deltas.csv"))) == 1
+    @test count(row -> first(row) == "meas", run_csv(joinpath(d, "run_prov", "se_deltas.csv")).rows) == 1
     # the headline leads with J/dof: a bare J grows with the row count and
     # reads as an alarm where J/dof says the set is healthy
     @test occursin("J/dof = ", SparlectraApp.to_dict(res_prov)["message"])
@@ -1545,8 +1545,13 @@ mpc.branch = [
     fsc = exportSCF(scnet; file = joinpath(d, "sc.scf.json"), short_circuit = study)
     # the source data survives the round trip, which is what makes the run possible
     @test length(importSCF(fsc).sc_sources.external_network_injections) == 1
-    res_sc = redirect_stdout(devnull) do
-      SparlectraApp._run_short_circuit_service(fsc, cfg, joinpath(d, "run_sc"), "scf_sc")
+    # the technical side of the format comparison below: `auto` follows the
+    # locale, so this run pins the portable one (a German desktop would give
+    # excel_de and the comparison would test excel_de against itself)
+    res_sc = withenv("LC_ALL" => "C.UTF-8") do
+      redirect_stdout(devnull) do
+        SparlectraApp._run_short_circuit_service(fsc, cfg, joinpath(d, "run_sc"), "scf_sc")
+      end
     end
     dsc = SparlectraApp.to_dict(res_sc)
     @test dsc["status"] == "succeeded"
@@ -1601,7 +1606,9 @@ mpc.branch = [
     gen_lines = readlines(gen_path)
     @test gen_lines[1] == "name;value;flag"
     @test gen_lines[2] == "\"a;b\";1.234,5;true"
-    Sparlectra.write_result_csv(gen_path, ("name", "value"), (("x", 0.5),))
+    withenv("LC_ALL" => "C.UTF-8") do
+      Sparlectra.write_result_csv(gen_path, ("name", "value"), (("x", 0.5),))
+    end
     @test readlines(gen_path) == ["name,value", "x,0.5"]
     # SE state round trip under excel_de (decimal comma, semicolon)
     scf_dir = joinpath(dirname(@__DIR__), "data", "scf")

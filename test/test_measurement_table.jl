@@ -1194,9 +1194,9 @@ function run_measurement_table_tests()
         @test d_on2["metadata"]["se_objective"] === d_on["metadata"]["se_objective"]
         @test d_on2["metadata"]["se_zero_injection_rows"] == 0
         # the verdict: one line per table row, joined by its line number
-        verdict = readlines(joinpath(d, "on", "measurements_verdict.csv"))
-        @test length(verdict) == length(art_rows) + 1
-        @test [parse(Int, first(split(l, ","))) for l in verdict[2:end]] == [r.line for r in art_rows]
+        verdict = run_csv(joinpath(d, "on", "measurements_verdict.csv"))
+        @test length(verdict.rows) == length(art_rows)
+        @test [Int(verdict.number(first(row))) for row in verdict.rows] == [r.line for r in art_rows]
         cfg_zoff = joinpath(d, "table_zi_off.yaml")
         write(cfg_zoff, "config_version: 1\nstate_estimation:\n  measurement_table: true\n  zero_injection: off\n")
         zoff = redirect_stdout(devnull) do
