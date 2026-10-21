@@ -68,16 +68,17 @@ const _APSLF_OUTER_FALLBACK_PV_BUS_MAX = 250
 """
     APSLF_MIN_VERSION
 
-Lowest AnalyticLoadFlow.jl version the adapter is verified against (0.10.0:
-the series is evaluated with Padé only, so the adapter passes no `use_pade`;
-an older version would fall back to direct Taylor summation). The
+Lowest AnalyticLoadFlow.jl version the adapter is verified against (0.10.2:
+a non-converged result carries the `diagnosis` that `solvePf` passes on;
+since 0.10.0 the series is evaluated with Padé only, so the adapter passes no
+`use_pade`, and an older version would fall back to direct Taylor summation). The
 Project.toml compat carries the same bound, but Julia does not check a
 Manifest against the compat at load time: an environment whose Manifest
 predates the bump loads the older version without a message, and an older
 version can return a wrong series result flagged as converged.
 `check_apslf_version` closes that gap at load time.
 """
-const APSLF_MIN_VERSION = v"0.10.0"
+const APSLF_MIN_VERSION = v"0.10.2"
 
 """
     check_apslf_version(loaded = pkgversion(AnalyticLoadFlow)) -> VersionNumber
@@ -105,14 +106,22 @@ Pure mapping from the canonical `PFModel` fields onto the AnalyticLoadFlow
 spec expected by `solve_pf_apslf`: `Ybus → Y`, `busType → bustype`,
 `real/imag(Sspec) → Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax`
 (defaulting to `-Inf`/`Inf` when `model` carries no Q-limits), `slack_idx →
-slack`. Split out from `solvePf` so the mapping itself is independently
-testable.
+slack`, and `Vslack`, the complex slack voltage: magnitude `Vset[slack_idx]`,
+angle of `V0[slack_idx]` (the slack angle of the net, which `getBusData` keeps
+under a flat start as well). `_apslf_solve` passes `Vslack` as the keyword of
+the same name; without it AnalyticLoadFlow fixes the slack at angle 0 and the
+whole solution comes back rotated by the slack angle. Split out from
+`solvePf` so the mapping itself is independently testable.
 """
 function _apslf_spec_from_model(model::PFModel)
   n = length(model.busIdx_net)
 
   qmin_pu = isempty(model.qmin_pu) ? fill(-Inf, n) : model.qmin_pu
   qmax_pu = isempty(model.qmax_pu) ? fill(Inf, n) : model.qmax_pu
+
+  # slack voltage as Newton holds it: setpoint magnitude, start angle
+  # (rectangular_network_solver.jl fixes V0[slack] the same way)
+  Vslack = ComplexF64(model.Vset[model.slack_idx] * cis(angle(model.V0[model.slack_idx])))
 
   return (
     Y = model.Ybus,
@@ -123,6 +132,7 @@ function _apslf_spec_from_model(model::PFModel)
     Qmin = qmin_pu,
     Qmax = qmax_pu,
     slack = model.slack_idx,
+    Vslack = Vslack,
   )
 end
 
@@ -135,16 +145,21 @@ Maps the canonical `PFModel` fields onto the AnalyticLoadFlow spec via
 [`_apslf_spec_from_model`](@ref). The returned voltage vector is in the same
 PF ordering as `model.busIdx_net`.
 
-`model.V0` is **not** used: AnalyticLoadFlow always starts from the canonical
-analytic germ `V(s=0) = 1∠0` and does not accept an external start voltage.
+`model.V0` is not used as a start: AnalyticLoadFlow always starts from its
+own analytic germ and does not accept an external start voltage. Only the
+angle of `V0[slack_idx]` is read, as the slack angle (see
+`_apslf_spec_from_model`).
 
 `meta` carries solver-specific diagnostics: the series/Padé `order`, the
 Padé margin (`stability`: `dmin`/`pole`/`bus`/`level`, derived from the
 distance of Padé poles to the physical evaluation point `s = 1`), the
 coefficient-growth radius of the series (`series_radius`: `radius`/`bus`, see
 `_apslf_series_radius`), and NR-polish bookkeeping
-(`enabled`/`success`/`improved`/`rejected`/`reject_reason`). Both bus fields
-are in the numbering of the net the model was built from (`busIdx_net`).
+(`enabled`/`success`/`improved`/`rejected`/`reject_reason`), and for a
+non-converged run the `diagnosis` of AnalyticLoadFlow (`reason`, `message`,
+`pole_min_abs`, `pole_bus`, `pole_pair`, `pade_change`, `order`; `nothing`
+when the run converged). The bus fields are in the numbering of the net the
+model was built from (`busIdx_net`).
 
 Without a finite reactive limit in `model` the direct kernel runs one outer
 pass instead of up to 30 identical ones (see `_apslf_solve`).
@@ -190,6 +205,25 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
     push!(clamps, (Int(model.busIdx_net[i]), side))
   end
 
+  # Why a non-converged run failed, from AnalyticLoadFlow's diagnosis of the
+  # last outer step (0.10.2): nothing for a converged run, and nothing when
+  # the coefficients of that step were not finite (the package then stores
+  # none). The pole bus goes to net numbering like the radius buses above.
+  diagnosis = if !res.converged && hasproperty(res, :diagnosis) && res.diagnosis !== nothing
+    d = res.diagnosis
+    (
+      reason = d.reason,
+      message = String(d.message),
+      pole_min_abs = Float64(abs(d.pole_min)),
+      pole_bus = d.pole_bus >= 1 ? Int(model.busIdx_net[d.pole_bus]) : 0,
+      pole_pair = Bool(d.pole_pair),
+      pade_change = Float64(d.pade_change),
+      order = Int(d.order),
+    )
+  else
+    nothing
+  end
+
   meta = (
     solver = :apslf,
     mode = res.effective_mode,
@@ -204,6 +238,7 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
     outer_iters = res.outer_iters,
     bustype_final = res.bustype,
     qlimit_clamps = clamps,
+    diagnosis = diagnosis,
   )
 
   return PFSolution(
@@ -231,8 +266,12 @@ end
 # every phase-shifting transformer (an unsymmetric Y) and hands it over
 # complete; AnalyticLoadFlow (phase shifters supported since 0.10.0) solves
 # it with its default germ, no Sparlectra-side special case.
+# Slack angle: solve_pf_apslf sets Vslack = Vm[slack] + 0im internally and
+# splats its keywords after that default, so the Vslack keyword passed here
+# wins (checked against AnalyticLoadFlow 0.10.0 and 0.10.2, the compat lower bound). It
+# also reaches the outer fallback inside solve_pf_apslf and the NR polish.
 function _apslf_solve(solver::ApslfSolver, spec)
-  common = (mode = solver.mode, order = solver.order, nr_polish = solver.nr_polish, return_coeffs = true)
+  common = (mode = solver.mode, order = solver.order, nr_polish = solver.nr_polish, return_coeffs = true, Vslack = spec.Vslack)
   limits_free = !any(isfinite, spec.Qmin) && !any(isfinite, spec.Qmax)
   (solver.mode === :direct && limits_free) || return AnalyticLoadFlow.solve_pf_apslf(spec; common...)
   res = AnalyticLoadFlow.solve_pf_apslf(spec; common..., max_outer = 1, outer_fallback_nbus_max = 0)

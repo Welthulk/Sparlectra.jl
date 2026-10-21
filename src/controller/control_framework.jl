@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -125,7 +125,7 @@ end
 
 # Generic controllable-element record of one controller: what the device is,
 # which actuator it moves, which quantity it steers onto which target, and
-# within which limits — the shared vocabulary over all controller types.
+# within which limits: the shared vocabulary over all controller types.
 # Types without a descriptor stay invisible in the element view (nothing).
 control_element_descriptor(::AbstractOuterController, ::Any)::Union{Nothing,NamedTuple} = nothing
 
@@ -137,7 +137,7 @@ a uniform vocabulary: `element` (the physical device), `device` (its role
 label), `actuator` and its `[actuator_min, actuator_max]` range, the
 controlled `quantity` with `target`/`target_value`, `discrete`, `enabled`,
 and the live `status`/`converged`/`at_limit` flags. Derived on demand from
-the registered controllers — purely a reporting view, no control behavior
+the registered controllers, purely a reporting view, no control behavior
 attached.
 """
 function controllableElements(net::Any)::Vector{NamedTuple}

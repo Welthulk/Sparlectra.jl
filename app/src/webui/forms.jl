@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -427,7 +427,7 @@ function _webui_case_directory(; case_directory::Union{Nothing,AbstractString} =
 end
 
 # .zip covers CGMES deliveries (single ZIP, base case plus boundary, or
-# ZIP-in-ZIP) — the importer's container layer opens them in memory.
+# ZIP-in-ZIP), the importer's container layer opens them in memory.
 # .csv covers measurement sets (SE phase 5): the role is decided by a content
 # sniff on the version comment, not the extension (see _webui_is_measurement_csv).
 # .json is a Sparlectra Case Format case (#342); the import path validates the
@@ -539,7 +539,7 @@ function _webui_cgmes_upload_role(path::AbstractString, directory::AbstractStrin
 
   # a boundary-only delivery has no equipment of its own
   if isempty(intersect(profiles, (:EQ, :EQ_OP, :EQ_SC, :TP, :SSH))) && !isempty(intersect(profiles, (:EQ_BD, :EQ_BD_OP, :TP_BD)))
-    return "🔗 $(version) boundary set · $(proflist) · $(cnt(:TopologicalNode)) boundary nodes — pair it with a base case"
+    return "🔗 $(version) boundary set · $(proflist) · $(cnt(:TopologicalNode)) boundary nodes - pair it with a base case"
   end
 
   parts = String[]
@@ -554,7 +554,7 @@ function _webui_cgmes_upload_role(path::AbstractString, directory::AbstractStrin
   content = join(parts, ", ")
 
   missing_profiles = [p for p in (:EQ, :SSH, :TP) if !(p in profiles)]
-  isempty(missing_profiles) || return "❌ $(version) · $(proflist) · $(content) — incomplete: missing profile(s) $(join(String.(missing_profiles), ", "))$(_webui_upload_analysis_note(path))"
+  isempty(missing_profiles) || return "❌ $(version) · $(proflist) · $(content) - incomplete: missing profile(s) $(join(String.(missing_profiles), ", "))$(_webui_upload_analysis_note(path))"
 
   if !summary.boundary_missing_hint
     return "✅ $(version) · $(proflist) · $(content) · self-contained, ready to compute"
@@ -578,7 +578,7 @@ function _webui_cgmes_upload_role(path::AbstractString, directory::AbstractStrin
   # it next to the case instead of asking for a second upload.
   fetched = _webui_try_supply_cgmes_boundary(path, directory)
   isempty(fetched) || return "✅ $(version) · $(proflist) · $(content) · boundary supplied automatically ($(fetched)), ready to compute"
-  return "⚠️ $(version) · $(proflist) · $(content) · $(summary.unresolved_count) unresolved references — boundary set missing: upload it as well, or type cgmes:&lt;alias&gt;$(_webui_upload_analysis_note(path))"
+  return "⚠️ $(version) · $(proflist) · $(content) · $(summary.unresolved_count) unresolved references - boundary set missing: upload it as well, or type cgmes:&lt;alias&gt;$(_webui_upload_analysis_note(path))"
 end
 
 """
@@ -586,7 +586,7 @@ Upload-time import analysis for a CGMES delivery that stayed incomplete
 (missing profiles or missing boundary): writes the full
 [`importFailureAnalysis`](@ref Sparlectra.CGMESImporter.importFailureAnalysis)
 report next to the case as `<case>.import_analysis.txt` and returns a short
-message suffix naming the missing declared dependencies. Best-effort — an
+message suffix naming the missing declared dependencies. Best-effort: an
 unreadable delivery yields an empty suffix and no file.
 """
 function _webui_upload_analysis_note(path::AbstractString)::String
@@ -600,9 +600,9 @@ function _webui_upload_analysis_note(path::AbstractString)::String
     if !isempty(stats.missing_dependencies)
       shown = join(Iterators.take(stats.missing_dependencies, 3), ", ")
       length(stats.missing_dependencies) > 3 && (shown *= ", …")
-      return " · missing declared dependencies: $(shown) — full analysis in $(basename(report_file))"
+      return " · missing declared dependencies: $(shown) - full analysis in $(basename(report_file))"
     end
-    return " — full analysis in $(basename(report_file))"
+    return " - full analysis in $(basename(report_file))"
   catch
     # keep the role summary useful even when the analysis cannot be built
     return ""
@@ -612,7 +612,7 @@ end
 """
 Look for a boundary delivery in the local ENTSO-E test-set cache that resolves
 `path`, copy it next to the case, and return its filename (empty when none
-fits). Only uses what is already extracted locally — no download is triggered
+fits). Only uses what is already extracted locally, no download is triggered
 from an upload.
 """
 function _webui_try_supply_cgmes_boundary(path::AbstractString, directory::AbstractString)::String
@@ -763,7 +763,7 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   end
   extension in (".m", ".dat", ".zip") || return false
   if extension == ".zip"
-    # A boundary set is a companion delivery, not a runnable case — hide it
+    # A boundary set is a companion delivery, not a runnable case: hide it
     # the same way FOR002 reference files are hidden.
     isfile(name) || return true
     return !_webui_is_cgmes_boundary_only_cached(name)
@@ -1418,10 +1418,33 @@ function _webui_case_format_conflict(path::AbstractString, fmt::AbstractString):
   end
 end
 
-function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing, apply_case_levels::Bool = true)
+# Whether the selected case has a case configuration file next to it, the
+# test resolve_config uses to take case-scope keys from the defaults.
+function _webui_case_has_config_file(casefile::AbstractString, case_directory)::Bool
+  name = strip(String(casefile))
+  isempty(name) && return false
+  path = isabspath(name) ? name : (case_directory === nothing ? name : joinpath(String(case_directory), name))
+  (isfile(path) || isdir(path)) || return false
+  return isfile(case_config_path(path))
+end
+
+function webui_form_state(; selected_casefile::AbstractString = "", selected_config_file::AbstractString = "", sidecar_profile = nothing, submitted_form = nothing, case_directory = nothing, apply_case_levels::Bool = true, case_scope_from_defaults::Bool = false)
   config_path = isempty(selected_config_file) ? DEFAULT_SPARLECTRA_CONFIG_PATH : selected_config_file
   values = Dict{String,Any}(spec.field => spec.default for spec in WEBUI_OPTION_SPECS)
   config_values = _webui_config_field_values(config_path)
+  # A case with a case configuration file reads its case-scope keys from
+  # that file over the packaged defaults, never from the configuration file
+  # (resolve_config). The Settings page asks for that view
+  # (case_scope_from_defaults): it showed the configuration file's value
+  # (L20: max_iter 25 shown, 80 used), and a save of the unchanged page
+  # wrote it into the case file and changed the run.
+  if case_scope_from_defaults && apply_case_levels && _webui_case_has_config_file(selected_casefile, case_directory)
+    default_values = _webui_config_field_values(DEFAULT_SPARLECTRA_CONFIG_PATH)
+    for (config_key, field, _) in _WEBUI_FORM_CONFIG_FIELDS
+      scf_is_case_config_key(config_key) || continue
+      haskey(default_values, field) ? (config_values[field] = default_values[field]) : delete!(config_values, field)
+    end
+  end
   merge!(values, config_values)
   # an SCF file states its system frequency (meta.f_nom), and the import
   # gives it precedence over the key: the select shows it, so an untouched
@@ -1480,7 +1503,7 @@ function webui_form_state(; selected_casefile::AbstractString = "", selected_con
 end
 
 """
-    _webui_load_case_settings(output_root, casefile; case_directory) -> Union{Nothing,Dict}
+    _webui_load_case_settings(output_root, casefile; config_file, case_directory) -> Union{Nothing,Dict}
 
 Per-case Web UI form defaults from the case configuration file: the `form`
 block (SE and generator options) plus the `_profile_path` marker for the
@@ -1488,11 +1511,13 @@ settings notice. Converts a leftover legacy settings sidecar
 (`<stem>.sparlectra-webui.yaml`) ONCE into the case configuration file and
 deletes it, with an operation-log line either way;
 when a case configuration file already exists, the stale sidecar is
-discarded instead of clobbering the newer file. The config-backed form
+discarded instead of clobbering the newer file. The conversion takes over
+the case-scope keys in which `config_file` differs from the packaged
+defaults, as a save that creates the file does. The config-backed form
 fields are seeded separately from the configuration levels
 (`_webui_case_config_field_values`).
 """
-function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; case_directory::Union{Nothing,AbstractString} = nothing)
+function _webui_load_case_settings(output_root::AbstractString, casefile::AbstractString; config_file::AbstractString, case_directory::Union{Nothing,AbstractString} = nothing)
   path = try
     _webui_case_settings_path(output_root, casefile; case_directory)
   catch err
@@ -1532,9 +1557,12 @@ function _webui_load_case_settings(output_root::AbstractString, casefile::Abstra
             converted_form[field] = normalized
           end
         end
+        # the conversion creates the case file: variant A as in a save
+        adoption = _webui_case_adoption(config_file, source; skip = collect(keys(converted_config)))
+        merge!(converted_config, adoption)
         write_case_config(source, converted_config; form = converted_form)
         rm(legacy; force = true)
-        _webui_log_case_settings_load(output_root, "case_settings_sidecar_converted"; casefile, profile_path = path, status = "converted", config_keys = length(converted_config), form_fields = length(converted_form))
+        _webui_log_case_settings_load(output_root, "case_settings_sidecar_converted"; casefile, profile_path = path, status = "converted", config_keys = length(converted_config), form_fields = length(converted_form), adopted_keys = length(adoption))
       catch err
         _webui_log_case_settings_load(output_root, "case_settings_load_failed"; casefile, profile_path = legacy, status = "failed", message = string("sidecar conversion failed: ", sprint(showerror, err)))
       end
@@ -1591,8 +1619,11 @@ end
 ## run-based save path never sees the generator form). Only persisted
 ## fields (WEBUI_OPTION_SPECS) are accepted; a config-backed field among
 ## them is written as its case-scope configuration key, every other
-## existing configuration key stays untouched.
-function _webui_merge_case_settings!(output_root::AbstractString, casefile_path::AbstractString, updates::AbstractDict; case_directory::Union{Nothing,AbstractString} = nothing)
+## existing configuration key stays untouched. A merge that creates the
+## file takes over the case-scope keys in which `config_file` differs from
+## the packaged defaults (variant A, _webui_case_adoption). Returns
+## `(path, adopted)`, or `nothing` when nothing was written.
+function _webui_merge_case_settings!(output_root::AbstractString, casefile_path::AbstractString, updates::AbstractDict; config_file::AbstractString, case_directory::Union{Nothing,AbstractString} = nothing)
   source = isabspath(strip(String(casefile_path))) ? normpath(String(casefile_path)) : _webui_resolve_case_profile_source(casefile_path; case_directory)
   isempty(source) && return nothing
   existing_config = try
@@ -1628,7 +1659,15 @@ function _webui_merge_case_settings!(output_root::AbstractString, casefile_path:
     end
     form[field] = v
   end
-  return write_case_config(source, config; form = form)
+  adopted = String[]
+  if !isfile(case_config_path(source))
+    for (key, installed) in _webui_case_adoption(config_file, source; skip = collect(keys(config)))
+      config[key] = installed
+      push!(adopted, key)
+    end
+    sort!(adopted)
+  end
+  return (; path = write_case_config(source, config; form = form), adopted)
 end
 
 function _webui_input_value(values::AbstractDict, field::AbstractString, default)::String
@@ -1695,7 +1734,7 @@ end
 
 # "Short circuit" button gating (the button is only
 # selectable when the data is actually there): cheap byte scan over the
-# delivery's XML contents for short-circuit source markers — synchronous
+# delivery's XML contents for short-circuit source markers, synchronous
 # machines, feeder short-circuit currents, or equivalent-injection
 # impedances. In-memory via collectCGMESFiles (nested ZIPs included), cached
 # per path+mtime so a 6209-bus delivery is scanned once, not on every form

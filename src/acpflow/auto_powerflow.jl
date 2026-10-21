@@ -453,8 +453,8 @@ function _auto_pf_escalation_stages(base_pf::PowerFlowConfig)
   ))
   push!(stages, (
     id = :L3_full_projection,
-    # no flat-start gate since #463: the flat start only sets the profile,
-    # and the projection works from it like every other start machine
+    # no flat-start gate: the auto mode chooses its own start, and this
+    # stage sets the projection explicitly on top of the run's flat start
     gate = (ev, pf) -> (true, ""),
     transform = (pf, ev) -> begin
       sm = _copy_start_mode_with(pf.start_mode; start_projection = true, try_blend_scan = true, try_dc_start = true, measure_candidates = true, accept_unmeasured_dc_start = true, blend_lambdas = [0.15, 0.25, 0.5, 0.75, 0.9])

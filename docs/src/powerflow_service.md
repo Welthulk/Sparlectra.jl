@@ -50,7 +50,7 @@ metadata only; failed runs are indexed once they produced `result.json`.
 | `run_metadata.yaml` | request and lifecycle metadata |
 | `performance.log` | with `performance_timing` (`off`, `compact`, `full`): Y-bus, Newton-iteration, Q-limit and linear-solve aggregates; `solver_elapsed_s` is the pure solver time |
 | `diagnose.log` | with `run_diagnostics`: the PowerFlow and Q-limit printers; a diagnostic failure never replaces the primary result |
-| `cgmes.log` | the full CGMES import report; only its `warning:` lines are mirrored into `run.log` |
+| `cgmes_import_report.md` | the full CGMES import report as Markdown (files, classes, network built, DY profile when the delivery carries one, short-circuit data, importer messages); only its `warning:` lines are mirrored into `run.log` |
 | `bus_voltages_complex.csv`, `branch_flows.csv`, `bus_powers.csv` | with `detailed_result_csv` (default `false`), after a successful solve, from `buildACPFlowReport(raw_result.net)`: voltages per bus (polar and rectangular); flows and losses per branch; per bus the solved generation, load and shunt power, `bus_type_start`/`bus_type_end`, the binding Q-limit, the `control`/`control_status` summary and the `non_physical` flag |
 | `q_limit_events.csv`, `q_limit_initial_limits.csv` | Q-limit switching events and the initial limits, with `run_diagnostics` or `detailed_result_csv`; a run with more than five switching events writes `q_limit_events.csv` on its own and `q_limit.log` keeps a five-row preview that names the file |
 

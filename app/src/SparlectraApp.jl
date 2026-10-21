@@ -167,6 +167,7 @@ import Sparlectra:
   _format_top_mismatch_rows,
   _hvdc_link_flow_rows,
   _is_machine_transformer,
+  _islandwise_apslf_diagnosis,
   _islandwise_failure_message,
   _jacobian_condest,
   _load_and_validate_config,
@@ -226,6 +227,7 @@ import Sparlectra:
   rectangular_pf_status,
   resolve_config,
   result_csv_format,
+  scf_case_units,
   scf_json_parse,
   snapshotPVQLimits!,
   sparlectra_arm_abort_token!,
@@ -241,6 +243,7 @@ include("api/api_types.jl")
 include("api/serialization.jl")
 include("api/artifacts.jl")
 include("api/run_metadata.jl")
+include("api/cgmes_import_report.jl")
 include("api/run_api.jl")
 include("api/powerflow_service.jl")
 include("api/run_short_circuit_service.jl")

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -499,12 +499,13 @@ function _run_sparlectra_api(;
     detailed_result_csv, detailed_result_csv_semicolon, export_cgmes, run_id, options)
 end
 
-# one run.log line naming the start-mode keys the flat start set to classic
-# for this run (the stored configuration keeps them; the start machines
-# follow their own keys, see _flatstart_profile_config)
+# one run.log line naming the start keys the flat start switched off for
+# this run (the stored configuration keeps them, see
+# _flatstart_profile_config)
 function _write_flatstart_overrides(io::IO, provenance::AbstractDict)
   overridden = get(provenance, "flatstart_overrides", String[])
-  isempty(overridden) || println(io, "Flat start: start modes set to classic for this run: ", join(overridden, ", "))
+  isempty(overridden) && return nothing
+  println(io, "Flat start: the run starts from the flat profile, no start projection; overridden for this run: ", join(overridden, ", "))
   return nothing
 end
 
@@ -671,51 +672,36 @@ function _run_sparlectra_api_body(
       message = sprint(showerror, err)
       # The typed import error carries the full importFailureAnalysis report
       # (supplied models, missing declared dependencies, unresolved-reference
-      # histogram, verdict). Write it into cgmes.log — the place the error
-      # message points the Web UI user at.
+      # histogram, verdict). Write it into the CGMES import report, the place
+      # the error message points the Web UI user at.
       import_analysis = err isa CGMESImporter.CGMESImportError ? err.analysis : ""
       paths = try
         first(_cgmes_delivery_paths(case_path, cgmes_cfg))
       catch
         [case_path]
       end
-      # A failed import is exactly when the report matters most, so write a
-      # diagnostic cgmes.log from what can still be read (summarizeCGMES works
-      # on incomplete deliveries) before returning the failure.
+      # A failed import is exactly when the report matters most, so the
+      # report also carries what summarizeCGMES can still read (it works on
+      # incomplete deliveries). A delivery it cannot read either (broken
+      # archive, unparsable XML) leaves its error text in the report instead.
+      summary = nothing
+      summary_error = nothing
       try
-        open(joinpath(output_path, "cgmes.log"), "w") do io
-          println(io, "# CGMES import report — IMPORT FAILED")
-          println(io, "case:   ", case_path)
-          println(io, "paths:  ", join(paths, "\n        "))
-          println(io, "error:  ", message)
-          println(io)
-          if !isempty(import_analysis)
-            println(io, "## Import analysis")
-            print(io, import_analysis)
-            println(io)
-          end
-          summary = CGMESImporter.summarizeCGMES(path = length(paths) == 1 ? paths[1] : paths)
-          println(io, "version: ", summary.version)
-          println(io, "objects: ", summary.object_count, " in ", length(summary.class_histogram), " classes")
-          println(io, "unresolved references: ", summary.unresolved_count, summary.boundary_missing_hint ? "  (topology references — boundary set likely missing)" : "")
-          isempty(summary.unresolved_sample) || println(io, "  sample: ", join(summary.unresolved_sample, ", "))
-          println(io)
-          println(io, "## Files")
-          for f in summary.files
-            println(io, "  ", rpad(f.name, 60), " [", join(sort(String.(collect(f.profiles))), ","), "]", f.skipped ? "  SKIPPED: " * f.skip_reason : "  " * string(f.object_count) * " objects")
-          end
-          println(io)
-          println(io, "## Class histogram")
-          for (cls, n) in summary.class_histogram
-            println(io, "  ", rpad(String(cls), 40), n)
-          end
-        end
+        summary = CGMESImporter.summarizeCGMES(path = length(paths) == 1 ? paths[1] : paths, read_dynamics = cgmes_cfg.read_dynamics)
+      catch serr
+        summary_error = sprint(showerror, serr)
+      end
+      try
+        _write_cgmes_import_failure_report(joinpath(output_path, CGMES_IMPORT_REPORT_NAME); message, analysis = import_analysis, case_path, paths, summary, summary_error)
       catch logerr
-        @warn "could not write diagnostic cgmes.log" exception = logerr
+        # expected: the output directory is not writable (SystemError,
+        # IOError); the failure result below still carries the error
+        logerr isa Union{SystemError,Base.IOError} || rethrow()
+        @warn "could not write $(CGMES_IMPORT_REPORT_NAME)" exception = logerr
       end
       is_boundary = occursin("boundary set missing", message) || occursin("unresolved topology references", message) || occursin("no resolvable BaseVoltage", message)
       reason = is_boundary ? "cgmes_boundary_missing" : "cgmes_import_error"
-      is_boundary && (message = string(message, " — upload the boundary delivery into the same case directory (its name must contain \"Boundary\" or \"_BD_\"), add it to cgmes_import.path, or type cgmes:<alias> to fetch a ready-made ENTSO-E test set."))
+      is_boundary && (message = string(message, ". Upload the boundary delivery into the same case directory (its name must contain \"Boundary\" or \"_BD_\"), add it to cgmes_import.path, or type cgmes:<alias> to fetch a ready-made ENTSO-E test set."))
       metadata = Dict("input_format" => String(requested_case_format), "input_format_detected" => "cgmes")
       return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
     end
@@ -728,56 +714,17 @@ function _run_sparlectra_api_body(
     effective_start_values = imported_cgmes.provenance["cgmes_effective_start_values"]::Symbol
     start_decision = imported_cgmes.provenance["cgmes_start_decision"]::String
     cgmes_run_config = imported_cgmes.config
-    # Dedicated cgmes.log: everything the importer saw and decided, next to
-    # run.log and diagnose.log, so a CGMES run can be audited without
-    # digging through the general run output.
+    # Dedicated CGMES import report (Markdown, rendered by the Web UI
+    # viewer): everything the importer saw and decided, next to run.log and
+    # diagnose.log, so a CGMES run can be audited without digging through
+    # the general run output.
     try
-      open(joinpath(output_path, "cgmes.log"), "w") do io
-        println(io, "# CGMES import report")
-        println(io, "case:        ", case_path)
-        println(io, "paths:       ", join(paths, "\n             "))
-        println(io, "version:     ", cgmes_result.store.version)
-        println(io, "tap control: ", cgmes_cfg.tap_control)
-        println(io, "machine control: ", cgmes_cfg.machine_control)
-        println(io, "base MVA:    ", cgmes_cfg.base_mva)
-        println(io, start_decision)
-        println(io)
-        println(io, "## Files")
-        for f in cgmes_result.store.files
-          println(io, "  ", rpad(f.name, 60), " [", join(sort(String.(collect(f.profiles))), ","), "]", f.skipped ? "  SKIPPED: " * f.skip_reason : "  " * string(f.object_count) * " objects")
-        end
-        println(io)
-        println(io, "## Class histogram")
-        for (cls, mrids) in sort(collect(cgmes_result.store.byclass); by = p -> -length(p.second))
-          println(io, "  ", rpad(String(cls), 40), length(mrids))
-        end
-        println(io)
-        println(io, "## Network built")
-        println(io, "  buses:      ", length(cgmes_result.net.nodeVec), " (", length(cgmes_result.net.isoNodes), " isolated)")
-        println(io, "  branches:   ", length(cgmes_result.net.branchVec))
-        println(io, "  links:      ", length(cgmes_result.net.linkVec))
-        println(io, "  prosumers:  ", length(cgmes_result.net.prosumpsVec))
-        println(io, "  shunts:     ", length(cgmes_result.net.shuntVec))
-        println(io, "  slack bus:  ", cgmes_result.slack_bus)
-        println(io, "  no-SV buses: ", length(cgmes_result.no_sv_buses), " (start from a neighbour with SV, else 1.0 pu / 0°)")
-        println(io)
-        sc = cgmes_result.shortcircuit
-        println(io, "## Short-circuit source data (read, not evaluated — issue #277)")
-        # Per-attribute completeness: a future IEC 60909 evaluation needs to
-        # know which inputs a delivery actually provides, not just the counts.
-        printShortCircuitCoverage(io, sc)
-        println(io)
-        println(io, "## Importer messages (", length(cgmes_result.messages), ")")
-        for m in cgmes_result.messages
-          println(io, "  ", m)
-        end
-        if !isempty(cgmes_result.skipped_equipment)
-          println(io)
-          println(io, "## Skipped equipment: ", length(cgmes_result.skipped_equipment), " mRID(s)")
-        end
-      end
+      _write_cgmes_import_report(joinpath(output_path, CGMES_IMPORT_REPORT_NAME), case_path, paths, cgmes_result, cgmes_cfg, start_decision)
     catch err
-      @warn "could not write cgmes.log" exception = err
+      # expected: the output directory is not writable (SystemError,
+      # IOError); the run itself does not depend on the report
+      err isa Union{SystemError,Base.IOError} || rethrow()
+      @warn "could not write $(CGMES_IMPORT_REPORT_NAME)" exception = err
     end
     emit_phase("building_sparlectra_net")
     # Per-bus SV coverage for the residual export (`has_sv` column): bus names
@@ -792,13 +739,14 @@ function _run_sparlectra_api_body(
     # power_flow.external_grid (issue #299) on a CGMES run: the delivery may
     # declare the feeder data itself (ExternalNetworkInjection at the slack
     # bus); in :auto mode those values win over the config numbers. Applied
-    # here — only this layer sees the short-circuit harvest; the generic hook
+    # here: only this layer sees the short-circuit harvest; the generic hook
     # in _run_sparlectra is idempotent and will skip the already-converted net.
     external_grid_note = _apply_external_grid_config!(cgmes_result.net, cgmes_run_config.powerflow; declared = _declared_slack_feeder(cgmes_result.net, cgmes_result.shortcircuit))
     raw_result = try
       open(logfile, "a") do io
         # run.log carries the narrative; the full importer report (files,
-        # class histogram, every notice/warning) lives in cgmes.log — one
+        # class histogram, every notice/warning) lives in
+        # cgmes_import_report.md, one
         # home per fact. Warnings still surface here because they mark
         # substituted values a reader of the narrative must not miss.
         println(io, "CGMES input (", length(paths), " path(s), ", length(cgmes_result.net.nodeVec), " buses)")
@@ -806,7 +754,7 @@ function _run_sparlectra_api_body(
         _write_flatstart_overrides(io, imported_cgmes.provenance)
         external_grid_note === nothing || println(io, external_grid_note)
         cgmes_warnings = [m for m in cgmes_result.messages if startswith(m, "warning:")]
-        println(io, "  importer messages: ", length(cgmes_result.messages), " (", length(cgmes_warnings), " warning(s)) — full report in cgmes.log")
+        println(io, "  importer messages: ", length(cgmes_result.messages), " (", length(cgmes_warnings), " warning(s)), full report in ", CGMES_IMPORT_REPORT_NAME)
         for m in cgmes_warnings
           println(io, "  ", m)
         end
@@ -823,7 +771,7 @@ function _run_sparlectra_api_body(
     # solved state against the delivery's own SV solution. The solver mutated
     # cgmes_result.net in place (passed by reference to _run_sparlectra), so
     # compareWithSV reads the state this run actually produced. On a
-    # non-converged run the numbers describe the diverged state — the status
+    # non-converged run the numbers describe the diverged state: the status
     # tag keeps them from being read as model error.
     sv_compare = nothing
     sv_compare_error = nothing
@@ -845,32 +793,12 @@ function _run_sparlectra_api_body(
       end
     end
     try
-      open(joinpath(output_path, "cgmes.log"), "a") do io
-        println(io)
-        println(io, "## SV comparison (run status: ", sv_compare_status, ", start values: ", effective_start_values, ")")
-        if sv_compare === nothing
-          println(io, "  unavailable", sv_compare_error === nothing ? "" : ": " * sv_compare_error)
-        else
-          println(io, "  voltages: n=", sv_compare.n, "  max|dvm|=", sv_compare.max_dvm, " pu  rms=", sv_compare.rms_dvm, "  max|dva|=", sv_compare.max_dva, "°  rms=", sv_compare.rms_dva, "°")
-          # A cut-out IGM keeps the CGM's global angle reference while the
-          # local solve pins its own slack — the uniform offset is removed
-          # from the dva judgement and reported here instead.
-          isfinite(sv_compare.va_ref_offset_deg) && abs(sv_compare.va_ref_offset_deg) > 0.01 && println(io, "  angle reference offset removed: ", round(sv_compare.va_ref_offset_deg; digits = 2), "° (median; raw dva column stays in sv_compare.csv)")
-          println(io, "  flows:    n=", sv_compare.flows.n, "  max|dp|=", sv_compare.flows.max_dp, " MW  max|dq|=", sv_compare.flows.max_dq, " MVAr")
-          println(io, "  artifacts: sv_compare.csv, sv_compare_flows.csv")
-          raw_result.final_converged || println(io, "  note: run did not converge — deltas describe the non-converged state, not the imported model")
-          # A real delivery ships its own solved state. When a flat-start run
-          # fails on a delivery that HAS usable SvVoltage data, the single most
-          # effective remedy is starting from that state — say so instead of
-          # leaving the user to find it (measured on a 6209-bus delivery: flat
-          # start diverges after 80 iterations, SV start converges in 4).
-          if !raw_result.final_converged && effective_start_values !== :sv && sv_bus_count > 0
-            println(io, "  hint: this delivery carries an SvVoltage state — set cgmes_import.start_values: sv (Web UI: \"CGMES start values\" = \"Imported SV state\") to start the solve from it.")
-          end
-        end
-      end
+      _append_cgmes_sv_comparison(joinpath(output_path, CGMES_IMPORT_REPORT_NAME); sv_compare, sv_compare_error, status = sv_compare_status, start_values = effective_start_values, converged = raw_result.final_converged, sv_bus_count)
     catch err
-      @warn "could not append SV comparison to cgmes.log" exception = err
+      # expected: the report file is not writable (SystemError, IOError);
+      # the SV comparison CSVs and the metadata carry the numbers anyway
+      err isa Union{SystemError,Base.IOError} || rethrow()
+      @warn "could not append the SV comparison to $(CGMES_IMPORT_REPORT_NAME)" exception = err
     end
     cgmes_metadata = Dict{String,Any}(
       "input_format" => String(requested_case_format),
@@ -921,6 +849,7 @@ function _run_sparlectra_api_body(
     raw_result = try
       open(logfile, "a") do io
         println(io, "Native DTF input (experimental/internal)")
+        _write_flatstart_overrides(io, imported_dtf.provenance)
         _write_resolved_q_limit_options(io, qlimit_metadata)
         _capture_run_output(io; live = config.output.console_live) do
           _run_sparlectra(net = dtf_net, config = config, performance_profile = api_performance_profile)
@@ -1014,6 +943,10 @@ function _run_sparlectra_api_body(
       "last_phase" => "solving_powerflow",
     )
     solver_elapsed_s === nothing || (metadata["solver_elapsed_s"] = solver_elapsed_s)
+    # an APSLF island that did not converge: its diagnosis keys, as a
+    # single-island run carries them in the success metadata
+    island_diagnosis = _islandwise_apslf_diagnosis(api_performance_profile)
+    island_diagnosis === nothing || merge!(metadata, _apslf_diagnosis_metadata(island_diagnosis))
     run_diagnostics && _write_execution_failure_diagnostics(joinpath(output_path, "diagnose.log"), reason, message)
     return _api_execution_failure(reason, message; run_id = run_id, casefile = case_path, config_file = config_path, output_dir = output_path, logfile = logfile, result_file = result_file, phase_recorder, performance_timing, total_start_ns = total_start, metadata = metadata)
   end
@@ -1145,7 +1078,7 @@ function _run_sparlectra_api_body(
   # Optional CGMES export artifact (Web UI checkbox / API flag): EQ+TP files
   # next to the other run artifacts. Reads only the static network model, so
   # it works for non-converged runs too; a failure is recorded as metadata and
-  # a run.log line, never as a run failure — the power-flow result stays the
+  # a run.log line, never as a run failure: the power-flow result stays the
   # primary purpose of the run.
   # (the optional MATPOWER export below records its keys in the same dict)
   cgmes_export_metadata = Dict{String,Any}()
@@ -1262,7 +1195,7 @@ function _run_sparlectra_api_body(
       println(io, "output_dir: ", output_path)
       println(io, "diagnostics_artifact: ", run_diagnostics ? "diagnose.log" : "disabled")
       println(io, "performance_artifact: ", timing_mode === :off ? "disabled" : "performance.log")
-      # Q-limit settings are NOT repeated here — the "Resolved Q-limit
+      # Q-limit settings are NOT repeated here: the "Resolved Q-limit
       # options" block near the top of this file is their one home.
       println(io, "q_limit_detail_artifacts: ", isempty(q_limit_artifacts) ? "none" : join(q_limit_artifacts, ", "))
       println(io, "matpower_dcline_artifact: ", matpower_dcline_artifact === nothing ? "none" : matpower_dcline_artifact)

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/cgmes/cgmes_export.jl
-# purpose: CGMES 2.4.15 (RDF/XML) exporter for a Sparlectra Net — EQ, TP,
+# purpose: CGMES 2.4.15 (RDF/XML) exporter for a Sparlectra Net: EQ, TP,
 #          and SSH profiles covering buses, AC lines (incl. optional
 #          zero-sequence attributes), two-winding transformers (fixed
 #          effective ratio via end ratedU, phase shift as a single-step
@@ -25,7 +25,7 @@
 # imported from CGMES the importer has recorded the original mRIDs under the
 # same keys, so the export reuses them; for all other nets deterministic
 # uuid5 ids are minted from the key string. Renaming a component therefore
-# never changes its exported mRID — only structural changes do.
+# never changes its exported mRID. Only structural changes do.
 #
 # Not produced (announced per unit via notices where applicable): static VAr
 # compensators, bus links, tap-changer/controller machinery beyond the
@@ -56,7 +56,7 @@ const SV_PROFILES = ["http://entsoe.eu/CIM/StateVariables/4/1"]
     CGMESLineShortCircuit
 
 Zero-sequence/short-circuit data for one line, for the EquipmentShortCircuit
-profile. Physical units (Ohm, Siemens, °C). Only written when supplied — no
+profile. Physical units (Ohm, Siemens, °C). Only written when supplied. No
 zero-sequence values are invented from positive-sequence data.
 """
 Base.@kwdef struct CGMESLineShortCircuit
@@ -98,7 +98,7 @@ fmtVal(x::Real) = string(Float64(x))
 _optNum(io::IO, tag::AbstractString, v::Union{Nothing,Real}) = v === nothing ? nothing : println(io, "    <cim:", tag, ">", fmtVal(v), "</cim:", tag, ">")
 _optBool(io::IO, tag::AbstractString, v::Union{Nothing,Bool}) = v === nothing ? nothing : println(io, "    <cim:", tag, ">", v, "</cim:", tag, ">")
 
-# harvested short-circuit source records by canonical mRID, per class — the
+# harvested short-circuit source records by canonical mRID, per class: the
 # writer matches them against the exported unit ids (which ARE the canonical
 # source mRIDs for captured units)
 function _scSourceByMrid(sc::Union{Nothing,CGMESShortCircuitData,Sparlectra.NativeShortCircuitData})
@@ -147,7 +147,7 @@ function writeXmlHeader(io::IO, created::Dates.DateTime)
 end
 
 function writeFullModel(io::IO, modelId::AbstractString, profiles::Vector{String}, dependentOn::Vector{String}, created::Dates.DateTime)
-  # One timestamp drives both header fields — with a caller-supplied `created`
+  # One timestamp drives both header fields, with a caller-supplied `created`
   # the whole file becomes byte-reproducible.
   stamp = Dates.format(created, "yyyy-mm-ddTHH:MM:SSZ")
   println(io, "  <md:FullModel rdf:about=\"urn:uuid:$(modelId)\">")
@@ -186,7 +186,7 @@ struct CGMESContext
   equivalentNetworkId::Union{Nothing,String} # container of the exported EquivalentBranch objects, nothing without any
   trafoRecs::Vector{NamedTuple}           # one record per exported 2W transformer branch
   trafo3Recs::Vector{NamedTuple}          # one record per reassembled 3W transformer (star group)
-  starAuxBuses::Set{Int}                  # star buses consumed by trafo3Recs — no TN/SvVoltage
+  starAuxBuses::Set{Int}                  # star buses consumed by trafo3Recs, no TN/SvVoltage
   prosumerRecs::Vector{NamedTuple}        # one record per exported prosumer
   shuntRecs::Vector{NamedTuple}           # one record per exported shunt
   linkRecs::Vector{NamedTuple}            # one record per exported bus link (Breaker)
@@ -298,10 +298,23 @@ function buildContext(net::Sparlectra.Net)
   substationId = claim("SUBSTATION")
   regionId = claim("REGION")
   subRegionId = claim("SUBREGION")
-  eqModelId = claim(cgmesKeyModel("EQ"))
-  tpModelId = claim(cgmesKeyModel("TP"))
-  sshModelId = claim(cgmesKeyModel("SSH"))
-  svModelId = claim(cgmesKeyModel("SV"))
+  # The FullModel ids are minted from the net name plus the profile, not
+  # from the profile alone: a fixed key gave every exported model the same
+  # EQ id, and the Web UI binds measurement tables to a CGMES case by that
+  # id. The id is still recorded under MODEL|<profile>, so a repeated export
+  # of the same net stays byte-identical.
+  modelId(profile) = begin
+    key = cgmesKeyModel(profile)
+    id = get!(net.cgmes_ids, key) do
+      string(UUIDs.uuid5(CGMES_UUID_NAMESPACE, string(key, "|", net.name)))
+    end
+    push!(claimed, key => id)
+    return id
+  end
+  eqModelId = modelId("EQ")
+  tpModelId = modelId("TP")
+  sshModelId = modelId("SSH")
+  svModelId = modelId("SV")
 
   _assertUniqueIds(claimed)
 
@@ -412,8 +425,8 @@ end
 
 # One record per transformer branch. The branch carries what the solver
 # actually uses (pu impedance on the to-side base, effective ratio, shift), so
-# every transformer variant — physical windings, PI-model imports, star legs
-# of a 3W import — exports uniformly. The effective ratio is written as
+# every transformer variant (physical windings, PI-model imports, star legs
+# of a 3W import) exports uniformly. The effective ratio is written as
 # ratedU1 = ratio · vn1 with ratedU2 = vn2: the importer's reconstruction
 # (ratedU1/ratedU2)/(vn1/vn2) then reproduces exactly the solved ratio, tap
 # positions flattened in.
@@ -479,7 +492,7 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
   branches = [net.branchVec[bi] for bi in branch_idx]
   if length(branches) != length(net.trafos)
     # branch/trafo pairing is positional; a mismatch means an unknown
-    # construction path — exporting a guess would corrupt the file
+    # construction path: exporting a guess would corrupt the file
     isempty(net.trafos) || push!(notices, "$(length(net.trafos)) transformer(s) not exported (unrecognized branch structure)")
     return recs, recs3, starAux
   end
@@ -516,7 +529,7 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
     # star bus name from it
     name = replace(_exportBusName(idx2busName, aux), r"^(AUX3WT_|Aux3WT_)" => "")
     if !(isapprox(vn_aux, vns[1]; rtol = 1e-9) && isapprox(ratios[1], 1.0; rtol = 1e-9))
-      push!(notices, "3W transformer $(name): star reconstruction not exact (leg-1 ratio $(ratios[1]), star base $(vn_aux)/$(vns[1]) kV) — exported as star equivalent")
+      push!(notices, "3W transformer $(name): star reconstruction not exact (leg-1 ratio $(ratios[1]), star base $(vn_aux)/$(vns[1]) kV), exported as star equivalent")
       continue
     end
     side_buses = [_exportBusName(idx2busName, s) for s in sides]
@@ -621,7 +634,7 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
       push!(notices, "transformer $(name): imported as EquivalentBranch, exported as PowerTransformer because it carries a ratio or shunt arms that do not fit the phase stamp")
     end
     # the solver reads the LIVE tap fields (calcBranchRatio), not the nominal
-    # construction values — a tap-controller run must export its final state
+    # construction values: a tap-controller run must export its final state
     eff_ratio = _liveRatio(br)
     shift = _liveShift(br)
     # a typed phase model in the CGMES regulating-vector convention exports
@@ -694,7 +707,7 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
         endIds = (claim(cgmesKeyTransformerEnd(ptKey, 1)), claim(cgmesKeyTransformerEnd(ptKey, 2))),
         terminalIds = (claim(cgmesKeyTerminal(ptKey, 1)), claim(cgmesKeyTerminal(ptKey, 2))),
         # phase shift travels as a single-step linear phase tap changer on
-        # end 1 (step 1, neutral 0, increment = shift) — the importer's end-1
+        # end 1 (step 1, neutral 0, increment = shift), the importer's end-1
         # tap application adds it back unnegated
         ptcId = (shift == 0.0 && ptc_model === nothing) ? nothing : claim(string(ptKey, "|PTC")),
         ptc_model = ptc_model,
@@ -907,7 +920,7 @@ end
 # sign (the rule of the MATPOWER export).
 _cgmesSymmetricArm(a::Float64, b::Float64)::Float64 = abs(a) <= abs(b) ? a : b
 
-# Hard guard: two different structural keys must never share one mRID —
+# Hard guard: two different structural keys must never share one mRID:
 # writing such a file would produce invalid RDF (duplicate rdf:ID). Aborts
 # before any file is opened.
 function _assertUniqueIds(claimed::Vector{Pair{String,String}})
@@ -915,7 +928,7 @@ function _assertUniqueIds(claimed::Vector{Pair{String,String}})
   for (key, id) in claimed
     other = get(seen, id, nothing)
     if other !== nothing && other != key
-      error("CGMES export: mRID $(id) is assigned to both \"$(other)\" and \"$(key)\" in net.cgmes_ids — export aborted, no files written")
+      error("CGMES export: mRID $(id) is assigned to both \"$(other)\" and \"$(key)\" in net.cgmes_ids. Export aborted, no files written")
     end
     seen[id] = key
   end
@@ -1103,7 +1116,7 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       println(io, "    <cim:ACLineSegment.bch>$(fmtVal(b))</cim:ACLineSegment.bch>")
       println(io, "    <cim:ACLineSegment.gch>$(fmtVal(g))</cim:ACLineSegment.gch>")
 
-      # Short-circuit/zero-sequence data (EquipmentShortCircuit) — only when supplied.
+      # Short-circuit/zero-sequence data (EquipmentShortCircuit), only when supplied.
       if haskey(sc_line_data, i)
         sc = sc_line_data[i]
         println(io, "    <cim:ACLineSegment.r0>$(fmtVal(sc.r0_ohm))</cim:ACLineSegment.r0>")
@@ -1256,7 +1269,7 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         # re-imported delivery keeps its Ik'' evaluation inputs
         sm_sc = _scRecordOf(sc_units.machines, sc_units.machine_records, rec, _exportBusName(ctx.idx2busName, rec.busIdx))
         if sm_sc !== nothing
-          # the prosumer model does not retain ratedS/ratedU — without them
+          # the prosumer model does not retain ratedS/ratedU: without them
           # the machine impedance x''d·U²/S is unusable on re-import
           rec.ratedS === nothing && _optNum(io, "RotatingMachine.ratedS", sm_sc.ratedS_MVA)
           _optNum(io, "SynchronousMachine.satDirectSubtransX", sm_sc.satDirectSubtransX_pu)
@@ -1322,7 +1335,7 @@ function writeEQFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
         println(io, "  <cim:StaticVarCompensator rdf:ID=\"_$(rec.id)\">")
         println(io, "    <cim:IdentifiedObject.name>$(xmlEscape(rec.name))</cim:IdentifiedObject.name>")
         vnKnown && println(io, "    <cim:ConductingEquipment.BaseVoltage rdf:resource=\"#_$(ctx.baseVoltageIds[rec.vn])\"/>")
-        # ratings are reactances (Q = vn²/X) — the exact inverse of the
+        # ratings are reactances (Q = vn²/X), the exact inverse of the
         # importer's Q-limit derivation
         (rec.maxQ !== nothing && rec.maxQ != 0.0) && _optNum(io, "StaticVarCompensator.capacitiveRating", rec.vn^2 / rec.maxQ)
         (rec.minQ !== nothing && rec.minQ != 0.0) && _optNum(io, "StaticVarCompensator.inductiveRating", rec.vn^2 / rec.minQ)
@@ -1434,7 +1447,7 @@ function writeTPFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       for (seq, termId) in enumerate(ctx.lineTerminalIds[i])
         busIdx = busIdxs[seq]
         if isnothing(busIdx) || !haskey(ctx.topoNodeIds, busIdx)
-          @warn "CGMES-TP: line $(line.comp.cName) terminal $(seq) has no valid bus index — skipped"
+          @warn "CGMES-TP: line $(line.comp.cName) terminal $(seq) has no valid bus index, skipped"
           continue
         end
         connected = terminal_connected(net.branchVec[ctx.lineBranchIdx[i]], seq)
@@ -1604,7 +1617,7 @@ Build the `sc_line_data` input of [`writeCGMESFiles`](@ref) from the
 zero-sequence line attributes harvested during a CGMES import, keyed by
 `net.linesAC` index. Lines are matched through the structural identity keys
 recorded on the network, so parallel lines keep their own data. Only lines
-with a complete zero-sequence pair (`r0` and `x0`) are included — nothing is
+with a complete zero-sequence pair (`r0` and `x0`) are included, nothing is
 invented for the rest.
 """
 function cgmesLineShortCircuitData(result::CGMESImportResult)::Dict{Int,CGMESLineShortCircuit}
@@ -1641,7 +1654,7 @@ end
 # SV profile
 # ---------------------------------------------------------------------------
 
-# SvVoltage/SvPowerFlow objects are snapshot artifacts of one export — they
+# SvVoltage/SvPowerFlow objects are snapshot artifacts of one export: they
 # carry no identity worth preserving across roundtrips, so their ids are
 # minted deterministically from the referenced object's id instead of going
 # through net.cgmes_ids.
@@ -1659,9 +1672,9 @@ end
 Write the SV profile from the network's CURRENT voltage state: after a solve
 this is the solution, right after an import it is the start state (for a
 CGMES import: the delivery's own SV values). SvPowerFlow rows follow the
-same conventions `compareWithSV` reads back — loads and units in load
+same conventions `compareWithSV` reads back (loads and units in load
 convention, branch-terminal flows from the branch model at the current
-voltages — so a re-import validates cleanly against this profile.
+voltages), so a re-import validates cleanly against this profile.
 """
 function writeSVFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractString, created::Dates.DateTime)
   iso = Set(net.isoNodes)
@@ -1688,7 +1701,7 @@ function writeSVFile(net::Sparlectra.Net, ctx::CGMESContext, path::AbstractStrin
       println(io, "  </cim:SvVoltage>")
     end
 
-    # branch-terminal flows from the branch model at the current voltages —
+    # branch-terminal flows from the branch model at the current voltages,
     # the same expressions compareWithSV evaluates on the read side
     # `arm` is the terminal arm the delivery carries on a line with unequal
     # arms (the excess flows through its compensator, not the line terminal)
@@ -1802,22 +1815,24 @@ asynchronous machines, shunts), SSH (operating points p/q, the
 `ProSumer.referencePriority`, 1 for a slack unit without one; a unit off the
 slack buses that is as strong as the slack is named in `notices`,
 voltage-regulation targets, shunt sections), and SV
-(the network's current voltage state with per-terminal `SvPowerFlow` rows —
+(the network's current voltage state with per-terminal `SvPowerFlow` rows,
 after a solve: the solution). `sc_line_data` supplies optional zero-sequence
 data per line index (order of `net.linesAC`); `sc_source` writes the
 machine/injection/motor short-circuit attributes of a CGMES import harvest
 back onto the units by mRID. `zip = true` additionally packs everything into
 a re-importable `<name>_CGMES.zip`. `created` sets the
-`md:Model.scenarioTime`/`md:Model.created` header stamp — pass a fixed value
+`md:Model.scenarioTime`/`md:Model.created` header stamp. Pass a fixed value
 to make the output byte-reproducible.
 
 Object mRIDs come from `net.cgmes_ids` (structural keys, see
 `cgmes_keys.jl`): ids recorded by the CGMES importer are reused, missing ids
-are minted deterministically (uuid5 over the key) and recorded. Two different
+are minted deterministically (uuid5 over the key) and recorded. The
+md:FullModel ids are minted over the profile key plus `net.name`, so nets with
+different names get different model ids. Two different
 keys resolving to the same mRID abort the export before any file is written.
 
-Works for any `Net` — built programmatically, or imported from CGMES,
-MATPOWER, or DTF — since the export reads directly from the network model.
+Works for any `Net` (built programmatically, or imported from CGMES,
+MATPOWER, or DTF), since the export reads directly from the network model.
 
 Returns a vector of the written file paths.
 
@@ -1828,9 +1843,9 @@ vector to collect these lines programmatically; without one they are emitted
 as warnings. Ratio tap-changer machinery is flattened into the fixed
 effective ratio.
 
-Every file carries the tool provenance — a `Generated by Sparlectra.jl
-v<version> on <stamp>` header comment and a matching `md:Model.description`
-— where the stamp is the `created` timestamp.
+Every file carries the tool provenance: a `Generated by Sparlectra.jl
+v<version> on <stamp>` header comment and a matching `md:Model.description`,
+where the stamp is the `created` timestamp.
 """
 function writeCGMESFiles(net::Sparlectra.Net; path::AbstractString = pwd(), sc_line_data::Dict{Int,CGMESLineShortCircuit} = Dict{Int,CGMESLineShortCircuit}(), sc_source::Union{Nothing,CGMESShortCircuitData,Sparlectra.NativeShortCircuitData} = nothing, created::Dates.DateTime = Dates.now(), notices::Union{Nothing,Vector{String}} = nothing, zip::Bool = false)
   # an interchange file must carry the physical equipment impedance, never a

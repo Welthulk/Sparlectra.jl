@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
 Run `f()` with stdout/stderr/logging captured into `io` (the archived
 `run.log` stream). With `live = true` (config `output.console_live`) the same
 bytes are additionally mirrored to the process's real stdout while the run
-executes — console and archive become two views of one stream instead of the
+executes: console and archive become two views of one stream instead of the
 console being silenced. The archive content is identical in both modes.
 
 Implementation note: `redirect_stdout` needs an OS-level stream, so the live
@@ -72,7 +72,7 @@ function _write_service_phase_summary(io::IO, phase_timings::AbstractVector)
   println(io, "Phase timings")
   println(io, "-------------")
   # Repeated phases (newton_iteration / q_limit_processing / linear_solve fire
-  # once per NR iteration) are aggregated into one line with a count — the
+  # once per NR iteration) are aggregated into one line with a count: the
   # readable narrative stays a handful of lines per run. The raw per-entry
   # sequence remains available in result.json (`service_phase_timings`).
   order = String[]
@@ -295,7 +295,7 @@ end
 # deeply nested vectors/dicts already duplicated in dedicated per-island
 # artifacts (`ac_island_<id>_solver.log`, `ac_island_solver_summary.csv`).
 # Dumped raw, their default Julia `string(...)` representation is one
-# multi-thousand-character line — unreadable, and heavy enough that some text
+# multi-thousand-character line, unreadable, and heavy enough that some text
 # editors struggle to open the file. Internal callback closures carry no
 # diagnostic content (their printed form is just an opaque `#N` gensym), so
 # they are omitted entirely rather than summarized.

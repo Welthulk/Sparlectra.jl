@@ -13,15 +13,22 @@
 # limitations under the License.
 
 # file: app/src/webui/update.jl
-# purpose: "Check for updates" of the Info panel: one request to the GitHub
-#          releases API on the click (never at start), the comparison with
-#          the running version, how this copy was installed, and for a copy
-#          made by tools/install_webui.* the unattended update in a detached
-#          process that waits for this Web UI to stop
+# purpose: "Check for updates" of the Info panel and of start_webui.jl: one
+#          request to the GitHub releases API on the click or at an
+#          interactive start, the comparison with the running version, how
+#          this copy was installed, and for a copy made by tools/install_webui.*
+#          the unattended update in a detached process that waits for this
+#          Web UI to stop
 
 const WEBUI_UPDATE_RELEASES_API = "https://api.github.com/repos/Welthulk/Sparlectra.jl/releases/latest"
 const WEBUI_UPDATE_RELEASES_PAGE = "https://github.com/Welthulk/Sparlectra.jl/releases"
 const WEBUI_UPDATE_TIMEOUT_SECONDS = 10.0
+# the check at start waits less: an offline start should not stall
+const WEBUI_CONSOLE_UPDATE_TIMEOUT_SECONDS = 5.0
+# how long the question at start waits for an answer before it counts as no
+const WEBUI_CONSOLE_UPDATE_ANSWER_SECONDS = 60.0
+# start_webui.jl flag that skips the check at start (also SPARLECTRA_UPDATE_CHECK=0)
+const WEBUI_CONSOLE_UPDATE_FLAG = "--no-update-check"
 # the one-line install of docs/src/webui_reference.md, per platform
 const WEBUI_UPDATE_ONE_LINE_SH = "curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.sh | sh"
 const WEBUI_UPDATE_ONE_LINE_WINDOWS = "iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.bat -OutFile install_webui.bat; .\\install_webui.bat"
@@ -88,8 +95,9 @@ end
     webui_check_for_update(; fetch, current, url, timeout) -> NamedTuple
 
 Ask the GitHub releases API for the latest release and compare it with the
-running version (`current`, default the Sparlectra version). Called only by
-the "Check for updates" button. Returns `state` (`:up_to_date`, `:newer` or
+running version (`current`, default the Sparlectra version). Called by
+the "Check for updates" button and by `webui_console_update_offer`
+at an interactive start. Returns `state` (`:up_to_date`, `:newer` or
 `:failed`), `current`, `latest` (`nothing` on failure), `tag`,
 `release_url`, and for a failure `failure` (`:network`, `:timeout`,
 `:rate_limit`, `:http`, `:malformed`) with a `message` naming it. Never
@@ -248,7 +256,7 @@ window of its own; it first waits until Windows lets the folder be moved
 (the console of the old Web UI holds it as working directory until it is
 closed) and writes the output of the install script to `update.log`.
 """
-function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::VersionNumber = version(), tag::AbstractString, operation_log::AbstractString, pid::Integer = getpid(), answers = _webui_update_answers(), windows::Bool = Sys.iswindows())
+function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::VersionNumber = version(), tag::AbstractString, operation_log::AbstractString, pid::Integer = getpid(), answers = _webui_update_answers(), windows::Bool = Sys.iswindows(), requested_in::AbstractString = "in the Web UI")
   dir = rstrip(String(root), ['/', '\\'])
   install_dir = dirname(dir)
   update_dir = webui_update_dir(operation_log)
@@ -262,7 +270,7 @@ function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::Ve
   # update runs the Web UI from its updater and reads that batch file by its
   # path again when the Web UI ends; rewriting it would run foreign lines
   file_stamp = Dates.format(requested, "yyyymmdd_HHMMSS")
-  write(log, "Sparlectra update requested in the Web UI at $(stamp): v$(current) to $(tag), copy $(dir)\n")
+  write(log, "Sparlectra update requested $(requested_in) at $(stamp): v$(current) to $(tag), copy $(dir)\n")
   b(x) = x ? "1" : "0"
   if windows
     updater = joinpath(update_dir, "sparlectra_update_$(file_stamp).bat")
@@ -317,6 +325,8 @@ function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::Ve
       "set \"SPARLECTRA_CREATE_SHORTCUT=\"",
       "set \"SPARLECTRA_START_WEBUI=\"",
       "echo Starting the Web UI ...",
+      "rem this console has a keyboard; the restart after an update does not ask again",
+      "set \"SPARLECTRA_UPDATE_CHECK=0\"",
       "call \"$(q(joinpath(dir, "start_webui.bat")))\"",
     ]
     # CRLF: cmd.exe finds labels in an LF-only batch file unreliably
@@ -384,6 +394,118 @@ function start_webui_update!(plan; spawn = cmd -> run(pipeline(detach(cmd); stdo
   return (started = true, message = "")
 end
 
+# The question of webui_console_update_offer: one line from `input`, or ""
+# when nobody answers within `seconds`, at the end of the input, or when the
+# input is closed while the question waits. Only an explicit y or yes counts.
+function _webui_console_read_answer(prompt::AbstractString; io::IO = stdout, input::IO = stdin, seconds::Real = WEBUI_CONSOLE_UPDATE_ANSWER_SECONDS)::String
+  print(io, prompt)
+  flush(io)
+  reader = @async try
+    readline(input)
+  catch err
+    # expected failure: the input is closed while the question waits
+    err isa EOFError || err isa Base.IOError || rethrow()
+    ""
+  end
+  if timedwait(() -> istaskdone(reader), Float64(seconds); pollint = 0.1) !== :ok
+    println(io)
+    return ""
+  end
+  return fetch(reader)
+end
+
+"""
+    webui_console_update_offer(; args, env, interactive, fetch, current, timeout, layout, root, ask, port_busy, sysimage_busy, operation_log, answers, spawn, io, windows) -> Symbol
+
+The update check of `start_webui.jl`, before the server starts. Runs
+`webui_check_for_update` with a short `timeout` (5 s) and, for a
+newer release on an installed copy (`webui_install_layout`), asks on the
+console whether to install it. Only an answer `y` or `yes` (any case)
+installs, through the same updater as the Info panel (`webui_update_plan`,
+`start_webui_update!`); the updater waits for this process to end, runs the
+install script and starts the new version. Any other answer, an empty line,
+the end of the input or no answer within 60 s means no.
+
+Returns what happened, so the caller knows whether to start the server:
+
+  * `:started`: the updater runs; the caller must exit without starting
+    the server.
+  * `:disabled`: `--no-update-check` in `args`, `SPARLECTRA_UPDATE_CHECK=0`
+    or `JULIA_PKG_OFFLINE=true` in `env`; no request.
+  * `:not_interactive`: stdin is not a terminal (`interactive`), no request
+    and never an install.
+  * `:up_to_date`, `:failed` (offline, timeout, rate limit, one line printed),
+    `:manual` (git checkout or unknown layout: one line on how to update),
+    `:busy` (a Web UI already runs on port 8080 or a sysimage build runs),
+    `:declined`, `:start_failed` (the updater could not be written or
+    started; nothing was changed).
+
+Never throws for a network problem. `fetch`, `ask`, `port_busy`,
+`sysimage_busy` and `spawn` are replaced in tests.
+"""
+function webui_console_update_offer(; args::AbstractVector{<:AbstractString} = ARGS, env::AbstractDict = ENV, interactive::Bool = isa(stdin, Base.TTY), fetch = _WEBUI_UPDATE_FETCH[], current::VersionNumber = version(), timeout::Real = WEBUI_CONSOLE_UPDATE_TIMEOUT_SECONDS, layout::Union{Nothing,Symbol} = nothing, root::AbstractString = SPARLECTRA_ROOT, ask = _webui_console_read_answer, port_busy = () -> _webui_port_holds_sparlectra("127.0.0.1", 8080), sysimage_busy = () -> sysimage_build_active(), operation_log::AbstractString = default_webui_operation_log_path(), answers = nothing, spawn = nothing, io::IO = stdout, windows::Bool = Sys.iswindows())::Symbol
+  opted_out = WEBUI_CONSOLE_UPDATE_FLAG in args || get(env, "SPARLECTRA_UPDATE_CHECK", "1") == "0" || lowercase(get(env, "JULIA_PKG_OFFLINE", "")) == "true"
+  opted_out && return :disabled
+  # piped input, CI or a service: no request and no question, so nothing is
+  # ever installed without a person. The restart after an update does not
+  # ask either: the unix updater starts it with stdin on /dev/null, the
+  # Windows updater sets SPARLECTRA_UPDATE_CHECK=0 for its console.
+  interactive || return :not_interactive
+  check = webui_check_for_update(; fetch, current, timeout)
+  if check.state === :failed
+    println(io, "Update check: $(check.message).")
+    return :failed
+  end
+  check.state === :up_to_date && return :up_to_date
+  println(io, "Sparlectra $(check.latest) is available (running $(current)): $(check.release_url)")
+  kind = layout === nothing ? webui_install_layout(root) : layout
+  dir = rstrip(String(root), ['/', '\\'])
+  if kind === :git_checkout
+    println(io, "This copy is a git checkout and is updated by hand: git fetch --tags, then git checkout $(check.tag) in $(dir).")
+    return :manual
+  elseif kind !== :installed_copy
+    println(io, "This copy was not made by the install script; update it with: $(windows ? WEBUI_UPDATE_ONE_LINE_WINDOWS : WEBUI_UPDATE_ONE_LINE_SH)")
+    return :manual
+  end
+  # the updater waits for this process only; a second Web UI on the same
+  # folder or a running sysimage build would have the folder replaced
+  # under it
+  if port_busy()
+    println(io, "A Sparlectra Web UI already runs on port 8080; stop it to install the update.")
+    return :busy
+  end
+  if sysimage_busy()
+    println(io, "A sysimage build is running; install the update when it has finished.")
+    return :busy
+  end
+  reply = something(ask("Install $(check.latest) now? [y/N] "), "")
+  if !(lowercase(strip(reply)) in ("y", "yes"))
+    println(io, "Not installed; starting $(current).")
+    return :declined
+  end
+  plan = try
+    webui_update_plan(; root = dir, current, tag = check.tag, operation_log, answers = answers === nothing ? _webui_update_answers() : answers, windows, requested_in = "from start_webui.jl")
+  catch err
+    # expected failure: the update folder next to the operation log cannot
+    # be created or written
+    err isa Base.IOError || err isa SystemError || rethrow()
+    println(io, "Could not prepare the update ($(sprint(showerror, err))); starting $(current).")
+    return :start_failed
+  end
+  started = spawn === nothing ? start_webui_update!(plan) : start_webui_update!(plan; spawn)
+  record_webui_operation!(operation_log, "update_install_requested"; route = "start_webui.jl", method = "CONSOLE", user_action = true, status = started.started ? "started" : "failed", layout = String(kind), tag = check.tag, log = plan.log, message = started.started ? nothing : started.message)
+  if !started.started
+    println(io, "$(started.message); starting $(current).")
+    return :start_failed
+  end
+  println(io, "Installing $(check.tag). The previous copy is kept as $(joinpath(plan.install_dir, "Sparlectra.old")); log: $(plan.log)")
+  if windows
+    println(io, "The update runs in a console window of its own and starts the new version. Close this window so that it can replace the folder.")
+  else
+    println(io, "The update runs in the background and starts the new version when it has finished.")
+  end
+  return :started
+end
 """
     render_webui_update_check(check; layout, root, operation_log, active_job, sysimage_busy, started_by_script, windows) -> String
 
@@ -403,7 +525,7 @@ function render_webui_update_check(check; layout::Symbol, root::AbstractString =
     push!(parts, "<div class=\"alert alert-info update-check-result\" role=\"status\"><strong>$(e(string(check.latest))) available</strong> (running $(e(string(check.current)))). <a href=\"$(e(check.release_url))\" target=\"_blank\" rel=\"noopener noreferrer\">Release notes</a></div>")
     push!(parts, _webui_update_install_section(check; layout, dir, operation_log, active_job, sysimage_busy, started_by_script, answers, windows))
   end
-  push!(parts, "<p class=\"field-help\">The check asks the GitHub releases API once, on the button only; nothing is checked at start and nothing about this installation is sent.</p>")
+  push!(parts, "<p class=\"field-help\">The check asks the GitHub releases API once per click, and start_webui.jl asks once per start from a terminal (off with --no-update-check or SPARLECTRA_UPDATE_CHECK=0); nothing about this installation is sent.</p>")
   return _webui_layout("Check for updates", "<section class=\"panel update-check\">$(join(parts, ""))</section>"; show_back = true)
 end
 

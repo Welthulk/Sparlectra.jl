@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -439,6 +439,7 @@ export
   CGMESLineShortCircuit,                  # Optional per-line zero-sequence data for the CGMES export.
   cgmesLineShortCircuitData,              # Harvested zero-sequence line data as writeCGMESFiles input.
   printShortCircuitCoverage,              # Readable rendering of the coverage rows.
+  dynamicsReportLines,                    # DY section of the CGMES import report (cgmes_import.read_dynamics).
   runShortCircuit!,                       # IEC 60909 balanced Ik'' max/min per fault bus (#277).
   exportSCF,                              # Write a Net as a Sparlectra Case Format file (PGM-compatible, #342).
   net_to_scf,                             # Build the SCF root object of a Net without writing it (#342).
@@ -617,7 +618,7 @@ export
   printACPFlowResults,                    # Print AC PF result report.
   printProsumerResults,
 
-  # powerflow_dc/ — standalone DC power flow (MATPOWER rundcpf/makeBdc equivalent).
+  # powerflow_dc/: standalone DC power flow (MATPOWER rundcpf/makeBdc equivalent).
   rundcpf!,                               # Solve standalone DC power flow; optional AC-NR seeding via seed_ac_start.
   DcPowerFlowConfig,                      # power_flow.dc.* configuration.
   DcPowerFlowReport,                      # Structured DC PF report (angles + lossless branch flows).
@@ -789,7 +790,7 @@ include("node.jl")
 include("branch.jl")
 include("link.jl")
 include("shunt.jl")
-# Native short-circuit source container (issue #299) — must precede
+# Native short-circuit source container (issue #299), must precede
 # network.jl because Net carries a typed sc_sources field.
 include("shortcircuit/native_sc_data.jl")
 # HVDC link record: must precede network.jl for the same reason (typed
@@ -871,7 +872,7 @@ include("stateestimation/state_estimation.jl")
 include("stateestimation/topology_validation.jl")
 # IEC 60909 balanced short-circuit evaluation (issue #277). Consumes
 # Net + the CGMES short-circuit harvest; reuses the equicircuit branch
-# helpers and the AC-island decomposition — the PF solver stays untouched.
+# helpers and the AC-island decomposition, the PF solver stays untouched.
 include("shortcircuit/short_circuit.jl")
 # N-1 contingency batch API (multi-core Phase 4): needs the rectangular
 # solver, remove functions, island detection, and the parallel runtime
@@ -899,7 +900,7 @@ include("adapters/matpower/MatpowerIO.jl")
 include("adapters/matpower/createnet_powermat.jl")
 include("adapters/dtf/DTFImporter.jl")
 include("adapters/cgmes/CGMESImporter.jl")
-import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, cgmesMeasurementKeys, generateMeasurementTableFromSV, CGMESSeriesInput, CGMESSeriesClassDiff, CGMESSeriesPair, CGMESSeriesReport, checkCGMESSeries, printCGMESSeriesReport, writeCGMESSeriesReport, CGMESSeriesError, CGMESSnapshotDelta, CGMESSeriesUnion, buildCGMESSeriesUnion, compareSnapshotReproduction, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData
+import .CGMESImporter: summarizeCGMES, createNetFromCGMES, importCGMES, compareWithSV, cgmesMeasurementKeys, generateMeasurementTableFromSV, CGMESSeriesInput, CGMESSeriesClassDiff, CGMESSeriesPair, CGMESSeriesReport, checkCGMESSeries, printCGMESSeriesReport, writeCGMESSeriesReport, CGMESSeriesError, CGMESSnapshotDelta, CGMESSeriesUnion, buildCGMESSeriesUnion, compareSnapshotReproduction, analyzeCGMES, shortCircuitCoverage, printShortCircuitCoverage, writeCGMESFiles, CGMESLineShortCircuit, cgmesLineShortCircuitData, dynamicsReportLines
 include("adapters/cgmes/glue.jl")
 include("adapters/cgmes/qsts_glue.jl")
 include("adapters/matpower/exportMatPower.jl")

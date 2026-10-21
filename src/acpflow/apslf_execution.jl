@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,6 +75,35 @@ function _apslf_radius_line(evaluated::Bool, dmin::Float64, bus::Int, level::Str
     string("series radius R = ", round(series_radius; sigdigits = 3), " (root test on the voltage coefficients, bus ", series_bus, ")")
   end
   return string(pade, "; ", series)
+end
+
+# Status fields for AnalyticLoadFlow's diagnosis of a non-converged solve
+# (solvePf meta.diagnosis): the reason, the nearest Padé pole (modulus, case
+# bus, conjugate pair or not), the change of the Padé value at s = 1 between
+# order N - 2 and N, and one line that carries all of it. The line also
+# replaces the generic reason_text, so run.log ("Primary reason") and the
+# message of the Web UI result show it. Empty for a converged solve.
+function _apslf_diagnosis_status(sol, snet::Net)::NamedTuple
+  d = sol.meta.diagnosis
+  d === nothing && return NamedTuple()
+  bus = d.pole_bus >= 1 ? _qlimit_original_bus_id(snet, d.pole_bus) : 0
+  line = _apslf_diagnosis_line(d.reason, d.message, d.pole_min_abs, d.pole_pair, bus, d.pade_change, d.order)
+  return (
+    apslf_diagnosis_reason = d.reason,
+    apslf_pole_min_abs = d.pole_min_abs,
+    apslf_pole_min_bus = bus,
+    apslf_pole_pair = d.pole_pair,
+    apslf_pade_change = d.pade_change,
+    apslf_diagnosis_line = line,
+    reason_text = string("APSLF analytic power-series solve did not converge within power_flow.tol. ", line),
+  )
+end
+
+function _apslf_diagnosis_line(reason::Symbol, message::String, pole_abs::Float64, pair::Bool, bus::Int, pade_change::Float64, order::Int)::String
+  pole = isfinite(pole_abs) ? string("nearest Pade pole |s| = ", round(pole_abs; sigdigits = 3), pair ? " (conjugate pair)" : " (single)", " at bus ", bus) : "no Pade pole found"
+  change = isnan(pade_change) ? "Pade change not evaluated (order below 4)" : string("Pade change order ", order - 2, " to ", order, " = ", round(pade_change; sigdigits = 3), " pu")
+  # the message of :pade_not_converged already names the change
+  return reason === :pade_not_converged ? string("APSLF diagnosis: ", reason, ", ", message, "; ", pole) : string("APSLF diagnosis: ", reason, ", ", message, "; ", pole, "; ", change)
 end
 
 # The run's radii over several islands: each of the two is the smallest one
@@ -188,7 +217,8 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
   if !multi_island
     iters, status, sol = runpf_external!(wnet, solver; tol = pf_cfg.tol, flatstart = wnet.flatstart, include_limits = include_limits, verbose = verbose)
     switches = _apslf_record_clamps!(net, sol, iters)
-    _set_rectangular_pf_status!(net, _apslf_pf_status(status == 0, sol.residual_inf, iters; extra = merge(_apslf_radius_status(sol, wnet), (pv_pq_switching_events = switches,))))
+    diag = _apslf_diagnosis_status(sol, wnet)
+    _set_rectangular_pf_status!(net, _apslf_pf_status(status == 0, sol.residual_inf, iters; extra = merge(_apslf_radius_status(sol, wnet), diag, (pv_pq_switching_events = switches,))))
     has_merges && sync_merges_back!()
     return iters, status
   end
@@ -240,10 +270,12 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
       total_switches += island_switches
       worst_radius = _apslf_worst_radius(worst_radius, _apslf_radius_status(sol, inet))
       if status != 0
-        failure_status = _apslf_pf_status(false, sol.residual_inf, it; extra = (island_id = row.island_id, pv_pq_switching_events = island_switches))
+        island_diag = _apslf_diagnosis_status(sol, inet)
+        failure_status = _apslf_pf_status(false, sol.residual_inf, it; extra = merge(island_diag, (island_id = row.island_id, pv_pq_switching_events = island_switches)))
         island_statuses[Int(row.island_id)] = failure_status
         _set_rectangular_pf_status!(net, failure_status)
-        err = ErrorException("AC island $(row.island_id) power-flow solve failed (solver=apslf):\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) residual_inf=$(sol.residual_inf)")
+        diag_text = hasproperty(island_diag, :apslf_diagnosis_line) ? string("\n  ", island_diag.apslf_diagnosis_line) : ""
+        err = ErrorException("AC island $(row.island_id) power-flow solve failed (solver=apslf):\n  buses=$(row.n_bus) branches=$(row.n_branch) ref=$(row.chosen_ref_bus)\n  bus_types: PV=$(row.n_pv) PQ=$(row.n_pq) REF=$(row.n_ref)\n  iterations=$(it) residual_inf=$(sol.residual_inf)$(diag_text)")
         first_failure === nothing && (first_failure = err)
         pf_cfg.islands.diagnostic_continue_after_failure || throw(err)
         continue

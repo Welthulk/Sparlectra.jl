@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -149,7 +149,7 @@ function _check_wrong_branch_solution(V::Vector{ComplexF64}, bus_types::Vector{S
 
   # Wrong-branch heuristics judge only the network's HIGHEST voltage level
   # by design: sub-transmission dips are normal
-  # operating spread, not a wrong-branch indicator — a real 6209-bus CGMES
+  # operating spread, not a wrong-branch indicator: a real 6209-bus CGMES
   # snapshot flagged healthy 45 kV feeders at 0.94 pu as SUSPECT while its
   # 380 kV level was clean. Without a net (pure vector call) or without
   # nominal-voltage data every bus stays in scope, preserving the previous

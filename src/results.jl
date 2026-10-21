@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,8 +21,8 @@
     _fitColumn(text, width) -> String
 
 Trim `text` to `width` characters, marking the cut with `…`. Fixed-width
-`@sprintf` fields pad but never truncate, so long names — CGMES bus and
-branch identifiers routinely exceed 25 characters — would otherwise push
+`@sprintf` fields pad but never truncate, so long names (CGMES bus and
+branch identifiers routinely exceed 25 characters) would otherwise push
 every following column out of alignment.
 """
 function _fitColumn(text, width::Int)::String
@@ -137,7 +137,7 @@ _effective_bus_name(busNameByIdx::AbstractDict, net::Net, bus_idx::Int)::String 
 
 # External-grid source presentation (issue #299): the hidden internal
 # reference bus "<bus>__extgrid_int" reports type "SOURCE" instead of
-# "SLACK" — the grid connection is a source, the hidden bus only its
+# "SLACK": the grid connection is a source, the hidden bus only its
 # internal anchor. The solver-internal node type stays Slack; this is
 # presentation only (result table, structured report, CSV/JSON rows).
 _is_external_grid_internal_bus(name::AbstractString)::Bool = endswith(name, "__extgrid_int")
@@ -252,7 +252,7 @@ function _bus_control_flag_cache(net::Net)::Dict{Int,BusControlFlags}
     cache[bus_idx] = BusControlFlags(old.has_qu | has_qu_controller(ps), old.has_pu | has_pu_controller(ps), old.hvdc)
   end
   # HVDC pair terminals: steered injections read "B2B", a grid-forming
-  # reference (island_feed to side) reads "B2B src" — the bus table then
+  # reference (island_feed to side) reads "B2B src": the bus table then
   # explains WHY a SLACK row is a converter and not a power plant
   for c in _hvdc_pair_controllers(net)
     c.enabled || continue
@@ -1036,6 +1036,10 @@ function printACPFlowResults(
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :apslf_convergence_line)
     @printf(io, "APSLF radius   : %s\n", String(rect_status_hdr.apslf_convergence_line))
   end
+  # a non-converged APSLF run: why, from AnalyticLoadFlow's diagnosis
+  if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :apslf_diagnosis_line)
+    println(io, String(rect_status_hdr.apslf_diagnosis_line))
+  end
   # dishonest Newton (0.30.2): the counts only when the switch was on
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :jacobian_reuse) && rect_status_hdr.jacobian_reuse
     @printf(io, "Jacobian reuse : %d reused steps, %d refactorisations, %d discarded\n", rect_status_hdr.jacobian_reuse_steps, rect_status_hdr.jacobian_reuse_refactorisations, rect_status_hdr.jacobian_reuse_discarded)
@@ -1365,7 +1369,7 @@ function printACPFlowResults(
     # Detailed engineering-style control section (OLTC/PST/combined).
     printTapControllerSummary(io, net)
   end
-  # Machine remote voltage controllers print only when present — the "none"
+  # Machine remote voltage controllers print only when present: the "none"
   # marker above stays the deterministic anchor for parsers.
   printMachineControllerSummary(io, net)
   # Shunt voltage controllers (SVC / MSC-MSR bank) print only when present.

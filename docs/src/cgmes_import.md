@@ -55,7 +55,7 @@ object to the element it became (kind and index).
 Everything else is counted in the coverage report; `summarizeCGMES` shows
 the full class histogram. Short-circuit source data is harvested on every
 import (read, not evaluated); `shortCircuitCoverage` reports its
-per-attribute completeness, printed in `cgmes.log`
+per-attribute completeness, shown in `cgmes_import_report.md`
 ([Short-Circuit Compendium](short_circuit.md)). The record of a
 `SynchronousMachine` on a `WindGeneratingUnit` or `SolarGeneratingUnit`
 names that class (`converter_unit`) and carries
@@ -65,7 +65,7 @@ the rated current from `ratedS`, else from `maxOperatingP`. A class with termina
 or with SSH active power of which no object reached the network (for
 example `EnergySource` with `map_energy_source` off, or
 `PowerElectronicsConnection` with `map_power_electronics` off) gets one
-`class not mapped:` row in the import messages and in `cgmes.log`, with its
+`class not mapped:` row in the import messages and in `cgmes_import_report.md`, with its
 object count and its SSH P sum; a class without SSH active power has no P
 sum. One header line above the rows states the sign convention: load sign,
 positive means flow out of the node.
@@ -199,7 +199,7 @@ The keys that steer a CGMES import: where the delivery is, the system base, whet
 | `cgmes_import.map_energy_source` | `false` | Map `EnergySource` objects as fixed PQ injections ([EnergySource](@ref cgmes_energy_source)). Allowed values: `true`, `false`. |
 | `cgmes_import.map_power_electronics` | `false` | Map CGMES 3.0 `PowerElectronicsConnection` objects as PQ or voltage-regulating injections ([PowerElectronicsConnection](@ref cgmes_power_electronics)). Allowed values: `true`, `false`. |
 | `cgmes_import.shunt_control` | `false` | Attach a switched-bank voltage controller to every `LinearShuntCompensator` with `controlEnabled` and a voltage `RegulatingControl` at its own bus ([Bank regulators](@ref cgmes_shunt_control)). Allowed values: `true`, `false`. |
-| `cgmes_import.read_dynamics` | `false` | Read the DY profile and give the machines their `DynamicData`: inertia, damping and rating of the synchronous machine models, droop and governor time constant of some turbine governors ([Dynamic data](@ref cgmes_dynamics)). Off: the DY file is skipped. Allowed values: `true`, `false`. |
+| `cgmes_import.read_dynamics` | `false` | Read the DY profile and give the machines their `DynamicData`: inertia, damping and rating of the synchronous machine models, droop and governor time constant of some turbine governors ([Dynamic data](@ref cgmes_dynamics)). Off: the DY file is skipped and one notice names the switch. Allowed values: `true`, `false`. |
 | `cgmes_import.vset_min_pu` | `0.5` | Lower bound of the plausibility band for a voltage `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal voltage. |
 | `cgmes_import.vset_max_pu` | `1.5` | Upper bound of that band. A target outside `[vset_min_pu, vset_max_pu]` is treated as a placeholder: it is ignored, the unit is held PV at the bus voltage derived from the nominal data, and the substitution is reported as a `warning:`. |
 | `cgmes_import.multi_slack` | `true` | Give every electrical island its own SV-declared angle reference (at most one per island), and a slack to every island with infeed but without reference (see Islands without a reference above). Required for multi-island deliveries; `false` forces the single-reference behavior. Allowed values: `true`, `false`. |
@@ -207,7 +207,7 @@ The keys that steer a CGMES import: where the delivery is, the system base, whet
 | `cgmes_import.placeholder_guards` | `warn_skip` | Behavior of the placeholder guards (implausible shunt admittances, tap corrections outside 0.5 … 2.0). `warn_skip`: keep the filler value out of the solve with a warning. `strict`: abort the import with an error naming the object. Allowed values: `warn_skip`, `strict`. |
 | `cgmes_import.infer_base_voltages` | `false` | Reconstruct missing nominal voltages when the delivery ships without its `BaseVoltage` catalog: nodes are seeded from the SV voltages (kV, snapped to the standard level series) and transformer rated voltages, then the levels propagate across level-preserving equipment (anything but a transformer). All substitutions are summarized as one `warning:` with per-source and per-level counts. Pair with `require_boundary: false`; nodes that stay unresolved still abort with the import analysis. Allowed values: `true`, `false`. |
 | `cgmes_import.hvdc_mode` | `injections` | HVDC converter handling. `injections`: fixed PCC injections with the SSH operating point; areas joined only through HVDC stay separate islands. `paired_control`: the same injections plus one steerable `HvdcPairControl` per detected converter pair; the DC topology (`ACDCConverterDCTerminal`, `DCNode`, `DCLineSegment`) groups the converters into links, the transfer and loss are derived from the two SSH operating points, and the outer loop keeps the pairing exact. Detection runs in both modes and names every pair in the import messages; a pair that cannot be attached (skipped converter, inconsistent snapshot) degrades to the fixed injections with a notice. Allowed values: `injections`, `paired_control`. |
-| `cgmes_import.start_values` | `auto` | Newton-Raphson start state for CGMES runs. `auto`: the delivery's `SvVoltage` state when it carries one, else the flat start. `sv`: always the imported state. `flat`: always the flat start. With an SV start the other start-value machines (`start_projection`, `dc_seed_unconditional`, `start_current_iteration`, `apslf_start`) are forced off for the run. An explicit `sv` or `flat` wins over `power_flow.flatstart`; under `auto` a set `power_flow.flatstart` chooses the flat start although the delivery carries an SV state. MATPOWER and DTF runs ignore this key. The resolved decision (what `auto` chose, overridden keys) is logged to `run.log` and `cgmes.log`; the SV comparison (`sv_compare.csv`) runs in every mode. Allowed values: `auto`, `flat`, `sv`. |
+| `cgmes_import.start_values` | `auto` | Newton-Raphson start state for CGMES runs. `auto`: the delivery's `SvVoltage` state when it carries one, else the flat start. `sv`: always the imported state. `flat`: always the flat start. With an SV start the other start-value machines (`start_projection`, `dc_seed_unconditional`, `start_current_iteration`, `apslf_start`) are forced off for the run. An explicit `sv` or `flat` wins over `power_flow.flatstart`; under `auto` a set `power_flow.flatstart` chooses the flat start although the delivery carries an SV state. MATPOWER and DTF runs ignore this key. The resolved decision (what `auto` chose, overridden keys) is logged to `run.log` and `cgmes_import_report.md`; the SV comparison (`sv_compare.csv`) runs in every mode. Allowed values: `auto`, `flat`, `sv`. |
 
 ### Implausible voltage setpoints
 
@@ -280,7 +280,7 @@ import names each such island in a notice.
 The key is off by default, because it changes the imported network of
 every delivery that carries such objects. Off, they stay out of the
 network and are listed in `skipped_equipment`; one notice in the import
-messages (and in `cgmes.log`) names the key that maps them, and their
+messages (and in `cgmes_import_report.md`) names the key that maps them, and their
 count and P sum stand in the table of classes not mapped. On, one notice
 counts the mapped and skipped
 objects with the P and Q sums. A delivery whose generation sits in
@@ -420,8 +420,8 @@ bank stays at its SSH sections.
 ## [Dynamic data (DY profile)](@id cgmes_dynamics)
 
 With `read_dynamics = true` the store reads the DY profile as well (profile
-tag `DY`; without the switch the file is skipped and named in the import
-messages) and the machines get their [`DynamicData`](@ref)
+tag `DY`; without the switch the file is skipped, and one import notice
+says that a DY profile is present and not read) and the machines get their [`DynamicData`](@ref)
 ([Dynamic Unit Data](@ref dynamic_data)). No calculation reads it; the
 island slack choice reads the unit type.
 
@@ -456,6 +456,14 @@ leads from the object to an EQ object. Further notices count the reasons.
 A record whose values break the rules of `DynamicData` (a negative
 inertia) is dropped with a `warning:`.
 
+The import report `cgmes_import_report.md` of a service run has a section **Dynamic
+data (DY profile)** whenever the delivery carries a DY profile. With the
+switch it lists the DY files, the machines that got `DynamicData` and the
+lines above; without it one line says that the profile is present and not
+read. `dynamicsReportLines(result)` returns the same lines, and
+`examples/run_cgmes_suite.jl` prints them for the MicroGrid runs, which
+read the DY profile.
+
 The ENTSO-E MicroGrid carries a DY profile (machine models with inertia
 and damping, `GovSteam0`, `GovSteam1`, `GovHydro1`, `GovHydro2`, all with
 `mwbase` 0, so no droop is taken); SmallGrid, RealGrid, FullGrid and
@@ -489,9 +497,9 @@ profile:
 - **Voltages**: per-bus Δvm/Δva against `SvVoltage`, with max and RMS.
   Angles are only defined up to one constant per island, so the
   comparison removes the median offset per island (`dva_aligned` drives
-  `max_dva`/`rms_dva`) and reports it as `va_ref_offset_deg` (cgmes.log,
-  run metadata, Web UI summary row); the raw `dva` column stays in
-  `sv_compare.csv`.
+  `max_dva`/`rms_dva`) and reports it as `va_ref_offset_deg`
+  (`cgmes_import_report.md`, run metadata, Web UI summary row); the raw
+  `dva` column stays in `sv_compare.csv`.
 - **Flows** (`.flows`): per-terminal comparison against `SvPowerFlow` in
   the CGMES sign convention (branch terminals, shunts at the solved
   voltage, loads as an SSH-SV consistency check, units aggregated per

@@ -87,6 +87,12 @@ metadata reports `contingency_screening_mode` and `contingency_screened`.
 called once per finished outage or scenario. The Web UI job passes one
 that stores the counter in the job snapshot (see `webui_jobs.jl`).
 
+`phase_callback` (default no-op) receives the run phase by name:
+`importing_case`, `solving_base_case`, `running_outages` (or
+`running_scenarios` for a file block or external scenario file) and
+`writing_artifacts`. The base case is solved inside the batch call, so
+the switch to the batch phase comes with the first finished outage.
+
 Failure behavior: `contingency_unsupported_format` (not MATPOWER, CGMES,
 PowSyBl or Sparlectra Case Format),
 `contingency_no_cases` (no in-service element of the requested kind),
@@ -94,7 +100,7 @@ PowSyBl or Sparlectra Case Format),
 `screening_mode`, missing `scenario_file`), plus the shared import/config
 failures.
 """
-function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; config_overrides::AbstractDict = Dict{String,Any}(), weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing, @nospecialize(progress = nothing))::SparlectraApiResult
+function _run_contingency_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, kind::AbstractString; config_overrides::AbstractDict = Dict{String,Any}(), weights_path::Union{Nothing,AbstractString} = nothing, se_state_file::Union{Nothing,AbstractString} = nothing, se_run_id::Union{Nothing,AbstractString} = nothing, se_start_mode::AbstractString = "se_state", scenario_source::Union{Nothing,AbstractString} = nothing, scenario_file::Union{Nothing,AbstractString} = nothing, screening_mode::Union{Nothing,AbstractString} = nothing, screening_margin_pct::Union{Nothing,Real} = nothing, @nospecialize(progress = nothing), @nospecialize(phase_callback = phase -> nothing))::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")
@@ -141,6 +147,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   if scenario_source in ("file_block", "external_file") && !(format in (:scf, :matpower))
     return _api_failure("invalid_request", "scenario_source $(scenario_source) resolves component ids against the typed case, which a CGMES delivery or a PowSyBl case does not carry. Export the case as SCF once (the Web UI's \"Export as SCF case file\" button or exportSCF), then run the scenario source against that .scf.json and reference its component ids. The n1_all/n1_branches/n1_generators scenario sources work on the CGMES case directly.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
+  phase_callback("importing_case")
   imported = try
     import_case(case_path, config; run_kind = :contingency)
   catch err
@@ -217,7 +224,23 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   results = nothing
   scf_cases_source = "generated"
   cases = ContingencyCase[]
+  # The base case is solved inside runContingencies!/runScenarios! before
+  # the batch starts, and the service cannot see that boundary. The first
+  # finished outage marks it: the wrapper reports the batch phase once,
+  # then forwards every tick to the caller's counter. It runs on the batch
+  # worker threads; the lock keeps the phase report (the Web UI job writes
+  # its dictionary there) from overlapping a counter update of another
+  # worker.
+  batch_phase = scenario_source in ("file_block", "external_file") ? "running_scenarios" : "running_outages"
+  batch_started = Ref(false)
+  batch_lock = ReentrantLock()
+  batch_progress = (done, total) -> lock(batch_lock) do
+    batch_started[] || (batch_started[] = true; phase_callback(batch_phase))
+    progress === nothing || progress(done, total)
+    return nothing
+  end
   if scenario_source in ("file_block", "external_file")
+    phase_callback("solving_base_case")
     scenario_result = try
       scfcase = format === :scf ? typed_case : convert_case(MatpowerAdapter(), MatpowerIO.read_case(case_path; legacy_compat = true), matpower_adapter_options(config))
       idx = ScenarioIndex(scfcase)
@@ -234,7 +257,7 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
       runScenarios!(net, set; index = idx, rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin,
         _engine_solver_kwargs(config.powerflow)...,
         warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note,
-        events = config.contingency.events, pairs = config.contingency.pairs, progress = progress)
+        events = config.contingency.events, pairs = config.contingency.pairs, progress = batch_progress)
     catch err
       err isa PowerFlowAborted && rethrow()
       # the pair cap of a file block that asks for pairs: named as such
@@ -325,14 +348,16 @@ function _run_contingency_service(case_path::AbstractString, config_file::Abstra
   dslack = config.powerflow.distributed_slack
   dslack_kwargs = _engine_solver_kwargs(config.powerflow)
   if results === nothing
+    phase_callback("solving_base_case")
     # an outage that removes the reference, or splits off an island without
     # one, does not end the case: the strongest remaining unit takes over
     # and the result names it (auto_slack, the default of runContingencies!)
-    results = runContingencies!(net, cases; names = names, rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = progress, dslack_kwargs...)
+    results = runContingencies!(net, cases; names = names, rescue_ladder = config.contingency.rescue_ladder, maxIte = config.contingency.max_iter, base_maxIte = config.powerflow.max_iter, screening_mode = screen_mode, screening_margin_pct = screen_margin, warm_active_set = config.contingency.warm_active_set, warm_cold_check = config.contingency.warm_cold_check, warm_cold_check_margin_pu = config.contingency.warm_cold_check_margin_pu, warm_note = warm_note, progress = batch_progress, dslack_kwargs...)
   end
   n_screened = eltype(results) === ScenarioResult ? count(r -> r.screened, results) : 0
   # a requested screening the network does not allow is named in run.log
   screen_reason = screen_mode === :off ? nothing : _screening_unavailable_reason(net)
+  phase_callback("writing_artifacts")
   report = buildContingencyReport(results)
   csv = writeContingencyResultsCSV(joinpath(output_dir, "contingency_n1.csv"), results; format = String(config.output.csv_format))
 

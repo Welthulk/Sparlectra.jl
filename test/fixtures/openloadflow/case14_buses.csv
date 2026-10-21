@@ -1,0 +1,25 @@
+# OpenLoadFlow reference solution of case14.m
+# source: Sparlectra export of MATPOWER case14.m (sha256 2ffc4e1b734ae6c5e92dbe68b4e36010ed695a4bbcc4d065c74c4fbc39fcf3c1), converted by MATPOWER cdf2matp from the IEEE CDF file ieee14cdf.txt of the UW Power Systems Test Case Archive (https://labs.ece.uw.edu/pstca/)
+# tool: pypowsybl 1.16.1 (OpenLoadFlow), written 2026-10-21T12:14:31Z
+# input: case14.m sha256 b03912c0287b93e297dfdd154ae17134ce3446d8c1cbf19f39d8ffd6423c35e5
+# network: IIDM built row by row from the MATPOWER file: lines with b/2 at each end; transformers with rated_u1 = baseKV1 * ratio,
+#   rated_u2 = baseKV2 and their g + jb (g from mpc.sparlectra.transformer_losses) as shunts (g + jb)/2/ratio^2 at the from bus and (g + jb)/2 at the to bus;
+#   branch flows of a transformer include these shunts; slack generation = slack bus mismatch (no distributed slack)
+# parameters: distributed_slack=false, use_reactive_limits=false, voltage_init_mode=UNIFORM_VALUES, transformer/shunt/phase-shifter control off, slack bus forced to VL1
+# provider: generatorsWithZeroMwTargetAreNotStarted=false, maxNewtonRaphsonIterations=50, maxOuterLoopIterations=100, maxPlausibleTargetVoltage=1.5, minPlausibleTargetVoltage=0.5, newtonRaphsonConvEpsPerEq=1e-12, plausibleActivePowerLimit=100000, reactiveRangeCheckMode=TARGET_P, slackBusPMaxMismatch=1e-6, slackBusSelectionMode=NAME, slackBusesIds=VL1
+# result: status ComponentStatus.CONVERGED, 4 iterations, slack bus mismatch -0.00672764210083443 MW written as slack generation
+bus,name,v_pu,v_angle_deg,p_gen_mw,q_gen_mvar
+1,1,1.06,0.0,232.39327235789915,-16.54930054138849
+2,2,1.045,-4.982589141975037,40.0,43.55710013951128
+3,3,1.01,-12.725099938267961,0.0,25.075348499122036
+4,4,1.0176708536917647,-10.31290109233162,0.0,0.0
+5,5,1.0195138598190605,-8.773853898295386,0.0,0.0
+6,6,1.07,-14.220946463702132,0.0,12.730944407280331
+7,7,1.0615195324909388,-13.359627365346357,0.0,0.0
+8,8,1.09,-13.359627365346357,0.0,17.623451368082186
+9,9,1.055931720636972,-14.938521295229096,0.0,0.0
+10,10,1.0509846249998478,-15.097288463071088,0.0,0.0
+11,11,1.056906518540365,-14.790622031321645,0.0,0.0
+12,12,1.0551885631971039,-15.075584520424384,0.0,0.0
+13,13,1.050381713628595,-15.156276336222042,0.0,0.0
+14,14,1.035529945853566,-16.03364452920559,0.0,0.0

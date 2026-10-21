@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -759,7 +759,7 @@ which Sparlectra reads back; see the MATPOWER page of the documentation.
   input. The input file itself is never written by this function.
 - `write_solution::Union{Nothing,Bool}`: Whether to write the solved AC
   power-flow state back into the export: `mpc.bus` `VM`/`VA` reflect the
-  solved node state, and `mpc.branch` gains the MATPOWER result columns 14–17
+  solved node state, and `mpc.branch` gains the MATPOWER result columns 14-17
   (`PF`, `QF`, `PT`, `QT`) sourced from the existing branch-flow report path
   (no flow recomputation in the exporter). `nothing` (default) reads
   `matpower_export.write_solution` from the active configuration

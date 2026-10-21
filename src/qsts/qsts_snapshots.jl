@@ -403,6 +403,15 @@ function _qsts_check_config(config::SparlectraConfig, mode::Symbol)
   return nothing
 end
 
+# one note naming the start keys a run-level flat start switched off for
+# this QSTS run (_flatstart_profile_config), the counterpart of the run.log
+# line of a power-flow run
+function _qsts_flatstart_note!(notes::Vector{String}, overridden::Vector{String})
+  isempty(overridden) && return notes
+  push!(notes, string("flat start: the run starts from the flat profile, no start projection; overridden for this run: ", join(overridden, ", ")))
+  return notes
+end
+
 # the configuration of the base solve: the passed one, with the controllers
 # off unless qsts.snapshot_controls asks for them (taps and banks then stay
 # at the values of the snapshot)
@@ -819,6 +828,8 @@ end
 # parallel map of the engine, assembly in step order.
 function _run_qsts(input::_QstsInput, config::SparlectraConfig, opts::_QstsRunOptions)::QstsResult
   _qsts_check_config(config)
+  # a flat start is a flat start on the base case and on every step
+  config, flat_overrides = _flatstart_profile_config(config)
   # an event series has no snapshots: each step is a switching state reached
   # from the step before
   isempty(input.event_list) || throw(ArgumentError(string("runQsts: ", input.name, " is an event series (event list ", input.event_list["source"], "); it runs with qsts.mode = sequential only")))
@@ -836,6 +847,7 @@ function _run_qsts(input::_QstsInput, config::SparlectraConfig, opts::_QstsRunOp
   scenarios = Scenario[Scenario(name = string("step ", k), ops = input.ops[k]) for k in 1:n if !isempty(input.ops[k])]
   _validate_scenarios_net(ScenarioSet(scenarios = scenarios), input.index, T0, controls && config.control.enabled)
   notes = String[]
+  _qsts_flatstart_note!(notes, flat_overrides)
   # the base case: the direct run of the template, with the controllers
   # only under qsts.snapshot_controls
   B = deepcopy(T0)

@@ -264,7 +264,7 @@ function run_webui_extended_tests()
     @test SparlectraApp._format_elapsed_duration(3) == "00:00:03.000"
     @test SparlectraApp._format_elapsed_duration(83) == "00:01:23.000"
     @test SparlectraApp._format_elapsed_duration(3725.125) == "01:02:05.125"
-    @test SparlectraApp._format_elapsed_duration(nothing) == "—"
+    @test SparlectraApp._format_elapsed_duration(nothing) == "-"
 
 
     @testset "Configuration refresh controls" begin (function ()
@@ -474,8 +474,12 @@ function run_webui_extended_tests()
       @test occursin("scope: case", profile_text)
       @test occursin("case: case145.m", profile_text)
       @test occursin("tol: 1.0e-7", profile_text)
-      @test occursin("autodamp: true", profile_text)
-      @test occursin("enforcement_mode: active_set", profile_text)
+      # autodamp true and active_set are the inherited values: not written
+      # (L20), the case still runs with them
+      @test !occursin("autodamp: true", profile_text)
+      @test !occursin("enforcement_mode", profile_text)
+      resolved145 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(root, "case145.m")).config.powerflow
+      @test (resolved145.max_iter, resolved145.autodamp, resolved145.qlimits.enforcement_mode) == (42, true, :active_set)
       @test !occursin("detailed_result_csv_format", profile_text)   # machine scope since 0.15.1
       @test !occursin("csv_format", profile_text)
       @test !occursin("benchmark", profile_text)   # machine scope stays out
@@ -488,7 +492,7 @@ function run_webui_extended_tests()
       @test case_cfg["matpower_import.apply_bus_names"] == false
       form_defaults = SparlectraApp._webui_case_form_defaults(joinpath(root, "case145.m"), root)
       @test !haskey(form_defaults, "detailed_result_csv_format")
-      @test form_defaults["performance_timing"] == "compact"
+      @test !haskey(form_defaults, "performance_timing")   # compact is the spec default
       @test form_defaults["gen_seed"] == 7
 
       # An SCF case saves through the SAME file; the case file itself is not
@@ -515,8 +519,9 @@ function run_webui_extended_tests()
       @test !isfile(stale_sidecar)                      # would shadow the save
       @test read(scf_case, String) == scf_before        # the case file is untouched
       scf_cc = Sparlectra.load_case_config(scf_case)
-      @test scf_cc["power_flow.autodamp"] === true      # case scope arrives
-      @test scf_cc["matpower_import.ratio"] == "normal"
+      @test scf_cc["power_flow.max_iter"] == 42         # case scope arrives
+      @test !haskey(scf_cc, "power_flow.autodamp")      # inherited values stay out
+      @test !haskey(scf_cc, "matpower_import.ratio")
       @test !haskey(scf_cc, "output.logfile_results")   # machine scope stays out
       @test !haskey(scf_cc, "benchmark.enabled")
       @test all(Sparlectra.scf_is_case_config_key(k) for k in keys(scf_cc))
@@ -809,11 +814,11 @@ form:
       fresh_case_path = joinpath(fresh_root, "resolved", "case145.m")
       fresh_cc = Sparlectra.load_case_config(fresh_case_path)
       @test all(Sparlectra.scf_is_case_config_key(k) for k in keys(fresh_cc))
-      @test fresh_cc["power_flow.qlimits.enforcement_mode"] == "active_set"
+      @test !haskey(fresh_cc, "power_flow.qlimits.enforcement_mode")   # active_set is inherited
       @test fresh_cc["power_flow.tol"] == 2.5e-7
       @test fresh_cc["power_flow.max_iter"] == 37
       fresh_form = SparlectraApp._webui_case_form_defaults(fresh_case_path, joinpath(fresh_root, "resolved"))
-      @test fresh_form["detailed_result_csv"] === true
+      @test !haskey(fresh_form, "detailed_result_csv")   # true is the spec default
       @test !haskey(fresh_form, "detailed_result_csv_format")
       @test !haskey(fresh_cc, "output.csv_format")
       @test !haskey(fresh_form, "effective_config")
@@ -3517,6 +3522,9 @@ result = get_powerflow_result(run_id)
           take!(ct_entered)
           mid = SparlectraApp.get_webui_powerflow_job(ct_id)
           @test mid["status"] == "running"
+          # L19: the job names the batch phase while the counter runs, not
+          # the last phase before the service call (preparing_configuration)
+          @test mid["current_phase"] == "running_outages"
           @test mid["progress_total"] == n_outages
           @test 1 <= mid["progress_done"] < n_outages
           mid_html = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(ct_id)?autorefresh=1"; output_root = root, runtime = rt).body)
@@ -3547,6 +3555,10 @@ result = get_powerflow_result(run_id)
             ct_csv_events = [l for l in eachline(op_log_path) if occursin(ct_id, l) && occursin("\"event\":\"detailed_result_csv_export", l)]
             @test any(l -> occursin("\"event\":\"detailed_result_csv_export_skipped\"", l) && occursin("\"reason\":\"contingency_run\"", l), ct_csv_events)
             @test !any(l -> occursin("\"event\":\"detailed_result_csv_export_failed\"", l), ct_csv_events)
+            # L19: the phases of an N-1 run reach the operation log in run order
+            ct_phases = [m[1] for m in (match(r"\"phase\":\"([a-z_]+)\"", l) for l in eachline(op_log_path) if occursin(ct_id, l) && occursin("\"event\":\"powerflow_phase_started\"", l)) if m !== nothing]
+            ct_order = [findfirst(==(p), ct_phases) for p in ("importing_case", "solving_base_case", "running_outages", "writing_artifacts")]
+            @test all(!isnothing, ct_order) && issorted(ct_order)
             # a finished job renders no counter (the N-1 table takes over)
             @test !occursin("id=\"batch-progress\"", String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(ct_id)"; output_root = root, runtime = rt).body))
           else
@@ -3694,6 +3706,10 @@ function _webui_qsts_tests()
       @test any(l -> occursin("\"event\":\"detailed_result_csv_export_skipped\"", l), csv_events)
       @test !any(l -> occursin("\"event\":\"detailed_result_csv_export_failed\"", l), csv_events)
       @test get(md, "qsts_controls_used", nothing) === true
+      # L19: the phases of a QSTS run reach the operation log in run order
+      qs_phases = [m[1] for m in (match(r"\"phase\":\"([a-z_]+)\"", l) for l in eachline(SparlectraApp.webui_operation_log_path(root)) if occursin(run_id, l) && occursin("\"event\":\"powerflow_phase_started\"", l)) if m !== nothing]
+      qs_order = [findfirst(==(p), qs_phases) for p in ("importing_case", "running_steps", "writing_artifacts")]
+      @test all(!isnothing, qs_order) && issorted(qs_order)
 
       # mode A without qsts.snapshot_controls: the companion file is there,
       # but its controllers are not used, and the result page says so

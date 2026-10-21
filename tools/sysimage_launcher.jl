@@ -26,7 +26,7 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
+export handle_sysimage, console_answer, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
@@ -184,6 +184,50 @@ function foreign_sysimage_owner(image::AbstractString, project_dir::AbstractStri
   return _comparable_dir(recorded) == _comparable_dir(project_dir) ? nothing : String(recorded)
 end
 
+# The console reader of the last question that got no answer in time, with
+# the stream it reads. A readline on a terminal cannot be cancelled: after a
+# timeout the task stays and takes the next line typed. A second readline on
+# the same stream would race with it, and the older task would take the answer
+# meant for the later question. So the next question on the same stream waits
+# on this task instead of starting another one.
+const _PENDING_CONSOLE_READER = Ref{Union{Nothing,Tuple{IO,Task}}}(nothing)
+
+"""
+    console_answer(prompt; io = stdout, input = stdin, seconds = 30.0) -> String
+
+Print `prompt` to `io` and return the next line from `input`, or "" when
+nobody answers within `seconds`, at the end of the input or when the input
+is closed while the question waits. A reader left over from an earlier
+question on the same `input` that timed out is reused, so one line typed on
+the console always answers the question on screen. Both console questions of
+`start_webui.jl` (sysimage build, update install) go through this function.
+"""
+function console_answer(prompt::AbstractString; io::IO = stdout, input::IO = stdin, seconds::Real = 30.0)::String
+  print(io, prompt)
+  flush(io)
+  pending = _PENDING_CONSOLE_READER[]
+  reader = if pending !== nothing && pending[1] === input && !istaskdone(pending[2])
+    pending[2]
+  else
+    # a finished leftover task holds a line typed after its own timeout; it
+    # is dropped, it was not typed for this question
+    @async try
+      readline(input)
+    catch err
+      # expected failure: the input is closed while the question waits
+      err isa EOFError || err isa Base.IOError || rethrow()
+      ""
+    end
+  end
+  _PENDING_CONSOLE_READER[] = (input, reader)
+  if timedwait(() -> istaskdone(reader), Float64(seconds); pollint = 0.1) !== :ok
+    println(io)
+    return ""
+  end
+  _PENDING_CONSOLE_READER[] = nothing
+  return fetch(reader)
+end
+
 """
 Ask `prompt` and return true only when the user answers yes. The build is
 opt-in: Enter, a timeout and a start without a terminal all mean no. A build
@@ -193,23 +237,8 @@ longer, and a user who did not ask for it should not wait for it;
 """
 function ask_build(prompt::AbstractString; seconds::Real = 30.0)::Bool
   isa(stdin, Base.TTY) || return false
-  print(prompt)
-  flush(stdout)
-  answer = Ref{String}("")
-  reader = @async begin
-    answer[] = try
-      readline(stdin)
-    catch
-      ""
-    end
-  end
-  waited = 0.0
-  while !istaskdone(reader) && waited < seconds
-    sleep(0.1)
-    waited += 0.1
-  end
-  istaskdone(reader) || println()
-  return lowercase(strip(answer[])) in ("y", "yes", "j", "ja")
+  answer = console_answer(prompt; seconds)
+  return lowercase(strip(answer)) in ("y", "yes", "j", "ja")
 end
 
 function build_sysimage(project_dir::AbstractString)::Bool

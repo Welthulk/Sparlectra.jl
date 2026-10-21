@@ -18,8 +18,9 @@
 #          output and replays a bounded excerpt on failure, and
 #          run_with_expected_warnings, which captures the advisories a test
 #          triggers on purpose and asserts that nothing else was logged,
-#          and parallel_comparison_report, the RAN/SKIPPED line of every
-#          parallel-vs-serial comparison
+#          parallel_comparison_report, the RAN/SKIPPED line of every
+#          parallel-vs-serial comparison, and cgmes_report_plain, the
+#          rendered text of the CGMES import report
 function selected_test_profile(args = ARGS, env = ENV)
   profile_args = [strip(String(arg)) for arg in args if !startswith(strip(String(arg)), "--")]
   cli_profile = isempty(profile_args) ? nothing : Symbol(first(profile_args))
@@ -218,6 +219,25 @@ function run_with_expected_warnings(f, patterns)
     Test.@test (record.message, expected) == (record.message, true)
   end
   return value
+end
+
+"""
+    cgmes_report_plain(output_dir) -> String
+
+The CGMES import report of a service run (`cgmes_import_report.md`) as the
+reader of the Web UI viewer sees it: rendered by the Markdown standard
+library, tags removed, one line per heading, list item, table row and
+preformatted line (table cells joined by `" | "`). Tests assert on this text,
+so they check the content and the rendering together, not the Markdown
+spelling of the file.
+"""
+function cgmes_report_plain(output_dir::AbstractString)::String
+  html = sprint(show, MIME"text/html"(), SparlectraApp.Markdown.parse(read(joinpath(output_dir, "cgmes_import_report.md"), String)))
+  html = replace(html, r"</t[dh]>" => " | ", r"</(p|li|h\d|tr)>" => "\n")
+  html = replace(html, r"<[^>]+>" => "")
+  html = replace(html, r"&#(\d+);" => m -> string(Char(parse(Int, m[3:(end - 1)]))))
+  html = replace(html, "&lt;" => "<", "&gt;" => ">", "&quot;" => "\"", "&amp;" => "&")
+  return join(filter(!isempty, rstrip.(strip.(split(html, '\n')), '|') .|> rstrip), "\n")
 end
 
 

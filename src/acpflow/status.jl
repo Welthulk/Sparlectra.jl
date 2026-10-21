@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -266,8 +266,10 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
   end
   status = _compose_framework_status(status, execution.control_status)
   # See the DC branch above: carry the run's iteration count for the
-  # single-island fallback of the island failure message.
-  status = _append_island_failure_message(merge(status, (iterations = execution.iterations,)), performance_profile)
+  # single-island fallback of the island failure message, and the APSLF
+  # diagnosis line, which that message replaces with the reason_text.
+  carried = rect_status !== nothing && hasproperty(rect_status, :apslf_diagnosis_line) ? (iterations = execution.iterations, apslf_diagnosis_line = rect_status.apslf_diagnosis_line) : (iterations = execution.iterations,)
+  status = _append_island_failure_message(merge(status, carried), performance_profile)
   diagnostics = cfg.powerflow.method === :rectangular ? merge(_rectangular_status_diagnostics(rect_status), _profile_start_projection_diagnostics(performance_profile)) : NamedTuple()
   # once per run, after the solve: a converged result below the voltage
   # threshold stays converged and gets the warning in the diagnostics and

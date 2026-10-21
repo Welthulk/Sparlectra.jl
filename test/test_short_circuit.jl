@@ -196,7 +196,7 @@ function run_short_circuit_tests()
       net = Net(name = "sc_flag", baseMVA = 100.0)
       addBus!(net = net, busName = "M1", vn_kV = 10.5)
       sc = _sc_data(machines = [_sc_machine(bus = "M1", xdpp = nothing, ratedS = 50.0, ratedU = 10.5)])
-      r = @test_logs (:warn, r"no usable x''_d — default 0.2 pu") match_mode = :any runShortCircuit!(net, sc; case = :max)
+      r = @test_logs (:warn, r"no usable x''_d, default 0.2 pu") match_mode = :any runShortCircuit!(net, sc; case = :max)
       row = r.rows[1]
       @test row.status === :ok
       @test row.contains_defaulted_data == true

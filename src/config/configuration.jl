@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -40,10 +40,11 @@ Base.@kwdef struct StartModeConfig
   measure_candidates::Bool = true
   accept_unmeasured_dc_start::Bool = false
   dc_seed_unconditional::Bool = false
-  # flat starts only (#463): the start projection
-  # also measures the flat profile with every PQ magnitude scaled by the
-  # product of the off-nominal transformer ratios on its path from the
-  # reference; see _ratio_profile_factors
+  # a candidate of the start projection on a flat seed (rescue ladder,
+  # auto mode, keyword calls): the flat profile with every PQ magnitude
+  # scaled by the product of the off-nominal transformer ratios on its path
+  # from the reference; a run-level flat start switches it off for the whole
+  # run (_flatstart_profile_config). See _ratio_profile_factors
   ratio_profile::Bool = true
   reuse_import_data::Bool = true
   blend_lambdas::Vector{Float64} = [0.25, 0.5, 0.75]
@@ -189,7 +190,7 @@ used when `power_flow.solver == :dc`.
 
 `angle_reference_deg` is the uniform angle offset added to every bus after
 the slack-referenced linear solve (the slack bus itself is fixed at this
-reference) — see [`solve_dc_powerflow`](@ref) for why this post-hoc shift is
+reference), see [`solve_dc_powerflow`](@ref) for why this post-hoc shift is
 exact. `ignore_out_of_service` documents that `status == 0` branches are
 always excluded from the B′ assembly (there is currently no supported way
 to include them; the field exists for forward compatibility with the YAML
@@ -200,7 +201,7 @@ Base.@kwdef struct DcPowerFlowConfig
   ignore_out_of_service::Bool = true
   # Run the standalone DC power flow when the AC solve (and the rescue
   # ladder, if enabled) did not converge. The AC status stays "not
-  # converged" — the fallback only leaves a usable DC state in the net.
+  # converged": the fallback only leaves a usable DC state in the net.
   fallback::Bool = false
 end
 
@@ -212,18 +213,18 @@ reference while the island's active-power imbalance is absorbed by a set of
 participating generators via one scalar `lambda_P` per island.
 
 # Fields
-- `enabled::Bool`: off by default — disabled reproduces the classical
+- `enabled::Bool`: off by default, disabled reproduces the classical
   single-slack behavior bit-for-bit.
-- `p_mode::Symbol`: how raw participation weights are derived —
+- `p_mode::Symbol`: how raw participation weights are derived:
   `:pg_weighted` (scheduled Pg), `:pmax_weighted` (maxP),
   `:headroom_weighted` (`max(maxP − Pg, 0)`), `:imported`
   (`ProSumer.participationFactor`, filled from MATPOWER `APF` /
   CGMES `GeneratingUnit.normalPF`), `:explicit` (the `weights` table).
-- `respect_p_limits::Bool`: diagnostic only — WARN when a participant's
+- `respect_p_limits::Bool`: diagnostic only, WARN when a participant's
   corrected P leaves `[minP, maxP]`; no re-dispatch.
 - `fallback::Symbol`: `:error` throws when an island has no valid participant;
   `:ref_only` falls back to the classical slack for that island with a warning.
-- `weights::Dict{String,Float64}`: `:explicit` mode only — bus name (or bus
+- `weights::Dict{String,Float64}`: `:explicit` mode only, bus name (or bus
   index as string) → weight.
 """
 Base.@kwdef struct DistributedSlackConfig
@@ -373,8 +374,8 @@ feeder impedance `z = Un²/Sk''`, so the connection-bus voltage reacts to
 loading instead of being held ideally stiff.
 
 # Fields
-- `enabled::Bool`: off by default — the classical ideal slack.
-- `source::Symbol`: where `Sk''`/`R/X` come from — `:auto` prefers the
+- `enabled::Bool`: off by default, the classical ideal slack.
+- `source::Symbol`: where `Sk''`/`R/X` come from: `:auto` prefers the
   values a CGMES delivery declares on the slack bus's
   `ExternalNetworkInjection` and falls back to the config numbers below
   (MATPOWER/DTF carry no such data); `:config` always uses the config
@@ -781,7 +782,7 @@ end
 """
     CGMESImportConfig
 
-Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
+Options of the `cgmes_import` configuration block, the ENTSO-E CGMES import
 (see `importCGMES`). `path` accepts a folder, a ZIP, or several of both
 (base case plus boundary set) separated by `;`.
 
@@ -822,7 +823,7 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   a `warning:` message. Widen the band to accept a delivery's own values, or set
   `vset_min_pu = 0` and a large `vset_max_pu` to disable the check entirely.
 - `multi_slack::Bool`: give every electrical island its own SV-declared angle
-  reference (at most one per island). Required for multi-island deliveries —
+  reference (at most one per island). Required for multi-island deliveries:
   without it every island beyond the primary one has no reference and the
   island-wise power flow refuses to run. Disable only to force the legacy
   single-reference behavior.
@@ -831,7 +832,7 @@ Options of the `cgmes_import` configuration block — the ENTSO-E CGMES import
   below this value builds no branch: its two buses are joined as a link,
   with a notice, like a closed switch. Default `1e-6`; 0 switches it off.
 - `start_values::Symbol`: Newton-Raphson start state for CGMES runs. `:flat`
-  (default) uses a synthetic flat start — the solver earns the solution
+  (default) uses a synthetic flat start: the solver earns the solution
   itself; `:sv` starts from the delivery's imported `SvVoltage` state and
   force-disables the competing start-value machines for the run. On CGMES
   runs this key wins over `power_flow.flatstart` /
@@ -856,7 +857,7 @@ Base.@kwdef struct CGMESImportConfig
   start_values::Symbol = :auto
   placeholder_guards::Symbol = :warn_skip
   # Reconstruct missing nominal voltages (SV snap + transformer ratedU +
-  # propagation) when the BaseVoltage catalog is absent — see
+  # propagation) when the BaseVoltage catalog is absent, see
   # _inferNominalVoltages. Pair with require_boundary = false.
   infer_base_voltages::Bool = false
   # HVDC converter handling (#297 Draft B): :injections keeps the Stage-0
@@ -868,14 +869,14 @@ end
 """
     ShortCircuitConfig
 
-Options of the `short_circuit` configuration block — the IEC 60909 balanced
+Options of the `short_circuit` configuration block, the IEC 60909 balanced
 short-circuit evaluation (`runShortCircuit!`).
 
 # Fields
 - `c_factor::Float64`: scalar override for the IEC 60909-0 voltage factor
   `c`. `0.0` (default) selects the hardcoded Table-1 values by nominal
   voltage level and case (`c_max`/`c_min`); a positive value replaces the
-  table for every bus — intended for expert/verification runs where a worked
+  table for every bus, intended for expert/verification runs where a worked
   example prescribes the factor. A configurable per-voltage-level table is
   not configurable.
 - `converter_current_factor::Float64`: fault current of a converter-connected
@@ -931,10 +932,10 @@ version-0 files are rewritten through the alias table).
 
 `tap_changer_model` selects how transformer tap changers act on the
 equivalent circuit:
-- `:ideal` — tap steps only change the complex winding ratio; the series
+- `:ideal`: tap steps only change the complex winding ratio; the series
   impedance keeps its neutral-position value (no impedance feedback;
   previous Sparlectra behavior).
-- `:impedance_correction` — tap steps additionally re-refer the transformer
+- `:impedance_correction`: tap steps additionally re-refer the transformer
   series impedance through the tapped winding (R and X scaled with
   `|1 + f·e^(jφ)|²`, implemented centrally in `src/equicircuit.jl`).
 The option applies to all transformers of an imported case and is read by
@@ -977,7 +978,7 @@ Typed MATPOWER export configuration.
 `write_solution` selects whether [`writeMatpowerCasefile`](@ref) writes the
 solved AC power-flow state back into the exported case:
 - `true` (default): `mpc.bus` `VM`/`VA` reflect the solved node state and
-  `mpc.branch` gains the standard MATPOWER result columns 14–17
+  `mpc.branch` gains the standard MATPOWER result columns 14-17
   (`PF`, `QF`, `PT`, `QT`), sourced from the existing branch-flow report path.
   A `mpc.sparlectra.solution_written = 1` marker documents this. If the network
   has not been solved, the exporter warns and falls back to the 13-column
@@ -1324,7 +1325,7 @@ const POWERFLOW_START_PROFILE_SOURCE_VALUES = (:flat, :dc, :bus_metadata, :histo
 # SvVoltage state. Wins over power_flow(.start_mode).flatstart on CGMES runs.
 const CGMES_START_VALUES_VALUES = (:auto, :flat, :sv)
 # placeholder-guard behavior: warn_skip keeps completeness-set filler values
-# out of the solve with a warning; strict aborts the import instead — for
+# out of the solve with a warning; strict aborts the import instead, for
 # deliveries where silently dropping data is not acceptable
 const CGMES_PLACEHOLDER_GUARDS_VALUES = (:warn_skip, :strict)
 const CGMES_HVDC_MODE_VALUES = (:injections, :paired_control)
@@ -1365,7 +1366,7 @@ const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injec
 # `reject_active` was the shipped template default of early releases, so
 # stored user/Web UI configuration files still carry it without it ever
 # having been a deliberate choice. Loading it verbatim would abort every
-# DC-line case (e.g. case_SyntheticUSA) for exactly those users — the
+# DC-line case (e.g. case_SyntheticUSA) for exactly those users. The
 # configuration surface therefore normalizes it to the current default with
 # a warning. The strict fail-fast behavior stays available programmatically:
 # createNetFromMatPowerCase(matpower_dcline_mode = :reject_active).
@@ -2619,7 +2620,7 @@ function ContingencyPairsConfig(raw::AbstractDict)
 end
 
 # The deprecated diagnostics.* duplicates of output.* are warned about (and
-# ignored) once, in `_validate_known_config_keys` — see
+# ignored) once, in `_validate_known_config_keys`, see
 # `_DEPRECATED_CONFIG_KEYS`. This constructor only reads the surviving key.
 function DiagnosticsConfig(raw::AbstractDict)
   merged = _merged_section(raw, "diagnostics")

@@ -254,8 +254,47 @@ function run_apslf_tests()
                 @test maximum(abs.(va_nr .- va_ap)) < 1e-4
                 st = Sparlectra.rectangular_pf_status(r_ap.net)
                 @test String(st.apslf_convergence_level) == "GRN"
+                # a converged run carries no diagnosis
+                @test !hasproperty(st, :apslf_diagnosis_reason)
                 println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
             end
+            # A non-converged run carries AnalyticLoadFlow's diagnosis (0.10.2)
+            # into the status: sp_case5 at order 4 (Q limits off) stops with
+            # the Pade value still moving by 1.4e-3 pu between order 2 and 4,
+            # converged from order 8 on. The convergence decision is the
+            # package's; only the reason is checked.
+            cfg_low = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=4), qlimits=Sparlectra.QLimitConfig(ignore_q_limits=true)), output=quiet)
+            r_low = run_sparlectra(net=Sparlectra.importSCF(scf5), config=cfg_low)
+            @test !r_low.final_converged
+            st_low = Sparlectra.rectangular_pf_status(r_low.net)
+            @test st_low.apslf_diagnosis_reason === :pade_not_converged
+            @test isfinite(st_low.apslf_pole_min_abs) && st_low.apslf_pole_min_bus >= 1
+            @test occursin(String(st_low.apslf_diagnosis_line), r_low.reason_text)
+            # The same island next to a small second island, run with an output
+            # directory as the service does: the island-wise error message and
+            # the island's solver log carry the diagnosis of the failed island,
+            # and the service reads its keys for the run metadata.
+            net_isl = Sparlectra.importSCF(scf5)
+            for b in ("X1", "X2")
+                addBus!(net=net_isl, busName=b, vn_kV=110.0)
+            end
+            addProsumer!(net=net_isl, busName="X1", type="EXTERNALNETWORKINJECTION", vm_pu=1.0, va_deg=0.0, referencePri="X1")
+            addProsumer!(net=net_isl, busName="X2", type="ENERGYCONSUMER", p=1.0, q=0.2)
+            addPIModelACLine!(net=net_isl, fromBus="X1", toBus="X2", r_pu=0.001, x_pu=0.01, b_pu=0.0, status=1)
+            profile = Dict{Symbol,Any}(:output_dir => mktempdir())
+            err_isl = try
+                redirect_stdout(devnull) do
+                    run_sparlectra(net=net_isl, config=cfg_low, performance_profile=profile)
+                end
+                nothing
+            catch err
+                err isa ErrorException || rethrow()
+                err
+            end
+            st_isl = Sparlectra._islandwise_apslf_diagnosis(profile)
+            @test st_isl !== nothing && st_isl.apslf_diagnosis_reason === :pade_not_converged
+            @test err_isl !== nothing && occursin(String(st_isl.apslf_diagnosis_line), err_isl.msg)
+            @test occursin(String(st_isl.apslf_diagnosis_line), read(joinpath(profile[:output_dir], "ac_island_$(st_isl.island_id)_solver.log"), String))
             # A fixed phase shift is modelled through the unsymmetric Y-bus
             # Sparlectra hands to AnalyticLoadFlow: the shipped sp_casePST
             # with its shifter at -20 degrees agrees with NR with the
@@ -294,6 +333,38 @@ function run_apslf_tests()
                 @test r.net.nodeVec[1]._vm_pu ≈ 1.02 atol = 1e-10
                 @test r.net.nodeVec[2]._vm_pu ≈ 1.03 atol = 1e-8
             end
+            # 0.60.0: the slack angle reaches AnalyticLoadFlow (Vslack). With
+            # the sp_case5 slack at 10 degrees, APSLF fixed the slack at 0 and
+            # returned the solution rotated by 10 degrees (0.178 pu in
+            # complex V); through the start generator Newton then kept the
+            # rotated slack. Solver, framework run and start path are
+            # compared with Newton in complex V.
+            function case5_va10()
+                net = Sparlectra.importSCF(scf5)
+                foreach(n -> Sparlectra.isSlack(n) && (n._va_deg = 10.0), net.nodeVec)
+                return net
+            end
+            cvec(net) = [n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
+            slack5 = findfirst(Sparlectra.isSlack, case5_va10().nodeVec)
+            r_nr10 = run_sparlectra(net=case5_va10(), config=cfg_nr)
+            @test r_nr10.final_converged
+            V_nr10 = cvec(r_nr10.net)
+            @test rad2deg(angle(V_nr10[slack5])) ≈ 10.0 atol = 1e-12
+            net_d10 = case5_va10()
+            _, status_d10, _ = runpf_external!(net_d10, apslf_solver(); tol=1e-8)
+            @test status_d10 == 0
+            @test maximum(abs.(cvec(net_d10) .- V_nr10)) < 1e-5
+            r_ap10 = run_sparlectra(net=case5_va10(), config=cfg_ap)
+            @test r_ap10.final_converged
+            @test maximum(abs.(cvec(r_ap10.net) .- V_nr10)) < 1e-5
+            cfg_st = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false, apslf_start=Sparlectra.ApslfStartConfig(enabled=true, order=40)), output=quiet)
+            r_st10 = run_sparlectra(net=case5_va10(), config=cfg_st)
+            @test r_st10.final_converged
+            @test maximum(abs.(cvec(r_st10.net) .- V_nr10)) < 1e-5
+            m10 = Sparlectra.buildPfModel(case5_va10(); include_limits=false)
+            Vg10, sg10 = Sparlectra._run_guarded_apslf_start(m10.Ybus, m10.V0, m10.Sspec, m10.busType, m10.Vset, m10.slack_idx; enabled=true, order=40, baseMVA=m10.baseMVA)
+            @test sg10.apslf_start_accepted
+            @test maximum(abs.(Vg10 .- V_nr10[m10.busIdx_net])) < 1e-5
         end)() end
 
 

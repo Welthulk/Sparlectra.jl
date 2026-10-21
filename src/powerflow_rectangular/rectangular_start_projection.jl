@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -560,8 +560,9 @@ as reference in all generated candidates.
 - `verbose::Int=0`: Logging verbosity.
 - `performance_profile=nothing`: Optional profiling dictionary for timing/diagnostics.
 - `ratio_profile_factors=Float64[]`: per-bus factors from `_ratio_profile_factors`
-  (the caller passes them only for a flat start with
-  `power_flow.start_mode.ratio_profile` on). Non-empty, the ratio-profile
+  (the caller passes them only when the projection runs on a flat seed with
+  `power_flow.start_mode.ratio_profile` on; a run-level flat start runs no
+  projection). Non-empty, the ratio-profile
   candidate (PQ magnitudes scaled by the factors, angles kept) is measured
   after the DC and blend candidates and wins under the same rule (smallest
   residual 2-norm, at least 10 percent below the raw seed); a requested DC

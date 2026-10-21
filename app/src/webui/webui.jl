@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -128,7 +128,7 @@ function _git_head_commit_sha(root::AbstractString)::Union{String,Nothing}
   packed = joinpath(common, "packed-refs")
   isfile(packed) || return nothing
   # open(...) do closes the handle on every exit path. eachline(path) would
-  # keep the file open until GC after the early return below — on Windows the
+  # keep the file open until GC after the early return below: on Windows the
   # still-open packed-refs then blocks directory removal (EBUSY, issue #290
   # test cleanup) and every banner-SHA resolution leaks one descriptor.
   return open(packed) do io
@@ -908,11 +908,11 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       # The raw libuv IOError ("listen: address already in use (EADDRINUSE)")
       # gives no hint about *why*. The most common cause is a Sparlectra Web
       # UI already running (an earlier start in this session, or another
-      # Julia process) — probe for it and, instead of aborting, hand the
+      # Julia process), probe for it and, instead of aborting, hand the
       # user the running instance.
       if _webui_port_holds_sparlectra(host_string, port)
         url = "http://$(host_string == "localhost" ? "127.0.0.1" : host_string):$(Int(port))/powerflow"
-        @info "Sparlectra Web UI is already running at $(url) — opening it instead of starting a second instance. To restart it, stop the running server first (close(server), the Stop Web UI button, or end its Julia process)."
+        @info "Sparlectra Web UI is already running at $(url), opening it instead of starting a second instance. To restart it, stop the running server first (close(server), the Stop Web UI button, or end its Julia process)."
         _webui_startup_log(_lifecycle_io, "webui_existing_instance_opened"; operation_log = paths.operation_log, status = "reused", host = host_string, port = Int(port))
         open_browser && _browser_opener(url)
         return nothing

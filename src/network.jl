@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -1541,21 +1541,21 @@ voltage source of the superordinate network plus its declared short-circuit
 data.
 
 Load-flow side: by default the connection bus becomes the reference (REF)
-bus, exactly as a manually added slack-type prosumer does — the external
+bus, exactly as a manually added slack-type prosumer does: the external
 grid is ideal in the power flow, and the short-circuit attributes change
 **no** power-flow result (`participationFactor` precedent). With
 `internal_impedance = true` the source instead becomes non-ideal: a hidden
 auxiliary bus `<busName>__extgrid_int` carries the reference voltage, and a
-series branch with `z_pu = baseMVA / sk_max_MVA` (voltage factor `c = 1` —
+series branch with `z_pu = baseMVA / sk_max_MVA` (voltage factor `c = 1`,
 the c-factor is a short-circuit concept), split by `rx_max`, connects it to
 the terminal bus. The terminal bus then stays an ordinary solved bus. The
 auxiliary bus is tagged `isAux`; expect it in reports under its generated
-name. Very large `sk_max_MVA` values degrade Jacobian conditioning — use
+name. Very large `sk_max_MVA` values degrade Jacobian conditioning. Use
 the default ideal representation when ideal behavior is wanted.
 
 Short-circuit side: `sk_max_MVA` (and optionally `sk_min_MVA`) with the
 `rx_max`/`rx_min` ratios are converted **at add time** into the feeder
-record consumed by [`runShortCircuit!`](@ref) — anchored at the physical
+record consumed by [`runShortCircuit!`](@ref), anchored at the physical
 connection bus also in the `internal_impedance` variant (the auxiliary
 branch is a dead end in the short-circuit network and carries no fault
 current).
@@ -1565,7 +1565,7 @@ current).
 - `busName::String`: connection bus (must exist).
 - `vm_pu::Float64 = 1.0`, `va_deg::Float64 = 0.0`: reference voltage.
 - `sk_max_MVA::Float64`: declared initial symmetrical short-circuit power,
-  maximum case. Mandatory — without it the feeder cannot contribute to any
+  maximum case. Mandatory: without it the feeder cannot contribute to any
   short circuit.
 - `sk_min_MVA::Union{Nothing,Float64} = nothing`: minimum case; without it
   the `:min` case skips the feeder with the engine's safety flag.
@@ -1612,11 +1612,11 @@ function addExternalGrid!(;
 
   if internal_impedance
     # Non-ideal variant (Stage 2): the reference voltage moves to a hidden
-    # internal bus — the actual slack — behind z = c·Un²/Sk with c = 1. On
+    # internal bus, the actual slack, behind z = c·Un²/Sk with c = 1. On
     # the per-voltage-level impedance base (z_base = Un²/baseMVA) that is
     # simply z_pu = baseMVA/Sk, independent of Un.
     internalName = busName * "__extgrid_int"
-    haskey(net.busDict, internalName) && throw(ArgumentError("addExternalGrid!: internal bus $(internalName) already exists — one internal-impedance external grid per bus."))
+    haskey(net.busDict, internalName) && throw(ArgumentError("addExternalGrid!: internal bus $(internalName) already exists. One internal-impedance external grid per bus."))
     vn_kV = getNodeVn(net.nodeVec[busIdx])
     addBus!(net = net, busName = internalName, vn_kV = vn_kV, vm_pu = vm_pu, va_deg = va_deg, isAux = true)
     z_pu = net.baseMVA / sk_max_MVA
@@ -1625,14 +1625,14 @@ function addExternalGrid!(;
     addPIModelACLine!(net = net, fromBus = internalName, toBus = busName, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, status = 1)
     addProsumer!(net = net, busName = internalName, type = "EXTERNALNETWORKINJECTION", referencePri = internalName, vm_pu = vm_pu, va_deg = va_deg, referencePriority = referencePriority)
   else
-    # Ideal variant (Stage 1): exactly the manual slack path — the prosumer
+    # Ideal variant (Stage 1): exactly the manual slack path, the prosumer
     # with referencePri marks the connection bus REF via
     # refreshBusTypesFromProsumers!.
     addProsumer!(net = net, busName = busName, type = "EXTERNALNETWORKINJECTION", referencePri = busName, vm_pu = vm_pu, va_deg = va_deg, referencePriority = referencePriority)
   end
 
   # Feeder record for the short-circuit engine: full CGMES ENI tuple contract
-  # (all eleven keys, unknowns as `nothing`). `bus` must be the busDict key —
+  # (all eleven keys, unknowns as `nothing`). `bus` must be the busDict key:
   # the engine resolves it through net.busDict. The mrid is deterministic and
   # unique per bus; the stamping falls back to it via something(name, mrid),
   # so it must never be nothing. Parallel feeders continue after the highest
@@ -1679,11 +1679,11 @@ impedance, so the former slack bus becomes an ordinary solved bus whose
 voltage reacts to loading.
 
 Steps: the slack prosumers at the bus are demoted (reference marker and
-voltage regulation removed — their scheduled `p`/`q` injections stay), and
+voltage regulation removed, their scheduled `p`/`q` injections stay), and
 `addExternalGrid!` with `internal_impedance = true` is added at the bus,
 carrying the former slack's voltage setpoint as the source's reference
 voltage. With multiple slack buses (island references) only the addressed
-bus is converted — every other island keeps its reference.
+bus is converted, every other island keeps its reference.
 
 # Arguments
 - `net::Net`: the network.
@@ -1721,7 +1721,7 @@ function convertSlackToExternalGrid!(;
     (isSlack(ps) && getPosumerBusIndex(ps) == busIdx) || continue
     ps.vm_pu === nothing || (vref = ps.vm_pu)
     ps.va_deg === nothing || (varef = ps.va_deg)
-    # Demote: no reference marker, no voltage holding — otherwise the bus
+    # Demote: no reference marker, no voltage holding, otherwise the bus
     # would stay PV-held and the source's finite stiffness could never show.
     ps.referencePri = nothing
     ps.isRegulated = false
@@ -1729,7 +1729,7 @@ function convertSlackToExternalGrid!(;
   end
   # Re-derive bus types and Q-limits right after the demotion instead of
   # relying on the addExternalGrid! → addProsumer! call below to do it as a
-  # side effect — the demotion must leave a consistent net on its own.
+  # side effect: the demotion must leave a consistent net on its own.
   refreshBusTypesFromProsumers!(net)
   _buildQLimits!(net)
 
@@ -1754,7 +1754,7 @@ function _apply_external_grid_config!(net::Net, pf; declared::Union{Nothing,Name
   eg.enabled || return nothing
   any(endswith(n, "__extgrid_int") for n in keys(net.busDict)) && return nothing
   if isempty(net.slackVec)
-    @warn "power_flow.external_grid.enabled: the net registers no slack bus — nothing to convert (enable power_flow.auto_slack or mark a slack first)."
+    @warn "power_flow.external_grid.enabled: the net registers no slack bus, nothing to convert (enable power_flow.auto_slack or mark a slack first)."
     return nothing
   end
   use_declared = eg.source === :auto && declared !== nothing
@@ -1770,7 +1770,7 @@ end
 Add active/reactive power to the NODE-level generation sum of a bus
 (`node._pƩGen`/`node._qƩGen`).
 
-!!! warning "Report layer only — no solver reads this"
+!!! warning "Report layer only: no solver reads this"
     Every solver builds its injections from the PROSUMER objects
     (`buildComplexSVec` reads `net.prosumpsVec`; since 0.9.12 the DC solver
     uses the same source, issue #323), so this edit does NOT change any
@@ -1793,7 +1793,7 @@ end
 Add active/reactive power to the NODE-level load sum of a bus
 (`node._pƩLoad`/`node._qƩLoad`).
 
-!!! warning "Report layer only — no solver reads this"
+!!! warning "Report layer only: no solver reads this"
     Every solver builds its injections from the PROSUMER objects
     (`buildComplexSVec` reads `net.prosumpsVec`; since 0.9.12 the DC solver
     uses the same source, issue #323), so this edit does NOT change any
@@ -2621,20 +2621,20 @@ function buildVoltageVector(net::Net)
 end
 
 # Case-specific diagnosis for "no solvable slack": the generic message hid
-# the two real situations — a selected slack sitting on an isolated bus
+# the two real situations: a selected slack sitting on an isolated bus
 # (single-bus/branch-less deliveries such as one side of a DC border), and a
 # net where no slack was ever registered.
 function _no_slack_message(where_::String, net::Net)::String
   n = length(net.nodeVec)
   iso = length(net.isoNodes)
   if n > 0 && iso == n
-    return "$(where_): all $(n) bus(es) of this network are isolated (no in-service branch) — there is no energized AC system to solve. A branch-less delivery (e.g. a single-bus area or one side of a DC border crossing) is only solvable in its assembled model."
+    return "$(where_): all $(n) bus(es) of this network are isolated (no in-service branch). There is no energized AC system to solve. A branch-less delivery (e.g. a single-bus area or one side of a DC border crossing) is only solvable in its assembled model."
   end
   if !isempty(net.slackVec)
     slack_names = join((getCompName(net.nodeVec[i].comp) for i in net.slackVec if 1 <= i <= n), ", ")
-    return "$(where_): the selected slack ($(slack_names)) lies on an isolated bus ($(iso) of $(n) buses isolated) — no energized bus carries the reference. Check the isolation report (ac_islands.csv) or choose a slack in the energized part."
+    return "$(where_): the selected slack ($(slack_names)) lies on an isolated bus ($(iso) of $(n) buses isolated). No energized bus carries the reference. Check the isolation report (ac_islands.csv) or choose a slack in the energized part."
   end
-  return "$(where_): no slack bus registered — the network needs one voltage reference (referencePriority, an ExternalNetworkInjection, or a generator marked as slack). Enable power_flow.auto_slack to let the solver pick the strongest candidate itself."
+  return "$(where_): no slack bus registered. The network needs one voltage reference (referencePriority, an ExternalNetworkInjection, or a generator marked as slack). Enable power_flow.auto_slack to let the solver pick the strongest candidate itself."
 end
 
 # Rank a slack candidate by its dispatchable size. Rated apparent power is the

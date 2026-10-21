@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -389,7 +389,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   # --- Extract fields from NamedTuple / struct uniformly ---
   # convert instead of the Matrix constructor: elides the full copy when the
   # field already is a Matrix{Float64} (the parser output). The matrices are
-  # only read below, so aliasing mpc.bus/gen/branch is safe — keep it that
+  # only read below, so aliasing mpc.bus/gen/branch is safe. Keep it that
   # way (the net cache also serializes the mpc alongside the built net).
   name    = hasproperty(mpc, :name)    ? getproperty(mpc, :name)    : "mpc"
   baseMVA = hasproperty(mpc, :baseMVA) ? Float64(getproperty(mpc, :baseMVA)) : error("mpc.baseMVA missing")
@@ -726,8 +726,8 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
     (mBase != baseMVA) && @debug "generator $(bus) has different mBase than network baseMVA (allowed in MATPOWER)" bus mBase baseMVA
 
     # MATPOWER APF (area participation factor, column 21) → distributed-slack
-    # participation weight (issue #192). The column is optional — many cases
-    # ship 10-column gen matrices — and 0.0 means "no factor", stored as
+    # participation weight (issue #192). The column is optional (many cases
+    # ship 10-column gen matrices), and 0.0 means "no factor", stored as
     # `nothing`. Carrying the value must not change results while
     # power_flow.distributed_slack is disabled.
     apf_raw = length(row) >= APF ? Float64(row[APF]) : 0.0

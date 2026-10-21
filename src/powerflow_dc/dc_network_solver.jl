@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -89,7 +89,7 @@ its own `matpower_like` reference bus, and the result is written back via
 `_write_dc_solution!` + `_sync_island_solution!` (reused unmodified).
 Sets [`dc_pf_status`](@ref) on `net`. `iterations` is always `1` (a direct
 linear solve, not an iterative process); `erg == 0` means every island
-solved (a linear solve either succeeds or throws — there is no partial
+solved (a linear solve either succeeds or throws, there is no partial
 convergence state to report).
 """
 function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)::Tuple{Int,Int}

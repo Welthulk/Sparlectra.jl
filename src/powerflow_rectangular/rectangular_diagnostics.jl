@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -113,7 +113,7 @@ function _write_current_iteration_start_log(performance_profile, summary; dampin
   return path
 end
 
-function _apslf_start_summary(; enabled::Bool, attempted::Bool = false, accepted::Bool = false, order::Int = 0, initial_mismatch::Float64 = NaN, final_mismatch::Float64 = NaN, reason::Symbol = :disabled)
+function _apslf_start_summary(; enabled::Bool, attempted::Bool = false, accepted::Bool = false, order::Int = 0, initial_mismatch::Float64 = NaN, final_mismatch::Float64 = NaN, reason::Symbol = :disabled, diagnosis::String = "")
   return (
     apslf_start_enabled = enabled,
     apslf_start_attempted = attempted,
@@ -122,6 +122,9 @@ function _apslf_start_summary(; enabled::Bool, attempted::Bool = false, accepted
     apslf_start_initial_mismatch = initial_mismatch,
     apslf_start_final_mismatch = final_mismatch,
     apslf_start_reason = reason,
+    # AnalyticLoadFlow's diagnosis line when the series did not converge
+    # (the candidate may still be adopted if it lowers the mismatch)
+    apslf_start_diagnosis = diagnosis,
   )
 end
 
@@ -151,6 +154,7 @@ function _write_apslf_start_log(performance_profile, summary)
     println(io, "apslf_start_reason: ", summary.apslf_start_reason)
     println(io, "initial_mismatch: ", summary.apslf_start_initial_mismatch)
     println(io, "final_mismatch: ", summary.apslf_start_final_mismatch)
+    isempty(summary.apslf_start_diagnosis) || println(io, "diagnosis: ", summary.apslf_start_diagnosis)
   end
   return path
 end
@@ -175,7 +179,7 @@ end
 
 # Branch component objects are generic ("BranchC" with cTyp Branch); the
 # element kind survives only in the component-name marker (B_2WT_/B_3WT_ are
-# transformer windings, B_ACL_ lines). MATPOWER imports carry no marker —
+# transformer windings, B_ACL_ lines). MATPOWER imports carry no marker:
 # there an off-nominal ratio or a tap flag is the transformer signature.
 _is_transformer_branch(br)::Bool = occursin("_2WT_", br.comp.cName) || occursin("_3WT_", br.comp.cName) || br.has_ratio_tap || br.has_phase_tap || !(br.ratio == 0.0 || br.ratio == 1.0)
 
@@ -186,8 +190,8 @@ Capture the full per-bus Newton mismatch at the start state `V0` into
 `profile[:initial_residual_rows]`, appending across island solves (each island
 subnet reports its buses under their original net-wide ids via
 `busOrigIdxDict`). Runs only when the caller set
-`profile[:capture_initial_residual_rows] = true` — the fixed-reference
-self-check / diagnostics path — so normal runs pay nothing. One entry per bus:
+`profile[:capture_initial_residual_rows] = true` (the fixed-reference
+self-check / diagnostics path), so normal runs pay nothing. One entry per bus:
 original bus id and name, nominal voltage, start vm/va, the P residual, and
 the Q residual for PQ buses (`NaN` for PV and slack buses, whose second
 mismatch equation is a voltage setpoint, not reactive power), plus
@@ -376,7 +380,7 @@ transformer tap ratio, a large phase shift, or an unusually resistive
 triggers; rows are returned worst-first, capped at `top_n` (`top_n < 0`
 returns all incident branches).
 
-This is a passive read of already-imported network data — it does not modify
+This is a passive read of already-imported network data: it does not modify
 `net` or influence solver behavior. It exists to turn "bus 42 has the worst
 mismatch" into "bus 42 has the worst mismatch, and its transformer branch #17
 has a suspicious 0.62 tap ratio" for `diagnose.log`.
@@ -410,7 +414,7 @@ function _branch_anomaly_diagnostics(net::Net, bus_index::Integer; top_n::Int = 
     # Real transmission lines at one bus routinely span a 3-5x reactance
     # range from length alone (confirmed empirically on case14's own,
     # correctly-imported data), so the outlier ratio below is set well above
-    # that natural spread — it is meant to catch import/unit-convention
+    # that natural spread, it is meant to catch import/unit-convention
     # mistakes (typically one to two orders of magnitude), not ordinary
     # engineering variance. Requires >=3 same-kind siblings for a meaningful
     # comparison.

@@ -36,29 +36,33 @@ From the cheapest to the most expensive, each with its key under
 10. **Auto mode**: `mode: auto`; the configuration is filled from the
     imported network and the stages above are escalated as needed.
 
-`flatstart: true` sets only the start profile: every start machine follows
-its own key and runs from the flat profile. The two start modes
-(`angle_mode`, `voltage_mode`) choose a profile themselves and count as
-`classic` under a flat start; the DC angles stay available through the
-projection's DC candidate. Recipe 1 therefore needs the projection off as
-well.
+`flatstart: true` is a flat start: the voltages stored in the case file are
+ignored, and the run switches the start projection, the DC seed, the two
+start modes and the ratio profile off. The current-iteration pre-solve and the APSLF start follow
+their own keys. The rescue ladder and `mode: auto` set their own start
+machines on top and are reported as such.
 
-With the projection on, a flat start also tries the ratio profile
-(`start_mode.ratio_profile`, default `true`): the flat magnitudes scaled per
-voltage level by the off-nominal transformer ratios on the path from the
-reference. A flat start drives a circulating current through every
-off-nominal transformer, and a stiff winding off nominal (the star
-equivalent of a three-winding transformer) can dominate the start: on the
-CGMES MiniGrid it is 164 pu of active power on a 9 MW case and the polar
-update diverges; the ratio profile starts at 0.09 pu and converges in three
-steps to the delivery's own state.
+Only the auxiliary buses (the star points of three-winding transformers)
+leave the flat profile: they start at the current-free value of their
+lowest-impedance winding, while PQ buses keep 1.0 pu, PV and slack buses
+their setpoints, and every angle 0. A stiff winding off nominal otherwise
+dominates the start: on the CGMES MiniGrid the flat star point drives
+164 pu of active power on a 9 MW case and the polar update diverges; with
+the star points at their ratio the MiniGrid converges from the flat start in
+four steps. A network without auxiliary buses starts exactly flat.
 
-Independent of the projection, every flat start sets the auxiliary buses
-(the star points of three-winding transformers) to the current-free value
-of their lowest-impedance winding, the visible buses keep 1.0 pu and 0
-degrees; that alone lets the MiniGrid converge from the bare flat start
-(polar update, projection off) in four steps. A network without auxiliary
-buses starts as before.
+The ratio profile (`start_mode.ratio_profile`, default `true`) is a
+candidate of the start projection: the flat magnitudes of all PQ buses, not
+only the star points, scaled per voltage level by the off-nominal
+transformer ratios on the path from the reference. `flatstart: true`
+switches it off for the whole run, also for the projections the rescue
+ladder (`settled_qlimits`, `dc_seed`) and `mode: auto` (stage
+`L3_full_projection`) run from the flat profile. Without the flat start the
+projection meets a flat seed in the rescue ladder's alternate start (after
+a failed start from stored voltages; `angle_mode: dc` keeps precedence over
+the candidate), in `dc_seed` (DC angles requested, so the candidate is
+measured but never kept) and in `mode: auto`. It has no effect on a start
+from stored voltages.
 
 ## Recipes
 

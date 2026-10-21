@@ -111,9 +111,17 @@ links to the Sysimage page and checks for updates.
 for the latest release of `Welthulk/Sparlectra.jl` and compares it with
 the running version. The page says up to date, names the newer release
 with its release notes, or names why the check failed (no network,
-timeout, rate limit, an answer without a release tag). The request goes
-out on the click only, never at start, with a timeout of 10 s and no data
-about the installation.
+timeout, rate limit, an answer without a release tag). The request has a
+timeout of 10 s and carries no data about the installation.
+
+`start_webui.jl` started from a terminal runs the same check before the
+server starts (timeout 5 s) and, for a newer release on an installed copy,
+asks `Install <version> now? [y/N]`; only `y` or `yes` installs, through
+the updater described below, and the new version starts when it is done.
+Any other answer, no answer within 60 s, a git checkout or another copy
+(one line on how to update), no network or a start without a terminal
+starts the Web UI as before; `--no-update-check` or
+`SPARLECTRA_UPDATE_CHECK=0` skips the check.
 
 What happens with a newer release depends on how the copy was installed:
 
@@ -307,7 +315,8 @@ Every uploaded CGMES delivery is checked at once. A complete one reports
 message names the missing declared `md:Model.DependentOn` dependencies by
 model id (typically the boundary set), and the report is written next to
 the case as `<case>.import_analysis.txt`. The same analysis is appended to
-`cgmes.log` whenever a run's CGMES import aborts. Scripted: the run mode
+the run's CGMES import report `cgmes_import_report.md` whenever its CGMES
+import aborts. Scripted: the run mode
 `import_analysis_mode` of `start_powerflow_run` (a non-importable delivery
 ends as a failed run with reason `import_analysis_not_importable`) or
 `analyzeCGMES`. **Require boundary set** (CGMES section, saved per case)
@@ -329,7 +338,12 @@ Run-independent options live on the **Settings** page and reach a run
 through the configuration precedence (`resolve_config`): saving with
 target "this case" writes case-scope keys into the case's configuration
 file, target "configuration file" merges into the general YAML (backup
-`.settings-save.bak`). The **Runs** page keeps the run parameters (modes,
+`.settings-save.bak`). A save writes only the values that differ from what
+the case inherits. The save that creates the case configuration file
+(also the measurement generator on a case without one) takes over the
+case-scope keys in which the general YAML differs from the packaged
+defaults, because from then on the case no longer reads them
+there; the message gives their number. The **Runs** page keeps the run parameters (modes,
 N-1 kind, N-1 list, screening, DTF outage fields), the
 state-estimation section (submitted with `se_mode`) and the N-1 editors
 as tabs. The measurement generator's
@@ -431,20 +445,27 @@ degrees on every bus and ignores the imported start voltages (MATPOWER
 seed the solve; a delivery is built around its own operating point, so
 that is the default.
 
-The checkbox sets only the start profile; the APSLF and DC start values,
-the current-iteration pre-solve and the start projection follow their own
-settings and run from the flat profile. While the flat start is on, the
-two start modes count as `classic`, the page greys them (saved values
-stay) and the run log names the override. A bare flat start needs the
-start machines off (`power_flow.start_mode.start_projection` is a
-configuration-file key).
+While the flat start is on, the run switches the start projection, the DC
+start values, the two start modes and the ratio profile off, also when the configuration file
+has `start_projection: true`. The page greys those controls (saved values
+stay) and the run log names the override. The current-iteration pre-solve
+and the APSLF start follow their own checkboxes.
+
+Three-winding star points start at the ratio of their stiffest winding on
+every flat start; all other buses stay flat.
 
 **Ratio profile as a start candidate** (`power_flow.start_mode.ratio_profile`,
-on by default) acts only on a flat start: the start projection also tries
-the flat profile with each voltage level scaled by the transformer ratios
-on its path from the slack, and keeps it when its mismatch is at least 10
-percent lower. It lets a flat start converge on networks with stiff
-off-nominal windings ([Start strategies](start_strategies.md)).
+on by default) is a candidate of the start projection: the flat profile
+with each voltage level scaled by the transformer ratios on its path from
+the slack, applied to every PQ bus (not only to three-winding star points)
+when its mismatch is at least 10 percent lower. The flat start switches it
+off for the whole run, rescue and auto stages included. Without the flat
+start it acts only where a projection starts from the flat profile: in the
+rescue ladder's alternate start, unless **Start angle mode** is `dc` (the
+DC angles keep precedence), and in the auto mode. The page greys the
+checkbox in every other case: flat start on, or neither **Auto mode** nor
+**Rescue** with a start angle mode other than `dc`. A greyed checkbox is
+not posted and the saved value stays.
 
 A CGMES run honours the flat start under **CGMES start values** = `auto`;
 an explicit `sv` on the Case page still starts from the delivery state
@@ -694,7 +715,11 @@ Every finished run gets a result page: run ID, schema version, status,
 convergence and solution flags, iterations, final mismatch, reason and
 message, input paths, output directory and a **Solver** entry. A CSV artifact opens as a table
 (delimiter taken from the header line), a Markdown report rendered;
-**Raw text** shows the file as written.
+**Raw text** shows the file as written. The CGMES import report of a run
+is the Markdown artifact `cgmes_import_report.md`; a delivery with a DY profile gets a section **Dynamic data
+(DY profile)** there, with the counts of `cgmes_import.read_dynamics` or
+one line saying that the profile was not read
+([Dynamic data](@ref cgmes_dynamics)).
 
 Above a CSV table, **Significant digits** (default 5) rounds every decimal
 cell, and **Power columns** (W, kW or MW) shows power columns in whole

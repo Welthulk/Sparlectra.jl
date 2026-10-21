@@ -372,7 +372,26 @@ end
 _scf_opt_num(row, key::String, context::String)::_ScfOptNum = haskey(row, key) ? _scf_num(row[key], context) : nothing
 _scf_opt_int(row, key::String, context::String)::_ScfOptInt = haskey(row, key) ? _scf_int(row[key], context) : nothing
 _scf_tri_num(row, key::String, context::String)::_ScfTriNum = haskey(row, key) ? (row[key] === nothing ? nothing : _scf_num(row[key], context)) : missing
-_scf_tri_str(row, key::String)::_ScfTriStr = haskey(row, key) ? (row[key] === nothing ? nothing : String(row[key])) : missing
+# PGM enums by name in integer order (power_grid_model.enum): PGM's own JSON
+# writes the integer, SCF writes the name, and the reader accepts both and
+# keeps the name so the rest of the import compares strings only
+const _SCF_PGM_ENUMS = Dict{String,Vector{String}}(
+  "measured_terminal_type" => ["branch_from", "branch_to", "source", "shunt", "load", "generator", "branch3_1", "branch3_2", "branch3_3", "node"],
+  "angle_measurement_type" => ["local_angle", "global_angle"],
+  "fault_type" => ["three_phase", "single_phase_to_ground", "two_phase", "two_phase_to_ground"],
+)
+
+function _scf_enum_str(v, key::String)::String
+  names = _SCF_PGM_ENUMS[key]
+  if v isa Integer && !(v isa Bool)
+    0 <= v < length(names) && return names[v+1]
+  elseif v isa AbstractString
+    v in names && return String(v)
+  end
+  throw(ArgumentError("SCF: $(key) must be one of $(join(names, ", ")) or its PGM integer 0 to $(length(names) - 1); got $(repr(v))."))
+end
+
+_scf_tri_str(row, key::String)::_ScfTriStr = haskey(row, key) ? (row[key] === nothing ? nothing : _scf_enum_str(row[key], key)) : missing
 
 _scfcase_node(row) = SCFNodeRow(id = _scf_int(_scf_require(row, "id", "a node entry"), "node.id"), u_rated = _scf_num(_scf_require(row, "u_rated", "a node entry"), "node.u_rated"))
 
@@ -506,7 +525,7 @@ function _scfcase_fault(row)
     id = _scf_int(_scf_get(row, "id", 0), "fault.id"),
     fault_object = _scf_int(_scf_require(row, "fault_object", "a fault entry"), "fault.fault_object"),
     status = _scf_opt_int(row, "status", "fault.status"),
-    fault_type = haskey(row, "fault_type") ? String(row["fault_type"]) : nothing,
+    fault_type = haskey(row, "fault_type") ? _scf_enum_str(row["fault_type"], "fault_type") : nothing,
     r_f = _scf_opt_num(row, "r_f", "fault.r_f"),
     x_f = _scf_opt_num(row, "x_f", "fault.x_f"),
   )

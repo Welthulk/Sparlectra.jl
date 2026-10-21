@@ -1038,7 +1038,7 @@ function run_legacy_webui_tests()
             # box shows checked, a generation with the box checked keeps
             # constraint, unchecked writes off; checked again it is on
             @test [SparlectraApp._webui_normalize_case_profile_form_value("gen_passive_as_zi", v) for v in ("constraint", "off", "on")] == [true, false, true]
-            SparlectraApp._webui_merge_case_settings!(root, case_path, Dict{String,Any}("gen_passive_as_zi" => "constraint"); case_directory=cases)
+            SparlectraApp._webui_merge_case_settings!(root, case_path, Dict{String,Any}("gen_passive_as_zi" => "constraint"); config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case_directory=cases)
             @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :constraint
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "true"))
             @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :constraint
@@ -1172,7 +1172,7 @@ function run_legacy_webui_tests()
 
             # reset-settings deletes the per-case sidecar profile; a second
             # reset reports that the defaults are already active
-            SparlectraApp._webui_merge_case_settings!(root, case_path, Dict{String,Any}("gen_seed" => 99); case_directory=dirname(case_path))
+            SparlectraApp._webui_merge_case_settings!(root, case_path, Dict{String,Any}("gen_seed" => 99); config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case_directory=dirname(case_path))
             spath = SparlectraApp._webui_case_settings_path(root, case_path; case_directory=dirname(case_path))
             @test isfile(spath)
             rrst = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/reset-settings", Dict{String,Any}("casefile" => basename(case_path)); output_root=root, runtime=rt)

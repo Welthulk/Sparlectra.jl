@@ -85,6 +85,105 @@ function run_scf_tests()
     @test occursin("u_rated", sprint(showerror, err2))
     case_plain.data.node[1].u_rated = u_kept
     @test plain isa Sparlectra.Net
+
+    # units = pu: build_net reads the pu block as it stands. The case is
+    # annotated with pu values formed from its own SI view by the reader's
+    # SI formula, so both builds must agree bit for bit (the SI regression),
+    # and one planted value the SI path cannot express must arrive unchanged
+    src = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")
+    case_si = Sparlectra.read_scf_json(src)
+    case_pu = Sparlectra.read_scf_json(src)
+    s_base = Sparlectra._scf_num(case_pu.sparlectra.meta["s_base"], "s_base")
+    u_by = Dict(n.id => n.u_rated for n in case_pu.data.node)
+    zb(id) = u_by[id]^2 / s_base
+    w_nom = 2.0 * pi * Sparlectra._scf_num(get(case_pu.sparlectra.meta, "f_nom", 50.0), "f_nom")
+    magic = 0.015404508911002418
+    magic_id = nothing
+    for row in case_pu.data.line
+      z = zb(row.to_node)
+      e = get!(case_pu.sparlectra.extra, string(row.id), Dict{String,Any}())
+      b_s = row.c1 === nothing ? 0.0 : row.c1 * w_nom
+      tan1 = row.tan1 === nothing ? 0.0 : row.tan1
+      pu = Dict{String,Any}("r_pu" => row.r1 / z, "x_pu" => row.x1 / z, "b_pu" => b_s * z, "g_pu" => row.g1 === nothing ? tan1 * b_s * z : row.g1 * z)
+      if magic_id === nothing
+        pu["x_pu"] = magic
+        magic_id = row.id
+      end
+      e["pu"] = pu
+    end
+    for row in case_pu.data.generic_branch
+      z = zb(row.to_node)
+      e = get!(case_pu.sparlectra.extra, string(row.id), Dict{String,Any}())
+      e["pu"] = Dict{String,Any}("r_pu" => row.r1 / z, "x_pu" => row.x1 / z, "b_pu" => row.b1 === nothing ? 0.0 : row.b1 * z, "g_pu" => row.g1 === nothing ? 0.0 : row.g1 * z)
+    end
+    for row in case_pu.data.shunt
+      z = zb(row.node)
+      e = get!(case_pu.sparlectra.extra, string(row.id), Dict{String,Any}())
+      e["pu"] = Dict{String,Any}("g_pu" => something(row.g1, 0.0) * z, "b_pu" => something(row.b1, 0.0) * z)
+    end
+    case_pu.sparlectra.meta["units"] = "pu"
+    net_si = Sparlectra.build_net(case_si)
+    net_pu = Sparlectra.build_net(case_pu)
+    @test length(net_si.branchVec) == length(net_pu.branchVec)
+    @test length(net_si.shuntVec) == length(net_pu.shuntVec)
+    planted = 0
+    for i in eachindex(net_si.branchVec)
+      a = net_si.branchVec[i]
+      b = net_pu.branchVec[i]
+      if b.x_pu === magic && a.x_pu !== magic
+        planted += 1
+      else
+        @test a.x_pu === b.x_pu
+      end
+      @test a.r_pu === b.r_pu
+      @test a.b_pu === b.b_pu
+      @test a.g_pu === b.g_pu
+    end
+    @test planted == 1
+    for i in eachindex(net_si.shuntVec)
+      @test net_si.shuntVec[i].y_pu_shunt === net_pu.shuntVec[i].y_pu_shunt
+    end
+    # a pu file whose branch lacks its pu block is refused, naming the id
+    broken = Sparlectra.read_scf_json(src)
+    broken.sparlectra.meta["units"] = "pu"
+    err3 = try
+      Sparlectra.build_net(broken)
+      nothing
+    catch e
+      e
+    end
+    @test err3 isa ArgumentError
+    @test occursin("pu block", sprint(showerror, err3))
+
+    # MATPOWER states its parameters per unit. Both ways into a case file,
+    # the adapter (convert_case) and the export of the directly imported
+    # net with units = :pu, must read back to the direct import's values
+    # bit for bit; through SI, sp_case118 loses the last bit on 123 of its
+    # 744 branch values (no exact preimage)
+    mfile = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+    cfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, mfile).config
+    mpc = Sparlectra.MatpowerIO.read_case(mfile; legacy_compat = true)
+    direct = Sparlectra.import_net(MatpowerAdapter(), mpc, Sparlectra.matpower_adapter_options(cfg))
+    d = mktempdir()
+    adapter_file = Sparlectra.write_scf_json(Sparlectra.convert_case(MatpowerAdapter(), mpc, Sparlectra.matpower_adapter_options(cfg)), joinpath(d, "adapter.scf.json"))
+    export_file = Sparlectra.exportSCF(direct; file = joinpath(d, "export.scf.json"), units = :pu)
+    si_file = Sparlectra.exportSCF(direct; file = joinpath(d, "export_si.scf.json"))
+    # the default export stays SI and declares nothing (shipped files unchanged)
+    @test !haskey(Sparlectra.read_scf_json(si_file).sparlectra.meta, "units")
+    for f in (adapter_file, export_file)
+      case_m = Sparlectra.read_scf_json(f)
+      @test Sparlectra.scf_case_units(case_m) === :pu
+      back = Sparlectra.build_net(case_m; config = cfg)
+      @test length(back.branchVec) == length(direct.branchVec)
+      @test count(i -> any(fld -> !isequal(getfield(direct.branchVec[i], fld), getfield(back.branchVec[i], fld)), (:r_pu, :x_pu, :b_pu, :g_pu)), eachindex(direct.branchVec)) == 0
+      @test length(back.shuntVec) == length(direct.shuntVec)
+      @test all(i -> isequal(direct.shuntVec[i].y_pu_shunt, back.shuntVec[i].y_pu_shunt), eachindex(direct.shuntVec))
+    end
+    # the SI export of the same net is the case the pu block exists for
+    back_si = Sparlectra.build_net(Sparlectra.read_scf_json(si_file); config = cfg)
+    @test any(i -> !isequal(direct.branchVec[i].x_pu, back_si.branchVec[i].x_pu) || !isequal(direct.branchVec[i].r_pu, back_si.branchVec[i].r_pu) || !isequal(direct.branchVec[i].b_pu, back_si.branchVec[i].b_pu), eachindex(direct.branchVec))
+    # the pu values live in the sparlectra block, which strict PGM drops
+    @test_throws ArgumentError Sparlectra.exportSCF(direct; file = joinpath(d, "strict.pgm.json"), units = :pu, strict_pgm = true)
   end)() end
 
   @testset "own bus names vs external_id" begin (function ()
@@ -1080,6 +1179,24 @@ mpc.branch = [
     it2, _ = runpf!(again, 40, 1e-12, 0)
     @test it2 == it
     @test isapprox(getNodeVm(again.nodeVec[3]), getNodeVm(net.nodeVec[3]); atol = 1e-12)
+
+    # PGM's own JSON stores enums as integers (MeasuredTerminalType node = 9,
+    # FaultType three_phase = 0); the reader aborted with a MethodError on
+    # String(::Int). The integer form must read as the same case as the name.
+    case14 = Sparlectra.scf_json_parse(read(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"), String))
+    terminals = Sparlectra._SCF_PGM_ENUMS["measured_terminal_type"]
+    as_int = deepcopy(case14)
+    for s in as_int["data"]["sym_power_sensor"]
+      s["measured_terminal_type"] = findfirst(==(s["measured_terminal_type"]), terminals) - 1
+    end
+    as_int["data"]["fault"][1]["fault_type"] = 0
+    mkey(m) = (m.typ, m.value, m.sigma, m.busIdx, m.branchIdx, m.direction, m.id)
+    @test map(mkey, Sparlectra.scf_to_net(as_int).measurements) == map(mkey, Sparlectra.scf_to_net(case14).measurements)
+    # a value outside the enum is refused with the field name
+    off = deepcopy(case14)
+    off["data"]["sym_power_sensor"][1]["measured_terminal_type"] = 42
+    @test_throws ArgumentError Sparlectra.scf_to_net(off)
+    @test_throws r"measured_terminal_type.*got 42" Sparlectra.scf_to_net(off)
   end)() end
 
   @testset "strict PGM writer mode" begin (function ()
@@ -1686,7 +1803,18 @@ mpc.branch = [
     @test occursin("scope: case", export_cc)
     @test occursin("mode: auto", export_cc)
     @test occursin("sym_voltage_sensor", txt)
+    # a MATPOWER source is exported in its own unit system (per unit)
+    @test Sparlectra.scf_case_units(Sparlectra.read_scf_json(out)) === :pu
     @test occursin("state_estimation", txt)
+    # an SCF case that declares units = pu is re-exported per unit with the
+    # same pu values; before the fix it went out as SI and lost its pu blocks
+    pu_before = Sparlectra.scf_json_parse(txt)["sparlectra"]["extra"]
+    @test count(k -> haskey(pu_before[k], "pu"), collect(keys(pu_before))) > 0
+    again = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
+    @test occursin("Exported", string(again))
+    @test Sparlectra.scf_case_units(Sparlectra.read_scf_json(out)) === :pu
+    pu_after = Sparlectra.scf_json_parse(read(out, String))["sparlectra"]["extra"]
+    @test all(k -> !haskey(pu_before[k], "pu") || get(get(pu_after, k, Dict()), "pu", nothing) == pu_before[k]["pu"], collect(keys(pu_before)))
     # unknown case and empty selection fail loudly, without writing
     bad = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "does_not_exist.m"); output_root = root, runtime = rt)
     @test occursin("not%20found", string(bad)) || occursin("not+found", string(bad))
@@ -1717,6 +1845,8 @@ mpc.branch = [
     cg = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "sp_case14_cgmes.zip", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH); output_root = root, runtime = rt)
     @test occursin("Exported", string(cg))
     @test isfile(joinpath(cases, "sp_case14_cgmes.scf.json"))
+    # a CGMES source states SI values and stays SI
+    @test Sparlectra.scf_case_units(Sparlectra.read_scf_json(joinpath(cases, "sp_case14_cgmes.scf.json"))) === :si
     cg_pgm = run_with_expected_warnings((r"strict_pgm = true",)) do
       SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "sp_case14_cgmes.zip", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
     end

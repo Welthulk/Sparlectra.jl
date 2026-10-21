@@ -538,6 +538,22 @@ function run_cgmes_importer_tests()
 
       # Without the option the import aborts with the typed analysis error.
       @test_throws Sparlectra.CGMESImporter.CGMESImportError importCGMES(path = nobv_dir, name = "nobv_off")
+      # A service run writes the analysis of that error into the import
+      # report, the file its message points at: the power-flow service adds
+      # what summarizeCGMES still reads, the short-circuit service the
+      # analysis alone.
+      local pf_out = mktempdir()
+      local pf_fail = run_sparlectra_api(casefile = nobv_dir, output_dir = pf_out, case_format = :cgmes)
+      @test pf_fail.status == :failed
+      @test occursin("cgmes_import_report.md", something(pf_fail.message, ""))
+      local pf_text = cgmes_report_plain(pf_out)
+      @test startswith(pf_text, "CGMES import report: IMPORT FAILED\n")
+      @test occursin("\nImport analysis\nCGMES import analysis\n", pf_text)
+      @test occursin("\nnobv_EQ.xml | EQ | ", pf_text)
+      local sc_out = mktempdir()
+      local sc_fail = SparlectraApp._run_short_circuit_service(nobv_dir, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, sc_out, "sc_nobv")
+      @test sc_fail.status == :failed
+      @test occursin("\nImport analysis\nCGMES import analysis\n", cgmes_report_plain(sc_out))
 
       # With the option every bus level is reconstructed from the SV state
       # (111.8–115.5 kV snap to 110), the substitution is summarized as one
@@ -1214,7 +1230,9 @@ function run_cgmes_importer_tests()
       @test length(residuals) - 1 == 9
       @test all(split(l, ',')[9] == "true" for l in residuals[2:end])
       @test any(parse(Int, split(l, ',')[10]) > 0 for l in residuals[2:end])
-      @test occursin("no-SV buses: 0", read(joinpath(out, "cgmes.log"), String))
+      @test occursin("No-SV buses: 0", cgmes_report_plain(out))
+      # a delivery without DY profile gets no DY section
+      @test !occursin("Dynamic data (DY profile)", cgmes_report_plain(out))
       # the tap changer of the import notice (SvTapStep four steps off the
       # SSH step) is listed in self_check.log with both steps
       off = _sp_case14_off_sv_tap_step()
@@ -1225,7 +1243,7 @@ function run_cgmes_importer_tests()
       tap_summary = read(joinpath(tout, "self_check.log"), String)
       @test occursin("cgmes_sv_tap_step_fits: 1 ", tap_summary)
       @test occursin(": SvTapStep $(off.sv_step) mismatch ", tap_summary) && occursin(", best step $(off.ssh_step) mismatch ", tap_summary)
-      @test occursin("notice: 1 tap changer(s) whose SvTapStep fits", read(joinpath(tout, "cgmes.log"), String))
+      @test occursin("notice: 1 tap changer(s) whose SvTapStep fits", cgmes_report_plain(tout))
     end)() end
 
     @testset "import_analysis_mode service run (synthetic deliveries)" begin (function ()
@@ -2127,10 +2145,15 @@ function run_cgmes_importer_tests()
         local plain = importCGMES(path = loaded, name = "sg_dy_plain")
         local dys = _cgmes_dy_store(loaded)
         local ps_of(r, name) = r.net.prosumpsVec[last(r.element_by_mrid[only(o for o in objectsOf(loaded, :SynchronousMachine) if str(o, :name) == name).mrid])]
-        # off: no DynamicData, no DY line, the network of the plain import
+        # no DY profile: no DY summary, no report line
+        @test plain.dynamics === nothing && isempty(dynamicsReportLines(plain))
+        # off: no DynamicData, one DY line naming the switch (also the whole
+        # report section), the network of the plain import
         local off = importCGMES(path = dys, name = "sg_dy_off")
         @test all(ps -> ps.dynamics === nothing, off.net.prosumpsVec)
-        @test !any(m -> startswith(m, "notice: DY"), off.messages)
+        local off_line = "DY profile present (1 file(s)), not read: cgmes_import.read_dynamics = false"
+        @test filter(m -> startswith(m, "notice: DY"), off.messages) == ["notice: " * off_line]
+        @test dynamicsReportLines(off) == [off_line]
         @test isempty(scf_roundtrip_field_diffs(plain.net, off.net))
         # on: TwinBrch carries inertia, damping, its EQ rating and the droop
         # of GovSteam1 (1/k on mwbase 100, converted to 200 MVA) with its t1
@@ -2160,6 +2183,12 @@ function run_cgmes_importer_tests()
           @test line in on.messages
         end
         @test count(m -> startswith(m, "notice: DY class "), on.messages) == 9
+        # the report section: the notices of the import, the DY file and the
+        # two units under their SynchronousMachine names
+        local rep = dynamicsReportLines(on)
+        @test filter(l -> !startswith(l, "DY files: ") && !startswith(l, "units with dynamic data: "), rep) == [m[9:end] for m in on.messages if startswith(m, "notice: DY")]
+        @test "DY files: dy_test.xml" in rep
+        @test Set(split(only(l for l in rep if startswith(l, "units with dynamic data: "))[26:end], ", ")) == Set(["TwinBrch SM", "Breed SM"])
         # a record against the DynamicData rules is dropped with a warning
         local neg = deepcopy(dys)
         neg.objects["_dy_m2"].attrs[:inertia] = "-6"
@@ -2208,11 +2237,24 @@ function run_cgmes_importer_tests()
         local f_off = importCGMES(path = paths, name = "sg_dyf_off")
         @test count(m -> startswith(m, "file skipped: sg_DY.xml") && endswith(m, "profile not in import set"), f_off.messages) == 1
         @test !any(o -> o.source == "sg_DY.xml", values(f_off.store.objects))
+        @test dynamicsReportLines(f_off) == ["DY profile present (1 file(s)), not read: cgmes_import.read_dynamics = false"]
         @test isempty(scf_roundtrip_field_diffs(plain.net, f_off.net))
         local f_on = importCGMES(path = paths, name = "sg_dyf_on", read_dynamics = true)
         @test ps_of(f_on, "TwinBrch SM").dynamics === DynamicData(inertia_s = 4.25, damping_pu = 0.5, rating_mva = 200.0)
         @test "notice: DY class LoadAggregate: 0 mapped, 1 not mapped, 0 without counterpart in EQ" in f_on.messages
         @test all(m -> startswith(m, "prosumer.dynamics"), scf_roundtrip_field_diffs(plain.net, f_on.net))
+        # the service run writes the same lines into the DY section of
+        # cgmes_import_report.md: with the switch the counts, without it the
+        # one line
+        for (rd, expected) in ((true, dynamicsReportLines(f_on)), (false, dynamicsReportLines(f_off)))
+          local out = mktempdir()
+          local cfg = joinpath(out, "c.yaml")
+          write(cfg, "config_version: 1\ncgmes_import:\n  path: \"" * paths[2] * ";" * paths[3] * "\"\n  read_dynamics: " * string(rd) * "\n")
+          local r = run_sparlectra_api(casefile = paths[1], config_file = cfg, output_dir = out, case_format = :cgmes)
+          @test r.status == :succeeded
+          local text = cgmes_report_plain(out)
+          @test occursin("\nDynamic data (DY profile)\n" * join(expected, "\n") * "\nShort-circuit source data", text)
+        end
         # the configured import, the YAML loader and the adapter options
         # forward the switch
         @test !SparlectraConfig().cgmes.read_dynamics
@@ -2220,6 +2262,28 @@ function run_cgmes_importer_tests()
         @test Sparlectra.CGMESImportConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("read_dynamics" => true))).read_dynamics
         @test Sparlectra.cgmes_adapter_options(SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(read_dynamics = true))).read_dynamics
       end)() end
+
+      # The DY profile of the ENTSO-E MicroGrid (CGMES cache, not in the
+      # repository): BE_DY_2.xml holds two and NL_DY_2.xml three
+      # SynchronousMachineTimeConstantReactance records, each on a machine of
+      # the network, so two and three units get DynamicData; without the
+      # switch the report has the one line naming it
+      for (alias, n_units) in (("microgrid_be", 2), ("microgrid_nl", 3))
+        local zip = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "cases", "cgmes_" * alias * ".zip")
+        if !isfile(zip)
+          println("      cgmes_importer: ", alias, " DY profile SKIPPED (", zip, " not in the CGMES cache)")
+          continue
+        end
+        println("      cgmes_importer: ", alias, " DY profile RAN")
+        @testset "DY profile of $(alias)" begin (function ()
+          local on = importCGMES(path = [zip], name = alias, read_dynamics = true)
+          @test count(ps -> ps.dynamics !== nothing, on.net.prosumpsVec) == n_units
+          @test length(on.dynamics.units) == n_units && length(on.dynamics.files) == 1
+          @test first(dynamicsReportLines(on)) == "DY profile read (cgmes_import.read_dynamics): $(n_units) unit(s) with dynamic data"
+          @test "DY class SynchronousMachineTimeConstantReactance: $(n_units) mapped, 0 not mapped, 0 without counterpart in EQ" in dynamicsReportLines(on)
+          @test dynamicsReportLines(importCGMES(path = [zip], name = alias)) == ["DY profile present (1 file(s)), not read: cgmes_import.read_dynamics = false"]
+        end)() end
+      end
 
       # The short-circuit harvest keeps the sources the import mapped. A
       # machine of SmallGrid without ratedS and maxOperatingP is the live

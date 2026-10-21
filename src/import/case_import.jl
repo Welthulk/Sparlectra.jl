@@ -214,7 +214,7 @@ that was actually read (does it carry a usable SvVoltage state or not).
 Returns the import result, the run configuration with the start decision
 applied, and the records the service artifacts need. Import errors
 propagate; the caller owns the failure reporting (the power-flow service
-writes a diagnostic cgmes.log from what can still be read).
+writes a diagnostic cgmes_import_report.md from what can still be read).
 """
 function _import_cgmes(path::AbstractString, cfg::SparlectraConfig; name::AbstractString, run_kind::Symbol = :powerflow, phase_callback = phase -> nothing)
   cgmes_cfg = cfg.cgmes
@@ -276,10 +276,12 @@ wording of those refusals is part of each service's contract.
 function import_case(path::AbstractString, general_config::SparlectraConfig; requested_format::Symbol = :auto, run_kind::Symbol = :powerflow, name::AbstractString = basename(path), performance_profile = nothing, phase_callback = phase -> nothing)
   fmt = _detect_case_format(String(path); requested = requested_format)
   provenance = Dict{String,Any}("source_path" => String(path))
-  # the flat start sets the voltage profile for this run, for every format:
-  # the two start modes go classic (they would choose another profile), the
-  # start machines follow their own keys (#463); the caller reports the
-  # overridden keys in its run log
+  # a flat start is a flat start for every format: the projection, the DC
+  # seed and the two start modes are off for this run
+  # (_flatstart_profile_config); the caller reports the overridden keys in
+  # its run log. CGMES decides the start only after the import
+  # (cgmes_import.start_values), so its list is computed there.
+  input_config = general_config
   general_config, flatstart_overrides = _flatstart_profile_config(general_config)
   provenance["flatstart_overrides"] = flatstart_overrides
   if fmt === :matpower || fmt === :scf || fmt === :scf_series
@@ -292,7 +294,11 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
     return ImportedCase(ctx.net, ctx.config, fmt, provenance, studies, ctx.auto_profile_overrides)
   elseif fmt === :cgmes
     phase_callback("reading_cgmes_delivery")
-    cg = _import_cgmes(String(path), general_config; name = name, run_kind = run_kind, phase_callback = phase_callback)
+    cg = _import_cgmes(String(path), input_config; name = name, run_kind = run_kind, phase_callback = phase_callback)
+    # the flat start as start_values decided it: :sv clears it (empty list),
+    # :flat sets it, so the list names what the run really switches off
+    cg_run_config, cg_flatstart_overrides = _flatstart_profile_config(cg.run_config)
+    provenance["flatstart_overrides"] = cg_flatstart_overrides
     provenance["cgmes_result"] = cg.result
     provenance["cgmes_paths"] = cg.paths
     provenance["cgmes_boundary_autodetected"] = cg.boundary_autodetected
@@ -308,8 +314,8 @@ function import_case(path::AbstractString, general_config::SparlectraConfig; req
     # stamped exactly once PER IMPORTER, and this is the CGMES
     # importer's once (with the run
     # config, exactly what the discarded second build used to apply).
-    _apply_config_net_parameters!(cg.result.net, cg.run_config)
-    return ImportedCase(cg.result.net, cg.run_config, fmt, provenance, _EMPTY_CASE_STUDIES, Dict{String,Any}())
+    _apply_config_net_parameters!(cg.result.net, cg_run_config)
+    return ImportedCase(cg.result.net, cg_run_config, fmt, provenance, _EMPTY_CASE_STUDIES, Dict{String,Any}())
   elseif fmt === :powsybl
     phase_callback("reading_powsybl_bundle")
     net, report, tables = _import_powsybl(String(path), powsybl_adapter_options(general_config); name = name)
@@ -337,8 +343,8 @@ end
 const DTF_FOR001_UNSUPPORTED_DCLINE_MESSAGE = "DC lines are currently not supported by the native DTF/MATPOWER power-flow path."
 
 # Resolve the delivery parts of one CGMES run: the case itself, any extra
-# parts from cgmes_import.path (typically the boundary set), and — for a bare
-# base case — a boundary delivery sitting next to it in the same directory
+# parts from cgmes_import.path (typically the boundary set), and, for a bare
+# base case, a boundary delivery sitting next to it in the same directory
 # (ENTSO-E names them "...Boundary..." or "..._BD_..."). Returns the path list
 # plus whether the boundary was autodetected. Shared by the power-flow CGMES
 # branch and the short-circuit service run.

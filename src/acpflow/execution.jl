@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -82,8 +82,8 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
         # slack at their regulated magnitudes, DC angles), so the solve reads
         # it from the net with flatstart = false: under a flat start the
         # solver would otherwise rebuild 1.0 pu / 0 degrees and drop the seed
-        # angles. Since #463 the flat start no longer switches the seed off,
-        # so this is the path that makes `flatstart: true` plus the seed work.
+        # angles. A run-level flat start switches the seed off
+        # (_flatstart_profile_config), so the seed runs here only without it.
         solve_pf_cfg = pf_cfg
         if pf_cfg.start_mode.dc_seed_unconditional
           _dc_seed_rectangular_angles!(net, pf_cfg; verbose = verbose, performance_profile = performance_profile)

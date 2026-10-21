@@ -543,6 +543,22 @@ function run_scf_series_tests()
       local rs = start_powerflow_run(Dict{String,Any}("casefile" => renamed, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(dir, "runs")))
       @test rs["status"] == "succeeded"
       @test occursin("SCF time series sp_case14_day: 96 steps", read(joinpath(rs["output_dir"], "run.log"), String))
+      # a flat start is a flat start on the QSTS base case too (the base
+      # solve skipped the run-level flat start and ran the DC start of the
+      # projection before), in both modes: no projection line
+      # from the solver, the flat-start line instead, the keys in the notes
+      local pf = cfg.powerflow
+      local flat = Sparlectra._copy_sparlectra_with_powerflow(cfg, Sparlectra._copy_powerflow_with(pf; start_mode = Sparlectra._copy_start_mode_with(pf.start_mode; flatstart = true, start_projection = true)))
+      flat = Sparlectra._sparlectra_config_with(flat; output = Sparlectra._struct_with(flat.output; console_diagnostics = :full))
+      local one = SCFSeries(name = "first", base = series.base, steps = series.steps[1:1], ops = series.ops[1:1], step_minutes = 15)
+      for mode in (:snapshots, :sequential)
+        local mcfg = Sparlectra._sparlectra_config_with(flat; qsts = Sparlectra._struct_with(flat.qsts; mode = mode))
+        local logs, r = Test.collect_test_logs(() -> redirect_stdout(() -> mode === :sequential ? only(runQsts([one]; config = mcfg)) : runQsts(one; config = mcfg), devnull); min_level = Logging.Info)
+        local msgs = [string(l.message) for l in logs]
+        @test r.base.status === :solved
+        @test !any(m -> startswith(m, "start projection selected"), msgs)
+        @test any(n -> startswith(n, "flat start:") && occursin("power_flow.start_mode.start_projection=false", n), r.notes)
+      end
     end)() end
 
     @testset "mode B on the example" begin (function ()

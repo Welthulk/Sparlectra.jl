@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -83,6 +83,9 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
   net !== nothing && path !== nothing && throw(ArgumentError("run_sparlectra: path is only valid with casefile."))
   cfg = config === nothing ? active_sparlectra_config() : config
   _maybe_print_startup_latency_hint(cfg)
+  # a flat start is a flat start: no projection, no DC seed, no stored
+  # voltages (the service applied this in import_case already; idempotent)
+  cfg, _ = _flatstart_profile_config(cfg)
   if net === nothing
     import_ctx = _import_sparlectra_context(casefile::String, path, cfg; performance_profile = performance_profile)
     run_net = import_ctx.net
@@ -92,7 +95,7 @@ function _run_sparlectra(; net::Union{Nothing,Net} = nothing, casefile::Union{No
     run_cfg = cfg
   end
   # power_flow.external_grid (issue #299): convert the marked slack into a
-  # non-ideal source before solving. Idempotent — CGMES runs may have applied
+  # non-ideal source before solving. Idempotent: CGMES runs may have applied
   # it already in the API layer (with delivery-declared Sk''/RX values).
   # the net's own feeder data wins in :auto mode (a CGMES ExternalNetworkInjection
   # or a case file's PGM `source` with sk/rx_ratio); without any, the config numbers apply

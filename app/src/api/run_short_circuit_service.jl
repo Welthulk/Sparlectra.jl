@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -387,7 +387,7 @@ delivery (boundary resolution shared with the power-flow path), evaluates
 short-circuit coverage report, and returns a `SparlectraApiResult` through
 the normal result conventions (`result.json`, artifact scan, run registry).
 
-Failure behavior — explicit reasons instead of empty tables:
+Failure behavior (explicit reasons instead of empty tables):
 - `short_circuit_requires_cgmes`: the case is neither a CGMES delivery nor a
   Sparlectra Case Format case (MATPOWER/DTF carry no harvested short-circuit
   data yet, issue #277 follow-up).
@@ -421,7 +421,7 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
     return _run_short_circuit_powsybl(case_path, config, config_file, output_dir, run_id, logfile, result_file, base_metadata)
   end
   if detected !== :cgmes
-    return _api_failure("short_circuit_requires_cgmes", "Short-circuit evaluation needs a CGMES delivery, a PowSyBl case or a Sparlectra Case Format case carrying source data — MATPOWER/DTF cases carry no harvested short-circuit source data yet (issue #277 follow-up).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    return _api_failure("short_circuit_requires_cgmes", "Short-circuit evaluation needs a CGMES delivery, a PowSyBl case or a Sparlectra Case Format case carrying source data. MATPOWER/DTF cases carry no harvested short-circuit source data yet (issue #277 follow-up).", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
   imported_cgmes = try
@@ -429,18 +429,15 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
   catch err
     message = sprint(showerror, err)
     # Same convention as the power-flow path: the typed import error carries
-    # the full analysis — persist it where the run's artifacts live.
+    # the full analysis, persist it where the run's artifacts live.
     if err isa CGMESImporter.CGMESImportError
       try
-        open(joinpath(output_dir, "cgmes.log"), "w") do io
-          println(io, "# CGMES import report — IMPORT FAILED")
-          println(io, "error:  ", message)
-          println(io)
-          println(io, "## Import analysis")
-          print(io, err.analysis)
-        end
+        _write_cgmes_import_failure_report(joinpath(output_dir, CGMES_IMPORT_REPORT_NAME); message, analysis = err.analysis, case_path)
       catch logerr
-        @warn "could not write diagnostic cgmes.log" exception = logerr
+        # expected: the output directory is not writable (SystemError,
+        # IOError); the failure result below still carries the error
+        logerr isa Union{SystemError,Base.IOError} || rethrow()
+        @warn "could not write $(CGMES_IMPORT_REPORT_NAME)" exception = logerr
       end
     end
     reason = occursin("boundary set missing", message) || occursin("unresolved topology references", message) || occursin("no resolvable BaseVoltage", message) ? "cgmes_boundary_missing" : "cgmes_import_error"
@@ -476,13 +473,13 @@ function _run_short_circuit_service(case_path::AbstractString, config_file::Abst
   end
 
   # A delivery without any usable source produces only :no_source/:isolated
-  # rows — that is missing data, not a zero-current network.
+  # rows: that is missing data, not a zero-current network.
   if !any(row.status === :ok for row in sc_max.rows)
     open(logfile, "a") do io
       println(io, "Short-circuit run: no usable short-circuit source in the delivery.")
       printShortCircuitCoverage(io, cgmes_result.shortcircuit)
     end
-    return _api_failure("short_circuit_data_missing", "The delivery imported, but no usable short-circuit source (machine x''_d or feeder Ik) was found — see the coverage report in run.log.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    return _api_failure("short_circuit_data_missing", "The delivery imported, but no usable short-circuit source (machine x''_d or feeder Ik) was found. See the coverage report in run.log.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
   max_csv = _write_short_circuit_csv(joinpath(output_dir, "short_circuit_max.csv"), sc_max; format = String(config.output.csv_format))

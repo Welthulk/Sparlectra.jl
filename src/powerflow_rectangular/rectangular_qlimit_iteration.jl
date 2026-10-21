@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -103,7 +103,7 @@ function _handle_rectangular_qlimit_iteration!(
     # settled state there is. Without this, a solve that converges FASTER than
     # the gate allows (measured: the ReliCapGrid CGM island converges in 7
     # iterations, :auto never fires) exits with its violations unevaluated and
-    # is then rejected as `remaining_pv_q_limit_violations` — the active-set
+    # is then rejected as `remaining_pv_q_limit_violations`: the active-set
     # path had no post-convergence switching round. Switching on the converged
     # iterate is safe: the solver accepts convergence only when the active set
     # did NOT change in that iteration, so the loop simply continues under the

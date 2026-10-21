@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -236,7 +236,7 @@ end
     PhaseTapChangerModel
 
 A mutable structure representing a CGMES-style phase-tap-changer (PST) model,
-data only — the CGMES formulas are implemented in `equicircuit.jl`
+data only: the CGMES formulas are implemented in `equicircuit.jl`
 (`calcPhaseTapFraction`, `calcPhaseTapAngleRatio`, `calcPhaseTapReactance`,
 `calcPhaseTapTable`). See `docs/src/branchmodel.md`.
 
@@ -252,7 +252,7 @@ data only — the CGMES formulas are implemented in `equicircuit.jl`
 - `x_min::Union{Nothing,Float64}`: `X(0)` in per unit; must be `nothing` for `:tabular`.
 - `x_max::Union{Nothing,Float64}`: `X(αmax)` in per unit; must be `nothing` for `:tabular`.
 - `convention::Symbol`: sign/reciprocal convention forwarded to `calcSkewAngleTap` for `:asymmetrical` models, and used to reconstruct the regulating vector for `:tabular` models; default `:reciprocal_from_side`.
-- `table::Union{Nothing,Vector{TapTablePoint}}`: required, non-empty, strictly ascending/unique-by-`step` for `:tabular`; must be `nothing` otherwise. The table is the single source of truth whenever present — no formula reconstruction and no interpolation between steps.
+- `table::Union{Nothing,Vector{TapTablePoint}}`: required, non-empty, strictly ascending/unique-by-`step` for `:tabular`; must be `nothing` otherwise. The table is the single source of truth whenever present: no formula reconstruction and no interpolation between steps.
 
 # Constructors
 - `PhaseTapChangerModel(; kind::Symbol, step::Int, lowStep::Union{Nothing,Int} = nothing, highStep::Union{Nothing,Int} = nothing, neutralStep::Int, voltage_step_increment::Union{Nothing,Float64} = nothing, step_phase_shift_increment::Union{Nothing,Float64} = nothing, winding_connection_angle_deg::Union{Nothing,Float64} = nothing, x_min::Union{Nothing,Float64} = nothing, x_max::Union{Nothing,Float64} = nothing, convention::Symbol = :reciprocal_from_side, table::Union{Nothing,Vector{TapTablePoint}} = nothing)`: Creates a new `PhaseTapChangerModel` instance. `lowStep`/`highStep` are required for `:symmetrical`/`:asymmetrical`; for `:tabular` they are derived from `table` when omitted, and validated against it otherwise.
@@ -867,7 +867,7 @@ Creates windings for a three-winding transformer using the MVA method.
 - `tap_side::Int`: The number of the tap side [1,2,3]. It is 0 if there is no tap.
 - `tap::PowerTransformerTaps`: The tap settings of the winding.
 - `phase_tap_side::Int = 0`: Winding index `[1,2,3]` carrying a [`PhaseTapChangerModel`](@ref) (Schrägregler);
-  `0` means none. Uses the same 1-based winding-index convention as `tap_side`. May equal `tap_side` —
+  `0` means none. Uses the same 1-based winding-index convention as `tap_side`. May equal `tap_side`,
   a ratio tap and a phase tap on the same winding is a valid configuration and is not rejected.
 - `phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing`: The phase-tap-changer model attached at
   `phase_tap_side`. Must be `nothing` iff `phase_tap_side == 0`; a `PhaseTapChangerModel` is required
@@ -893,7 +893,7 @@ create3WTWindings!(u_kV = [110.0, 20.0, 10.0], sn_MVA = [100.0, 80.0, 20.0], add
 """
 function create3WTWindings!(; u_kV::Array{Float64,1}, sn_MVA::Array{Float64,1}, addEx_Side::Array{TransformerModelParameters,1}, sh_deg::Array{Float64,1}, tap_side::Int, tap::PowerTransformerTaps, phase_tap_side::Int = 0, phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing)::Tuple{PowerTransformerWinding,PowerTransformerWinding,PowerTransformerWinding}
   phase_tap_side in 0:3 || throw(ArgumentError("create3WTWindings!: phase_tap_side must be in 0:3 (winding index 1..3, 0 = none), got $(phase_tap_side)"))
-  (phase_tap_side == 0) == (phase_taps === nothing) || throw(ArgumentError("create3WTWindings!: phase_tap_side and phase_taps must be set together — phase_tap_side != 0 requires a PhaseTapChangerModel, and phase_taps requires phase_tap_side != 0"))
+  (phase_tap_side == 0) == (phase_taps === nothing) || throw(ArgumentError("create3WTWindings!: phase_tap_side and phase_taps must be set together, phase_tap_side != 0 requires a PhaseTapChangerModel, and phase_taps requires phase_tap_side != 0"))
 
   for side = 1:3
     if isnothing(addEx_Side[side].vkr_percent)

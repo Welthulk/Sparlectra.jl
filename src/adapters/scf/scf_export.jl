@@ -31,7 +31,10 @@
 # and _scf_read_measurements_v10!). 1.3 adds the optional block
 # extra.<machine>.dynamics (DynamicData, #506); a 1.2 reader ignores unknown
 # extra keys without a word and would drop it, so the revision moves. A 1.2
-# file has no such block and reads unchanged.
+# file has no such block and reads unchanged. 1.3 also brings the unit
+# declaration meta.units ("si", the default, or "pu") with the pu block
+# extra.<branch or shunt>.pu; a 1.2 reader refuses a 1.3 file by its
+# revision, so it never reads pu values as SI.
 const SCF_FORMAT_VERSION = "1.3"
 
 # Configuration groups a case file may NOT carry: they describe the machine
@@ -1356,7 +1359,11 @@ function net_to_scf(
   measurement_provenance::AbstractDict = Dict{String,Any}(),
   strict_pgm::Bool = false,
   created_at::AbstractString = "",
+  units::Symbol = :si,
 )::Dict{String,Any}
+  units in (:si, :pu) || throw(ArgumentError("SCF export: units must be :si or :pu, got :$(units)."))
+  # the pu values live in the sparlectra block, which a strict PGM file drops
+  (units === :pu && strict_pgm) && throw(ArgumentError("SCF export: units = :pu needs the sparlectra block, which strict_pgm = true leaves out."))
   # f_nom divides every line susceptance (c1 = b/(2*pi*f)): 0 gives NaN or
   # Inf, a negative value a negative capacitance. The adapters pass their
   # option here without going through the Net constructor check.
@@ -1404,6 +1411,7 @@ function net_to_scf(
   isempty(created_at) || (meta["created_at"] = String(created_at))
 
   spar = Dict{String,Any}("format_version" => SCF_FORMAT_VERSION, "meta" => meta, "roles" => _scf_roles(net, ids), "extra" => _scf_extra(net, ids))
+  units === :pu && _scf_write_pu_blocks!(spar, net, ids)
   components = Dict{String,Any}()
   taps = _scf_tap_changers(net, ids)
   isempty(taps) || (components["tap_changer"] = taps)
@@ -1538,6 +1546,26 @@ function net_to_scf(
   return root
 end
 
+# units = :pu: the branch and shunt parameters as the net holds them, in the
+# pu block of each extra entry, and the declaration in meta. The data
+# section keeps the SI view; build_net reads the pu block instead of it.
+function _scf_write_pu_blocks!(spar::Dict{String,Any}, net::Net, ids::ScfIdMap)
+  spar["meta"]["units"] = "pu"
+  extra = spar["extra"]
+  for i in eachindex(net.branchVec)
+    id = get(ids.branch, i, nothing)
+    id === nothing && continue
+    br = net.branchVec[i]
+    # base impedance, the same quantity the SI rows carry
+    extra[string(id)]["pu"] = Dict{String,Any}("r_pu" => br.r_base_pu, "x_pu" => br.x_base_pu, "b_pu" => br.b_pu, "g_pu" => br.g_pu)
+  end
+  for (i, id) in ids.shunt
+    y = net.shuntVec[i].y_pu_shunt
+    extra[string(id)]["pu"] = Dict{String,Any}("g_pu" => real(y), "b_pu" => imag(y))
+  end
+  return nothing
+end
+
 # A case file must describe the EQUIPMENT, not a FACTS operating point: a
 # series-FACTS control run stamps its compensated impedance onto r_pu/x_pu
 # while r_base_pu/x_base_pu keep the physical value. Writing a compensated
@@ -1586,6 +1614,11 @@ Keyword arguments:
   else. Everything that block carries is then absent from the file,
   `meta.f_nom` included; the export names what it dropped in a warning.
   Off by default.
+- `units`: `:si` (default) or `:pu`. With `:pu` the file declares
+  `meta.units = "pu"` and carries the branch and shunt parameters per unit
+  in the `pu` block of their `sparlectra.extra` entry, so a network that
+  was built from per-unit data (MATPOWER) reads back bit for bit. The
+  `data` section stays the SI view. Not combinable with `strict_pgm`.
 
 Throws an `ArgumentError` when the network carries FACTS-compensated
 impedances (call `restoreBaseImpedances!` first).

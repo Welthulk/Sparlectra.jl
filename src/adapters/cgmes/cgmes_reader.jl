@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/cgmes/cgmes_reader.jl
-# purpose: layer 2 of the CGMES importer — generic RDF/XML property-bag
+# purpose: layer 2 of the CGMES importer, generic RDF/XML property-bag
 # reader. Every top-level `<cim:Class rdf:ID|about>` becomes/updates one
 # CIMObject; no per-class code. `rdf:ID` creates, `rdf:about` overlays
 # (SSH/TP/SV on EQ). Verified against the ENTSO-E test sets (A2): flat
@@ -30,7 +30,7 @@ name is kept as an additional key.
 
 `source` is the name of the file whose `rdf:ID` created the object (overlays
 via `rdf:about` do not change it). In a multi-area delivery this is the only
-way to tell which area contributed a piece of equipment — the sides of an
+way to tell which area contributed a piece of equipment: the sides of an
 assembled border are otherwise indistinguishable.
 """
 struct CIMObject
@@ -76,7 +76,7 @@ _strip_mrid(v::AbstractString) = startswith(v, "#") ? String(v[2:end]) : String(
 """Store-level overflow for multi-valued references (#294 point 9): RDF/XML
 may repeat the same property on one object (`TopologicalIsland.
 TopologicalNodes` lists thousands of members). `CIMObject.refs` keeps its
-one-value-per-key shape — the 1:1 fast path stays allocation-free — and
+one-value-per-key shape (the 1:1 fast path stays allocation-free) and
 every additional value lands here under `(mrid, key)`, in document order,
 excluding the first value (which stays in `refs`). Query via `refsAll`."""
 const CGMESMultiRefs = Dict{Tuple{String,Symbol},Vector{String}}
@@ -138,15 +138,15 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       end
       break
     elseif n == "Dataset"
-      # CGMES 3.0 / NC document header (dcat:Dataset) instead of md:FullModel —
+      # CGMES 3.0 / NC document header (dcat:Dataset) instead of md:FullModel:
       # ReliCapGrid boundary files ship like this. The profile is declared as a
       # short code in dcat:keyword ("BD", "EQ", …), there is no Model.profile.
       # Without this branch such a file gets an empty profile set, is parsed
-      # anyway, but never classified — a boundary file then never reaches
+      # anyway, but never classified, a boundary file then never reaches
       # store.boundary and the assembled-border equivalent-injection rule in
       # the mapping cannot fire.
       header = :Dataset
-      # The dataset id (rdf:about) is the model identity — other files'
+      # The dataset id (rdf:about) is the model identity: other files'
       # md:Model.DependentOn declarations point at it, so it must be captured
       # for the dependency matching of the import analysis.
       for a in EzXML.eachattribute(el)
@@ -198,7 +198,7 @@ function readCGMESFile!(objects::Dict{String,CIMObject}, byclass::Dict{Symbol,Ve
       objects[mrid] = obj
       push!(get!(Vector{String}, byclass, cls), mrid)
     elseif !is_about && obj.class != cls
-      # duplicate rdf:ID with a different class — keep first, count as object anyway
+      # duplicate rdf:ID with a different class: keep first, count as object anyway
       @debug "CGMES reader: duplicate rdf:ID $(mrid) ($(obj.class) vs $(cls))"
     end
     count += 1

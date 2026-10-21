@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/cgmes/cgmes_import_analysis.jl
-# purpose: detailed why-does-this-delivery-not-import analysis — supplied
+# purpose: detailed why-does-this-delivery-not-import analysis, supplied
 #          models, declared md:Model.DependentOn prerequisites vs. what was
 #          actually handed in, and an unresolved-reference histogram with a
 #          plain-language verdict (typically: the boundary set is missing).
@@ -24,7 +24,7 @@
 Import abort that carries the full [`importFailureAnalysis`](@ref) report.
 `showerror` prints only the one-line message; consumers that own a log or a
 UI (the powerflow service, the Web UI) read the `analysis` field and write
-the report where their users actually look (`cgmes.log`).
+the report where their users actually look (`cgmes_import_report.md`).
 """
 struct CGMESImportError <: Exception
   message::String
@@ -41,16 +41,16 @@ imported (or what is incomplete about it):
 
 1. the supplied model files with profile, CGMES version, and model id;
 2. every `md:Model.DependentOn` prerequisite declared by the file headers,
-   matched against the supplied model ids — missing prerequisites are the
+   matched against the supplied model ids: missing prerequisites are the
    authoritative statement of what the delivery expects but did not get;
 3. a histogram of unresolved object references grouped by class and
    property;
 4. a verdict in plain language. A delivery whose `TopologicalNode.BaseVoltage`
-   references stay unresolved depends on an external base-voltage catalog —
+   references stay unresolved depends on an external base-voltage catalog:
    in real ENTSO-E deliveries that catalog lives in the boundary set
    (`EQ_BD`/`TP_BD`), so importing without the matching boundary cannot work.
 
-The report is purely diagnostic — building it never throws.
+The report is purely diagnostic: building it never throws.
 """
 function importFailureAnalysis(store::CGMESStore)::String
   io = IOBuffer()
@@ -82,7 +82,7 @@ function importFailureAnalysis(store::CGMESStore)::String
   else
     println(io, "Declared dependencies MISSING from the input (md:Model.DependentOn):")
     for dep in sort!(collect(keys(missing_deps)))
-      println(io, "  - model $(dep) — required by ", join(sort(missing_deps[dep]), ", "))
+      println(io, "  - model $(dep): required by ", join(sort(missing_deps[dep]), ", "))
     end
   end
 
@@ -108,13 +108,13 @@ function importFailureAnalysis(store::CGMESStore)::String
   if !isempty(missing_deps)
     println(io, "Verdict: the delivery declares $(length(missing_deps)) prerequisite model(s) that are not part of the input.")
     println(io, "         In real ENTSO-E deliveries these are typically the boundary files (EQ_BD/TP_BD) of the")
-    println(io, "         matching date — the boundary carries the border X-nodes and the shared BaseVoltage catalog.")
+    println(io, "         matching date. The boundary carries the border X-nodes and the shared BaseVoltage catalog.")
     println(io, "         Obtain the matching boundary set and pass it as an additional path.")
   elseif base_voltage_gap
-    println(io, "Verdict: BaseVoltage references stay unresolved — the base-voltage catalog is not part of the input.")
+    println(io, "Verdict: BaseVoltage references stay unresolved. The base-voltage catalog is not part of the input.")
     println(io, "         It usually ships in the boundary EQ file (EQ_BD); import the delivery together with its boundary set.")
   elseif topology_gap
-    println(io, "Verdict: terminals reference topological nodes that are not part of the input — a TP file is missing or truncated.")
+    println(io, "Verdict: terminals reference topological nodes that are not part of the input. A TP file is missing or truncated.")
   elseif !isempty(unresolved)
     println(io, "Verdict: cross-references stay unresolved; check that every profile file of the delivery (EQ, TP, SSH, SV) was supplied.")
   else
@@ -145,11 +145,11 @@ end
 """
     analyzeCGMES(; path)::String
 
-Load a CGMES delivery (folder, ZIP, XML file, or a vector of those — same
+Load a CGMES delivery (folder, ZIP, XML file, or a vector of those, same
 forms as `importCGMES`) without mapping it to a network, print the
 [`importFailureAnalysis`](@ref) report, and return it. Use this to find out
-*why* a delivery does not import — most commonly which declared boundary
-dependency is missing — without wading through importer errors.
+*why* a delivery does not import (most commonly which declared boundary
+dependency is missing), without wading through importer errors.
 """
 function analyzeCGMES(; path)::String
   store = loadCGMES(path)
