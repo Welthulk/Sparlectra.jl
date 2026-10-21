@@ -236,7 +236,7 @@ function _scf_validate_studies(root::AbstractDict)
   for row in _scf_get(_scf_get(root, "data", Dict{String,Any}()), "fault", [])
     row isa AbstractDict || throw(ArgumentError("SCF: every data.fault entry must be an object."))
     _scf_require(row, "fault_object", "a fault entry")
-    ft = String(_scf_get(row, "fault_type", "three_phase"))
+    ft = _scf_enum_str(_scf_get(row, "fault_type", "three_phase"), "fault_type")
     ft == "three_phase" || throw(ArgumentError("SCF: fault.fault_type must be three_phase (Sparlectra evaluates the balanced fault); got $(repr(ft))."))
     for key in ("r_f", "x_f")
       v = _scf_get(row, key, 0.0)
@@ -542,6 +542,24 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   # internal index in `extra`, so the reader rebuilds the original order
   # instead of a name-sorted one; without a recorded index the id order wins.
   zbase(id) = u_rated_by_id[id]^2 / s_base_va
+  # The declared unit system (sparlectra.meta.units). In a units = pu file
+  # the zb-coupled electrical parameters of lines, transformers and shunts
+  # are read from the pu block of their extra entry as they stand; the SI
+  # data section is a derived view for PGM readers and is not read for
+  # them. The only conversion of the chain stays here, in build_net, and a
+  # pu file needs none.
+  units = scf_case_units(case)
+  pu_block = function (id)
+    e = _scf_get(extra, string(id), nothing)
+    e isa AbstractDict || throw(ArgumentError("SCF: units = pu, but component $(id) has no extra entry carrying its pu values."))
+    pu = _scf_get(e, "pu", nothing)
+    pu isa AbstractDict || throw(ArgumentError("SCF: units = pu, but component $(id) carries no pu block in its extra entry."))
+    return pu
+  end
+  pu_field = function (pu, field, id)
+    haskey(pu, field) || throw(ArgumentError("SCF: units = pu, but component $(id) carries no $(field) in its pu block."))
+    return _scf_num(pu[field], string("extra.pu.", field))
+  end
   # ONE precomputed angular frequency, exactly as the writer uses it: the
   # multiplication order decides the last bit and therefore byte identity
   w_nom = 2.0 * pi * f_nom
@@ -564,16 +582,17 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     if entry.kind == "line"
       b_s = row.c1 === nothing ? 0.0 : row.c1 * w_nom
       tan1 = row.tan1 === nothing ? 0.0 : row.tan1
+      line_pu = units === :pu ? pu_block(id) : nothing
       addPIModelACLine!(
         net = net,
         fromBus = bus_by_id[row.from_node],
         toBus = bus_by_id[to],
-        r_pu = row.r1 / zb,
-        x_pu = row.x1 / zb,
-        b_pu = b_s * zb,
+        r_pu = line_pu === nothing ? row.r1 / zb : pu_field(line_pu, "r_pu", id),
+        x_pu = line_pu === nothing ? row.x1 / zb : pu_field(line_pu, "x_pu", id),
+        b_pu = line_pu === nothing ? b_s * zb : pu_field(line_pu, "b_pu", id),
         # the direct field wins: tan1 * b_s is 0 whenever the writer had to
         # fall back to g1 (conductance without capacitance)
-        g_pu = row.g1 === nothing ? tan1 * b_s * zb : row.g1 * zb,
+        g_pu = line_pu === nothing ? (row.g1 === nothing ? tan1 * b_s * zb : row.g1 * zb) : pu_field(line_pu, "g_pu", id),
         status = 1,
         ratedS = row.i_n === nothing ? nothing : row.i_n * sqrt(3.0) * u_rated_by_id[to] / 1.0e6,
         from_status = something(row.from_status, 1),
@@ -583,13 +602,14 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
       # k and theta describe the LIVE tap; the neutral position comes from
       # the tap_changer entry when the file carries one, and the nameplate
       # is applied afterwards through the shared path
+      gb_pu = units === :pu ? pu_block(id) : nothing
       addPIModelTrafo!(
         net = net,
         fromBus = bus_by_id[row.from_node],
         toBus = bus_by_id[to],
-        r_pu = row.r1 / zb,
-        x_pu = row.x1 / zb,
-        b_pu = row.b1 === nothing ? 0.0 : row.b1 * zb,
+        r_pu = gb_pu === nothing ? row.r1 / zb : pu_field(gb_pu, "r_pu", id),
+        x_pu = gb_pu === nothing ? row.x1 / zb : pu_field(gb_pu, "x_pu", id),
+        b_pu = gb_pu === nothing ? (row.b1 === nothing ? 0.0 : row.b1 * zb) : pu_field(gb_pu, "b_pu", id),
         status = 1,
         ratio = something(row.k, 1.0),
         shift_deg = rad2deg(something(row.theta, 0.0)),
@@ -597,7 +617,11 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
         from_status = something(row.from_status, 1),
         to_status = something(row.to_status, 1),
       )
-      row.g1 === nothing || set_branch_shunt_total!(net.branchVec[end]; g_pu = row.g1 * zb, b_pu = net.branchVec[end].b_pu)
+      if gb_pu !== nothing
+        set_branch_shunt_total!(net.branchVec[end]; g_pu = pu_field(gb_pu, "g_pu", id), b_pu = net.branchVec[end].b_pu)
+      elseif row.g1 !== nothing
+        set_branch_shunt_total!(net.branchVec[end]; g_pu = row.g1 * zb, b_pu = net.branchVec[end].b_pu)
+      end
       trafo_by_branch_idx[length(net.branchVec)] = net.trafos[end]
     end
     branch_index_by_id[id] = length(net.branchVec)
@@ -952,13 +976,23 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     node = row.node
     # counterpart of the writer's division: multiply by the base itself
     zb_sh = zbase(node)
-    g_pu = something(row.g1, 0.0) * zb_sh
-    b_pu = something(row.b1, 0.0) * zb_sh
+    sh_pu = units === :pu ? pu_block(entry.id) : nothing
+    g_pu = sh_pu === nothing ? something(row.g1, 0.0) * zb_sh : pu_field(sh_pu, "g_pu", entry.id)
+    b_pu = sh_pu === nothing ? something(row.b1, 0.0) * zb_sh : pu_field(sh_pu, "b_pu", entry.id)
     # addShunt! takes the nominal P/Q draw at 1 pu voltage in MW/MVar
     # addShunt! forms y = (P + jQ)/baseMVA, so Q carries the susceptance with
     # the SAME sign the file states; negating it turned a capacitor into a
     # reactor on every round trip
     addShunt!(net = net, busName = bus_by_id[node], pShunt = g_pu * s_base, qShunt = b_pu * s_base)
+    if sh_pu !== nothing
+      # addShunt! divides the MW/MVar draw by baseMVA again, and (g * s) / s
+      # is not always g; a pu file states the admittance itself, so it is
+      # stamped as stated
+      sh = net.shuntVec[end]
+      sh.y_pu_shunt = ComplexF64(g_pu, b_pu)
+      sh.G_shunt = g_pu
+      sh.B_shunt = b_pu
+    end
     # the generated id carries the net index; a file written from a net
     # whose controller shunt sat before a plain one has a different index
     # here, so the file's external_id is restored (same rule as for nodes)
@@ -1731,9 +1765,13 @@ existing files read unchanged. Unknown values are a hard error. For
 `:pu` the conversion base must be complete: `meta.s_base` (VA,
 positive and finite) and a positive finite `u_rated` on every node;
 per-unit numbers without their base are not interpretable, so a
-missing piece is a hard error naming the field.
+missing piece is a hard error naming the field. `build_net` reads the
+branch and shunt parameters of a `:pu` file from the `pu` block of
+their `sparlectra.extra` entry.
 """
 function scf_case_units(case::SCFCase)::Symbol
+  # a plain PGM dataset has no sparlectra block at all: that is si
+  case.sparlectra === nothing && return :si
   raw = get(case.sparlectra.meta, "units", "si")
   raw isa AbstractString || throw(ArgumentError("sparlectra.meta.units must be a string (\"pu\" or \"si\"), got $(typeof(raw))."))
   u = Symbol(lowercase(strip(String(raw))))

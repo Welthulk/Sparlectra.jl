@@ -58,7 +58,7 @@ Two limit modes (`limit_mode`):
   `|x - x_base_pu| <= v_inj_max_pu / |I|`. The bound is re-evaluated from
   the solved branch current before every outer step, so at high loading the
   usable reactance window SHRINKS (less compensation available exactly when
-  the current is large) — the defining contrast to the TCSC's fixed window.
+  the current is large), the defining contrast to the TCSC's fixed window.
   An at-limit SSSC keeps adjusting while its current-dependent bound still
   moves and only parks `at_limit` once the bound has settled.
 """
@@ -209,7 +209,7 @@ function addSeriesReactanceControl!(
   local xlo::Float64
   local xhi::Float64
   if v_inj_max_pu !== nothing
-    (x_min_pu !== nothing || x_max_pu !== nothing) && error("SeriesReactanceControl: x_min_pu/x_max_pu and v_inj_max_pu are mutually exclusive — the injectable series voltage is the limit in SSSC mode.")
+    (x_min_pu !== nothing || x_max_pu !== nothing) && error("SeriesReactanceControl: x_min_pu/x_max_pu and v_inj_max_pu are mutually exclusive. The injectable series voltage is the limit in SSSC mode.")
     v_inj_max_pu > 0.0 || error("SeriesReactanceControl: v_inj_max_pu must be positive, got $(v_inj_max_pu)")
     limit_mode = :injected_voltage
     # no current is known before the first solve: start with the zero-width
@@ -277,7 +277,7 @@ control_is_converged(ctrl::SeriesReactanceControl, ::AbstractControlState)::Bool
 control_is_blocked(ctrl::SeriesReactanceControl, ::AbstractControlState)::Bool = ctrl.at_limit
 
 # SSSC live-bounds constants: the current floor keeps the window finite on a
-# (numerically) currentless branch — physically an SSSC injects no voltage
+# (numerically) currentless branch: physically an SSSC injects no voltage
 # without current, so the model is unconstrained there anyway; the tracking
 # tolerance decides when a moving bound has settled (pu reactance).
 const _SSSC_MIN_CURRENT_PU = 1e-4

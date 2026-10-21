@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -610,11 +610,18 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     end
     intended = String["power_flow"]
     isempty(net.measurements) || push!(intended, "state_estimation")
+    source_format = _detect_case_format(case_path)
+    # per unit stays per unit: a MATPOWER case states its parameters per
+    # unit, and an SCF case that declares units = pu carries them in its pu
+    # blocks. An SI copy of either loses the last bit of about one value in
+    # ten. A strict PGM file has no place for them.
+    keep_pu = !strict && (source_format === :matpower || (source_format === :scf && scf_case_units(read_scf_json(case_path)) === :pu))
     exportSCF(
       net;
       file = out_path,
       case_name = first(splitext(basename(requested))),
-      source_format = String(_detect_case_format(case_path)),
+      source_format = String(source_format),
+      units = keep_pu ? :pu : :si,
       source_reference = basename(requested),
       intended_calculations = intended,
       measurement_provenance = provenance,
@@ -1354,38 +1361,267 @@ end
 # generator off in the same save.
 function _webui_resolve_solver_start_conflict!(updates::AbstractDict)
   get(updates, "power_flow.solver", nothing) == "apslf" && (updates["power_flow.apslf_start.enabled"] = false)
-  # the flat start does not touch the other start settings here: the start
-  # machines follow their own keys, only the two start modes are overridden
-  # by the run (_flatstart_profile_config), the page greys those two, and
+  # the flat start does not touch the other start settings here: the run
+  # switches the projection, the DC seed and the two start modes off
+  # (_flatstart_profile_config), the page greys the controls it has, and
   # they come back as saved when the flat start is unchecked again
   return updates
 end
 
+# What a Settings save compares against (L20): a save writes a key only
+# where the submitted value differs from the value the key gets without
+# it. The result is the effective nested dictionary of the chain (read it
+# with _dotted_config_value): the deprecated in-file SCF block over the
+# configuration file over the packaged defaults. Once a case configuration
+# file exists, resolve_config skips the configuration file's case-scope
+# keys (`case_scope_from_defaults = true`); for a case without one they
+# take part (`false`). The caller states which, there is no default: a
+# case without a case file compared against the packaged defaults pinned
+# every value the configuration file changes (max_iter 25 stayed in the
+# case file after the configuration went to 30).
+function _webui_case_inherited_raw(config_file::AbstractString, source::AbstractString; case_scope_from_defaults::Bool)::Dict{String,Any}
+  scf_level = lowercase(splitext(String(source))[2]) == ".json" && isfile(source) ? scf_case_config(String(source); dropped = String[]) : Dict{String,Any}()
+  _, raw = _load_api_config(String(config_file), validate_gui_config_overrides(scf_level); case_scope_from_defaults)
+  return raw
+end
+
+# The general file over the packaged defaults, the baseline of the
+# machine-scope keys and of the save with target `general`.
+function _webui_general_inherited_raw(config_file::AbstractString)::Dict{String,Any}
+  _, raw = _load_api_config(String(config_file), Dict{String,Any}())
+  return raw
+end
+
+# Value equality across the spellings a form value and a YAML value take
+# for the same setting: 80 and 80.0, a stripped string, vectors and tables
+# element by element, an empty text or list for an unset key.
+function _webui_same_config_value(a, b)::Bool
+  _unset(x) = x === nothing || (x isa AbstractString && isempty(strip(x))) || (x isa AbstractVector && isempty(x)) || (x isa AbstractDict && isempty(x))
+  (a === nothing || b === nothing) && return _unset(a) && _unset(b)
+  (a isa Bool || b isa Bool) && return a isa Bool && b isa Bool && a == b
+  a isa Real && b isa Real && return a == b
+  a isa AbstractString && b isa AbstractString && return strip(a) == strip(b)
+  if a isa AbstractVector && b isa AbstractVector
+    return length(a) == length(b) && all(_webui_same_config_value(x, y) for (x, y) in zip(a, b))
+  end
+  if a isa AbstractDict && b isa AbstractDict
+    sa = Dict{String,Any}(string(k) => v for (k, v) in a)
+    sb = Dict{String,Any}(string(k) => v for (k, v) in b)
+    return Set(keys(sa)) == Set(keys(sb)) && all(_webui_same_config_value(sa[k], sb[k]) for k in keys(sa))
+  end
+  return isequal(a, b)
+end
+
+# True when the posted value of `key` equals its inherited value in `raw`.
+# A key with a form field is also compared in the form's spelling (a select
+# posts "off" for a stored false, a bus list is one text).
+function _webui_posted_equals_inherited(key::AbstractString, value, raw::AbstractDict)::Bool
+  inherited = _dotted_config_value(raw, key)
+  _webui_same_config_value(value, inherited) && return true
+  idx = findfirst(t -> String(t[1]) == key, _WEBUI_FORM_CONFIG_FIELDS)
+  (idx === nothing || inherited === nothing) && return false
+  field = String(_WEBUI_FORM_CONFIG_FIELDS[idx][2])
+  shown = try
+    (_webui_normalize_case_profile_form_value(field, value), _webui_normalize_case_profile_form_value(field, inherited))
+  catch err
+    # a value the form cannot render in this spelling counts as changed,
+    # so the save keeps it rather than dropping a user's choice
+    err isa ArgumentError || rethrow()
+    return false
+  end
+  return _webui_same_config_value(shown[1], shown[2])
+end
+
+# The failures a configuration read reports for a bad file: the loader and
+# its validators throw ArgumentError, the YAML reader ErrorException (it
+# calls error()), a missing or unreadable file SystemError or IOError.
+# Anything else is a bug in the caller and is rethrown.
+_webui_config_read_failure(err)::Bool = err isa Union{ArgumentError,ErrorException,SystemError,Base.IOError}
+
+# A key the creating save may take over from the configuration file: case
+# scope (scf_is_case_config_key excludes output, benchmark, runtime, webui
+# and matpower_export) and no file or directory path, which belongs to the
+# machine even where it sits in a case section.
+_webui_adoptable_case_key(key::AbstractString)::Bool = scf_is_case_config_key(key) && !occursin(r"(_file|_path|_dir|_directory|_root)$", key)
+
+# Every Web UI write that CREATES
+# the case configuration file (the saves, the measurement generator, the
+# legacy sidecar conversion) also takes over each case-scope key in which
+# the configuration file differs from the packaged default. Once the file
+# exists, resolve_config skips the configuration file's case-scope keys, so
+# without this a save of tol alone moved max_iter from the installation's
+# 30 to the default 80. Only on creation: an existing case file is never
+# filled up. Keys in `skip` are decided by the caller. Returns the keys to
+# take over with the configuration file's values; throws what the
+# configuration read throws (see _webui_config_read_failure).
+function _webui_case_adoption(config_file::AbstractString, source::AbstractString; skip = String[])::Dict{String,Any}
+  # no configuration file selected (a page served without a runtime): the
+  # case inherits the packaged defaults, nothing differs from them
+  isempty(strip(config_file)) && return Dict{String,Any}()
+  installed_chain = _webui_case_inherited_raw(config_file, source; case_scope_from_defaults = false)
+  defaults_chain = _webui_case_inherited_raw(config_file, source; case_scope_from_defaults = true)
+  adoption = Dict{String,Any}()
+  for key in sort!(collect(GUI_EDITABLE_CONFIG_KEYS))
+    (_webui_adoptable_case_key(key) && !(key in skip)) || continue
+    installed = _dotted_config_value(installed_chain, key)
+    # an unset value cannot be written into a case file
+    installed === nothing && continue
+    _webui_same_config_value(installed, _dotted_config_value(defaults_chain, key)) && continue
+    adoption[key] = installed
+  end
+  return adoption
+end
+
+# Which posted values a case-scope save writes (L20), shared by the Settings,
+# Case page and State Estimation saves and the result page's "save settings
+# for this case". A value equal to what the case gets without the save is
+# not a decision: it is not written, and removed where the file holds it.
+# The baseline is the chain resolve_config uses for this case: with a case
+# configuration file the packaged defaults (plus the in-file SCF block),
+# without one the configuration file over the defaults. Form-block fields
+# inherit their spec default, `case_format` inherits auto, and
+# `measurement_file` the convention set the SE section arms without a
+# stored choice (`default_measurement_file`, `nothing` when there is none). Machine-scope keys are returned in
+# `dropped`. Throws what the configuration read throws (see
+# _webui_config_read_failure). Returns `(keep, remove, remove_form,
+# form_updates, dropped, inherited, candidate, adopted)`, `candidate` being
+# the case configuration after the save and `adopted` the keys a creating
+# save took over from the configuration file (variant A, see below).
+function _webui_case_save_plan(config_file::AbstractString, source::AbstractString, config_updates::AbstractDict, form_updates::AbstractDict; default_measurement_file = nothing)
+  has_case_file = isfile(case_config_path(source))
+  inherited = _webui_case_inherited_raw(config_file, source; case_scope_from_defaults = has_case_file)
+  # an SCF file's meta.f_nom outranks an unset frequency key at import,
+  # so the file's frequency is what that key inherits for this case
+  file_f = _webui_case_file_frequency(source, nothing)
+  is_inherited(key, value, raw) = key == "model.nominal_frequency_hz" && file_f !== nothing ? _webui_same_config_value(value, file_f) : _webui_posted_equals_inherited(key, value, raw)
+  keep = Dict{String,Any}()
+  remove = String[]
+  dropped = String[]
+  for (key, value) in config_updates
+    key = String(key)
+    if !scf_is_case_config_key(key)
+      push!(dropped, key)
+    elseif is_inherited(key, value, inherited)
+      push!(remove, key)
+    else
+      keep[key] = value
+    end
+  end
+  form_kept = Dict{String,Any}()
+  remove_form = String[]
+  for (field, value) in form_updates
+    field = String(field)
+    spec = get(_WEBUI_OPTION_BY_FIELD, field, nothing)
+    at_default = if spec !== nothing
+      _webui_same_config_value(value, spec.default)
+    elseif field == "case_format"
+      value == "auto"
+    elseif field == "measurement_file"
+      default_measurement_file !== nothing && _webui_same_config_value(value, default_measurement_file)
+    else
+      false
+    end
+    at_default ? push!(remove_form, field) : (form_kept[field] = value)
+  end
+  # variant A (_webui_case_adoption) on the save that creates the case
+  # file; an unchanged save still creates none
+  adopted = String[]
+  if !has_case_file && (!isempty(keep) || !isempty(form_kept))
+    for (key, installed) in _webui_case_adoption(config_file, source; skip = collect(keys(keep)))
+      keep[key] = installed
+      filter!(!=(key), remove)
+      push!(adopted, key)
+    end
+    sort!(adopted)
+  end
+  # the merged case configuration must build NOW: an incompatible pair
+  # saved today failed the next run instead (a Web UI run: apslf_start
+  # kept from an earlier save under a newly chosen apslf solver)
+  stored = try
+    load_case_config(source)
+  catch err
+    # an unreadable case file is replaced by the save, which logs the loss
+    # (_webui_merge_case_config_write, on_unreadable)
+    _webui_config_read_failure(err) || rethrow()
+    Dict{String,Any}()
+  end
+  candidate = merge(stored, keep)
+  foreach(k -> delete!(candidate, k), remove)
+  # With a case file, a save that leaves nothing in it deletes it
+  # (write_case_config), and the case then reads the configuration file
+  # again. The posted values are compared against that chain instead, so a
+  # value the configuration file does not have stays in the case file and
+  # the run uses what was posted.
+  stored_form = [f for f in keys(_webui_case_form_defaults(source, nothing)) if (haskey(_WEBUI_OPTION_BY_FIELD, f) || f == "case_format") && !(f in remove_form)]
+  isempty(_webui_stored_measurement_choice(source)) || "measurement_file" in remove_form || push!(stored_form, "measurement_file")
+  if has_case_file && isempty(candidate) && isempty(stored_form) && isempty(form_kept) && !isempty(remove)
+    general_chain = _webui_case_inherited_raw(config_file, source; case_scope_from_defaults = false)
+    for key in copy(remove)
+      is_inherited(key, config_updates[key], general_chain) && continue
+      keep[key] = candidate[key] = config_updates[key]
+      filter!(!=(key), remove)
+    end
+  end
+  return (; keep, remove, remove_form, form_updates = form_kept, dropped, inherited, candidate, adopted)
+end
+
+# The SE section's measurement-set choice stored in the case file's form
+# block, "" when there is none. It has no option spec, so
+# _webui_case_form_defaults does not return it. An unreadable file gives ""
+# here; the save replaces that file and logs it (on_unreadable).
+function _webui_stored_measurement_choice(source::AbstractString)::String
+  path = case_config_path(source)
+  isfile(path) || return ""
+  raw = try
+    load_yaml_dict(path)
+  catch err
+    _webui_config_read_failure(err) || rethrow()
+    return ""
+  end
+  # a shared-stem file of the other case carries the other case's form
+  declared = strip(string(get(raw, "case", "")))
+  (isempty(declared) || declared == basename(String(source))) || return ""
+  block = get(raw, "form", nothing)
+  block isa AbstractDict || return ""
+  value = get(block, "measurement_file", nothing)
+  return value isa AbstractString ? basename(strip(value)) : ""
+end
+
 """
-    _webui_merge_case_config_write(source, keep_updates, form_updates; on_unreadable) -> NamedTuple
+    _webui_merge_case_config_write(source, keep_updates, form_updates; on_unreadable, remove, remove_form) -> NamedTuple
 
 Merge updates into the case configuration file next to `source` and write
 it: the existing file is the base (`keep_updates` win on conflict), existing
 form-block fields survive a save from a page that does not carry them (the
-PF result save must not wipe the SE generator options; `case_format` is the
-one non-spec form-block field and survives the same way), and
+PF result save must not wipe the SE generator options; the non-spec
+form-block fields `case_format` and `measurement_file` survive the same
+way), and
 `form_updates` win over stored form values. An unreadable existing file is
 replaced deliberately (the save is the user's explicit request to persist
 the current state); `on_unreadable` is called with the error so the caller
-can log the loss. Returns `(path, config, form)` of what was written.
+can log the loss. `remove` (dotted configuration keys) and `remove_form`
+(form-block fields) are deleted from the stored file first: the Settings
+save passes the fields set back to their inherited value. Returns
+`(path, config, form)` of what was written.
 """
-function _webui_merge_case_config_write(source::AbstractString, keep_updates::AbstractDict, form_updates::AbstractDict; on_unreadable::Function = err -> nothing)
+function _webui_merge_case_config_write(source::AbstractString, keep_updates::AbstractDict, form_updates::AbstractDict; on_unreadable::Function = err -> nothing, remove = String[], remove_form = String[])
   existing_config = try
     load_case_config(source)
   catch err
     on_unreadable(err)
     Dict{String,Any}()
   end
+  foreach(k -> delete!(existing_config, String(k)), remove)
   config = merge(existing_config, keep_updates)
   form_fields = Dict{String,Any}()
   for (field, value) in _webui_case_form_defaults(source, nothing)
     (haskey(_WEBUI_OPTION_BY_FIELD, String(field)) || String(field) == "case_format") && (form_fields[String(field)] = value)
   end
+  # a save from the Settings or Case page posts no measurement set and
+  # dropped the stored choice; the SE section then armed another set
+  stored_set = _webui_stored_measurement_choice(source)
+  isempty(stored_set) || (form_fields["measurement_file"] = stored_set)
+  foreach(k -> delete!(form_fields, String(k)), remove_form)
   merge!(form_fields, form_updates)
   path = write_case_config(source, config; form = form_fields)
   return (; path, config, form = form_fields)
@@ -1534,16 +1770,33 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
     isempty(case) && return back(return_to == "case" ? "Select a case before saving case options." : "Select a case first (Case page), or save to the configuration file.")
     source = isabspath(case) ? normpath(case) : _webui_resolve_case_profile_source(case; case_directory = directory)
     (isempty(source) || !(isfile(source) || isdir(source))) && return back("Case '$(case)' was not found in the case directory; resolve it first.")
-    keep = Dict{String,Any}()
-    dropped = String[]
-    for (key, value) in config_updates
-      scf_is_case_config_key(key) ? (keep[key] = value) : push!(dropped, key)
+    # the page posts every field it renders; only a value that differs
+    # from what the key inherits is a decision (L20: an unchanged save
+    # wrote about 90 keys into the case file and pinned them). A field at
+    # its inherited value is removed from the file, which also covers a
+    # field set back.
+    _webui_resolve_solver_start_conflict!(config_updates)
+    # the SE section posts the set it arms. Only the convention file
+    # <case>.measurements.csv is a stable default; the newest-set rule moves
+    # with every generated set, so a choice made under it is kept.
+    se_default = nothing
+    if haskey(form_updates, "measurement_file")
+      armed = _webui_se_form_state(Dict{String,Any}("case" => basename(source)); output_root, application_root, case_directory = directory, config_file, use_saved_choice = false).selected_measurement
+      armed in [string(st, ".measurements.csv") for st in _webui_case_stems(basename(source))] && (se_default = armed)
     end
-    _webui_resolve_solver_start_conflict!(keep)
-    # the merged case configuration must build NOW: an incompatible pair
-    # saved today failed the next run instead (a Web UI run: apslf_start
-    # kept from an earlier save under a newly chosen apslf solver)
-    candidate = merge(try load_case_config(source) catch; Dict{String,Any}() end, keep)
+    plan = try
+      _webui_case_save_plan(config_file, source, config_updates, form_updates; default_measurement_file = se_default)
+    catch err
+      # the configuration file or the case's in-file block does not load;
+      # the message names it and nothing is written
+      _webui_config_read_failure(err) || rethrow()
+      record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = sprint(showerror, err))
+      return back("Could not save settings for this case: $(sprint(showerror, err))")
+    end
+    (; keep, remove, remove_form, dropped, inherited) = plan
+    form_updates = plan.form_updates
+    had_case_file = isfile(case_config_path(source))
+    candidate = plan.candidate
     try
       _load_api_config(config_file, validate_gui_config_overrides(candidate); case_scope_from_defaults = true)
     catch err
@@ -1551,29 +1804,54 @@ function handle_settings_save(form::AbstractDict; output_root::AbstractString = 
       return back("Could not save settings for this case: $(sprint(showerror, err))")
     end
     written = try
-      _webui_merge_case_config_write(source, keep, form_updates; on_unreadable = err -> record_webui_operation!(operation_log, "settings_save_replaced_unreadable"; route, method = "POST", user_action = true, casefile = case, status = "replaced", message = sprint(showerror, err)))
+      _webui_merge_case_config_write(source, keep, form_updates; remove, remove_form, on_unreadable = err -> record_webui_operation!(operation_log, "settings_save_replaced_unreadable"; route, method = "POST", user_action = true, casefile = case, status = "replaced", message = sprint(showerror, err)))
     catch err
       record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, casefile = case, target, status = "rejected", message = sprint(showerror, err))
       return back("Could not write the case configuration file: $(sprint(showerror, err))")
     end
-    record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, casefile = case, target, return_to, status = "succeeded", profile_path = written.path, saved_keys = length(written.config), form_fields = length(written.form), machine_scope_dropped = join(sort!(dropped), ","))
+    record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, casefile = case, target, return_to, status = "succeeded", profile_path = written.path, saved_keys = length(written.config), form_fields = length(written.form), adopted_from_config = length(plan.adopted), machine_scope_dropped = join(sort!(dropped), ","))
     # machine-scope keys on the form (the CSV format among them) are not
     # case settings, but a save is a save: they go to the configuration file
     # in the same request, and the message names both files. Before this
     # they were dropped with a note, and a user who saved with the default
     # target saw the value jump back on every save.
+    # Only machine keys whose value changed are written: an unchanged one
+    # rewrote the file (its comments lost) and marked the key as set by the
+    # user, which also took it away from the auto profile.
     note = ""
-    if !isempty(dropped)
-      machine_updates = Dict{String,Any}(k => config_updates[k] for k in dropped)
+    changed_machine = sort!(String[k for k in dropped if !_webui_posted_equals_inherited(k, config_updates[k], inherited)])
+    if !isempty(changed_machine)
+      machine_updates = Dict{String,Any}(k => config_updates[k] for k in changed_machine)
       general = _webui_write_general_settings!(config_file, machine_updates)
       general.ok || return back("Saved case settings to $(basename(written.path)), but the configuration file was not written: $(general.message)")
-      note = " Machine-scope key(s) saved to $(basename(config_file)): $(join(sort!(dropped), ", "))."
+      note = " Machine-scope key(s) saved to $(basename(config_file)): $(join(changed_machine, ", "))."
     end
+    # nothing differs from what the case inherits: write_case_config wrote
+    # no file (or removed the one that held only inherited values)
+    isfile(written.path) || return back("No setting differs from what this case inherits; $(basename(written.path)) is not needed and does not exist.$(note)")
     verb = return_to == "case" ? "Saved case options" : "Saved settings for this case"
-    return back("$(verb) to $(basename(written.path)).$(note)")
+    # a new case file no longer follows the configuration file, so the
+    # message says how many of its values came from there (variant A)
+    created = had_case_file ? "" : " New case file; $(length(plan.adopted)) value(s) taken from $(basename(config_file)), where it differs from the packaged defaults."
+    return back("$(verb) to $(basename(written.path)).$(created)$(note)")
   end
   target == "general" || return back("Unknown settings target '$(target)'.")
   _webui_resolve_solver_start_conflict!(config_updates)
+  # the same rule for the general file: a key whose value did not change is
+  # not written and not marked as set by the user
+  general_inherited = try
+    _webui_general_inherited_raw(config_file)
+  catch err
+    # the configuration file does not load
+    _webui_config_read_failure(err) || rethrow()
+    record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, target, status = "rejected", message = sprint(showerror, err))
+    return back("Could not save settings: $(sprint(showerror, err))")
+  end
+  filter!(kv -> !_webui_posted_equals_inherited(kv.first, kv.second, general_inherited), config_updates)
+  if isempty(config_updates)
+    record_webui_operation!(operation_log, "settings_saved"; route, method = "POST", user_action = true, target, status = "unchanged", config_file, saved_keys = 0)
+    return back("No setting differs from $(basename(config_file)); nothing was written.")
+  end
   general = _webui_write_general_settings!(config_file, config_updates)
   if !general.ok
     record_webui_operation!(operation_log, "settings_save_failed"; route, method = "POST", user_action = true, target, status = "rejected", message = general.message)
@@ -1980,8 +2258,22 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
     haskey(settings_raw, String(field)) || continue
     form_updates[String(field)] = value
   end
+  # the same rule as the Settings save (L20): a run setting equal to what
+  # the case inherits is not written, so the case keeps following the
+  # configuration file and the defaults
+  run_config_file = String(something(get(settings_raw, "config_file", nothing), ""))
+  isempty(run_config_file) && (run_config_file = DEFAULT_SPARLECTRA_CONFIG_PATH)
+  had_case_file = isfile(case_config_path(case_settings_source))
+  plan = try
+    _webui_case_save_plan(run_config_file, case_settings_source, keep, form_updates)
+  catch err
+    # the run's configuration file or the case's in-file block does not load
+    _webui_config_read_failure(err) || rethrow()
+    record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = sprint(showerror, err))
+    return _webui_html(render_webui_error(400, "Could not save the case settings: $(sprint(showerror, err))"); status = 400)
+  end
   written = try
-    _webui_merge_case_config_write(case_settings_source, keep, form_updates; on_unreadable = err -> record_webui_operation!(operation_log, "case_settings_save_replaced_unreadable"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "replaced", message = sprint(showerror, err)))
+    _webui_merge_case_config_write(case_settings_source, plan.keep, plan.form_updates; remove = plan.remove, remove_form = plan.remove_form, on_unreadable = err -> record_webui_operation!(operation_log, "case_settings_save_replaced_unreadable"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "replaced", message = sprint(showerror, err)))
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "rejected", message = sprint(showerror, err))
     return _webui_html(render_webui_error(400, "Could not write the case configuration file: $(sprint(showerror, err))"); status = 400)
@@ -1998,11 +2290,13 @@ function handle_powerflow_case_settings_save(run_id::AbstractString, form::Abstr
     stale_sidecar && rm(legacy; force = true)
   catch
   end
-  record_webui_operation!(operation_log, "case_settings_saved"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "succeeded", profile_path = written_path, saved_keys = length(keep), form_fields = length(form_fields), machine_scope_dropped = join(dropped_keys, ","), stale_sidecar_removed = stale_sidecar)
+  record_webui_operation!(operation_log, "case_settings_saved"; route = "/powerflow/result/$(run_id)/case-settings/save", method = "POST", user_action = true, run_id, status = "succeeded", profile_path = written_path, saved_keys = length(keep), form_fields = length(form_fields), adopted_from_config = length(plan.adopted), machine_scope_dropped = join(dropped_keys, ","), stale_sidecar_removed = stale_sidecar)
   case_dir = _webui_case_directory(; application_root = _webui_application_root(), output_root = output_root)
   back_name = dirname(abspath(case_settings_source)) == abspath(case_dir) ? basename(case_settings_source) : case_settings_source
-  return _webui_html(_webui_case_settings_saved_html(written_path, back_name, length(keep) + length(form_fields), successful, !successful && override; label = "Saved case configuration:", extra = string(
+  saved_label = isfile(written_path) ? "Saved case configuration:" : "No setting of this run differs from what the case inherits; no case configuration file:"
+  return _webui_html(_webui_case_settings_saved_html(written_path, back_name, length(keep) + length(form_fields), successful, !successful && override; label = saved_label, extra = string(
     isempty(dropped_keys) ? "" : "<li><strong>Kept on this machine (not case scope):</strong> $(length(dropped_keys)) key(s)</li>",
+    had_case_file || !isfile(written_path) ? "" : "<li><strong>Taken from the configuration file:</strong> $(length(plan.adopted)) value(s) where it differs from the packaged defaults</li>",
     stale_sidecar ? "<li><strong>Old settings sidecar removed:</strong> the case configuration file is the record now</li>" : "",
   )))
 end
@@ -2346,17 +2640,18 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _webui_se_form_state(query; output_root, application_root, case_directory, config_file, selected_fallback) -> NamedTuple
+    _webui_se_form_state(query; output_root, application_root, case_directory, config_file, selected_fallback, use_saved_choice) -> NamedTuple
 
 Assembles the state of the state-estimation section embedded on the Runs
 page: case and measurement-set discovery, set info and
 editors, sticky generator values, and truth-run candidates. `query` carries
 the SE-specific keys (`case`, `message`, `g_*`); when `case` is absent, the
 page's shared case selection arrives as `selected_fallback`. Returns the
-keyword set of `render_se_form`. GET /stateestimation itself is a real
+keyword set of `render_se_form`. `use_saved_choice = false` ignores the
+measurement set stored in the case configuration file. GET /stateestimation itself is a real
 redirect to the Runs page (no second rendering path).
 """
-function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, config_file::AbstractString = "", selected_fallback::AbstractString = "")
+function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, application_root::AbstractString = _webui_application_root(), case_directory = nothing, config_file::AbstractString = "", selected_fallback::AbstractString = "", use_saved_choice::Bool = true)
   directory = _webui_case_directory(; case_directory = case_directory, application_root = application_root, output_root = output_root)
   cases = _webui_casefile_options_in_directory(directory)
   selected = String(get(query, "case", ""))
@@ -2464,9 +2759,11 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # The saved choice outranks the convention and the newest
   # set; the explicit query key of a redirect (a set just written) outranks
   # the saved choice. Decided HERE, before the set info below is read.
+  # `use_saved_choice = false` gives the set armed without a stored choice,
+  # the value a save compares the posted choice against (L20)
   saved_meas = ""
-  if !isempty(selected)
-    loaded_early = _webui_load_case_settings(output_root, joinpath(directory, selected); case_directory = directory)
+  if !isempty(selected) && use_saved_choice
+    loaded_early = _webui_load_case_settings(output_root, joinpath(directory, selected); config_file, case_directory = directory)
     loaded_early isa AbstractDict && (saved_meas = basename(String(get(loaded_early, "measurement_file", ""))))
   end
   if !isempty(saved_meas) && !(saved_meas in measurements)
@@ -2531,7 +2828,7 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   end
   se_profile = Dict{String,Any}()
   if !isempty(selected)
-    loaded = _webui_load_case_settings(output_root, joinpath(directory, selected); case_directory = directory)
+    loaded = _webui_load_case_settings(output_root, joinpath(directory, selected); config_file, case_directory = directory)
     loaded isa AbstractDict && (se_profile = loaded)
     for (k, v) in se_profile
       startswith(k, "_") && continue
@@ -2993,8 +3290,11 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   record_webui_operation!(operation_log, "se_measurements_generated"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, casefile = casefile, measurement_file = out_name)
   # persist the generator options in the case sidecar so a case reload
   # restores them (the run-based save path never sees this form)
+  adopted_note = ""
   try
-    _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); case_directory = directory)
+    merged = _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); config_file, case_directory = directory)
+    # a generation that created the case file names what variant A took over
+    merged !== nothing && !isempty(merged.adopted) && (adopted_note = "; new case file, $(length(merged.adopted)) value(s) taken from $(basename(config_file)), where it differs from the packaged defaults")
     # the checkbox goes into the case configuration as
     # state_estimation.zero_injection, read by every SE run of the case
     # as on or off; a case set to constraint (equality-constrained zero
@@ -3002,13 +3302,13 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
     # the box only says whether the rows exist
     if passive_as_zi !== nothing
       zi_mode = passive_as_zi ? (resolve_config(config_file, case_path).config.state_estimation.zero_injection === :constraint ? "constraint" : "on") : "off"
-      _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("gen_passive_as_zi" => zi_mode); case_directory = directory)
+      _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("gen_passive_as_zi" => zi_mode); config_file, case_directory = directory)
     end
   catch err
     record_webui_operation!(operation_log, "case_settings_save_failed"; route = "/stateestimation/generate-measurements", method = "POST", user_action = true, message = sprint(showerror, err))
   end
   sigma_note = ", sigma U=$(sigma_u_pct)% P=$(sigma_p_pct)% Q=$(sigma_q_pct)%$(include_i ? " I=$(sigma_i_pct)%" : "") of reading"
-  return _webui_se_redirect(casefile, "generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))"; extra_query = gq * "&measurement_file=" * _webui_urlencode(out_name))
+  return _webui_se_redirect(casefile, "generated $(out_name) ($(gen.rows) rows, $(gen.noisy ? "noisy" : "noise-free")$(sigma_note)$(gen.truth_note)$(gen.flow_note)$(gen.passive_note)$(gen.critical_note)$(gen.gross_note)$(gen.tap_note)$(gen.island_note))$(adopted_note)"; extra_query = gq * "&measurement_file=" * _webui_urlencode(out_name))
 end
 
 """

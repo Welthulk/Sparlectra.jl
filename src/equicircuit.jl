@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -170,9 +170,9 @@ Return the multiplicative correction factor applied to the transformer series
 impedance (R and X) for the selected tap-changer model.
 
 Sparlectra distinguishes two tap-changer models:
-- `:ideal` — the tap changer only changes the complex winding ratio; the
+- `:ideal`: the tap changer only changes the complex winding ratio; the
   short-circuit impedance keeps its neutral-position value (factor `1.0`).
-- `:impedance_correction` — the tap changer acts on a physical winding, so the
+- `:impedance_correction`: the tap changer acts on a physical winding, so the
   short-circuit impedance is re-referred through the tapped winding. R and X
   are scaled with ``|1 + f e^{j\\varphi}|^2``, where `f` is the
   additional-voltage fraction (`tap_fraction`) and ``\\varphi`` the skew angle
@@ -275,7 +275,7 @@ end
 
 # Failure behavior
 Errors if `m.voltage_step_increment` is `nothing`. Always throws
-`ArgumentError` for `kind == :tabular` — a tabular model has no linear tap
+`ArgumentError` for `kind == :tabular`: a tabular model has no linear tap
 fraction, only discrete `(ratio, angle_deg)` rows (see
 [`calcPhaseTapTable`](@ref)).
 """
@@ -289,9 +289,9 @@ end
     calcPhaseTapTable(m::PhaseTapChangerModel; step::Int = m.step) -> NamedTuple
 
 Exact lookup of the `m.table` row for `step` (no interpolation between table
-steps — taps are discrete; continuous interpolation is deferred to a later,
+steps: taps are discrete; continuous interpolation is deferred to a later,
 outer-loop-facing stage). Implemented as a linear `findfirst` scan over the
-already-validated, strictly ascending table — no `Dict` caching in this
+already-validated, strictly ascending table, no `Dict` caching in this
 stage.
 
 # Returns
@@ -335,7 +335,7 @@ Effective ratio/shift/regulating-vector of a CGMES phase-tap-changer model
 - `kind == :asymmetrical` (ch. 6.2, quadrature booster = `ψ = 90°`):
   delegates to `calcSkewAngleTap(tap_fraction = f, skew_angle_deg =
   winding_connection_angle_deg, convention = m.convention)` unchanged.
-- `kind == :tabular`: table OVERRIDES the formula path — delegates to
+- `kind == :tabular`: table OVERRIDES the formula path, delegates to
   [`calcPhaseTapTable`](@ref) for `(effective_ratio, effective_shift_deg)`
   and reconstructs `regulating_vector` as the exact inverse of
   `calcSkewAngleTap`'s regulating-vector-to-(ratio,shift) mapping for
@@ -386,7 +386,7 @@ of [`calcPhaseTapAngleRatio`](@ref) at some step):
 - `:symmetrical`:  `X(α) = x_min + (x_max - x_min) * (sind(α/2) / sind(αmax/2))^2`
 - `:asymmetrical`: `X(α) = x_min + (x_max - x_min) * (tand(α) / tand(αmax))^2`
 - `:tabular`: returns the `x_pu` of the `m.table` row at `m.step` (may be
-  `nothing`); `alpha_deg` is ignored — the table is the single source of
+  `nothing`); `alpha_deg` is ignored: the table is the single source of
   truth and carries no continuous angle dependence.
 
 where (for the formula kinds) `αmax` is

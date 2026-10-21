@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ end
 Pretty-prints the structured Q-limit log (`net.qLimitLog`) as a small table.
 
 # Keyword arguments
-- `sort_by`:  `:iter` (default) or `:bus` — controls sorting.
+- `sort_by`:  `:iter` (default) or `:bus`, controls sorting.
 - `io`: optional output stream (default = `stdout`).
 
 Each line shows:

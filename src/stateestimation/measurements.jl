@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -241,7 +241,7 @@ end
 """
     addPmuPhasorMeasurement!(measurements; net, busName, vm_pu, va_deg, sigmaVm=0.002, sigmaVa=0.02, active=true, idPrefix="PMU")
 
-Append a complete PMU voltage-phasor measurement — magnitude and angle — for
+Append a complete PMU voltage-phasor measurement (magnitude and angle) for
 one bus and return the pair `(vmMeas, vaMeas)`.
 
 The magnitude enters as an ordinary `VmMeas` (p.u.); PMU accuracy is

@@ -57,13 +57,15 @@ power_flow:
     enabled: false
     order: 40
   # Flat start (true = every bus at 1.0 pu and 0 degrees, PV and slack at
-  # their setpoints). It sets only the start profile: the start machines
-  # (start_mode.start_projection, start_mode.dc_seed_unconditional,
-  # start_current_iteration, apslf_start) follow their own keys and run from
-  # the flat profile; only start_mode.angle_mode and voltage_mode are treated
-  # as classic while it is on.
+  # their setpoints; voltages stored in the case file are ignored). While it
+  # is on, the run switches start_mode.start_projection,
+  # start_mode.dc_seed_unconditional, the two start modes and
+  # start_mode.ratio_profile off, the last one also for the rescue and auto
+  # stages of the run. Kept: auxiliary buses (star points) start at the
+  # ratio of their stiffest winding.
+  # start_current_iteration and apslf_start follow their own keys.
   # Default false: imported start voltages (MATPOWER VM/VA, CGMES SvVoltage) reach the
-  # solver — a flat start silently discarded the CGMES SV state (RealGrid divergence,
+  # solver: a flat start silently discarded the CGMES SV state (RealGrid divergence,
   # case) while MATPOWER runs only masked it via the projected start modes.
   flatstart: false
   # Positive solver tolerance and iteration cap.
@@ -214,7 +216,7 @@ power_flow:
   # impedance z = Un²/Sk'', so the former slack bus reacts to loading.
   external_grid:
     enabled: false
-    # Allowed values: auto, config — auto prefers the Sk''/R-X values a CGMES
+    # Allowed values: auto, config. Auto prefers the Sk''/R-X values a CGMES
     # delivery declares on the slack bus's ExternalNetworkInjection and falls
     # back to the numbers below; config always uses the numbers below.
     source: auto
@@ -258,13 +260,17 @@ power_flow:
     # seed_ac_start=true behavior. Mutually exclusive with
     # power_flow.apslf_start.enabled and power_flow.solver in (apslf, dc).
     dc_seed_unconditional: false
-    # Flat starts only: the start projection also measures the ratio profile,
-    # the flat profile with every PQ bus magnitude scaled by the product of
-    # the off-nominal transformer ratios on its path from the reference (PV
-    # and slack keep their setpoints, angles stay 0). Like the DC and blend
-    # candidates it replaces the flat profile only when its mismatch 2-norm
-    # is at least 10 percent lower. Inert unless start_projection is on and
-    # power_flow.flatstart is true.
+    # A start projection candidate on a flat seed: the flat profile with
+    # every PQ bus magnitude scaled by the product of the off-nominal
+    # transformer ratios on its path from the reference (PV and slack keep
+    # their setpoints, angles stay 0), taken under the same rule as the DC
+    # and blend candidates; a requested DC start angle keeps precedence.
+    # When it acts it scales every PQ bus, not only star points.
+    # power_flow.flatstart: true switches it off for the whole run. Without
+    # the flat start the projection meets a flat seed in the rescue ladder's
+    # alternate start and dc_seed (power_flow.rescue; dc_seed requests DC
+    # angles, so the candidate never wins there) and in mode: auto.
+    # No effect on a start from stored voltages.
     ratio_profile: true
     # Reuse imported MATPOWER reference values during start generation.
     reuse_import_data: true
@@ -559,7 +565,7 @@ cgmes_import:
   # Delivery location(s): folder or ZIP; separate multiple parts (base case
   # and boundary set) with ";". Empty means "no CGMES input configured".
   path: ""
-  # System base in MVA — CGMES does not define one.
+  # System base in MVA (CGMES does not define one).
   base_mva: 100.0
   # Fail when topology references stay unresolved (usually a missing boundary set).
   require_boundary: true
@@ -612,7 +618,7 @@ cgmes_import:
   vset_min_pu: 0.5
   vset_max_pu: 1.5
   # Give every electrical island its own SV-declared angle reference (at most
-  # one per island). Required for multi-island deliveries — without it every
+  # one per island). Required for multi-island deliveries: without it every
   # island beyond the primary has no reference and the island-wise power flow
   # refuses to run. false forces the legacy single-reference behavior.
   multi_slack: true
@@ -628,7 +634,7 @@ cgmes_import:
   #   without convergence, SV 4 iterations).
   # - sv: always start from the imported SvVoltage state.
   # - flat: always use the synthetic flat start (the solver earns the
-  #   solution itself — for method studies).
+  #   solution itself, for method studies).
   # sv/auto-with-SV force-disable the competing start-value machines for the
   # run. On CGMES runs this wins over power_flow.flatstart; MATPOWER/DTF runs
   # ignore it. The SV comparison (sv_compare.csv) runs either way.
@@ -651,7 +657,7 @@ cgmes_import:
 short_circuit:
   # Scalar override for the IEC 60909-0 voltage factor c. 0 = automatic
   # Table-1 defaults by voltage level and case (c_max/c_min); a positive
-  # value (0.5..1.2) replaces the table for every bus — for expert or
+  # value (0.5..1.2) replaces the table for every bus, for expert or
   # verification runs where a worked example prescribes the factor.
   c_factor: 0.0
   # Fault current of a converter-connected unit (PowerElectronicsConnection
@@ -798,7 +804,7 @@ runtime:
   case_source: ""
   configured_default_casefile: ""
 
-# Console/logfile output options live under `output:` — the former
+# Console/logfile output options live under `output:`. The former
 # diagnostics.console_*/logfile_diagnostics duplicates are deprecated and
 # ignored (the parser warns when one is set).
 diagnostics:

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -126,7 +126,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   non_slack = non_slack_indices(n, slack_idx)
   pos_non_slack = build_pos_map(non_slack, n)
   # Distributed slack appends one state (lambda_P) and one equation (the REF
-  # bus's P residual) — see mismatch_rectangular. The participant set is fixed
+  # bus's P residual), see mismatch_rectangular. The participant set is fixed
   # per solve, so the extended pattern is as iteration-stable as the base one.
   dsl = dslack !== nothing
   nvar = 2 * (n - 1) + (dsl ? 1 : 0)   # [Vr(non-slack); Vi(non-slack); lambda?]
@@ -233,7 +233,7 @@ function _assemble_rectangular_jacobian!(
   # index 2(n-1)+1. Their emits are woven into the SAME deterministic sequence
   # as everything else (REF-row network entries inside the main column loop,
   # constant alpha entries in a fixed block at the end), so the in-place
-  # pos_map replay stays valid — dslack is constant for one solve, and any
+  # pos_map replay stays valid: dslack is constant for one solve, and any
   # toggle rebuilds the assembly like an active-set switch does.
   dsl = dslack !== nothing
   row_ref = 2 * (n - 1) + 1
@@ -269,7 +269,7 @@ function _assemble_rectangular_jacobian!(
     for ptr in nzrange(Ybus, j)
       i = rv[ptr]
 
-      # Slack bus has no equations — except with distributed slack, where its
+      # Slack bus has no equations, except with distributed slack, where its
       # P residual is the appended last row.
       if i == slack_idx
         if dsl

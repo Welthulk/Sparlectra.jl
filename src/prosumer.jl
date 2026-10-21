@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -432,7 +432,7 @@ mutable struct ProSumer
   # Filled by the importers (MATPOWER gen `APF`, CGMES `GeneratingUnit.normalPF`)
   # or set explicitly; `nothing` means "no factor known". Carrying the value has
   # NO effect on the power flow unless power_flow.distributed_slack selects the
-  # `imported` mode — importing must never change results by itself.
+  # `imported` mode: importing must never change results by itself.
   participationFactor::Union{Nothing,Float64}
   # Reference priority (0.30.2), CGMES `referencePriority` semantics: 0 = no
   # stated preference, 1 = the strongest candidate, larger = weaker. It is a

@@ -367,6 +367,8 @@ by it), so that no transformer carries a circulating current at the start.
 The projection keeps the candidate with the smallest residual 2-norm when it
 is at least 10 percent below the raw seed's, which helps avoid wrong
 low-voltage or wrong-angle branches; the convergence criteria are unchanged.
+A run with `power_flow.flatstart = true` switches the ratio profile off for
+the whole run, see [Start strategies](start_strategies.md).
 
 ```julia
 runpf!(net, 60, 1e-8, 1;

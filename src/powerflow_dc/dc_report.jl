@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,7 @@ Structured container for DC power-flow results (see [`rundcpf!`](@ref)).
 Deliberately not [`ACPFlowReport`](@ref): the DC model has no voltage
 magnitude solution (always 1.0 pu by definition), no reactive power, no
 losses (exactly zero, lossless model), and no iteration/tolerance concept
-(a direct linear solve, not a Newton iteration) — so those columns are
+(a direct linear solve, not a Newton iteration), so those columns are
 simply absent rather than filled with placeholder values.
 
 # Fields
@@ -128,8 +128,8 @@ end
 
 Run the standalone DC power flow and write its bus angles into `net` as a
 Newton-Raphson start seed, without disturbing Slack/PV regulated voltage
-magnitudes. The DC model has no voltage-magnitude solution — it writes
-`vm_pu=1.0` for every bus — which is correct for a standalone DC report but
+magnitudes. The DC model has no voltage-magnitude solution: it writes
+`vm_pu=1.0` for every bus, which is correct for a standalone DC report but
 would erase Slack/PV setpoints ahead of an AC seed (`initialVrect`'s
 non-flatstart path reads `node._vm_pu` directly, with no separate setpoint
 fallback). Snapshots those setpoints before the DC solve and restores them
@@ -154,7 +154,7 @@ end
 Solve the standalone, MATPOWER-`rundcpf`-equivalent DC power flow and write
 the bus angles (voltage magnitude implicitly 1.0 pu everywhere, by DC-model
 definition) and lossless branch flows back into `net`. The run is flagged
-via [`dc_pf_status`](@ref) — a status registry kept separate from
+via [`dc_pf_status`](@ref), a status registry kept separate from
 `rectangular_pf_status`, so AC reporting/status code never mistakes a DC
 solution for an AC one. Respects `power_flow.islands` (each AC island is
 solved independently, `matpower_like` reference bus). Ported from
@@ -168,13 +168,13 @@ copied).
 - `seed_ac_start`: if `true`, after the DC solve succeeds, immediately runs
   the AC rectangular Newton-Raphson solve ([`runpf_rectangular!`](@ref))
   seeded from the just-computed DC angles (`opt_flatstart=false`, so the
-  solver picks up `net`'s current `_va_deg`/`_vm_pu` as its starting point —
+  solver picks up `net`'s current `_va_deg`/`_vm_pu` as its starting point:
   the DC step already wrote these). Slack/PV voltage-magnitude setpoints
   (which the DC write would otherwise flatten to 1.0 pu along with every
   other bus) are snapshotted before the DC solve and restored onto `net`
   right before the AC call, so only the angles are DC-seeded. The AC call
   also defaults to `damp=1.0` (full Newton steps, matching what
-  `run_sparlectra`'s config-driven path uses — `runpf_rectangular!`'s own
+  `run_sparlectra`'s config-driven path uses, `runpf_rectangular!`'s own
   bare keyword default, `damp=0.2`, is deliberately conservative for
   unmediated direct calls and would waste a good start on needlessly small
   steps). On return, `net` holds the **AC-converged** solution (not the DC
@@ -193,7 +193,7 @@ copied).
 Does not support outer-loop controllers (tap/PST/shunt/... control):
 the *static* effect of a phase-shifting transformer's current
 `phase_shift_deg` is correctly represented in the DC model (it enters the
-B′/injection math), but no outer loop adjusts it — mirrors the existing
+B′/injection math), but no outer loop adjusts it, which mirrors the existing
 `power_flow.solver=:apslf` restriction.
 """
 function rundcpf!(net::Net; angle_reference_deg::Float64 = 0.0, verbose::Int = 0, performance_profile = nothing, seed_ac_start::Bool = false, ac_kwargs::NamedTuple = NamedTuple())::DcPowerFlowReport
@@ -212,7 +212,7 @@ function rundcpf!(net::Net; angle_reference_deg::Float64 = 0.0, verbose::Int = 0
     # runpf_rectangular!'s own bare keyword default (damp=0.2) is deliberately
     # conservative for unmediated direct calls; the config-driven run_sparlectra
     # path always uses damp=1.0 (full Newton steps, PowerFlowConfig has no damp
-    # field of its own — the outer active-set/framework loop supplies it as a
+    # field of its own: the outer active-set/framework loop supplies it as a
     # runtime kwarg). Match that here so a good DC-angle start isn't wasted on
     # needlessly damped steps; still overridable via ac_kwargs.
     ac_damp = get(ac_kwargs, :damp, 1.0)

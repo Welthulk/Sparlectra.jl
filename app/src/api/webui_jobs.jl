@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -49,6 +49,12 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
   "topology_precheck",
   "state_estimation",
   "estimation_diagnostics",
+  # N-1 / scenario batch and QSTS phases; the outage or step counter itself
+  # never writes to the operation log
+  "solving_base_case",
+  "running_outages",
+  "running_scenarios",
+  "running_steps",
   "postprocessing_result",
   "writing_artifacts",
   "finalizing_success",

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -353,14 +353,14 @@ is mutated in place.
 Reuses the exact merit function from the merit-function line search
 (`_rectangular_merit_value`, unweighted `W = I`) as `m(x)`, matching
 `m(x) = ‖F(x)‖²` up to the constant `1/2` factor common to numerator and
-denominator of `rho` — no second merit computation is implemented. The
+denominator of `rho`: no second merit computation is implemented. The
 dogleg gradient `g = JᵀF` uses the same `W = I` convention for consistency
 with `m(x)`.
 
 When `step_mode = :dogleg` and `active_set_changed = true` (a PV/PQ switch
 happened this Newton iteration), the pre-switch gradient/Cauchy point would
-be invalid, so — mirroring the merit-function line search's
-`active_set_skip` policy — the dogleg comparison is skipped for this call: a
+be invalid, so, mirroring the merit-function line search's
+`active_set_skip` policy, the dogleg comparison is skipped for this call: a
 single scaled-Newton trial is taken at the current radius and accepted
 unconditionally, and the radius is left unchanged.
 
@@ -489,7 +489,7 @@ end
         Vset,
     )
 
-Performs one Newton–Raphson step in rectangular coordinates using the analytic
+Performs one Newton-Raphson step in rectangular coordinates using the analytic
 Jacobian that matches `mismatch_rectangular`.
 
 - State: x = [Vr(non-slack); Vi(non-slack)]

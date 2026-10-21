@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@
     build_complex_jacobian(Ybus, V)
 
 Builds the 2n × 2n Wirtinger-type Jacobian blocks for the complex-state
-Newton–Raphson formulation.
+Newton-Raphson formulation.
 
 Given:
     I = Ybus * V
@@ -84,7 +84,7 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   #
   # Distributed slack (issue #192): with an active `dslack`, every participant's
   # P residual gains the term -alpha_i * lambda, and the REF bus's P residual is
-  # APPENDED as the last row — the interleaved layout of the 2(n-1) voltage rows
+  # APPENDED as the last row, the interleaved layout of the 2(n-1) voltage rows
   # stays untouched, so all row-indexed consumers keep working. lambda is read
   # from `dslack.lambda_trial` (see _dslack_set_trial!): step-search helpers
   # evaluate trial states V + a*δV whose matching lambda is lambda + a*δlambda.

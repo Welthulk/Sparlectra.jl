@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
 # file: src/controller/machine_control.jl
-# purpose: outer-loop remote voltage control for machines — a generator held
+# purpose: outer-loop remote voltage control for machines: a generator held
 #          as PQ injection whose reactive output is adjusted between power-flow
 #          solves until the voltage at a *different* (remote) bus reaches its
 #          target, bounded by the machine's reactive limits. Includes the
@@ -39,7 +39,7 @@ the first move is a bounded fraction of the remaining reactive headroom in the
 physically expected direction (more injected Q raises the voltage), every
 following move uses the measured sensitivity of the two previous operating
 points. Reaching a reactive limit with the target still outside the deadband
-parks the controller `at_limit` — the exact analogue of PV→PQ switching under
+parks the controller `at_limit`, the exact analogue of PV→PQ switching under
 Q limits, and honest about what the machine can actually deliver.
 
 Two limit modes (`limit_mode`):
@@ -50,7 +50,7 @@ Two limit modes (`limit_mode`):
   scales with the terminal voltage: `Q_lim = V_machine_bus * s_max_mva`,
   symmetric (`qmin = -Q_lim`, `qmax = +Q_lim`), re-evaluated from the solved
   machine-bus voltage before every outer step. At the limit the injected Q
-  therefore TRACKS the sagging or recovering voltage linearly — the defining
+  therefore TRACKS the sagging or recovering voltage linearly, the defining
   contrast to the SVC's quadratic `V^2 * B` collapse (see
   [`ShuntVoltageControl`](@ref)) and to the constant-Q machine box. An
   at-limit STATCOM keeps adjusting while its voltage-dependent bound still
@@ -61,7 +61,7 @@ owned by `run_control!`; construct instances via [`addMachineVoltageControl!`](@
 """
 mutable struct MachineVoltageControl <: AbstractOuterController
   name::String                # display name (machine/equipment name)
-  bus::String                 # machine's own bus — where the Q actuator lives
+  bus::String                 # machine's own bus, where the Q actuator lives
   prosumer_idx::Int           # index into net.prosumpsVec (push-only, stable)
   target_bus::String          # regulated (remote) bus
   target_vm_pu::Float64
@@ -112,7 +112,7 @@ end
 
 # resolve the controlled prosumer defensively: indices are push-only stable,
 # but a controller copied onto a reduced net (island extraction) may point
-# past the end or at a different machine — fail loudly instead of actuating
+# past the end or at a different machine: fail loudly instead of actuating
 # the wrong unit.
 function _find_machine_prosumer(net::Net, ctrl::MachineVoltageControl)::ProSumer
   (1 <= ctrl.prosumer_idx <= length(net.prosumpsVec)) || error("MachineVoltageControl $(ctrl.name): prosumer index $(ctrl.prosumer_idx) out of range")
@@ -132,7 +132,7 @@ voltage magnitude at `target_bus`.
 # Arguments
 - `net::Net`: the network.
 - `bus::String`: the machine's own bus. The generator there must be a plain PQ
-  injection (not voltage-regulating) — its reactive output is the actuator.
+  injection (not voltage-regulating), its reactive output is the actuator.
 - `target_bus::String`: the regulated bus. Must be a PQ bus: a PV or slack
   target is already voltage-held by another unit and leaves this controller
   nothing to regulate (rejected with an error).
@@ -182,13 +182,13 @@ function addMachineVoltageControl!(
   _check_control_priority(priority, "MachineVoltageControl")
   busIdx = geNetBusIdx(net = net, busName = bus)
   targetIdx = geNetBusIdx(net = net, busName = target_bus)
-  bus == target_bus && error("MachineVoltageControl: target_bus equals the machine bus $(bus) — local voltage control is a PV setpoint (addProsumer! with vm_pu), not a remote controller.")
+  bus == target_bus && error("MachineVoltageControl: target_bus equals the machine bus $(bus). Local voltage control is a PV setpoint (addProsumer! with vm_pu), not a remote controller.")
   target_vm_pu > 0.0 || error("MachineVoltageControl: target_vm_pu must be positive, got $(target_vm_pu)")
 
   # The regulated bus must be free to move: a PV/slack target is held by
   # another voltage-controlling unit and the two controllers would fight.
   tnode = net.nodeVec[targetIdx]
-  tnode._nodeType == PQ || error("MachineVoltageControl: target bus $(target_bus) is $(tnode._nodeType) — its voltage is already held; a remote controller needs a PQ target.")
+  tnode._nodeType == PQ || error("MachineVoltageControl: target bus $(target_bus) is $(tnode._nodeType). Its voltage is already held; a remote controller needs a PQ target.")
   # Cross-type check: a tap-regulated bus stays PQ, so the node-type check
   # above cannot see a transformer controller on the same target, but two
   # controllers steering one voltage fight each other in the outer loop,
@@ -215,13 +215,13 @@ function addMachineVoltageControl!(
   else
     gens = [i for (i, p) in enumerate(net.prosumpsVec) if isGenerator(p) && getPosumerBusIndex(p) == busIdx]
     isempty(gens) && error("MachineVoltageControl: no generator at bus $(bus)")
-    length(gens) > 1 && error("MachineVoltageControl: $(length(gens)) generators at bus $(bus) — pass prosumer_index to pick one.")
+    length(gens) > 1 && error("MachineVoltageControl: $(length(gens)) generators at bus $(bus). Pass prosumer_index to pick one.")
     gens[1]
   end
   ps = net.prosumpsVec[ps_idx]
   # A voltage-regulating machine is (or makes its bus) PV: its reactive output
   # is a solver outcome, not a settable injection.
-  ps.isRegulated && error("MachineVoltageControl: the machine at $(bus) is voltage-regulating (PV) — a remote controller needs a PQ machine.")
+  ps.isRegulated && error("MachineVoltageControl: the machine at $(bus) is voltage-regulating (PV). A remote controller needs a PQ machine.")
 
   # limit-mode resolution: a converter rating switches the controller into
   # STATCOM mode; the constant machine box and the current limit are
@@ -238,7 +238,7 @@ function addMachineVoltageControl!(
   local qlo::Float64
   local qhi::Float64
   if s_rating !== nothing
-    (qmin_mvar !== nothing || qmax_mvar !== nothing) && error("MachineVoltageControl: qmin_mvar/qmax_mvar and a STATCOM rating (s_max_mva/i_max_ka) are mutually exclusive — the converter current is the limit in STATCOM mode.")
+    (qmin_mvar !== nothing || qmax_mvar !== nothing) && error("MachineVoltageControl: qmin_mvar/qmax_mvar and a STATCOM rating (s_max_mva/i_max_ka) are mutually exclusive. The converter current is the limit in STATCOM mode.")
     s_rating > 0.0 || error("MachineVoltageControl: s_max_mva must be positive, got $(s_rating)")
     limit_mode = :current
     # initial symmetric bounds from the CURRENT bus voltage (start profile);
@@ -251,7 +251,7 @@ function addMachineVoltageControl!(
     limit_mode = :constant_q
     qlo_raw = something(qmin_mvar, ps.minQ === nothing ? nothing : ps.minQ)
     qhi_raw = something(qmax_mvar, ps.maxQ === nothing ? nothing : ps.maxQ)
-    (qlo_raw === nothing || qhi_raw === nothing) && error("MachineVoltageControl: machine at $(bus) has no scalar minQ/maxQ — pass qmin_mvar/qmax_mvar explicitly (or a STATCOM rating s_max_mva/i_max_ka).")
+    (qlo_raw === nothing || qhi_raw === nothing) && error("MachineVoltageControl: machine at $(bus) has no scalar minQ/maxQ. Pass qmin_mvar/qmax_mvar explicitly (or a STATCOM rating s_max_mva/i_max_ka).")
     qlo = qlo_raw
     qhi = qhi_raw
     qlo < qhi || error("MachineVoltageControl: empty reactive range [$(qlo), $(qhi)] MVAr")
@@ -335,11 +335,11 @@ end
 
 # Secant fraction of the remaining Q headroom for the first (bootstrap) move.
 # Deliberately below 1.0: the sensitivity is unknown at that point, and a
-# short first step only costs one extra outer iteration — the secant update
+# short first step only costs one extra outer iteration: the secant update
 # extrapolates past it immediately.
 const _MACHINE_CTRL_BOOTSTRAP_FRACTION = 0.25
 # Below this measured sensitivity (p.u. per MVAr) the secant step is
-# meaningless — the target bus is electrically insensitive to this machine.
+# meaningless: the target bus is electrically insensitive to this machine.
 const _MACHINE_CTRL_MIN_SLOPE = 1e-6
 
 function control_propose_update!(ctrl::MachineVoltageControl, net::Net, ::AbstractControlState, context)
@@ -374,7 +374,7 @@ function control_apply_update!(ctrl::MachineVoltageControl, net::Net, ::Abstract
   if moved
     ps = _find_machine_prosumer(net, ctrl)
     # The solver reads bus-level sums (node._qƩGen), the prosumer keeps the
-    # per-machine value — update both by the same delta so they stay coherent
+    # per-machine value. Update both by the same delta so they stay coherent
     # with any other injections on the bus.
     Δ = update.new_q - (ps.qVal === nothing ? 0.0 : ps.qVal)
     ps.qVal = update.new_q

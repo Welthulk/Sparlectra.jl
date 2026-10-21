@@ -19,7 +19,8 @@
 #          and flow legs are copies from test_powsybl_importer.jl, the
 #          generator leg is new. Since 0.50.0 also the test grids, the CIGRE
 #          HV net and sp_case14 against OpenLoadFlow solutions of their
-#          MATPOWER export (test/fixtures/openloadflow).
+#          MATPOWER export (test/fixtures/openloadflow), since 0.60.0 also
+#          MATPOWER case14 and case118.
 using Sparlectra
 using Test
 using DelimitedFiles
@@ -83,7 +84,14 @@ _ref_olf_options(case) = case == "micro_grid_be" ? PowsyblAdapterOptions(remote_
 # Sparlectra's own test nets against OpenLoadFlow (0.50.0): the shared test
 # grids (createTest3BusNet, also with its reactive limit of 15 Mvar binding,
 # and createTest5BusNet), the CIGRE HV benchmark (createCIGRE) and the
-# shipped sp_case14. test/fixtures/openloadflow holds per case the MATPOWER
+# shipped sp_case14; since 0.60.0 MATPOWER case14 and case118, whose file
+# carries only the rounded IEEE CDF state and so no usable reference. The
+# two are read from their fixture .m (the MATPOWER export of the cached
+# case), so the test downloads nothing. The limit: the fixture is a file
+# Sparlectra wrote (case14 with baseKV 1.0 instead of 0), so the test checks
+# the solver against OpenLoadFlow on that model, not the import of the
+# original MATPOWER file.
+# test/fixtures/openloadflow holds per case the MATPOWER
 # model file the net was exported to and the OLF solution of that file; the
 # header of each CSV names the tool, its parameters and the sha256 of the
 # input. The nets are built here as the other tests build them, so a change
@@ -95,6 +103,8 @@ const _REF_OLF_NET_CASES = [
   (case = "test5bus", build = () -> createTest5BusNet(qlim_min = -200.0, qlim_max = 200.0)),
   (case = "cigre", build = () -> createCIGRE()),
   (case = "sp_case14", build = () -> _ref_olf_flat!(Sparlectra.import_case(normpath(joinpath(@__DIR__, "..", "..", "data", "scf", "sp_case14.scf.json")), Sparlectra.SparlectraConfig(Dict())).net)),
+  (case = "case14", build = () -> _ref_olf_flat!(Sparlectra.import_case(joinpath(_REF_OLF_NETS, "case14.m"), Sparlectra.SparlectraConfig(Dict())).net)),
+  (case = "case118", build = () -> _ref_olf_flat!(Sparlectra.import_case(joinpath(_REF_OLF_NETS, "case118.m"), Sparlectra.SparlectraConfig(Dict())).net)),
 ]
 
 # sp_case14 carries its solved state as start state, so Newton would stop
@@ -109,8 +119,11 @@ function _ref_olf_flat!(net)
 end
 
 # the run configuration of these nets: one slack, no distributed slack, the
-# reactive limits enforced (they bind only in test3bus_qlim15, where OLF
-# runs with its reactive limits on as well), controllers off (sp_case14
+# reactive limits enforced (they bind only in test3bus_qlim15 and case118,
+# where OLF runs with its reactive limits on as well; both switch the same
+# six buses 19, 32, 34, 92, 103 and 105 of case118 to PQ; OLF with limits
+# would also hold the Q limit of the slack, which in case14 binds and which
+# Sparlectra and MATPOWER do not apply), controllers off (sp_case14
 # declares a tap controller; the fixture is the file state, as the demo-case
 # test solves it with runpf!)
 function _ref_olf_net_config()

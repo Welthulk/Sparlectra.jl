@@ -619,7 +619,7 @@ function run_legacy_cgmes_importer_tests()
       end)() end
 
       # The framework/API path: a delivery zip as casefile, dispatch by
-      # auto-detection, cgmes.log next to run.log, and the SV comparison
+      # auto-detection, cgmes_import_report.md next to run.log, and the SV comparison
       # artifacts of the default start (auto resolves to sv on a delivery
       # that carries SvVoltage).
       @testset "run_sparlectra_api dispatch on a fixture delivery zip" begin (function ()
@@ -632,12 +632,18 @@ function run_legacy_cgmes_importer_tests()
         @test r.metadata["cgmes_buses"] == 14
         @test r.metadata["cgmes_slack_bus"] == "Ostheim_110"
         @test r.metadata["cgmes_messages"] > 0
-        logfile = joinpath(out, "cgmes.log")
-        @test isfile(logfile)
-        text = read(logfile, String)
-        for section in ("# CGMES import report", "## Class histogram", "## Network built", "## Short-circuit source data", "## Importer messages", "## SV comparison")
-          @test occursin(section, text)
+        @test isfile(joinpath(out, "cgmes_import_report.md"))
+        @test !isfile(joinpath(out, "cgmes.log"))
+        text = cgmes_report_plain(out)
+        for section in ("CGMES import report", "Class histogram", "Network built", "Short-circuit source data", "Importer messages", "SV comparison")
+          @test occursin("\n" * section, "\n" * text)
         end
+        # the files and the run's SV comparison as the viewer shows them
+        @test occursin("\nBuses: 14 (0 isolated)\n", text)
+        @test occursin("\nRun status: converged\n", text)
+        # the report is a Markdown artifact: the Web UI renders it
+        art = only(a for a in collect_sparlectra_api_artifacts(out) if a.name == "cgmes_import_report.md")
+        @test art.mime_type == "text/markdown"
         @test r.metadata["cgmes_start_values"] == "sv"
         @test r.metadata["cgmes_sv_compare_status"] == "converged"
         @test r.metadata["cgmes_sv_compare_n"] == 14
@@ -684,8 +690,7 @@ function run_legacy_cgmes_importer_tests()
         write(cfg_f, "config_version: 1\npower_flow:\n  max_iter: 1\n  tol: 1.0e-14\n  rescue: false\ncgmes_import:\n  start_values: flat\n")
         rf = run_sparlectra_api(casefile = z, config_file = cfg_f, output_dir = out_f)
         @test rf.status != :succeeded
-        @test isfile(joinpath(out_f, "cgmes.log"))
-        @test occursin("# CGMES import report", read(joinpath(out_f, "cgmes.log"), String))
+        @test startswith(cgmes_report_plain(out_f), "CGMES import report\n")
       end)() end
 
       # The Web UI "Analyze import" and "Short circuit" buttons on the

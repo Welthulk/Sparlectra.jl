@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -220,6 +220,23 @@ function _plausibility_lifecycle_metadata(raw_result::SparlectraRunResult)::Dict
   )
 end
 
+# Why a non-converged APSLF solve failed (AnalyticLoadFlow diagnosis, set by
+# apslf_execution.jl); all values nothing for a converged run or another
+# solver. Also used for the failure metadata of an island-wise run.
+function _apslf_diagnosis_metadata(status)::Dict{String,Any}
+  field(name::Symbol) = status !== nothing && hasproperty(status, name) ? getproperty(status, name) : nothing
+  finite_or_nothing(x) = x isa Real && isfinite(x) ? x : nothing
+  reason = field(:apslf_diagnosis_reason)
+  return Dict{String,Any}(
+    "apslf_diagnosis_reason" => reason === nothing ? nothing : String(reason),
+    "apslf_pole_min_abs" => finite_or_nothing(field(:apslf_pole_min_abs)),
+    "apslf_pole_min_bus" => field(:apslf_pole_min_bus),
+    "apslf_pole_pair" => field(:apslf_pole_pair),
+    "apslf_pade_change" => finite_or_nothing(field(:apslf_pade_change)),
+    "apslf_diagnosis_line" => field(:apslf_diagnosis_line),
+  )
+end
+
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   fq = _final_q_check_summary(raw_result)
@@ -299,7 +316,7 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
       "detailed_result_csv" => detailed_result_csv,
       "detailed_result_csv_format" => csv_format_name,
     )),
-  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status), _power_mode_lu_lifecycle_metadata(rect_status), _plausibility_lifecycle_metadata(raw_result))
+  ), qlimit_metadata, current_iteration_metadata, merit_linesearch_metadata, wrong_branch_metadata, trust_region_metadata, island_wise_metadata, _jacobian_reuse_lifecycle_metadata(rect_status), _power_mode_lu_lifecycle_metadata(rect_status), _plausibility_lifecycle_metadata(raw_result), _apslf_diagnosis_metadata(rect_status))
   # Partial CSV exports are still successful API runs, but the Web UI needs the
   # partial file error in the stable lifecycle field used by Last Errors.
   haskey(csv_timing_metadata, :partial_error) && (metadata["detailed_result_csv_error"] = csv_timing_metadata[:partial_error])

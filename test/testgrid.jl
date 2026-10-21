@@ -1009,10 +1009,13 @@ function test_rectangular_start_projection_ratio_profile()::Bool
   steps(k) = [f[Int(br.fromBus)] * (1.0 / abs(Sparlectra.calcBranchRatio(br))) for br in net.branchVec if br.status == 1 && Int(br.toBus) == k] ∪ [f[Int(br.toBus)] * abs(Sparlectra.calcBranchRatio(br)) for br in net.branchVec if br.status == 1 && Int(br.fromBus) == k]
   bfs = f[slack] == 1.0 && all(k -> k == slack || f[k] in steps(k), eachindex(f)) && any(x -> x != 1.0, f) && all(x -> isfinite(x) && x > 0.0, f)
 
-  # forwarding: the solver builds the candidate only for a flat start with
-  # the projection and the keyword on; the configuration default reaches it
-  built(net0; kw...) = (prof = Dict{Symbol,Any}(:enabled => true); Sparlectra.runpf_rectangular!(net0; maxiter = 30, tol = 1e-8, damp = 1.0, qlimits_enabled = false, performance_profile = prof, kw...); prof[:start_projection_summary].ratio_profile_built)
+  # forwarding: the solver builds the candidate only when the projection
+  # runs on a flat seed with the keyword on; without the projection nothing
+  # is measured at all (a run-level flat start); the configuration default
+  # reaches it
+  built(net0; kw...) = (prof = Dict{Symbol,Any}(:enabled => true); Sparlectra.runpf_rectangular!(net0; maxiter = 30, tol = 1e-8, damp = 1.0, qlimits_enabled = false, performance_profile = prof, kw...); s = get(prof, :start_projection_summary, nothing); s === nothing ? nothing : s.ratio_profile_built)
   chain = built(load_fixture_net("sp_case14"); opt_flatstart = true, start_projection = true, start_projection_ratio_profile = true) === true &&
+          built(load_fixture_net("sp_case14"); opt_flatstart = true, start_projection = false, start_projection_ratio_profile = true) === nothing &&
           built(load_fixture_net("sp_case14"); opt_flatstart = true, start_projection = true) === false &&
           built(load_fixture_net("sp_case14"); opt_flatstart = false, start_projection = true, start_projection_ratio_profile = true) === false
   cfg_prof = Dict{Symbol,Any}(:enabled => true)
@@ -1052,6 +1055,91 @@ function test_rectangular_start_projection_ratio_profile()::Bool
   solver_chain = erg == 0 && Sparlectra.rectangular_pf_status(sn2).initial_mismatch < 1.0
 
   return exact && no_candidate && dc_first && bfs && chain && config_default && no_aux && rule && solver_chain
+end
+
+# A run-level flat start is a flat start (before, a flat start selected in the Web UI on sp_case118 still ran from the DC
+# start of the projection the configuration template switches on). With
+# power_flow.flatstart the run ignores the stored VM/VA and runs no
+# projection, no DC seed and no ratio-profile candidate; only auxiliary buses
+# (three-winding star points) start at their ratio. A start from stored voltages keeps the projection.
+function test_run_level_flat_start_is_flat()::Bool
+  mp_dir = joinpath(dirname(@__DIR__), "data", "mpower")
+  # the template's start settings: projection on, DC angle and blended
+  # voltage modes, ratio profile on (its default)
+  template_start(flat; kw...) = Sparlectra.StartModeConfig(; flatstart = flat, start_projection = true, try_dc_start = true, try_blend_scan = true, angle_mode = :dc, voltage_mode = :profile_blend, ratio_profile = true, kw...)
+  function start_of(start_mode; casefile = "sp_case118.m", net = nothing)
+    cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = start_mode), output = Sparlectra.OutputConfig(logfile_results = :off, startup_latency_hint = false))
+    prof = Dict{Symbol,Any}(:enabled => true, :capture_initial_residual_rows => true)
+    r = net === nothing ? run_sparlectra(casefile = casefile, path = mp_dir, config = cfg, performance_profile = prof) : run_sparlectra(net = net, config = cfg, performance_profile = prof)
+    # the first solve's rows only (a Q-limit round would append more)
+    rows = prof[:initial_residual_rows][1:length(r.net.nodeVec)]
+    return (r = r, rows = rows, summary = get(prof, :start_projection_summary, nothing), timings = get(prof, :timings, Dict{Symbol,Any}()))
+  end
+  # every non-auxiliary bus flat: PQ at 1.0 pu, PV and slack at their
+  # setpoints, every angle 0 except the slack's (its reference angle from
+  # the case, 0.99 deg on micro_grid_be)
+  flat_except_aux(x, net) = (vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net);
+                             all(k -> Sparlectra._is_aux_node(net.nodeVec[k]) || ((x.rows[k].bus_type === :Slack || x.rows[k].va_deg_start == 0.0) && x.rows[k].vm_pu_start == (x.rows[k].bus_type === :PQ ? 1.0 : vset[k])), eachindex(x.rows)))
+
+  # sp_case118 from a flat start although the file carries a solved state:
+  # no projection, no candidate, no projection phase in the timings
+  flat = start_of(template_start(true))
+  no_projection = flat.r.final_converged && flat.summary === nothing && !haskey(flat.timings, :start_projection) && flat_except_aux(flat, flat.r.net)
+  # the same start as a bare flat start with the ratio profile off
+  bare = start_of(Sparlectra.StartModeConfig(flatstart = true, start_projection = false, ratio_profile = false))
+  same_start = bare.summary === nothing && [(x.vm_pu_start, x.va_deg_start) for x in bare.rows] == [(x.vm_pu_start, x.va_deg_start) for x in flat.rows]
+  # the DC seed is off under a flat start as well
+  seeded = start_of(template_start(true; dc_seed_unconditional = true))
+  no_seed = Sparlectra.dc_pf_status(seeded.r.net) === nothing && [(x.vm_pu_start, x.va_deg_start) for x in seeded.rows] == [(x.vm_pu_start, x.va_deg_start) for x in flat.rows]
+  # a start from the stored voltages keeps the projection
+  stored = start_of(template_start(false))
+  projected = stored.summary !== nothing && stored.summary.dc_angle_start_built === true && haskey(stored.timings, :start_projection)
+
+  # case14 (shipped sp_case14, its two transformers moved off nominal so the
+  # ratio profile would scale the 20 kV level): every bus starts flat. The
+  # control: the factors the ratio profile would apply differ from 1.0 on
+  # PQ buses, so the check would fail if the candidate were applied.
+  c14 = load_fixture_net("sp_case14")
+  for (br, t) in zip([br for br in c14.branchVec if Sparlectra.getNodeVn(c14.nodeVec[Int(br.fromBus)]) != Sparlectra.getNodeVn(c14.nodeVec[Int(br.toBus)])], (0.95, 0.93))
+    br.ratio = t
+    br.tap_ratio = t
+  end
+  c14_unsolved = deepcopy(c14)  # the solve below changes the net
+  slack14 = findfirst(nd -> Sparlectra.getNodeType(nd) == Sparlectra.Slack, c14.nodeVec)
+  would_scale = any(k -> Sparlectra.getNodeType(c14.nodeVec[k]) == Sparlectra.PQ && Sparlectra._ratio_profile_factors(c14, slack14)[k] != 1.0, eachindex(c14.nodeVec))
+  c14_flat = start_of(template_start(true); net = c14)
+  case14_flat = would_scale && c14_flat.r.final_converged && c14_flat.summary === nothing && !any(nd -> Sparlectra._is_aux_node(nd), c14_flat.r.net.nodeVec) && flat_except_aux(c14_flat, c14_flat.r.net)
+  # the rescue strategies of a flat-start run that project from the flat
+  # profile (settled_qlimits, dc_seed) see the ratio profile switched off as
+  # well. Control: settled_qlimits with the candidate forced on keeps it and
+  # raises PQ buses, so the check would fail if the run config kept the key.
+  function rescue_start(sm, ratio)
+    prof = Dict{Symbol,Any}(:enabled => true, :capture_initial_residual_rows => true)
+    net = deepcopy(c14_unsolved)
+    Sparlectra.runpf_rectangular!(net; maxiter = 30, tol = 1e-8, damp = 1.0, qlimits_enabled = false, performance_profile = prof,
+      opt_flatstart = sm.flatstart, start_projection = sm.start_projection, start_projection_try_dc_start = sm.try_dc_start,
+      start_projection_try_blend_scan = sm.try_blend_scan, start_projection_requested_angle_mode = sm.angle_mode,
+      start_projection_requested_voltage_mode = sm.voltage_mode, start_projection_ratio_profile = ratio,
+      start_projection_accept_unmeasured_dc_start = sm.accept_unmeasured_dc_start)
+    rows = prof[:initial_residual_rows][1:length(net.nodeVec)]
+    return (built = prof[:start_projection_summary].ratio_profile_built, pq_flat = all(r -> r.bus_type !== :PQ || r.vm_pu_start == 1.0, rows))
+  end
+  run_cfg, _ = Sparlectra._flatstart_profile_config(Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = template_start(true))))
+  flat_rescue = [pf.start_mode for (name, pf) in Sparlectra._rescue_config_variants(run_cfg.powerflow) if name in (:settled_qlimits, :dc_seed)]
+  rescue_flat = length(flat_rescue) == 2 && all(sm -> sm.flatstart && sm.start_projection && !sm.ratio_profile, flat_rescue) &&
+                all(sm -> (x = rescue_start(sm, sm.ratio_profile); !x.built && x.pq_flat), flat_rescue) &&
+                !rescue_start(flat_rescue[1], true).pq_flat
+
+  # auxiliary buses keep the ratio start (micro_grid_be, a three-winding
+  # transformer whose star point has a 0.95 winding): the star point starts
+  # at 0.95 pu, every other bus flat
+  dir = joinpath(@__DIR__, "fixtures", "powsybl", "micro_grid_be.powsybl")
+  be, _ = Sparlectra.build_net_from_powsybl(Sparlectra.read_powsybl_bundle(dir), Sparlectra.PowsyblAdapterOptions(remote_regulation = :remote))
+  aux = [k for k in eachindex(be.nodeVec) if Sparlectra._is_aux_node(be.nodeVec[k])]
+  be_flat = start_of(template_start(true); net = be)
+  aux_ratio = any(k -> isapprox(be_flat.rows[k].vm_pu_start, 0.95; atol = 1e-12), aux) && flat_except_aux(be_flat, be_flat.r.net) && be_flat.summary === nothing
+
+  return no_projection && same_start && no_seed && projected && case14_flat && rescue_flat && aux_ratio
 end
 
 function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
@@ -3703,6 +3791,7 @@ function run_grid_fast_tests()
     @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
     @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
     @test test_rectangular_start_projection_ratio_profile() == true
+    @test test_run_level_flat_start_is_flat() == true
     @test test_q_limit_adjust_vset_success() == true
     @test test_q_limit_adjust_vset_no_controller_switches() == true
     @test test_q_limit_adjust_vset_multiple_controllers_error() == true

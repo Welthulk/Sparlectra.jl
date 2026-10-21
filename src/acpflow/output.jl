@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ function _postprocess_sparlectra_result!(result::SparlectraRunResult, cfg::Sparl
   phase_callback("postprocessing_result")
   if cfg.powerflow.solver === :dc
     # DC branch flows are already final (lossless, computed directly from
-    # theta) — calcNetLosses!/calcLinkFlowsKCL! are AC-π-model-based and
+    # theta): calcNetLosses!/calcLinkFlowsKCL! are AC-π-model-based and
     # would silently overwrite them, and printACPFlowResults would error
     # against DC's empty AC diagnostics.
     out_cfg = cfg.output

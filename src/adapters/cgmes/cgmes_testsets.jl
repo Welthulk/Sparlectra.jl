@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 # purpose: on-demand access to the ENTSO-E CGMES conformity test
 # configurations. Downloads the official package once into the gitignored
 # `data/CGMES` cache, extracts it (pure Julia, nested ZIPs included), and
-# packs a named test set — base case plus boundary where needed — into a
+# packs a named test set, base case plus boundary where needed, into a
 # single ZIP that any CGMES entry point (importCGMES, the API, the Web UI
 # upload flow) accepts.
 
@@ -44,7 +44,7 @@ entry): alias → subdirectories of the extracted package that form the
 delivery (base case plus boundary set where one exists).
 """
 const CGMES_TESTSET_ALIASES = Dict{String,Vector{String}}(
-  # convenience shorthand: "microgrid" is the BE base configuration — the
+  # convenience shorthand: "microgrid" is the BE base configuration, the
   # reference demonstrator used throughout the docs and tests
   "microgrid" => [joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BC_BE_v2"), joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")],
   "microgrid_be" => [joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BC_BE_v2"), joinpath(_MG, "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")],
@@ -111,7 +111,7 @@ const RELICAPGRID_ALIASES = Dict{String,NamedTuple{(:model, :grid, :boundary),Tu
     boundary = ["Boundary_Border-Galia-Britheim.xml"],
   ),
   # Portheim is Espheim's other neighbour. Note its files carry a different
-  # timestamp (2024-12-23) than the rest of the family (2022-06-15) — it was
+  # timestamp (2024-12-23) than the rest of the family (2022-06-15). It was
   # published later, so a combined model mixes two snapshot times.
   "portheim" => (
     model = "Portheim",
@@ -125,25 +125,25 @@ Combined ReliCapGrid deliveries: alias → member aliases of
 [`RELICAPGRID_ALIASES`](@ref), fetched and packed into ONE delivery.
 
 A single ReliCapGrid model is one area of a multi-area system. Imported alone,
-the nodes on its borders hang free — there is nothing behind them — so the
+the nodes on its borders hang free (there is nothing behind them), so the
 power flow has no chance of producing a meaningful result no matter how good
 the solver is. Combining the areas across a shared boundary file closes those
 borders.
 
 The family has exactly six borders:
 
-    Svedala — Espheim — Portheim
+    Svedala - Espheim - Portheim
        |
-    Belgovia — Galia — Britheim
+    Belgovia - Galia - Britheim
                   |
                Nordheim
 
 `relicapgrid_cgm` therefore takes all seven models and is the only fully
 closed combination. `svedala_neighbours` is the cheap variant that closes
-Svedala's own two borders but leaves Espheim—Portheim and Belgovia—Galia open.
+Svedala's own two borders but leaves Espheim-Portheim and Belgovia-Galia open.
 
-(`Jotunheim` exists in the repository but ships only TP and SV — no EQ/SSH and
-no border — so it cannot be imported and is not offered.)
+(`Jotunheim` exists in the repository but ships only TP and SV, no EQ/SSH and
+no border, so it cannot be imported and is not offered.)
 """
 const RELICAPGRID_COMBINED = Dict{String,Vector{String}}(
   "relicapgrid_cgm" => ["svedala", "espheim", "portheim", "belgovia", "galia", "britheim", "nordheim"],
@@ -183,8 +183,8 @@ end
 """
     fetchReliCapGridSet(alias; outdir) -> String
 
-Fetch a ReliCapGrid delivery (CGMES 3.0) — grid profiles plus the boundary
-files of its borders — from GitHub and pack it into `<outdir>/cgmes_<alias>.zip`.
+Fetch a ReliCapGrid delivery (CGMES 3.0), grid profiles plus the boundary
+files of its borders, from GitHub and pack it into `<outdir>/cgmes_<alias>.zip`.
 Downloaded files are cached under the CGMES cache directory, so repeated calls
 do not hit the network.
 
@@ -275,7 +275,7 @@ allCGMESTestSetAliases() = sort(union(collect(keys(CGMES_TESTSET_ALIASES)), coll
 # recursive pure-Julia extraction; nested ZIPs land in a folder named after
 # the ZIP (matching the layout the analysis phase established)
 function _extractZipTree(zipbytes::Vector{UInt8}, outdir::AbstractString; depth::Int = 0)
-  depth > 4 && error("CGMES test sets: ZIP nesting deeper than 4 — unexpected layout")
+  depth > 4 && error("CGMES test sets: ZIP nesting deeper than 4, unexpected layout")
   reader = ZipArchives.ZipReader(zipbytes)
   for entry in ZipArchives.zip_names(reader)
     endswith(entry, "/") && continue
@@ -329,8 +329,8 @@ end
     fetchCGMESTestSet(alias; outdir) -> String
 
 Resolve a test-set alias (see [`CGMES_TESTSET_ALIASES`](@ref), e.g.
-`"microgrid_be"`, `"smallgrid"`, `"realgrid"`) and pack the delivery — base
-case plus boundary where one exists — into `<outdir>/cgmes_<alias>.zip`.
+`"microgrid_be"`, `"smallgrid"`, `"realgrid"`) and pack the delivery, base
+case plus boundary where one exists, into `<outdir>/cgmes_<alias>.zip`.
 Returns the ZIP path; the file is reused when it already exists. Downloads
 and extracts the ENTSO-E package on first use.
 """

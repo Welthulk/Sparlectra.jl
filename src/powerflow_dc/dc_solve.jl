@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,10 +26,10 @@
         -> (theta::Vector{Float64}, Pf::Vector{Float64}, Pt::Vector{Float64}, slack_p_mw::Float64, terms::Vector{_DcBranchTerm})
 
 Solve `Bbus * theta = Pbus - Pbusinj` for bus angles (radians), with the
-slack bus fixed. `Pbus[k] = Re(S[k])` — MATPOWER's `Pbus`, built from the
+slack bus fixed. `Pbus[k] = Re(S[k])`, MATPOWER's `Pbus`, built from the
 PROSUMER specification via `buildComplexSVec`, the same source the
 rectangular AC solver reads (issue #323: the node-level sums are a
-result/report layer — an AC solve writes solved values back into them and
+result/report layer: an AC solve writes solved values back into them and
 manual edits there never reached the AC solver, so reading them here made
 DC and AC disagree about what the network is). Shunts are deliberately
 excluded: the lossless DC model has no shunt term.
@@ -40,20 +40,20 @@ and `_solve_dc_angle_system` unmodified, shared with the rectangular
 solver's DC-angle start projection); `angle_reference_rad` is then added as a
 uniform shift to every bus angle afterward. This is exact, not approximate:
 `Bbus`'s rows sum to zero by construction (a weighted graph Laplacian), so
-`Bbus*(theta .+ c) == Bbus*theta` for any constant `c` — fixing the slack
+`Bbus*(theta .+ c) == Bbus*theta` for any constant `c`, fixing the slack
 angle to a nonzero reference is mathematically equivalent to solving with a
 zero reference and shifting the whole result afterward.
 
 Note on `reduce_susceptance_to_nonslack`'s `value_of`: the helper
 reconstructs the reduced Laplacian purely from `Bsrc`'s *off-diagonal*
 entries (its own diagonal is ignored), and expects those off-diagonal
-entries to already be the *positive* per-branch weight — exactly what
+entries to already be the *positive* per-branch weight, exactly what
 `imag(Ybus)` off-diagonals are for the legacy AC-start heuristic. `Bbus`
 (from [`assemble_dc_bbus`](@ref)) is a real MATPOWER-style Laplacian with
 *negative* off-diagonals (`-b`, matching `makeBdc`'s actual `Bbus`, which
 must stay that way since it's a documented public return value), so
 `value_of = x -> -x` is passed here to flip it back to the positive
-convention the helper expects — `value_of = identity` would silently
+convention the helper expects. `value_of = identity` would silently
 double-negate every angle and flow.
 
 `Pf[l] = b_l*(theta[from_l] - theta[to_l]) - b_l*shift_rad_l`, in MW after

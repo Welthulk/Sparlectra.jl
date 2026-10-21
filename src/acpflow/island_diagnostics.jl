@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -306,6 +306,9 @@ function _write_ac_island_diagnostics!(net::Net, cfg::PowerFlowConfig, performan
           println(log, "mismatch_status: ", mismatch_status)
           println(log, "final_status: ", final_status)
           println(log, "failure_reason: ", reason)
+          # APSLF only: why the series did not converge
+          apslf_diag = _status_property(row_status, :apslf_diagnosis_line, nothing)
+          apslf_diag === nothing || println(log, "apslf_diagnosis: ", apslf_diag)
           println(log, "stage: ", stage)
           println(log, "exception_type: ", exception_type)
           println(log, "exception_message: ", exception_message)
@@ -379,12 +382,30 @@ function _append_island_failure_message(status, performance_profile)
     "  stage=", stage_text, "\n",
     "  artifact=", artifact,
   )
+  # an APSLF solve that did not converge: AnalyticLoadFlow's diagnosis line
+  # (apslf_execution.jl), otherwise lost with the replaced reason_text
+  diag_line = _status_property(row_status, :apslf_diagnosis_line, _status_property(status, :apslf_diagnosis_line, nothing))
+  diag_line === nothing || (text = string(text, "\n  ", diag_line))
   return merge(status, (reason_text = text,))
 end
 
 function _island_status_value(row_status, key::Symbol, default)
   row_status === nothing && return default
   return hasproperty(row_status, key) ? getproperty(row_status, key) : default
+end
+
+# The status of the first island (by island id) whose APSLF solve did not
+# converge and carries a diagnosis; nothing otherwise. The service puts its
+# diagnosis keys into the metadata of a failed island-wise run.
+function _islandwise_apslf_diagnosis(performance_profile)
+  performance_profile isa AbstractDict || return nothing
+  statuses = get(performance_profile, :ac_island_solver_statuses, nothing)
+  statuses isa AbstractDict || return nothing
+  for id in sort!(collect(keys(statuses)))
+    st = statuses[id]
+    hasproperty(st, :apslf_diagnosis_line) && return st
+  end
+  return nothing
 end
 
 function _islandwise_failure_message(performance_profile)::Union{Nothing,String}
@@ -410,6 +431,10 @@ function _islandwise_failure_message(performance_profile)::Union{Nothing,String}
       push!(lines, "  island $(row.island_id): converged, iterations=$(iterations)")
     else
       push!(lines, "  island $(row.island_id): $(final_status), iterations=$(iterations), final_mismatch=$(final_mismatch), reason=$(reason)")
+      # an APSLF island that did not converge: its diagnosis line, which
+      # this message replaces as the error text of the run
+      diag_line = _island_status_value(row_status, :apslf_diagnosis_line, nothing)
+      diag_line === nothing || push!(lines, "    " * String(diag_line))
       push!(failed_descriptions, "island $(row.island_id) $(final_status)")
     end
     qlimits_enabled |= row.settings.qlimits_enabled

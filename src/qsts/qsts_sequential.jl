@@ -615,6 +615,8 @@ function _run_qsts_series(input::_QstsInput, config::SparlectraConfig, opts::_Qs
   n = length(input.ops)
   n >= 1 || throw(ArgumentError("runQsts: the series has no step"))
   1 <= stop <= n || throw(ArgumentError(string("runQsts: stop step ", stop, " outside 1 to ", n)))
+  # a flat start is a flat start on the base case and on every step
+  config, flat_overrides = _flatstart_profile_config(config)
   q = config.qsts
   (q.sequential_start === :snapshot && !isempty(input.event_list)) &&
     throw(ArgumentError(string("runQsts: qsts.sequential_start = snapshot needs the snapshot of each step; ", input.name, " is an event series without snapshots, use previous")))
@@ -629,6 +631,7 @@ function _run_qsts_series(input::_QstsInput, config::SparlectraConfig, opts::_Qs
   scenarios = Scenario[Scenario(name = string("step ", k), ops = input.ops[k]) for k in 1:n if !isempty(input.ops[k])]
   _validate_scenarios_net(ScenarioSet(scenarios = scenarios), input.index, T0, false)
   notes = String[]
+  _qsts_flatstart_note!(notes, flat_overrides)
   n_ref_taps = count(op -> op.op === :set && op.field === :tap_pos && (i = get(input.index.internal_by_id, op.id, 0); 1 <= i <= length(T0.branchVec) && _scenario_branch_tap_controller(T0, i) !== nothing),
                      Iterators.flatten(input.ops))
   n_ref_taps > 0 && push!(notes, string(n_ref_taps, " tap_pos op(s) on transformers with a tap controller are reference positions; outside resync steps the carried tap replaces them"))

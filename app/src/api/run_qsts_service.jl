@@ -245,7 +245,7 @@ function _qsts_overview_html(r::QstsResult, view::AbstractDict, summary, control
 end
 
 """
-    _run_qsts_service(case_path, config_file, output_dir, run_id, mode; config_overrides = Dict(), progress = nothing) -> SparlectraApiResult
+    _run_qsts_service(case_path, config_file, output_dir, run_id, mode; config_overrides = Dict(), progress = nothing, phase_callback = phase -> nothing) -> SparlectraApiResult
 
 Service backend of the Web UI "QSTS" button. Reads the SCF time series at
 `case_path` ([`read_scf_series`](@ref); the file is recognized by its
@@ -255,7 +255,8 @@ companion file `<series>.control.yaml` when that file exists, sets
 `qsts.mode` to `mode` (`"sequential"` or `"snapshots"`) for this run only
 and runs [`runQsts`](@ref). `progress(done, total)` is handed to it (one
 call per finished step); the abort token of a Web UI job is checked before
-every step.
+every step. `phase_callback` receives the run phase by name:
+`importing_case`, `running_steps`, `writing_artifacts`.
 
 Writes the files of [`writeQstsResults`](@ref) (CSV format of the run
 configuration), the element view `qsts_view.json`, one SVG per element
@@ -272,7 +273,7 @@ reader check), `invalid_control_file` (the companion file does not load),
 shared configuration failures.
 """
 function _run_qsts_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, mode::AbstractString;
-                           config_overrides::AbstractDict = Dict{String,Any}(), @nospecialize(progress = nothing))::SparlectraApiResult
+                           config_overrides::AbstractDict = Dict{String,Any}(), @nospecialize(progress = nothing), @nospecialize(phase_callback = phase -> nothing))::SparlectraApiResult
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
   result_file = joinpath(output_dir, "result.json")
@@ -289,6 +290,7 @@ function _run_qsts_service(case_path::AbstractString, config_file::AbstractStrin
   catch err
     return fail(_config_resolve_reason(err), sprint(showerror, err))
   end
+  phase_callback("importing_case")
   series = try
     read_scf_series(case_path)
   catch err
@@ -315,6 +317,7 @@ function _run_qsts_service(case_path::AbstractString, config_file::AbstractStrin
   controls_used || (control_note = string(control_note, "; not used: a snapshot run without qsts.snapshot_controls runs without controllers"))
   # the run mode for this run only; the configuration file keeps qsts.mode
   config = _sparlectra_config_with(config; qsts = _struct_with(config.qsts; mode = Symbol(mode)))
+  phase_callback("running_steps")
   r = try
     runQsts(series; config = config, progress = progress)
   catch err
@@ -325,6 +328,7 @@ function _run_qsts_service(case_path::AbstractString, config_file::AbstractStrin
     return fail("qsts_invalid", sprint(showerror, err))
   end
 
+  phase_callback("writing_artifacts")
   csv_format = String(config.output.csv_format)
   paths = writeQstsResults(output_dir, r; format = csv_format)
   view = _qsts_view_dict(r)

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@
 #     rP_i = P_calc_i(V) - P_spec_i - alpha_i * lambda_P,   sum(alpha_i) = 1
 #
 # The system gains one unknown (lambda_P) and one equation (the REF bus's P
-# residual, which is no longer free). The REF voltage stays fixed — the angle
+# residual, which is no longer free). The REF voltage stays fixed: the angle
 # reference is untouched; only its P becomes an equation.
 
 """
@@ -32,7 +32,7 @@ Solver-side distributed-slack state for one island solve.
 
 - `alpha`: per-bus participation, `length(alpha) == n`, `sum(alpha) == 1`
   (aggregated over the generators of a bus; zero for non-participants). Fixed
-  for the whole solve — a PV→PQ switch during Q-limit handling does NOT remove
+  for the whole solve: a PV→PQ switch during Q-limit handling does NOT remove
   a participant.
 - `lambda`: the accepted `lambda_P` in p.u. (persists across the NR loop of
   one `runpf_rectangular!` call, starting at 0.0).
@@ -88,7 +88,7 @@ and counted. Surviving weights are normalized to `sum(alpha) = 1`, aggregated
 per bus.
 
 With no surviving participant, `fallback = :error` throws an `ArgumentError`
-naming island and mode; `:ref_only` returns `nothing` with a warning — the
+naming island and mode; `:ref_only` returns `nothing` with a warning: the
 island then solves classically.
 """
 function build_distributed_slack_state(
@@ -163,7 +163,7 @@ function build_distributed_slack_state(
     if fallback === :error
       throw(ArgumentError("distributed slack: no valid participant on $(label) with p_mode=$(p_mode) ($(dropped) candidate(s) dropped). Set power_flow.distributed_slack.fallback=ref_only to fall back to the classical slack."))
     end
-    @warn "Distributed slack: no valid participant — falling back to the classical slack for this island." island = label mode = p_mode dropped
+    @warn "Distributed slack: no valid participant, falling back to the classical slack for this island." island = label mode = p_mode dropped
     return nothing
   end
 
@@ -182,13 +182,13 @@ end
 #192: attach distributed-slack result metadata to the solver status
 NamedTuple (flat `distributed_slack_*` keys, following the `wrong_branch_*`
 naming of the existing metadata) and print a compact console summary at
-`verbose > 0`. The full participant table goes to the debug log only — the
+`verbose > 0`. The full participant table goes to the debug log only: the
 console stays at a few lines per the repository logging rule.
 
 When `respect_p_limits` is set, each participant whose corrected output
 `Pg + alpha_gen * lambda_P * Sbase` leaves `[minP, maxP]` produces one WARN;
 the count is reported as `distributed_slack_p_limit_violations`. Stage 1
-warns only — it does not clamp and re-solve.
+warns only: it does not clamp and re-solve.
 """
 function _merge_distributed_slack_diagnostics(status_build, performance_profile, net::Net, dslack::Union{Nothing,DistributedSlackState}, Sbase::Float64, verbose::Int)
   active = dslack !== nothing

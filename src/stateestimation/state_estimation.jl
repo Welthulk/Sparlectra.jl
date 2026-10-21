@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -4355,7 +4355,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "## State-estimation diagnostics")
     println(io)
     println(io, "- **Converged:** $(summary.converged)")
-    println(io, "- **Global consistency:** $(summary.global_consistency) — $(_global_consistency_label(summary))")
+    println(io, "- **Global consistency:** $(summary.global_consistency) ($(_global_consistency_label(summary)))")
     @printf(io, "- **Objective J:** %.6f (dof=%d, z=%.3f, within_3sigma=%s)\n", summary.objective.value, summary.objective.dof, summary.objective.zscore, string(summary.objective.within_3sigma))
     if hasproperty(summary.objective, :z_wh)
       @printf(io, "- **Wilson-Hilferty:** z_wh=%.3f, reason=%s%s\n", summary.objective.z_wh, string(summary.objective.reason), summary.small_redundancy ? " (small redundancy: nu < 30, reduced test power)" : "")
@@ -4545,7 +4545,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
       @printf(io, "- **Objective before:** %.6f\n", base.objective.value)
       @printf(io, "- **Objective after:** %.6f\n", rerun.diagnostics.objective.value)
       @printf(io, "- **Objective after stats:** dof=%d, z=%.3f, within_3sigma=%s\n", rerun_summary.objective.dof, rerun_summary.objective.zscore, string(rerun_summary.objective.within_3sigma))
-      println(io, "- **Global consistency after rerun:** $(rerun_summary.global_consistency) — $(_global_consistency_label(rerun_summary))")
+      println(io, "- **Global consistency after rerun:** $(rerun_summary.global_consistency) ($(_global_consistency_label(rerun_summary)))")
       println(io, "- **Interpretation after rerun:** $(rerun_summary.reason)")
     else
       println(io, "\nDeactivate-and-rerun")

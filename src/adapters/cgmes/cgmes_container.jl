@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/adapters/cgmes/cgmes_container.jl
-# purpose: layer 1 of the CGMES importer — turn a folder, a ZIP, several ZIPs
+# purpose: layer 1 of the CGMES importer, turn a folder, a ZIP, several ZIPs
 # or ZIP-in-ZIP containers into named XML byte streams. No XML parsing here;
 # profile classification happens in the reader (from the md:Model header,
 # never from filenames).

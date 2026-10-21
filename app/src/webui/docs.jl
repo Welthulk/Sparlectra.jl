@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -96,8 +96,8 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.apslf.order" => (label = "APSLF highest coefficient (order)", hint = "Highest power-series coefficient computed by the APSLF solver. Higher orders help stressed cases but increase the solve cost.", doc = "powerflow_configuration/#pf-solver-selection"),
   "power_flow.apslf.nr_polish" => (label = "APSLF NR polish", hint = "Run a Newton-Raphson polishing step on the APSLF series result. Default off: the series alone is a load-flow solution.", doc = "powerflow_configuration/#pf-solver-selection"),
   "power_flow.apslf.convergence_radius" => (label = "APSLF convergence radius", hint = "Evaluate the APSLF convergence radius, the distance of the nearest Padé pole to the evaluation point. Costs about as much as the solve; shown with the result.", doc = "powerflow_configuration/#pf-solver-selection"),
-  "power_flow.flatstart" => (label = "Flat start", hint = "Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. Start values and projection still run from it; only the start modes are ignored.", doc = "webui_reference/#webui-flat-start"),
-  "power_flow.start_mode.ratio_profile" => (label = "Ratio profile as a start candidate", hint = "Flat start only: the start projection also tries the flat profile scaled per voltage level by the transformer ratios and keeps it when clearly better.", doc = "powerflow_configuration/#pf-start-mode"),
+  "power_flow.flatstart" => (label = "Flat start", hint = "Every bus at 1.0 pu and 0 degrees, stored voltages ignored, no start projection or DC start. Only three-winding star points start at their ratio.", doc = "webui_reference/#webui-flat-start"),
+  "power_flow.start_mode.ratio_profile" => (label = "Ratio profile as a start candidate", hint = "PQ buses scaled by the transformer ratios as a start candidate. Off under a flat start; otherwise used only by the rescue alternate start and the auto mode.", doc = "powerflow_configuration/#pf-start-mode"),
   "power_flow.apslf_start.enabled" => (label = "Use APSLF start values", hint = "APSLF solver as a guarded start-value generator ahead of Newton-Raphson: the candidate is kept only if it improves the mismatch. Not with solver APSLF.", doc = "powerflow_configuration/#pf-apslf-start"),
   "power_flow.apslf_start.order" => (label = "APSLF start highest coefficient (order)", hint = "Highest series coefficient of the APSLF start-value generator; higher orders cost more before the candidate is judged. No effect unless the generator is on.", doc = "powerflow_configuration/#pf-apslf-start"),
   "power_flow.wrong_branch_detection" => (label = "Wrong-branch detection", hint = "Plausibility check of the converged solution on the highest voltage level: warn reports a suspicious result, fail treats it as non-converged, off skips it.", doc = "configuration/#config-wrong-branch"),

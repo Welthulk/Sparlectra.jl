@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@
     ShortCircuitResult
 
 Result of one [`runShortCircuit!`](@ref) evaluation (one `case`, one or many
-fault buses). Deliberately a separate type — it neither extends nor embeds
+fault buses). Deliberately a separate type: it neither extends nor embeds
 into `ACPFlowReport` (precedent: `rundcpf!` with its own report type).
 
 # Fields
@@ -88,7 +88,7 @@ function _sc_c_factor(vn_kV::Float64, case::Symbol, override::Float64)::Float64
 end
 
 # Fictitious generator resistance R_Gf per IEC 60909-0 §6.6.3 (needed so the
-# R/X ratio at the fault — and with it kappa/i_p — stays meaningful even in
+# R/X ratio at the fault (and with it kappa/i_p) stays meaningful even in
 # machine-dominated networks): 0.05·x''d for machines >= 100 MVA, 0.07·x''d
 # below that (HV machines), 0.15·x''d for LV machines.
 _sc_generator_resistance(x_pu::Float64, ratedS_MVA::Float64, ratedU_kV::Float64)::Float64 = (ratedU_kV > 1.0 ? (ratedS_MVA >= 100.0 ? 0.05 : 0.07) : 0.15) * x_pu
@@ -269,7 +269,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
   sbase = net.baseMVA
 
   # Synchronous machines: x''d on machine base → network base. Missing data
-  # is substituted with documented defaults AND flagged (safety contract) —
+  # is substituted with documented defaults AND flagged (safety contract):
   # a silent default on a safety-relevant quantity is not acceptable.
   for m in sc.synchronous_machines
     # a machine on a wind or solar unit is a current source, below with
@@ -296,7 +296,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       size = sc_machine_size(net, m)
       srated = something(size.value, sbase)
       why = if size.source === :rated_s
-        "short-circuit: SynchronousMachine $(name) has no usable x''_d — default 0.2 pu (machine base) substituted"
+        "short-circuit: SynchronousMachine $(name) has no usable x''_d, default 0.2 pu (machine base) substituted"
       elseif size.source === :pmax && placeholder !== nothing
         "short-circuit: SynchronousMachine $(name) has no usable x''_d and $(placeholder): default 0.2 pu on its maximum active power $(srated) MW substituted"
       elseif size.source === :pmax
@@ -315,7 +315,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       # adapter that converts from ohm (IIDM) has formed the value on the
       # network base already
       srated = sbase
-      why = placeholder === nothing ? "short-circuit: SynchronousMachine $(name) has no usable ratedS — network base $(sbase) MVA substituted" : "short-circuit: SynchronousMachine $(name) has $(placeholder): network base $(sbase) MVA substituted"
+      why = placeholder === nothing ? "short-circuit: SynchronousMachine $(name) has no usable ratedS, network base $(sbase) MVA substituted" : "short-circuit: SynchronousMachine $(name) has $(placeholder): network base $(sbase) MVA substituted"
       note(why)
       flag_bus(busidx, why)
       flag_island(busidx, why)
@@ -323,7 +323,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
     urated = m.ratedU_kV
     if urated === nothing || !isfinite(Float64(urated)) || Float64(urated) <= 0.0
       urated = vn
-      why = "short-circuit: SynchronousMachine $(name) has no usable ratedU — bus nominal $(vn) kV substituted"
+      why = "short-circuit: SynchronousMachine $(name) has no usable ratedU, bus nominal $(vn) kV substituted"
       note(why)
       flag_bus(busidx, why)
       flag_island(busidx, why)
@@ -336,7 +336,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
   # Network-feeder equivalents (ExternalNetworkInjection): Z_Q from the
   # declared initial symmetrical short-circuit current at the connection
   # point, R/X split from the declared ratio (default X = |Z|, R = 0.1·X per
-  # IEC 60909-0 §6.2 when unknown — flagged).
+  # IEC 60909-0 §6.2 when unknown, flagged).
   for f in sc.external_network_injections
     f.bus === nothing && continue
     busidx = get(net.busDict, String(f.bus), nothing)
@@ -347,8 +347,8 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
     if ik_A === nothing || !isfinite(Float64(ik_A)) || Float64(ik_A) <= 0.0
       # A feeder without a declared current cannot be modeled; in the :max
       # case the missing infeed makes every result in the island a lower
-      # bound — exactly what the safety flag exists for.
-      why = "short-circuit: feeder $(name) has no usable $(case === :max ? "maxInitialSymShCCurrent" : "minInitialSymShCCurrent") — contribution skipped ($(case === :max ? "Ik''max is a lower bound" : "Ik''min may be overestimated"))"
+      # bound, exactly what the safety flag exists for.
+      why = "short-circuit: feeder $(name) has no usable $(case === :max ? "maxInitialSymShCCurrent" : "minInitialSymShCCurrent"), contribution skipped ($(case === :max ? "Ik''max is a lower bound" : "Ik''min may be overestimated"))"
       note(why)
       flag_island(busidx, why)
       # in the minimum case the missing infeed overestimates, no lower bound
@@ -360,7 +360,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
     rx = case === :max ? f.maxR1ToX1Ratio : f.minR1ToX1Ratio
     if rx === nothing || !isfinite(Float64(rx)) || Float64(rx) < 0.0
       rx = 0.1
-      why = "short-circuit: feeder $(name) has no usable R/X ratio — default R = 0.1·X substituted"
+      why = "short-circuit: feeder $(name) has no usable R/X ratio, default R = 0.1·X substituted"
       note(why)
       flag_bus(busidx, why)
       flag_island(busidx, why)
@@ -384,7 +384,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
     r_ohm = e.r_ohm
     if r_ohm === nothing || !isfinite(Float64(r_ohm)) || Float64(r_ohm) < 0.0
       r_ohm = 0.0
-      why = "short-circuit: EquivalentInjection $(name) has no usable r — 0 Ω substituted"
+      why = "short-circuit: EquivalentInjection $(name) has no usable r, 0 Ω substituted"
       note(why)
       flag_bus(busidx, why)
       flag_island(busidx, why)
@@ -422,7 +422,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
         urated === nothing || !isfinite(Float64(urated)) || Float64(urated) <= 0.0 ? "ratedU" :
         srated === nothing || !isfinite(Float64(srated)) || Float64(srated) <= 0.0 ? "ratedS (nor ratedMechanicalPower/efficiency/ratedPowerFactor)" : nothing
       if missing_attr !== nothing
-        why = "short-circuit: AsynchronousMachine $(name) has no usable $(missing_attr) — contribution skipped; Ik''max in its island is a lower bound"
+        why = "short-circuit: AsynchronousMachine $(name) has no usable $(missing_attr), contribution skipped; Ik''max in its island is a lower bound"
         note(why)
         flag_island(busidx, why)
         flag_lower(busidx)
@@ -435,7 +435,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
         # decides the MV band and falls back to the conservative 0.15.
         mw_per_pole = m.ratedMechanicalPower_MW !== nothing && m.polePairNumber !== nothing && Float64(m.polePairNumber) > 0.0 ? Float64(m.ratedMechanicalPower_MW) / Float64(m.polePairNumber) : nothing
         rx = Float64(urated) <= 1.0 ? 0.42 : (mw_per_pole !== nothing && mw_per_pole >= 1.0 ? 0.10 : 0.15)
-        why = "short-circuit: AsynchronousMachine $(name) has no usable rxLockedRotorRatio — IEC 60909-0 §6.7.2 default R/X = $(rx) substituted"
+        why = "short-circuit: AsynchronousMachine $(name) has no usable rxLockedRotorRatio, IEC 60909-0 §6.7.2 default R/X = $(rx) substituted"
         note(why)
         flag_bus(busidx, why)
         flag_island(busidx, why)
@@ -454,7 +454,7 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
       busidx = Int(ps.comp.cFrom_bus)
       busidx in eachindex(net.nodeVec) || continue
       busidx in harvested_asm_buses && continue
-      why = "short-circuit: AsynchronousMachine $(ps.comp.cName) — short-circuit attributes not harvested, contribution skipped; Ik''max in its island is a lower bound"
+      why = "short-circuit: AsynchronousMachine $(ps.comp.cName): short-circuit attributes not harvested, contribution skipped; Ik''max in its island is a lower bound"
       note(why)
       flag_island(busidx, why)
       flag_lower(busidx)
@@ -588,11 +588,11 @@ function _sc_source_admittances(net::Net, sc, case::Symbol, c_override::Float64,
 end
 
 # Assemble the positive-sequence short-circuit admittance matrix of one
-# island: series branch impedances only (IEC 60909-0 — loads, line charging
+# island: series branch impedances only (IEC 60909-0: loads, line charging
 # and shunt compensators are dropped), source admittances on the diagonal.
 # Reuses the equivalent-circuit helpers (calcBranchYser/calcBranchRatio)
 # instead of re-implementing the branch model; deliberately NOT a patched
-# createYBUS — the PF assembly stays untouched by design and the
+# createYBUS: the PF assembly stays untouched by design and the
 # series-only variant needs no sparsity bookkeeping beyond this COO loop.
 # `island_buses` are group representatives (`reps`, the closed-link map of
 # the power flow): every bus enters the matrix through the representative
@@ -671,7 +671,7 @@ sequence only, series impedances only.
 
 Per fault bus the short-circuit impedance is obtained by a Z-bus column
 solve: one sparse LU factorization per island and case, one triangular solve
-per fault bus — the full inverse is never formed. Outputs per bus: `Ik''`
+per fault bus: the full inverse is never formed. Outputs per bus: `Ik''`
 (kA), `Sk''` (MVA), and `kappa`/`i_p` from the R/X ratio at the fault
 location (IEC 60909-0 method b: `κ = min(1.15·(1.02 + 0.98·e^{-3R/X}),
 cap)` with cap 1.8 below 1 kV and 2.0 above).
@@ -718,7 +718,7 @@ the factor off or without a size it feeds nothing and flags its island as
 a lower bound. Such a machine never enters `:min`.
 
 Substituted defaults and skipped contributions are flagged on the affected
-result rows (`contains_defaulted_data` + reasons), not only logged — for
+result rows (`contains_defaulted_data` + reasons), not only logged: for
 `:max` a skipped contribution makes the result a lower bound. Buses in
 islands without any short-circuit source report `status = :no_source` with
 `NaN` currents; isolated buses report `status = :isolated`.
@@ -952,7 +952,7 @@ function runShortCircuit!(
       return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :ok, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = ik, sk_MVA = sqrt(3.0) * vn * ik, kappa = NaN, ip_kA = sqrt(2.0) * ik, contains_defaulted_data = true, lower_bound = lower, reasons = reasons)
     end
     if sol === nothing || sol.factor === nothing
-      push!(reasons, "no short-circuit source in island $(island) — fault current undefined")
+      push!(reasons, "no short-circuit source in island $(island), fault current undefined")
       return (bus = name, bus_idx = bus, vn_kV = vn, island = island, status = :no_source, c = c, zk_ohm = NaN, rx_ratio = NaN, ik_kA = NaN, sk_MVA = NaN, kappa = NaN, ip_kA = NaN, contains_defaulted_data = true, lower_bound = lower, reasons = reasons)
     end
     li = sol.local_index[reps[bus]]
@@ -977,13 +977,13 @@ function runShortCircuit!(
     ik = ik_vs + ik_pf
     sk = sqrt(3.0) * vn * ik
     # R/X at the fault location (method b); a non-positive reactance would
-    # mean a badly conditioned source model — guard with a flag instead of
+    # mean a badly conditioned source model. Guard with a flag instead of
     # producing a silent kappa.
     rx = imag(z_ohm) > 0.0 ? max(real(z_ohm), 0.0) / imag(z_ohm) : NaN
     kappa = if isfinite(rx)
       min(1.15 * (1.02 + 0.98 * exp(-3.0 * rx)), vn <= 1.0 ? 1.8 : 2.0)
     else
-      push!(reasons, "short-circuit: non-positive reactance at the fault point — kappa/i_p unavailable")
+      push!(reasons, "short-circuit: non-positive reactance at the fault point, kappa/i_p unavailable")
       NaN
     end
     # kappa belongs to the voltage-source part; the converter part enters
@@ -1019,7 +1019,7 @@ function runShortCircuit!(
       Threads.@spawn begin
         # `local` is load-bearing: without it these assignments would bind
         # the ENCLOSING function's variables (the serial branch defines the
-        # same names), and every task would share one boxed slot — a data
+        # same names), and every task would share one boxed slot: a data
         # race that silently corrupts results (measured before the fix)
         local task_solution_for = island -> get(chunk_solutions[ci], island, nothing)
         local task_workspace_for = make_workspace_for()
@@ -1050,7 +1050,7 @@ end
 
 # Native-data convenience (issue #299): run on the net's own sc_sources
 # (filled by addExternalGrid!). An entirely empty container already yields
-# :no_source rows through the engine's safety-flag machinery — deliberately
+# :no_source rows through the engine's safety-flag machinery, deliberately
 # no pre-check here.
 runShortCircuit!(net::Net; kwargs...) = runShortCircuit!(net, net.sc_sources; kwargs...)
 
@@ -1079,7 +1079,7 @@ flag column), followed by the reason list of every flagged row. The Web UI
 """
 function printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows::Int = 50)
   println(io, _sc_status_line(result))
-  println(io, "Balanced 3-phase short circuit (IEC 60909-0) — case: ", result.case, result.c_factor_override > 0.0 ? ", c-factor override $(result.c_factor_override)" : ", c per IEC Table 1")
+  println(io, "Balanced 3-phase short circuit (IEC 60909-0), case: ", result.case, result.c_factor_override > 0.0 ? ", c-factor override $(result.c_factor_override)" : ", c per IEC Table 1")
   foreach(m -> println(io, m), filter(m -> startswith(m, _SC_EB_NEGATIVE_R) || startswith(m, _SC_3W_NEGATIVE_R), result.messages))
   println(io, rpad("bus", 24), rpad("Un[kV]", 9), rpad("Ik''[kA]", 11), rpad("Sk''[MVA]", 12), rpad("kappa", 8), rpad("ip[kA]", 11), rpad("status", 11), "flagged")
   shown = 0
@@ -1091,7 +1091,7 @@ function printShortCircuitResult(io::IO, result::ShortCircuitResult; max_rows::I
   end
   flagged = [row for row in result.rows if row.contains_defaulted_data]
   if !isempty(flagged)
-    println(io, "Flagged rows (defaulted data / skipped contributions — Ik''max lower bound where noted):")
+    println(io, "Flagged rows (defaulted data / skipped contributions, Ik''max lower bound where noted):")
     seen = Set{String}()
     for row in flagged
       for reason in row.reasons

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 # purpose: structural identity keys for `net.cgmes_ids`, shared by the CGMES
 #          importer (mRID capture) and the CGMES exporter (mRID reuse/minting).
 #
-# A structural key describes WHAT an object is in the network — not what it is
+# A structural key describes WHAT an object is in the network, not what it is
 # called in a source file. The importer records original mRIDs under these
 # keys; the exporter looks the same keys up and reuses the recorded mRID, so a
 # CGMES → Net → CGMES roundtrip preserves object identity. Keys that are not
@@ -50,7 +50,7 @@
 #   ASM|<bus>|<k>                    AsynchronousMachine
 #   SH|<bus>|<k>                     LinearShuntCompensator
 #   <parentkey>|T1 / |T2             Terminal by equipment sequence number
-#   MODEL|EQ / MODEL|TP / MODEL|SSH  md:FullModel header ids per profile
+#   MODEL|EQ / MODEL|TP / MODEL|SSH / MODEL|SV  md:FullModel header ids per profile (minted from the key plus the net name)
 #   REGION / SUBREGION / SUBSTATION  the single container hierarchy objects
 
 # A single leading underscore in an mRID is RDF/XML id syntax

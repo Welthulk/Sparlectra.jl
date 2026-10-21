@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,7 +19,7 @@
 #          array-level Newton driver run_complex_nr_rectangular
 #
 
-# rectangular_network_solver.jl — Rectangular PF network-level orchestration and public entry glue
+# rectangular_network_solver.jl: Rectangular PF network-level orchestration and public entry glue
 #
 # Current split architecture:
 # - `runpf_rectangular!` is the network-integrated rectangular solver entry point.
@@ -606,7 +606,7 @@ function runpf_rectangular!(
   end
 
   # Distributed slack (issue #192): discover participants on the FINAL bus
-  # types and freeze the alpha vector for the whole solve — later PV→PQ
+  # types and freeze the alpha vector for the whole solve: later PV→PQ
   # switching does not change participation. `nothing` (disabled, or ref_only
   # fallback with no valid participant) leaves the classical path untouched.
   dslack = if distributed_slack_enabled
@@ -615,7 +615,10 @@ function runpf_rectangular!(
     nothing
   end
 
-  set_phase("start_projection")
+  # The phase and its timing key exist only when the projection runs: a
+  # run-level flat start switches it off (_flatstart_profile_config), and its
+  # run.log must not show a start projection that did not run.
+  start_projection && set_phase("start_projection")
   # The projection's DC candidate solves the net's own DC model (Bbus plus
   # the phase-shift injections, assembled once here through assemble_dc_bbus,
   # the same model rundcpf! solves); without a net it would fall back to
@@ -632,14 +635,19 @@ function runpf_rectangular!(
   if verbose > 0 && wants_dc_candidate && projection_dc_model === nothing
     @info "start projection: DC candidate uses imag(Ybus) (an in-service branch has x_pu == 0, no DC model)"
   end
-  # The ratio-profile candidate (power_flow.start_mode.ratio_profile) belongs
-  # to a FLAT start only: there the flat magnitudes ignore the off-nominal
-  # transformer ratios, and the candidate scales them per voltage level. A
-  # start from stored voltages already carries its own magnitudes. The
-  # factors need the net's branches, so they are built here and handed to
-  # the projection; an empty vector means "no candidate" and leaves the
-  # selection exactly as before (the grid-bench adapter path runs with the
-  # projection off and never gets here with factors).
+  # The ratio-profile candidate (power_flow.start_mode.ratio_profile) is a
+  # candidate of the start projection on a FLAT seed: the flat magnitudes
+  # ignore the off-nominal transformer ratios, and the candidate scales them
+  # per voltage level. A start from stored voltages carries its own
+  # magnitudes. This is the one decision point: under a run-level flat start
+  # the projection is off (_flatstart_profile_config) and no candidate is
+  # built, so PQ buses start at 1.0 pu, PV and slack buses at their
+  # setpoints, every angle at 0, and only the auxiliary buses carry a ratio
+  # (_aux_bus_flat_start! above). The
+  # projection meets a flat seed in the rescue ladder's alternate start, in
+  # the auto mode and in direct keyword calls. The factors need the net's
+  # branches, so they are built here and handed to the projection; an empty
+  # vector means "no candidate".
   ratio_profile_factors = if start_projection && opt_flatstart && start_projection_ratio_profile
     _perf_profile_time!(performance_profile, :start_projection_ratio_profile) do
       _ratio_profile_factors(net, slack_idx)
@@ -647,7 +655,7 @@ function runpf_rectangular!(
   else
     Float64[]
   end
-  V0 = _perf_profile_time!(performance_profile, :start_projection) do
+  V0 = !start_projection ? V0 : _perf_profile_time!(performance_profile, :start_projection) do
     project_rectangular_start(
       Ybus,
       V0,
@@ -657,7 +665,7 @@ function runpf_rectangular!(
       slack_idx;
       dc_model = projection_dc_model,
       ratio_profile_factors = ratio_profile_factors,
-      enabled = start_projection,
+      enabled = true,
       try_dc_start = start_projection_try_dc_start,
       try_blend_scan = start_projection_try_blend_scan,
       branch_guard = start_projection_branch_guard,
@@ -713,7 +721,7 @@ function runpf_rectangular!(
 
   # Fixed-reference self-check support: record the full per-bus mismatch at
   # the exact start state Newton will see, after every start-value machine ran
-  # or was bypassed. Opt-in via the profile flag — normal runs pay nothing.
+  # or was bypassed. Opt-in via the profile flag, normal runs pay nothing.
   if performance_profile isa AbstractDict && get(performance_profile, :capture_initial_residual_rows, false) === true
     _perf_profile_time!(performance_profile, :initial_residual_capture) do
       _capture_initial_residual_rows!(performance_profile, Ybus, V0, S, bus_types, Vset, slack_idx, net)
@@ -1296,7 +1304,7 @@ function runpf_rectangular!(
 
   # The loop above can exit (converged break, non-converged break, or normal
   # exhaustion) while "q_limit_processing" or "newton_iteration" is still the
-  # active phase label — with no further set_phase() call afterward, all of
+  # active phase label: with no further set_phase() call afterward, all of
   # steps 6-8 below (voltage/injection writeback, Q-limit summary
   # finalization, wrong-branch checks, mismatch diagnostics) would otherwise
   # be misattributed to whichever phase happened to be active on the last
@@ -1894,7 +1902,7 @@ end
 # --- AC rescue ladder and DC fallback (power_flow.rescue / power_flow.dc.fallback) ---
 
 # The retries must restart from the state the caller handed in, not from the
-# garbage a failed Newton run leaves behind — so the start voltages are
+# garbage a failed Newton run leaves behind, so the start voltages are
 # snapshotted before the first attempt and restored before every retry.
 _snapshot_start_voltages(net::Net) = (Union{Nothing,Float64}[n._vm_pu for n in net.nodeVec], Union{Nothing,Float64}[n._va_deg for n in net.nodeVec])
 
@@ -1911,15 +1919,15 @@ end
 Ordered rescue strategies for a non-converged AC solve. Each entry is a
 `(name, config)` pair derived from the failed run's configuration:
 
-1. `:alternate_start` — toggle the flat-start flag: a stalled imported start
+1. `:alternate_start`: toggle the flat-start flag: a stalled imported start
    often solves from flat, and a failed flat start may solve from the
    imported voltages.
-2. `:autodamp` — adaptive damping with the default floor (skipped when the
+2. `:autodamp`: adaptive damping with the default floor (skipped when the
    failed run already used autodamp; the competing trust-region step control
    is disabled for this attempt).
-3. `:dc_seed` — flat voltage magnitudes with DC-projected start angles via
+3. `:dc_seed`: flat voltage magnitudes with DC-projected start angles via
    the existing start-projection machinery.
-4. `:settled_qlimits` — the globalization package for large, Q-limit-noisy
+4. `:settled_qlimits`: the globalization package for large, Q-limit-noisy
    systems: Armijo merit line search, a low damping floor, and Q-limit
    switching held back until the reactive requests have settled
    (`qlimits.start_mode = :auto`). Measured on an 82000-bus case whose
@@ -2101,7 +2109,7 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
       println("dc fallback: the DC power flow failed as well: ", sprint(showerror, err))
     end
     if dc_ok
-      println("dc fallback: AC did not converge — the net now carries the standalone DC solution (angles and branch P only, vm = 1 pu, no reactive results). The AC status stays non-converged.")
+      println("dc fallback: AC did not converge. The net now carries the standalone DC solution (angles and branch P only, vm = 1 pu, no reactive results). The AC status stays non-converged.")
       performance_profile isa AbstractDict && (performance_profile[:dc_fallback_applied] = true)
       status = rectangular_pf_status(net)
       status !== nothing && _set_rectangular_pf_status!(net, merge(status, (; dc_fallback_applied = true)))
@@ -2385,7 +2393,7 @@ function _merged_pf_net(net::Net)
   #
   # In practice both call sites (runpf!, _run_apslf_powerflow!) run
   # refreshBusTypesFromProsumers! right afterwards, which rebuilds slackVec from
-  # the — already remapped — prosumer bus indices and would mask a stale entry.
+  # the (already remapped) prosumer bus indices and would mask a stale entry.
   # Do not rely on that: _merged_pf_net is also called directly (tests,
   # diagnostics), and a future caller may skip the refresh.
   if !isempty(wnet.slackVec)

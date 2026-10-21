@@ -183,7 +183,9 @@ the number of buses and the load left unsupplied.
 | factorization reuse between steps | none |
 
 Every key that differs from the passed configuration is listed in the
-result `notes`. A `tap_pos` op of an SCF series sets the tap of its step,
+result `notes`. With `power_flow.flatstart = true` the base case starts
+flat as in a power-flow run, without start projection or DC seed; the notes
+name the switched-off keys. A `tap_pos` op of an SCF series sets the tap of its step,
 also on a transformer with a tap controller; with the controllers running
 such an op is refused. The run is refused, with the key named, for
 `power_flow.solver` other than `rectangular`, `power_flow.mode = auto` and

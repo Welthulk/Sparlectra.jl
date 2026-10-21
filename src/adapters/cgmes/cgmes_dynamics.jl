@@ -98,7 +98,8 @@ objects mapped, not mapped and without counterpart in the EQ (no
 `SynchronousMachine` behind the reference, or for the classes not mapped no
 reference path to an EQ object); further notices count the reasons. A
 record whose values break the `DynamicData` rules is dropped with a
-`warning:`.
+`warning:`. Returns the `CGMESDynamicsSummary` of the import report,
+`nothing` when the delivery carries no DY profile.
 """
 function _mapDynamics!(net, store::CGMESStore, ctx::_MapCtx)
   dy_files = Set{String}(f.name for f in store.files if :DY in f.profiles && !f.skipped)
@@ -129,6 +130,8 @@ function _mapDynamics!(net, store::CGMESStore, ctx::_MapCtx)
   acc = Dict{Int,Dict{Symbol,Any}}()
   sources = Dict{Int,Vector{Tuple{Symbol,String}}}()
   model_of = Dict{String,Int}()   # machine model mRID -> prosumer
+  # the SynchronousMachine name of the report (prosumer names repeat in real deliveries)
+  unit_name = Dict{Int,String}()
   for cls in _DY_MACHINE_CLASSES, o in dy_objects(cls)
     if boolval(o, :enabled, true) == false
       skip!(cls, "function block disabled")
@@ -151,6 +154,7 @@ function _mapDynamics!(net, store::CGMESStore, ctx::_MapCtx)
     acc[k] = Dict{Symbol,Any}(:inertia_s => num(o, :inertia), :damping_pu => num(o, :damping, 0.0), :rating_mva => rating, :unit_type => Sparlectra.SynchronousUnit)
     sources[k] = [(cls, o.mrid)]
     model_of[o.mrid] = k
+    unit_name[k] = str(sm, :name, sm.mrid)
   end
 
   governed = Set{Int}()
@@ -201,7 +205,6 @@ function _mapDynamics!(net, store::CGMESStore, ctx::_MapCtx)
     push!(sources[k], (cls, o.mrid))
   end
 
-  n_units = 0
   for k in sort!(collect(keys(acc)))
     kw = filter(p -> last(p) !== nothing, acc[k])
     dd = try
@@ -217,7 +220,6 @@ function _mapDynamics!(net, store::CGMESStore, ctx::_MapCtx)
       continue
     end
     net.prosumpsVec[k].dynamics = dd
-    n_units += 1
     for (cls, _) in sources[k]
       bump!(mapped, cls)
     end
@@ -239,12 +241,56 @@ function _mapDynamics!(net, store::CGMESStore, ctx::_MapCtx)
     _dyReachesEQ(store.objects[m], store, dy_files, incoming) ? bump!(not_mapped, cls) : bump!(no_eq, cls)
   end
 
-  push!(ctx.messages, "notice: DY profile read (cgmes_import.read_dynamics): $(n_units) unit(s) with dynamic data")
-  for cls in sort!(collect(dy_classes))
-    push!(ctx.messages, "notice: DY class $(cls): $(get(mapped, cls, 0)) mapped, $(get(not_mapped, cls, 0)) not mapped, $(get(no_eq, cls, 0)) without counterpart in EQ")
+  units = String[unit_name[k] for k in sort!(collect(keys(acc))) if net.prosumpsVec[k].dynamics !== nothing]
+  classes = [(class = cls, mapped = get(mapped, cls, 0), not_mapped = get(not_mapped, cls, 0), no_eq = get(no_eq, cls, 0)) for cls in sort!(collect(dy_classes))]
+  why_rows = [(class = cls, count = n, reason = why) for ((cls, why), n) in sort!(collect(reasons))]
+  summary = CGMESDynamicsSummary(sort!(collect(dy_files)), true, units, classes, why_rows)
+  for line in _dynamicsCountLines(summary)
+    push!(ctx.messages, "notice: " * line)
   end
-  for ((cls, why), n) in sort!(collect(reasons))
-    push!(ctx.messages, "notice: DY $(cls): $(n) object(s), $(why)")
+  return summary
+end
+
+# The DY files of `store` when the switch leaves them out, `nothing` without
+# a DY profile. A DY file is skipped by the reader then, or, in a store the
+# caller loaded with the DY profile, read but not mapped.
+function _dynamicsNotRead(store::CGMESStore)::Union{Nothing,CGMESDynamicsSummary}
+  files = sort!([f.name for f in store.files if :DY in f.profiles])
+  isempty(files) && return nothing
+  return CGMESDynamicsSummary(files, false, String[], NamedTuple{(:class, :mapped, :not_mapped, :no_eq),Tuple{Symbol,Int,Int,Int}}[], NamedTuple{(:class, :count, :reason),Tuple{Symbol,Int,String}}[])
+end
+
+# the count lines of a read DY profile; the import messages carry them with
+# a "notice: " prefix, the report adds the files and the units
+function _dynamicsCountLines(s::CGMESDynamicsSummary)::Vector{String}
+  lines = ["DY profile read (cgmes_import.read_dynamics): $(length(s.units)) unit(s) with dynamic data"]
+  for c in s.classes
+    push!(lines, "DY class $(c.class): $(c.mapped) mapped, $(c.not_mapped) not mapped, $(c.no_eq) without counterpart in EQ")
   end
-  return nothing
+  for r in s.reasons
+    push!(lines, "DY $(r.class): $(r.count) object(s), $(r.reason)")
+  end
+  return lines
+end
+
+"""
+    dynamicsReportLines(result::CGMESImportResult) -> Vector{String}
+    dynamicsReportLines(s::CGMESDynamicsSummary) -> Vector{String}
+
+Lines for the DY section of a CGMES import report (`cgmes_import_report.md` of a service
+run, `examples/run_cgmes_suite.jl`). Without a DY profile in the delivery the
+vector is empty. With a DY profile and `cgmes_import.read_dynamics = false`
+it holds one line naming the files and the switch. With the switch on: the
+number of units with `DynamicData`, the DY files, the unit names, one line
+per DY class (mapped, not mapped, without counterpart in the EQ) and one per
+reason, the same counts as the `notice: DY` import messages.
+"""
+dynamicsReportLines(result::CGMESImportResult)::Vector{String} = result.dynamics === nothing ? String[] : dynamicsReportLines(result.dynamics)
+
+function dynamicsReportLines(s::CGMESDynamicsSummary)::Vector{String}
+  s.read || return ["DY profile present ($(length(s.files)) file(s)), not read: cgmes_import.read_dynamics = false"]
+  lines = _dynamicsCountLines(s)
+  extra = ["DY files: " * join(s.files, ", ")]
+  isempty(s.units) || push!(extra, "units with dynamic data: " * join(s.units, ", "))
+  return vcat(lines[1:1], extra, lines[2:end])
 end

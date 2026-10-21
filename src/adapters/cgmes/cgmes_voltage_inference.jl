@@ -22,13 +22,13 @@
 
 # European standard nominal levels in kV, matched against the level library
 # of the real ENTSO-E CGM boundary (0.4 … 750 kV). 380 and 400 (and
-# 220/275/300/330, 132/135/150) coexist there — snapping picks the
+# 220/275/300/330, 132/135/150) coexist there: snapping picks the
 # relatively nearest, so a 393 kV SV value lands on 400 while 385 lands on
 # 380, and a 135 kV system is not folded onto 132.
 const _STANDARD_NOMINAL_KV = (1150.0, 750.0, 500.0, 400.0, 380.0, 330.0, 300.0, 275.0, 220.0, 150.0, 135.0, 132.0, 110.0, 66.0, 60.0, 45.0, 33.0, 30.0, 20.0, 15.0, 10.0, 6.3, 3.0, 0.69, 0.4)
 
 # Snap a measured/rated kV value to the standard series. Outside the 15 %
-# acceptance band the raw value is kept (rounded) — an exotic level is still
+# acceptance band the raw value is kept (rounded), an exotic level is still
 # better than refusing the bus, and the summary warning names the substitution
 # either way.
 function _snapNominalKV(v::Float64)::Float64
@@ -48,23 +48,23 @@ end
 Reconstruct nominal voltages for topological nodes whose `BaseVoltage` does
 not resolve (missing boundary catalog):
 
-1. **SV seed** — `SvVoltage.v` is stored in kV; snapped to the standard
+1. **SV seed**: `SvVoltage.v` is stored in kV; snapped to the standard
    level series it identifies the node's level directly (de-energized nodes
    with `v ≈ 0` are skipped).
-2. **Transformer seed** — `PowerTransformerEnd.ratedU` at the end's terminal
+2. **Transformer seed**: `PowerTransformerEnd.ratedU` at the end's terminal
    fills nodes without an SV value.
-3. **Propagation** — nodes joined by level-preserving equipment (anything
+3. **Propagation**: nodes joined by level-preserving equipment (anything
    but a `PowerTransformer`) share their level; a BFS spreads the seeded
    levels across switches, lines, and equivalent branches.
 
 Returns the per-TN map plus the per-source counts for the summary message.
-Nodes that stay unresolved are simply absent from the map — the caller keeps
+Nodes that stay unresolved are simply absent from the map, the caller keeps
 its regular missing-voltage handling for them.
 """
 function _inferNominalVoltages(store::CGMESStore)
   vn = Dict{String,Float64}()
 
-  # 1. SV seeds — the strongest evidence: the solved operating voltage.
+  # 1. SV seeds, the strongest evidence: the solved operating voltage.
   sv_n = 0
   for sv in objectsOf(store, :SvVoltage)
     tn = get(sv.refs, :TopologicalNode, nothing)

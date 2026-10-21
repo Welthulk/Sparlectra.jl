@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -678,6 +678,12 @@ webui, matpower_export) still come from the general file. A case
 without a config file, including a bare `.scf.json`, keeps the full
 chain, and so does the deprecated in-file block alone (legacy level,
 legacy semantics).
+
+A Web UI write that creates a case configuration file (a settings save,
+the measurement generator, the conversion of a legacy settings sidecar)
+writes, besides its own values, every case-scope key in which the general
+file differs from the packaged defaults, so the case computes as before. From then on
+the case no longer follows the general file for case-scope keys.
 
 Returns the effective typed `config`, the `effective_raw` dictionary for
 the effective-config artifact, the merged flat and nested override chains,

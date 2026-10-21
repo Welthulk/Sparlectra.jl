@@ -105,7 +105,7 @@ function run_webui_fast_tests()
             @test occursin("zero-sequence data on 3 line(s)", completed_html)
 
             failed_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "y", "status" => "completed", "metadata" => Dict("cgmes_export_status" => "failed", "cgmes_export_error" => "boom")))
-            @test occursin("failed — boom", failed_html)
+            @test occursin("failed: boom", failed_html)
 
             plain_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "z", "status" => "completed"))
             @test !occursin("CGMES export", plain_html)
@@ -293,7 +293,9 @@ function run_webui_fast_tests()
             @test resp_solver.status in (302, 303)
             saved_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
             @test saved_cfg["power_flow.solver"] == "apslf"
-            @test saved_cfg["power_flow.apslf_start.enabled"] === false
+            # the forced false is the inherited value, so the stored true is removed
+            @test get(saved_cfg, "power_flow.apslf_start.enabled", false) === false
+            @test Sparlectra.resolve_config(cfg_rt, joinpath(cache, "sp_case14.scf.json")).config.powerflow.apslf_start.enabled === false
             # an incompatible pair in one save is refused at save time, not at the run
             resp_bad = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular", "power_flow_apslf_start_enabled" => "true", "power_flow_dc_seed_unconditional" => "true"); output_root=root, runtime=rt)
             @test occursin("Could not save settings for this case", SparlectraApp._webui_urldecode(Dict(resp_bad.headers)["Location"]))
@@ -306,11 +308,12 @@ function run_webui_fast_tests()
             @test occursin("down-weight from |r|/sigma", knees_note)
             @test !occursin("se_robust_k1: 10", read(Sparlectra.case_config_path(joinpath(cache, "sp_case14.scf.json")), String))
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_solver" => "rectangular"); output_root=root, runtime=rt)
-            # the flat start sets only the profile (#463): the saved start
-            # settings stay as posted, the start machines run from the flat
-            # profile, only the two start modes are set to classic for the
-            # run (named in run.log); unchecking gives the modes back. The
-            # ratio-profile switch travels from the form into the case file.
+            # the flat start is a flat start: the saved start
+            # settings stay as posted, the run switches the projection, the
+            # DC seed and the two start modes off (named in run.log), the
+            # current-iteration and APSLF starts follow their own keys;
+            # unchecking gives the modes back. The ratio-profile switch
+            # travels from the form into the case file.
             resp_flat = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "true", "power_flow_ratio_profile" => "false", "power_flow_start_current_iteration_enabled" => "true", "power_flow_start_angle_mode" => "dc", "power_flow_start_voltage_mode" => "profile_blend"); output_root=root, runtime=rt)
             @test resp_flat.status in (302, 303)
             flat_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
@@ -320,22 +323,26 @@ function run_webui_fast_tests()
             run_flat = SparlectraApp.start_powerflow_run(Dict("casefile" => "sp_case14.scf.json", "config_file" => cfg_rt, "output_root" => root); case_directory=cache)
             @test run_flat["status"] == "succeeded"
             run_log = read(joinpath(String(run_flat["output_dir"]), "run.log"), String)
-            @test occursin("Flat start: start modes set to classic for this run: power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
+            @test occursin("power_flow.start_mode.angle_mode=classic, power_flow.start_mode.voltage_mode=classic", run_log)
             @test occursin(r"Flatstart\s+:\s+Yes", run_log)
             # the pre-solve was not switched off by the flat start
             @test run_flat["metadata"]["current_iteration_enabled"] === true
             profile_cfg, profile_keys = Sparlectra._flatstart_profile_config(Sparlectra.load_sparlectra_config(cfg_rt; reload = true, overrides = Dict{String,Any}("power_flow" => Dict{String,Any}("flatstart" => true, "apslf_start" => Dict{String,Any}("enabled" => true), "start_mode" => Dict{String,Any}("start_projection" => true, "angle_mode" => "dc")))))
-            @test profile_cfg.powerflow.start_mode.start_projection === true
+            @test profile_cfg.powerflow.start_mode.start_projection === false
             @test profile_cfg.powerflow.apslf_start.enabled === true
             @test profile_cfg.powerflow.start_mode.angle_mode === :classic
             @test "power_flow.start_mode.angle_mode=classic" in profile_keys
-            @test !any(k -> occursin("start_projection", k) || occursin("apslf_start", k), profile_keys)
+            @test "power_flow.start_mode.start_projection=false" in profile_keys
+            @test !any(k -> occursin("apslf_start", k), profile_keys)
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_flatstart" => "false"); output_root=root, runtime=rt)
-            off_cfg = Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json"))
-            @test off_cfg["power_flow.flatstart"] === false
-            @test off_cfg["power_flow.start_mode.angle_mode"] == "dc"
+            # both are back at their inherited values (L20: such a key is not
+            # kept in the case file), and the run reads them that way
+            off_pf = Sparlectra.resolve_config(cfg_rt, joinpath(cache, "sp_case14.scf.json")).config.powerflow
+            @test off_pf.start_mode.flatstart === false
+            @test off_pf.start_mode.angle_mode === :dc
+            @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "power_flow.flatstart")
             # machine-scope keys are named and kept out of the case file
-            resp2 = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "output_logfile_results" => "full"); output_root=root, runtime=rt)
+            resp2 = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "output_logfile_results" => "compact"); output_root=root, runtime=rt)
             @test occursin("output.logfile_results", SparlectraApp._webui_urldecode(Dict(resp2.headers)["Location"]))
             @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "output.logfile_results")
             # the general target merges into the YAML with a backup
@@ -509,13 +516,112 @@ function run_webui_fast_tests()
             @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.max_iter == 44
             @test max_iter(page("")) == "33"
             @test max_iter(page("&config_view=1")) == "44"
+            # L20: the page posts every field it renders. Saving it unchanged
+            # leaves the case file and the configuration file as they were
+            # (it wrote about 90 keys into the case file before).
+            case_path = joinpath(cache, "sp_case14.scf.json")
+            case_cfg = Sparlectra.case_config_path(case_path)
+            case_before = read(case_cfg, String)
+            cfg_before = read(cfg, String)
+            post(form) = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", form; output_root = root, runtime = rt)
+            unchanged = _webui_browser_form(page(""), "settings-form")
+            @test length(unchanged) > 50
+            @test post(unchanged).status == 303
+            @test read(case_cfg, String) == case_before
+            @test read(cfg, String) == cfg_before
+            # a changed field is written, and only that one
+            @test post(merge(unchanged, Dict{String,Any}("power_flow_tol" => "1.0e-7"))).status == 303
+            @test Sparlectra.load_case_config(case_path) == Dict{String,Any}("power_flow.max_iter" => 33, "power_flow.tol" => 1.0e-7)
+            @test read(cfg, String) == cfg_before
+            # set back to the inherited value the key leaves the case file; with
+            # a case file the inherited value is the packaged default, not the
+            # configuration file's 44, and the page shows what the run uses
+            packaged_max = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).powerflow.max_iter
+            @test packaged_max != 44
+            @test post(merge(_webui_browser_form(page(""), "settings-form"), Dict{String,Any}("power_flow_max_iter" => string(packaged_max)))).status == 303
+            @test Sparlectra.load_case_config(case_path) == Dict{String,Any}("power_flow.tol" => 1.0e-7)
+            @test Sparlectra.resolve_config(cfg, case_path).config.powerflow.max_iter == packaged_max
+            @test max_iter(page("")) == string(packaged_max)
+            # the last key set back would delete the file and hand the case to
+            # the configuration file (44): the posted value stays instead
+            packaged_tol = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true).powerflow.tol
+            @test post(merge(_webui_browser_form(page(""), "settings-form"), Dict{String,Any}("power_flow_tol" => string(packaged_tol)))).status == 303
+            @test Sparlectra.resolve_config(cfg, case_path).config.powerflow.max_iter == packaged_max
+            @test Sparlectra.load_case_config(case_path) == Dict{String,Any}("power_flow.max_iter" => packaged_max)
+            # A case WITHOUT a case file inherits the configuration file (44,
+            # not the packaged default). Unchanged saves from the Settings
+            # page, the Case page and the SE section create no case file; it
+            # held max_iter 44 before and the case stopped following the
+            # configuration file.
+            for f in ("sp_case5.scf.json", "sp_case5.measurements.csv")
+                cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", f)), joinpath(cache, f))
+            end
+            case5 = joinpath(cache, "sp_case5.scf.json")
+            get5(path) = String(copy(SparlectraApp.route_sparlectra_webui("GET", path * "?casefile=sp_case5.scf.json"; output_root = root, runtime = rt).body))
+            @test max_iter(get5("/powerflow/settings")) == "44"
+            for (path, id, marker) in (("/powerflow/settings", "settings-form", ""), ("/powerflow/case", "case-options-form", ""), ("/powerflow", "", "name=\"return_to\" value=\"runs\""))
+                form5 = _webui_browser_form(get5(path), id; containing = marker)
+                @test haskey(form5, "measurement_file") == (path == "/powerflow")
+                @test post(form5).status == 303
+                @test !isfile(Sparlectra.case_config_path(case5))
+            end
+            # a changed field creates the case file with that key only
+            @test post(merge(_webui_browser_form(get5("/powerflow/settings"), "settings-form"), Dict{String,Any}("power_flow_max_iter" => "45"))).status == 303
+            @test Sparlectra.load_case_config(case5) == Dict{String,Any}("power_flow.max_iter" => 45)
+            @test Sparlectra.resolve_config(cfg, case5).config.powerflow.max_iter == 45
+            # a measurement set chosen in the SE section survives a Settings save
+            # (that save posts no set and dropped the stored choice)
+            cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.measurements.baddata.csv")), joinpath(cache, "sp_case5.measurements.baddata.csv"))
+            se5 = _webui_browser_form(get5("/powerflow"), ""; containing = "name=\"return_to\" value=\"runs\"")
+            @test post(merge(se5, Dict{String,Any}("measurement_file" => "sp_case5.measurements.baddata.csv"))).status == 303
+            @test post(merge(_webui_browser_form(get5("/powerflow/settings"), "settings-form"), Dict{String,Any}("power_flow_max_iter" => "46"))).status == 303
+            @test occursin("<option value=\"sp_case5.measurements.baddata.csv\" selected>", get5("/powerflow"))
+            @test Sparlectra.load_case_config(case5) == Dict{String,Any}("power_flow.max_iter" => 46)
+            # The save that creates a case
+            # file also takes over the case-scope keys in which the
+            # configuration file differs from the packaged defaults. A case file
+            # makes resolve_config skip the configuration file's case-scope
+            # keys, so a save of tol alone moved max_iter from the
+            # installation's 30 to the packaged 80. Machine keys stay out.
+            rm(Sparlectra.case_config_path(case5))
+            @test packaged_max != 30
+            @test SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("power_flow.max_iter" => 30, "output.console_max_rows" => 7)).ok
+            @test Sparlectra.resolve_config(cfg, case5).config.powerflow.max_iter == 30
+            unchanged5 = _webui_browser_form(get5("/powerflow/settings"), "settings-form")
+            @test post(unchanged5).status == 303
+            @test !isfile(Sparlectra.case_config_path(case5))
+            created = post(merge(unchanged5, Dict{String,Any}("power_flow_tol" => "1.0e-7")))
+            @test created.status == 303
+            @test occursin("1 value(s) taken from configuration.yaml", SparlectraApp._webui_urldecode(Dict(created.headers)["Location"]))
+            @test Sparlectra.load_case_config(case5) == Dict{String,Any}("power_flow.tol" => 1.0e-7, "power_flow.max_iter" => 30)
+            @test Sparlectra.resolve_config(cfg, case5).config.powerflow.max_iter == 30
+            run5 = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => "sp_case5.scf.json", "config_file" => cfg, "output_root" => joinpath(root, "runs5")); case_directory = cache)
+            @test run5["status"] == "succeeded"
+            eff5 = read(joinpath(String(run5["output_dir"]), "effective_config.yaml"), String)
+            seg5 = eff5[first(findfirst("  power_flow:", eff5)):end]
+            @test occursin("value: 30", seg5[first(findfirst("    max_iter:", seg5)):(first(findfirst("    max_iter:", seg5))+220)])
+            # an existing case file is not filled up: a later change of the
+            # configuration file stays out of it
+            @test SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("power_flow.autodamp_min" => 0.07)).ok
+            @test post(merge(_webui_browser_form(get5("/powerflow/settings"), "settings-form"), Dict{String,Any}("power_flow_max_iter" => "31"))).status == 303
+            @test Sparlectra.load_case_config(case5) == Dict{String,Any}("power_flow.tol" => 1.0e-7, "power_flow.max_iter" => 31)
+            # the measurement generator creates the case file too (it stores
+            # its options) and takes over the same values
+            rm(Sparlectra.case_config_path(case5))
+            gen5 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "sp_case5.scf.json", "config_file" => cfg); output_root = root, runtime = rt)
+            @test gen5.status == 303
+            @test occursin("2 value(s) taken from configuration.yaml", SparlectraApp._webui_urldecode(Dict(gen5.headers)["Location"]))
+            stored5 = Sparlectra.load_case_config(case5)
+            @test (stored5["power_flow.max_iter"], stored5["power_flow.autodamp_min"]) == (30, 0.07)
+            @test !haskey(stored5, "output.console_max_rows")
+            @test Sparlectra.resolve_config(cfg, case5).config.powerflow.max_iter == 30
             # without a case (fresh root, nothing recalled) the page shows the
             # configuration file and offers no file-view link
             root2 = joinpath(dir, "out2")
             mkpath(root2)
             rt2 = (; case_directory = cache, config_file = cfg, operation_log = SparlectraApp.webui_operation_log_path(root2), startup_config_error = nothing, runner = SparlectraApp.start_powerflow_run)
             nocase = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root2, runtime = rt2).body))
-            @test max_iter(nocase) == "44"
+            @test max_iter(nocase) == "30"   # the configuration file value set above
             @test !occursin("config_view=1", nocase)
         end)() end
 
@@ -1081,6 +1187,20 @@ function run_webui_fast_tests()
             # no terminal in the test process, so the question answers itself with
             # no: an unattended start goes without an image, a build is opt-in
             @test sl(:ask_build, "never shown") == false
+            # a reader left pending by a question that timed out is reused by
+            # the next question on the same stream: a second readline would
+            # race with it and the older task would take the answer
+            console = Base.BufferStream()
+            ask_console(seconds) = Base.invokelatest(Base.invokelatest(getfield, SL, :console_answer), "?"; io = devnull, input = console, seconds)
+            @test ask_console(0.2) == ""
+            first_reader = slval(:_PENDING_CONSOLE_READER)[][2]
+            @test !istaskdone(first_reader)
+            write(console, "y\n")
+            @test ask_console(5.0) == "y"
+            @test istaskdone(first_reader) && fetch(first_reader) == "y"
+            @test slval(:_PENDING_CONSOLE_READER)[] === nothing
+            # the end of the input is an empty answer
+            @test Base.invokelatest(Base.invokelatest(getfield, SL, :console_answer), "?"; io = devnull, input = IOBuffer(""), seconds = 5.0) == ""
             @test slval(:REBUILD_FLAG) == "--rebuild-sysimage"
             @test slval(:NO_IMAGE_FLAG) == "--no-sysimage"
             # platform path contract, still owned by the package for everything
@@ -1819,6 +1939,60 @@ function run_webui_fast_tests()
                 end
                 @test occursin("\"status\":\"started\"", read(A.webui_operation_log_path(logs), String))
 
+                # --- the question of start_webui.jl: only an installed copy
+                # is asked, and only y or yes starts the updater
+                clogs = joinpath(tmp, "clogs")
+                cspawned = Cmd[]
+                asked = String[]
+                fetched = Ref(0)
+                counted(f) = (url; timeout) -> (fetched[] += 1; f(url; timeout))
+                function offer(; reply = "y", fetch = answer(200, release("v0.51.0")), layout = :installed_copy, root = inst, interactive = true, args = String[], env = Dict{String,String}(), port = false, building = false, spawn = cmd -> (push!(cspawned, cmd); nothing), ask = p -> (push!(asked, p); reply))
+                    return A.webui_console_update_offer(; args, env, interactive, fetch = counted(fetch), current = cur, layout, root, ask, port_busy = () -> port, sysimage_busy = () -> building, operation_log = clogs, answers = ans, spawn, io = devnull, windows = false)
+                end
+                # (a) a newer release, an installed copy and a yes
+                @test offer(reply = "y") === :started
+                @test length(cspawned) == 1 && length(asked) == 1
+                @test cspawned[1].exec[1] == "sh" && dirname(cspawned[1].exec[2]) == A.webui_update_dir(clogs)
+                @test occursin("kill -0 $(getpid())", read(cspawned[1].exec[2], String))
+                @test offer(reply = " YES\n") === :started
+                @test length(cspawned) == 2
+                # (b) every other answer, an empty line, the end of the input
+                # and no answer in time are a no
+                for reply in ("n", "no", "", "  ", "ja", "yy")
+                    @test (reply, offer(; reply)) == (reply, :declined)
+                end
+                eof_ask = p -> A._webui_console_read_answer(p; io = devnull, input = IOBuffer(""))
+                @test offer(ask = eof_ask) === :declined
+                silent = Base.BufferStream()
+                @test A._webui_console_read_answer("?"; io = devnull, input = silent, seconds = 0.2) == ""
+                typed = Base.BufferStream()
+                write(typed, "y\n")
+                @test A._webui_console_read_answer("?"; io = devnull, input = typed, seconds = 5.0) == "y"
+                @test length(cspawned) == 2
+                n_asked = length(asked)
+                # (c) up to date and (d) a failed check ask nothing
+                @test offer(fetch = answer(200, release("v0.50.0"))) === :up_to_date
+                @test offer(fetch = failure("Could not resolve host: api.github.com")) === :failed
+                @test offer(fetch = failure("Operation timed out"; timed_out = true)) === :failed
+                @test offer(fetch = answer(500, "")) === :failed
+                # (e) a git checkout or an unknown copy is never asked
+                @test offer(layout = :git_checkout, root = checkout) === :manual
+                @test offer(layout = :unknown, root = renamed) === :manual
+                # a Web UI on the port or a sysimage build: no question
+                @test offer(port = true) === :busy
+                @test offer(building = true) === :busy
+                @test length(asked) == n_asked && length(cspawned) == 2
+                # no terminal and the opt-outs: not even the request
+                fetched[] = 0
+                @test offer(interactive = false) === :not_interactive
+                @test offer(args = ["--no-update-check"]) === :disabled
+                @test offer(env = Dict("SPARLECTRA_UPDATE_CHECK" => "0")) === :disabled
+                @test offer(env = Dict("JULIA_PKG_OFFLINE" => "true")) === :disabled
+                @test fetched[] == 0 && length(asked) == n_asked && length(cspawned) == 2
+                # a shell that cannot start: nothing runs, the start goes on
+                @test offer(spawn = cmd -> throw(Base.IOError("could not spawn sh", -2))) === :start_failed
+                @test occursin("\"method\":\"CONSOLE\"", read(A.webui_operation_log_path(clogs), String))
+
                 # the Windows plan, built on any platform: start opens the console
                 # window, the batch file has CRLF line ends and the same answers
                 wplan = A.webui_update_plan(; root = inst, current = cur, tag = "v0.51.0", operation_log = joinpath(tmp, "wlogs"), pid = 4242, answers = (build_sysimage = false, create_shortcut = true), windows = true)
@@ -1829,6 +2003,11 @@ function run_webui_fast_tests()
                 for line in ("tasklist /FI \"PID eq 4242\"", "set \"SPARLECTRA_BUILD_SYSIMAGE=0\"", "set \"SPARLECTRA_CREATE_SHORTCUT=1\"", "set \"SPARLECTRA_INSTALL_DIR=$(dirname(inst))\"", "call \"$(joinpath(inst, "start_webui.bat"))\"")
                     @test (line, occursin(line, bat)) == (line, true)
                 end
+                # the restart runs in a console with a keyboard: the update
+                # question is switched off before start_webui.bat is called
+                restart = findfirst("call \"$(joinpath(inst, "start_webui.bat"))\"", bat)
+                optout = findlast("set \"SPARLECTRA_UPDATE_CHECK=0\"", bat)
+                @test optout !== nothing && restart !== nothing && last(optout) < first(restart)
             end
         end)() end
 

@@ -118,6 +118,17 @@ clamped at a reactive limit is a PQ bus at that limit, logged like a
 rectangular Q-limit event (result table `PQ*`, Q-V check), and its voltage
 setpoint does not count as a mismatch.
 
+A run that does not converge carries the diagnosis of AnalyticLoadFlow
+(0.10.2): the reason, for example `outside_pade_region` or
+`pade_not_converged`, the nearest Padé pole with its case bus and whether it
+is a conjugate pair, and the change of the Padé value at `s = 1` from order
+`N - 2` to `N`. It appears as one `APSLF diagnosis:` line in the primary
+reason of `run.log` and the Web UI result, and in the run metadata
+(`apslf_diagnosis_reason`, `apslf_pole_min_abs`, `apslf_pade_change`, ...).
+In an island-wise run the error message and the island's
+`ac_island_<n>_solver.log` show the line of each failed island; the metadata
+carries the keys of the first failed island.
+
 ### Standalone use via the external-solver bridge
 
 ```julia
@@ -126,10 +137,13 @@ iters, status, sol = runpf_external!(net, apslf_solver(); tol = 1e-8)
 
 Spec mapping `PFModel → AnalyticLoadFlow`: `Ybus → Y`, `busType → bustype`,
 `real/imag(Sspec) → Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax`
-(unconstrained when `model` carries no Q-limits), `slack_idx → slack`.
+(unconstrained when `model` carries no Q-limits), `slack_idx → slack`, and
+the slack voltage `Vset[slack_idx]` at the angle of `V0[slack_idx]` → `Vslack`,
+so the solution keeps the slack angle of the net.
 `sol.meta` carries the series/Padé `order`, the Padé margin (`stability`:
 `dmin`/`pole`/`bus`/`level`), the series radius (`series_radius`:
-`radius`/`bus`) and NR-polish bookkeeping; both bus fields are node indices
+`radius`/`bus`), NR-polish bookkeeping and, for a non-converged run, the
+`diagnosis`; the bus fields are node indices
 of the solved net, the framework run reports case bus numbers. Without a
 finite reactive limit the direct kernel runs one pass: nothing can switch,
 so further passes would repeat the same series solve.
@@ -149,9 +163,9 @@ controls: [Web UI guide](webui.md).
 APSLF is a different solution method, not a drop-in replacement of the
 rectangular path:
 
-- **No selectable start voltage.** The series starts from the analytic germ
-  `V(s=0) = 1∠0`; `model.V0`, `start_mode` and `start_projection` have no
-  effect.
+- **No selectable start voltage.** The series starts from its own analytic
+  germ; `model.V0` (apart from the slack angle), `start_mode` and
+  `start_projection` have no effect.
 - **No OLTC, tap-changer or phase-shifting-transformer control and no
   Q(U)/P(U) control.** With `power_flow.solver = apslf` the outer-loop tap
   and phase-shifter controllers are not run, Q(U)/P(U) controllers and

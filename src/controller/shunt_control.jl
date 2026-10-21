@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 # purpose: SVC-style variable-shunt voltage controller (outer loop): a
 #          susceptance actuator holds the local bus voltage; at a limit the
 #          device keeps its clamped susceptance, so the reactive output then
-#          follows V² — the honest SVC limit region, unlike a machine's
+#          follows V², the honest SVC limit region, unlike a machine's
 #          constant-Q limit. Includes the discrete MSC/MSR mode (issue
 #          #324): the susceptance moves in whole switched blocks
 #          (step_mvar), truncated toward the target so the bank never
@@ -32,7 +32,7 @@ susceptance, expressed as MVAr at 1.0 p.u. of the bus nominal voltage
 `[bs_min_mvar, bs_max_mvar]`. In range the controller holds
 `target_vm_pu` at its own bus via secant iteration; at a limit the
 susceptance stays clamped and the injected reactive power follows the bus
-voltage squared through the Y-bus stamp — the constant-B region of a real
+voltage squared through the Y-bus stamp, the constant-B region of a real
 SVC. Reported honestly via `at_limit`.
 
 Two actuator modes:
@@ -107,7 +107,7 @@ shunt of the bus instead (a CGMES bank with its own regulating control).
 
 # Arguments
 - `net::Net`: the network.
-- `bus::String`: the supported bus. Must be a PQ bus — a PV or slack bus is
+- `bus::String`: the supported bus. Must be a PQ bus: a PV or slack bus is
   already voltage-held by another unit.
 - `target_vm_pu::Float64`: voltage target at `bus` in p.u.
 - `bs_min_mvar`, `bs_max_mvar`: susceptance range as MVAr at 1.0 p.u.
@@ -169,7 +169,7 @@ function addShuntVoltageControl!(
     _shunt_step_floor(bs_max_mvar, step_mvar) >= _shunt_step_ceil(bs_min_mvar, step_mvar) || error("ShuntVoltageControl: no whole multiple of step_mvar = $(step_mvar) lies inside [$(bs_min_mvar), $(bs_max_mvar)] MVAr")
   end
   node = net.nodeVec[busIdx]
-  node._nodeType == PQ || error("ShuntVoltageControl: bus $(bus) is $(node._nodeType) — its voltage is already held; a shunt controller needs a PQ bus.")
+  node._nodeType == PQ || error("ShuntVoltageControl: bus $(bus) is $(node._nodeType). Its voltage is already held; a shunt controller needs a PQ bus.")
   any(c -> c isa ShuntVoltageControl && c.bus == bus, net.machineControls) && error("ShuntVoltageControl: bus $(bus) already has a shunt voltage controller.")
   # Cross-type check, same reasoning as for machine controllers: a
   # tap-regulated bus stays PQ, so only this warning can flag the double
@@ -247,7 +247,7 @@ end
 
 # resolve the controlled shunt defensively (same reasoning as the machine
 # controller: indices are push-only stable, but a copied controller may point
-# elsewhere — fail loudly instead of actuating the wrong element)
+# elsewhere: fail loudly instead of actuating the wrong element)
 function _find_controlled_shunt(net::Net, ctrl::ShuntVoltageControl)::Shunt
   (1 <= ctrl.shunt_idx <= length(net.shuntVec)) || error("ShuntVoltageControl $(ctrl.name): shunt index $(ctrl.shunt_idx) out of range")
   sh = net.shuntVec[ctrl.shunt_idx]
@@ -343,7 +343,7 @@ function control_propose_update!(ctrl::ShuntVoltageControl, net::Net, ::Abstract
   new_bs = clamp(b0 + Δb, ctrl.bs_min_mvar, ctrl.bs_max_mvar)
   if ctrl.step_mvar !== nothing
     # discrete bank (#324): move whole blocks only, TRUNCATED toward the
-    # target — the bank approaches from one side and never overshoots, so
+    # target: the bank approaches from one side and never overshoots, so
     # it cannot oscillate between two adjacent steps (anti-hunting). The
     # bootstrap probe may propose less than one block; widen it to the
     # first whole block in the probe direction so the secant gets its
@@ -387,7 +387,7 @@ function control_apply_update!(ctrl::ShuntVoltageControl, net::Net, ::AbstractCo
   ctrl.at_limit = _shunt_at_outer_limit(ctrl)
   if ctrl.step_mvar !== nothing
     # parked: not converged, not at the last block, and no whole block was
-    # proposed — the step resolution is exhausted at this operating point.
+    # proposed: the step resolution is exhausted at this operating point.
     # Any accepted move un-parks (the next evaluate re-decides).
     ctrl.parked = !ctrl.converged && !ctrl.at_limit && !moved
     ctrl.parked && (ctrl.status = :parked)

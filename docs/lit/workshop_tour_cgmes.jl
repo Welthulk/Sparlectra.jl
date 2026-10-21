@@ -183,8 +183,8 @@ print(a_report)
 # declared dependencies (`md:Model.DependentOn`), which of them are
 # missing from the input, and a histogram of unresolved references. The
 # missing boundary set is named BY MODEL ID: exactly the file to ask the
-# sender for. The same report lands in `cgmes.log` when a Web UI or
-# service import aborts.
+# sender for. The same report lands in `cgmes_import_report.md` when a
+# Web UI or service import aborts.
 #
 # ## Chapter 3: bus-branch import, solve, validate
 #

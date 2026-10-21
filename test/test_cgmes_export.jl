@@ -246,6 +246,19 @@ function run_cgmes_export_tests()
     ns = Sparlectra.CGMESImporter.CGMES_UUID_NAMESPACE
     @test net.cgmes_ids["TN|A"] == string(UUIDs.uuid5(ns, "TN|A"))
     @test net.cgmes_ids["ACL|A|B|2"] == string(UUIDs.uuid5(ns, "ACL|A|B|2"))
+    # the FullModel ids are minted over the key plus the net name: two
+    # networks never share an EQ model id (L8, every export carried the same
+    # one and the Web UI binds measurement tables by it)
+    @test net.cgmes_ids["MODEL|EQ"] == string(UUIDs.uuid5(ns, "MODEL|EQ|exportnet"))
+    other = _export_test_net()
+    other.name = "othernet"
+    dir_a = mktempdir()
+    dir_b = mktempdir()
+    writeCGMESFiles(_export_test_net(); path = dir_a, created = _EXPORT_STAMP)
+    writeCGMESFiles(other; path = dir_b, created = _EXPORT_STAMP)
+    eq_a = Sparlectra.CGMESImporter.cgmesEquipmentModelIds(dir_a)
+    eq_b = Sparlectra.CGMESImporter.cgmesEquipmentModelIds(dir_b)
+    @test length(eq_a) == 1 && length(eq_b) == 1 && eq_a != eq_b
   end)() end
 
   @testset "re-export is byte-identical" begin (function ()
@@ -664,6 +677,11 @@ function run_cgmes_export_tests()
   # regulating controls, breakers, the SSH operating point, the SV
   # voltages and flows) must compare equal object by object.
   @testset "export-import-export identity on the checked-in deliveries" begin (function ()
+    # each delivery carries its own EQ model id (L8: all three shared one,
+    # so a measurement table bound to one demo case showed up at all three)
+    demo_eq = [Sparlectra.CGMESImporter.cgmesEquipmentModelIds(cgmes_fixture_dir(c)) for c in ("sp_case14", "sp_case118", "sp_casePST")]
+    @test all(ids -> length(ids) == 1, demo_eq)
+    @test allunique(first.(demo_eq))
     for case in ("sp_case14", "sp_case118", "sp_casePST")
       dir = cgmes_fixture_dir(case)
       res = importCGMES(path = dir, name = case)

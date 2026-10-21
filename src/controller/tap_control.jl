@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -239,7 +239,7 @@ function control_propose_update!(ctrl::PowerTransformerControl, net::Net, ::Abst
   end
   return (old_ratio = old_ratio, new_ratio = new_ratio, old_phase = old_phase, new_phase = new_phase)
 end
-# Typed phase-tap model of the winding that carries this controller —
+# Typed phase-tap model of the winding that carries this controller:
 # `nothing` for controllers on windings without one (MATPOWER general-case
 # PSTs, CGMES-flattened PSTs), which keep static reactance.
 function _phase_tap_model_of(net::Net, ctrl::PowerTransformerControl)::Union{Nothing,PhaseTapChangerModel}
@@ -255,7 +255,7 @@ end
 # X(α) of the controlled PST at a continuous controller angle, in pu.
 # Formula models (symmetrical/asymmetrical with x_min/x_max) evaluate
 # calcPhaseTapReactance directly at the continuous angle; tabular models snap
-# to the nearest table row by angle (no interpolation — the #261 Stage-4
+# to the nearest table row by angle (no interpolation, the #261 Stage-4
 # decision) and use its per-step x_pu. Returns `nothing` when the model
 # carries no reactance data, which keeps the coupling strictly opt-in.
 function _phase_tap_reactance_at(net::Net, ctrl::PowerTransformerControl, angle_deg::Float64)::Union{Nothing,Float64}
@@ -782,7 +782,7 @@ Add and validate a transformer tap controller.
 Validation rules:
 - Each actuator (ratio tap, phase tap) of a transformer may be driven by at
   most one active controller. Two controllers may coexist on one transformer
-  when they drive disjoint actuators — the classic Schrägregelung split of a
+  when they drive disjoint actuators, the classic Schrägregelung split of a
   voltage controller (ratio tap) plus an active-power controller (phase tap).
 - Required target fields must be set according to `mode`.
 - `control_ratio` / `control_phase` must match the chosen mode.
@@ -863,7 +863,7 @@ function addPowerTransformerControl!(
       cbr = _find_trafo_branch(net, c.trafo)
       cbr.branchIdx == br.branchIdx && continue
       if c.target_bus == target_bus && c.target_vm_pu !== nothing
-        @warn "PowerTransformerControl: a tap controller ($(c.trafo)) already regulates the voltage of target bus $(target_bus) — two independent controllers on one voltage fight each other via circulating reactive power; regulate parallel units as a GROUP (followers = [...]) instead."
+        @warn "PowerTransformerControl: a tap controller ($(c.trafo)) already regulates the voltage of target bus $(target_bus). Two independent controllers on one voltage fight each other via circulating reactive power; regulate parallel units as a GROUP (followers = [...]) instead."
       end
     end
   end
@@ -976,7 +976,7 @@ function _phase_probe_direction(net::Net, br::Branch, ctrl::PowerTransformerCont
   erg = _probe_solve_status(net, probe_cfg)
   erg != 0 && return -1.0
   # branch flows live in fBranchFlow/tBranchFlow, which only calcNetLosses!
-  # rewrites — without the refresh both probe reads return the same stale
+  # rewrites: without the refresh both probe reads return the same stale
   # values and the estimated direction is always 0
   calcNetLosses!(net)
   p0 = get_branch_p_from_to_mw(net, ctrl.target_branch[1], ctrl.target_branch[2])

@@ -130,7 +130,7 @@ sweeps (`runtime.parallel.*`) compose with the pass.
 | Call | [`runShortCircuit!`](@ref) (`case = :max` or `:min`, `buses = :all` or a list), `printShortCircuitResult`; coverage: `shortCircuitCoverage`, `printShortCircuitCoverage` |
 | Config key | `short_circuit.c_factor` (or the `c_factor` keyword): scalar expert override of the voltage factor for verification runs; `short_circuit.sweep_method` (`:auto`, `:takahashi`, `:solves`), `short_circuit.takahashi_min_buses` (default 50); `short_circuit.converter_current_factor` (default 0, off): converter current without `maxIFault` as a multiple of the rated current |
 | Result field | per fault bus `Ik''` (kA), `Sk''` (MVA), `κ`, `i_p`, `status` (`:no_source` with `NaN` currents), `contains_defaulted_data` plus a reason list, `lower_bound`; per run `status` and `status_reason` |
-| Artifact | `short_circuit_max.csv`, `short_circuit_min.csv` (one row per bus; `flagged`, `reasons` and `lower_bound` carry the flags); coverage view in `cgmes.log` |
+| Artifact | `short_circuit_max.csv`, `short_circuit_min.csv` (one row per bus; `flagged`, `reasons` and `lower_bound` carry the flags); coverage view in `run.log` |
 | Web UI | PowerFlow form, **Short circuit** button: both cases, no power-flow solve; which cases offer it: [Web UI](webui.md) |
 
 **The data.** Every CGMES import harvests the short-circuit source data
@@ -152,7 +152,8 @@ disconnected, out of service) feeds no fault current:
 
 `shortCircuitCoverage(result.shortcircuit)` reports the record count per
 class and the fill rate per attribute; `printShortCircuitCoverage` renders
-it, and every CGMES run writes the same view into `cgmes.log`.
+it, and every CGMES power-flow run writes the same view as a table into
+`cgmes_import_report.md`.
 
 **The calculation.** [`runShortCircuit!`](@ref) computes the balanced
 three-phase initial symmetrical current:

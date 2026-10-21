@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -44,18 +44,18 @@ end
 
 DC power-flow susceptance matrix and phase-shift injection vector, ported
 from MATPOWER's `makeBdc.m` (BSD-3-Clause; algorithm only, no code copied).
-Series reactance only — resistance, shunt conductance/susceptance, and line
+Series reactance only: resistance, shunt conductance/susceptance, and line
 charging are all ignored, per the lossless DC model. Tap magnitude divides
 the series susceptance; phase shift enters only as an injection term, never
 as part of `Bbus` itself (MATPOWER's DC convention).
 
-Reads `Branch.tap_ratio`/`Branch.phase_shift_deg` — the branch's *live*
-effective tap this network was last stamped with — gated by
+Reads `Branch.tap_ratio`/`Branch.phase_shift_deg` (the branch's *live*
+effective tap this network was last stamped with), gated by
 `Branch.ratio != 0.0` marking a transformer (mirrors `calcBranchRatio`'s
 "line vs. transformer" convention in `src/branch.jl`). Only in-service
 (`status == 1`) branches contribute.
 
-Returns the full `n×n` sparse `Bbus` (before any slack elimination — reduce
+Returns the full `n×n` sparse `Bbus` (before any slack elimination: reduce
 with `reduce_susceptance_to_nonslack` using `value_of = x -> -x`,
 since that helper expects positive off-diagonal branch weights and `Bbus`'s
 off-diagonals are the standard-convention `-b`; see [`solve_dc_powerflow`](@ref)'s

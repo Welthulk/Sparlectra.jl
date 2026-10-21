@@ -33,7 +33,7 @@ SparlectraBenchmarkToolsExt = "BenchmarkTools"
 SparlectraKLUExt = "KLU"
 
 [compat]
-AnalyticLoadFlow = "0.10"
+AnalyticLoadFlow = "0.10.2"
 BenchmarkTools = "1.6"
 Dates = "1"
 DelimitedFiles = "1"

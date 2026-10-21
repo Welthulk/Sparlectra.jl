@@ -18,6 +18,11 @@
 #          macOS and Windows go through exactly the same code: check for a
 #          usable sysimage (tools/sysimage_launcher.jl), offer to build one
 #          when it is missing or outdated, then relaunch through the image.
+#          Started from a terminal, it then asks GitHub for a newer release
+#          and offers to install it (an installed copy only); only an answer
+#          y or yes installs. `--no-update-check` or SPARLECTRA_UPDATE_CHECK=0
+#          skips the check for unattended starts, and so does
+#          JULIA_PKG_OFFLINE=true.
 
 # --- sysimage handling ------------------------------------------------------
 # This runs BEFORE `using Sparlectra`, deliberately: the launcher module sits
@@ -25,7 +30,7 @@
 # no package load. Julia can only take an image at process start (-J), so a
 # process that wants one has to start itself again.
 include(joinpath(@__DIR__, "tools", "sysimage_launcher.jl"))
-using .SysimageLauncher: handle_sysimage, prepare_environments, repair_environment, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
+using .SysimageLauncher: handle_sysimage, console_answer, prepare_environments, repair_environment, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
 
 const _SPARLECTRA_LIBRARY_DIR = abspath(@__DIR__)
 const _SPARLECTRA_APP_DIR = abspath(joinpath(@__DIR__, "app"))
@@ -72,6 +77,22 @@ if _ENV_ONLY
   println("Environment check finished.")
   exit(0)
 end
+
+# --- update check -----------------------------------------------------------
+# After the sysimage decision, because the check lives in SparlectraApp: on a
+# sysimage it runs in the relaunched process, whose id the updater waits for.
+# Only an installed copy is offered the install, and only an explicit yes
+# installs. When the updater runs, this process ends without a server; the
+# updater starts the new version. The question reads the console through
+# console_answer like the sysimage question, so a reader left over from that
+# question after its timeout takes the answer to this one instead of racing
+# with a second reader for the same line.
+function offer_update()
+  ask = prompt -> console_answer(prompt; seconds = SparlectraApp.WEBUI_CONSOLE_UPDATE_ANSWER_SECONDS)
+  SparlectraApp.webui_console_update_offer(; ask) === :started && exit(0)
+  return nothing
+end
+Base.invokelatest(Base.invokelatest(getfield, @__MODULE__, :offer_update))
 
 function main()
   # On a sysimage the pages are compiled already and the window opens at

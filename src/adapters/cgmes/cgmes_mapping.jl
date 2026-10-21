@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,15 +13,15 @@
 # limitations under the License.
 
 # file: src/adapters/cgmes/cgmes_mapping.jl
-# purpose: layer 5 of the CGMES importer — map CIM objects onto the
+# purpose: layer 5 of the CGMES importer, map CIM objects onto the
 # Sparlectra Net (Stage 1: bus-branch, lines, 2W/3W transformers with fixed
 # SSH tap positions, shunts, loads, machines, equivalent injections, slack
 # selection). Short-circuit source data is always harvested into
-# `CGMESShortCircuitData` — read, not evaluated.
+# `CGMESShortCircuitData` (read, not evaluated).
 
 """
 Typed short-circuit source data harvested during import.
-Each entry carries the CIM mRID, the object name and — where resolvable —
+Each entry carries the CIM mRID, the object name and, where resolvable,
 the Sparlectra bus name. Values stay in CGMES units (Ω, S, A, pu on machine
 base); nothing is evaluated in Stage 1. `importCGMES` keeps the records of
 the sources it mapped onto the network (`ExternalNetworkInjection`,
@@ -58,6 +58,19 @@ end
 # fits the SV flows of its transformer clearly worse than another step
 const _SvTapFitRow = NamedTuple{(:transformer, :tap_changer, :sv_step, :best_step, :sv_mismatch_mva, :best_mismatch_mva),Tuple{String,String,Int,Int,Float64,Float64}}
 
+# What the import did with the DY profile, kept for the import report
+# (dynamicsReportLines): the DY files of the delivery, whether they were
+# read (cgmes_import.read_dynamics), the units that got DynamicData and the
+# per-class and per-reason counts of _mapDynamics!. `nothing` on the result
+# when the delivery carries no DY profile.
+struct CGMESDynamicsSummary
+  files::Vector{String}
+  read::Bool
+  units::Vector{String}
+  classes::Vector{NamedTuple{(:class, :mapped, :not_mapped, :no_eq),Tuple{Symbol,Int,Int,Int}}}
+  reasons::Vector{NamedTuple{(:class, :count, :reason),Tuple{Symbol,Int,String}}}
+end
+
 """
 Result of `importCGMES`: the `Net`, the merged `CGMESStore`, the bus-branch
 topology, the harvested short-circuit data, the selected slack bus and the
@@ -72,6 +85,10 @@ which weakens any comparison against the delivery's SV state
 `sv_tap_step_fits` lists the tap changers whose `SvPowerFlow` fits another
 step clearly better than their `SvTapStep` (transformer, tap changer, both
 steps and both mismatches in MVA); the import counts them in one notice.
+`dynamics` says what the import did with a DY profile (`nothing` without
+one): its files, whether `cgmes_import.read_dynamics` read them, the units
+that got `DynamicData` and the counts per DY class and reason;
+`dynamicsReportLines` renders it.
 
 `element_by_mrid` maps the mRID of every CGMES object the importer turned
 into a network element to `(kind, index)`, recorded where the element is
@@ -118,6 +135,7 @@ struct CGMESImportResult
   no_sv_buses::Vector{String}
   element_by_mrid::Dict{String,Tuple{Symbol,Int}}
   sv_tap_step_fits::Vector{_SvTapFitRow}
+  dynamics::Union{Nothing,CGMESDynamicsSummary}
 end
 
 # mutable importer bookkeeping threaded through the mapping helpers.
@@ -138,7 +156,7 @@ struct _MapCtx
   # machine remote-voltage controllers planned by _mapInjections! and attached
   # by importCGMES only after bus types and isolation are final
   machine_ctrl_plans::Vector{NamedTuple}
-  # first-seen counters for structural identity keys, keyed by (kind, bus) —
+  # first-seen counters for structural identity keys, keyed by (kind, bus):
   # shared across all mapping passes so capture and a later export assign the
   # same <k> even when equipment of one class arrives from different loops
   eqp_counters::Dict{Tuple{String,String},Int}
@@ -187,19 +205,19 @@ _MapCtx(tap_control::Bool = false, ignore_connected::Bool = false; machine_contr
 # flags contradict their SV state)
 _conn(ctx::_MapCtx, flag::Bool) = ctx.ignore_connected || flag
 
-# SSH `Equipment.inService` — CGMES 3.0 moved the operational status onto the
+# SSH `Equipment.inService`, CGMES 3.0 moved the operational status onto the
 # equipment itself; 2.4.15 deliveries do not carry it (absent → in service).
 # This is NOT redundant with Terminal.connected: ReliCapGrid parks
 # out-of-service generators with connected=true, inService=false, no SvVoltage
 # and a placeholder regulation target. Ignoring the flag imported 413 MW of
-# phantom generation into Svedala alone — the single largest reason the solved
+# phantom generation into Svedala alone, the single largest reason the solved
 # corridor flows missed the delivery's SV state. Honors ignore_connected for
 # consistency with _conn (the override means "treat everything as live").
 _inService(ctx::_MapCtx, o::CIMObject)::Bool = ctx.ignore_connected || something(boolval(o, :inService), true)
 
 # --- tap changers (fixed operating point in Stage 1) ------------------------
 #
-# Step source order: SvTapStep position (the solved state — present in every
+# Step source order: SvTapStep position (the solved state, present in every
 # conformity data set and in real exchanges) → SSH `step` (initial operating
 # point) → neutralStep. The MicroGrid BaseCase SV was produced with active tap
 # control, so SvTapStep differs from SSH for regulated units; a fixed-tap
@@ -641,9 +659,9 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       end
       # regulated bus from the TapChangerControl terminal
       tinfo = _regulatedBus(store, topo, tcc)
-      tinfo === nothing && (push!(ctx.messages, "notice: tap controller $(name) — control terminal unresolved, skipped"); continue)
+      tinfo === nothing && (push!(ctx.messages, "notice: tap controller $(name), control terminal unresolved, skipped"); continue)
       target = num(tcc, :targetValue, 0.0)
-      target <= 0.0 && (push!(ctx.messages, "notice: tap controller $(name) — no positive voltage target, skipped"); continue)
+      target <= 0.0 && (push!(ctx.messages, "notice: tap controller $(name), no positive voltage target, skipped"); continue)
       deadband = num(tcc, :targetDeadband, 0.0)
       before = Sparlectra._tap_controllers(net)
       Sparlectra.addPowerTransformerControl!(
@@ -672,7 +690,7 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       side = tccterm === nothing ? nothing : get(ctx.branch_side, tccterm, nothing)
       from_name = _busDictName(net, br.fromBus)
       to_name = _busDictName(net, br.toBus)
-      (from_name === nothing || to_name === nothing) && (push!(ctx.messages, "notice: tap controller $(name) — bus name lookup failed, skipped"); continue)
+      (from_name === nothing || to_name === nothing) && (push!(ctx.messages, "notice: tap controller $(name), bus name lookup failed, skipped"); continue)
       # the controller monitors the branch in stored (from → to) orientation;
       # a control terminal on the to side flips the target sign (the loss
       # asymmetry between the two ends is far below the deadband)
@@ -695,7 +713,7 @@ function _attachTapControl!(net, store::CGMESStore, topo::CGMESTopology, ctx::_M
       push!(attached, (tc, on_from_side))
       push!(ctx.messages, "tap control: $(trafo_name)/$(name) → active power $(target) MW on $(target_branch[1]) → $(target_branch[2])")
     else
-      push!(ctx.messages, "notice: tap controller $(name) — unsupported combination $(tc.class)/$(mode), skipped")
+      push!(ctx.messages, "notice: tap controller $(name), unsupported combination $(tc.class)/$(mode), skipped")
     end
   end
   return attached
@@ -773,7 +791,7 @@ end
 # Real deliveries contain connected component(s) without any source: every
 # generator/injection in them is switched off, or the feeding branches are
 # open (RealGrid: 13 pockets totalling 22 buses). Solving those is impossible
-# — they have no reference — so they are de-energized deliberately: loads
+# (they have no reference), so they are de-energized deliberately: loads
 # zeroed, branches out of service, buses isolated, one message per component.
 # Without this the solver aborts on "island without reference".
 
@@ -783,7 +801,7 @@ De-energize every connected component that contains no source.
 A CGMES snapshot regularly carries network parts that are switched off in
 reality: open bays, stub connections, feeders parked out of service. They still
 appear as buses with loads attached. Left alone, such a component has load but
-no generation and no reference — an unsolvable subsystem that would fail the
+no generation and no reference, an unsolvable subsystem that would fail the
 power flow for a reason that has nothing to do with the interesting network.
 
 The pass therefore zeroes the injections, opens the branches and marks the
@@ -801,7 +819,7 @@ in (P < 0 in load sign). The unsupplied P of a component is the P its loads
 consume plus the P its drawing units drew; the P that feeding loads put in is
 reported as dropped load infeed and not netted against it.
 
-Connectivity is evaluated over in-service branches AND closed links — the
+Connectivity is evaluated over in-service branches AND closed links: the
 electrical view, since a component fed through a closed switch is energized.
 """
 function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
@@ -875,7 +893,7 @@ function _deEnergizeSourcelessComponents!(net, ctx::_MapCtx)
 end
 
 # A voltage controller whose target bus is held by a generator (slack or PV)
-# cannot influence that voltage — the machine fixes it. Such controllers occur
+# cannot influence that voltage: the machine fixes it. Such controllers occur
 # in real data sets (MicroGrid BE-TR2_3 regulates the slack busbar); leaving
 # them active would burn outer iterations and report a "regulation" that is
 # none. Bus types are known only after refreshBusTypesFromProsumers!, so this
@@ -890,7 +908,7 @@ function _disableIneffectiveTapControllers!(net, ctx::_MapCtx)
     ntype = net.nodeVec[idx]._nodeType
     (ntype == Sparlectra.Slack || ntype == Sparlectra.PV) || continue
     ctrl.enabled = false
-    push!(ctx.messages, "notice: tap controller on $(ctrl.target_bus) disabled — target bus is $(ntype) (voltage held by a generator)")
+    push!(ctx.messages, "notice: tap controller on $(ctrl.target_bus) disabled, target bus is $(ntype) (voltage held by a generator)")
   end
   return nothing
 end
@@ -930,7 +948,7 @@ end
 # Plausibility band for a single tap correction factor, same philosophy as the
 # vset band: real tap ranges stay within a few ten percent of neutral (RealGrid
 # tabular rows: 0.9 .. 1.1), while FullGrid's tabular table carries the literal
-# placeholder row ratio 9.99 / angle 0.99° (the set's 0.99/99.99 family) — a
+# placeholder row ratio 9.99 / angle 0.99° (the set's 0.99/99.99 family), a
 # 10:1 off-nominal that alone produces a ~400 pu mismatch. Outside the band the
 # tap is ignored with a warning; the transformer keeps its nominal ratio.
 const CGMES_TAP_CORR_MIN = 0.5
@@ -938,7 +956,7 @@ const CGMES_TAP_CORR_MAX = 2.0
 
 function _tapCorrPlausible(kind::String, tc::CIMObject, corr::Float64, messages::Vector{String}; strict::Bool = false)::Bool
   CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX && return true
-  msg = "$(kind) $(something(str(tc, :name), tc.mrid)) declares an implausible tap correction ($(round(corr; digits = 3)), band $(CGMES_TAP_CORR_MIN)..$(CGMES_TAP_CORR_MAX)) — placeholder suspected"
+  msg = "$(kind) $(something(str(tc, :name), tc.mrid)) declares an implausible tap correction ($(round(corr; digits = 3)), band $(CGMES_TAP_CORR_MIN)..$(CGMES_TAP_CORR_MAX)), placeholder suspected"
   strict && error("cgmes_import.placeholder_guards = strict: " * msg)
   push!(messages, "warning: " * msg * ", tap ignored")
   return false
@@ -959,7 +977,7 @@ function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMO
       if tc.class == :PhaseTapChangerTabular
         built = _phaseTapTableModel(store, tc, Int(round(_tapStep(tc, svsteps))))
         if built === nothing
-          push!(messages, "notice: PhaseTapChangerTabular $(something(str(tc, :name), tc.mrid)) — table unresolved, tap ignored")
+          push!(messages, "notice: PhaseTapChangerTabular $(something(str(tc, :name), tc.mrid)), table unresolved, tap ignored")
           continue
         end
         row = Sparlectra.calcPhaseTapTable(built.model)
@@ -968,14 +986,14 @@ function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMO
       pratio, pshift = _phaseTapRatioShift(store, tc, svsteps)
       _tapCorrPlausible(String(tc.class), tc, pratio, messages; strict = strict) || continue
       ratio = on_from_side ? ratio * pratio : ratio / pratio
-      # Angle sign: an end-2 (to-side) tap angle enters NEGATED — the branch
+      # Angle sign: an end-2 (to-side) tap angle enters NEGATED: the branch
       # ratio is t1/t2, so θ_eff = θ1 − θ2 (standard end-referral semantics;
       # PowSyBl does the same when moving an end-2 changer to end 1). The
       # deciding fixture is RealGrid: its four flowing end-2 tabular PSTs
       # reproduce the SV state only with the flip (SV-start max|F| 5 pu vs
       # 395 pu without). KNOWN AMBIGUITY: the ENTSO-E PSEI pair
       # PST_PTChLin_PTE1/PTE2 encodes identical parameters on end 1/end 2 and
-      # its PTE2 SV expects the UNflipped angle — under this (standard-side)
+      # its PTE2 SV expects the UNflipped angle. Under this (standard-side)
       # convention the PTE2 sets deviate by dva 0.29° / dp 0.79 MW. Real
       # deliveries win over the 2-bus conformity toys.
       shift += on_from_side ? pshift : -pshift
@@ -1022,7 +1040,7 @@ function _ensureBus!(net::Sparlectra.Net, created::Set{String}, topo::CGMESTopol
   push!(created, bus)
   # Identity capture for a later CGMES export: remember the original TN mRID
   # under the structural bus key. Aux buses and per-side split buses are
-  # synthetic identities without a 1:1 source TN — the exporter mints fresh
+  # synthetic identities without a 1:1 source TN, the exporter mints fresh
   # deterministic ids for them instead.
   if !isAux && busname === nothing
     net.cgmes_ids[cgmesKeyTopologicalNode(bus)] = cgmesCanonicalMrid(tn)
@@ -1035,17 +1053,17 @@ Detect assembled boundary nodes whose equivalent injections do **not** cancel
 and assign each contributing area (source file) its own side bus.
 
 An AC X-node with both sides present carries two declarations of the *same*
-exchange — they cancel, the equivalents are discarded, and the node joins the
+exchange: they cancel, the equivalents are discarded, and the node joins the
 areas galvanically. When the pair does NOT cancel, the two injections are two
 different devices (in practice: the HVDC converters of a DC border crossing;
 the residue is the DC loss). Joining the sides galvanically is then wrong
 twice over: it creates an AC corridor where none exists, and it violates KCL
 against the delivery's own SV state (ReliCapGrid `BP_SD-EH_DC1`: 94.8 MW flow
-into the node on one side, 72.6 MW out on the other — impossible through one
+into the node on one side, 72.6 MW out on the other, impossible through one
 node). Each side therefore keeps its line and its converter injection on its
 own bus.
 
-The side of a piece of equipment is the file that defined it — the only
+The side of a piece of equipment is the file that defined it, the only
 criterion that exists, since both sides' terminals reference the same CN (and
 here even the same TN). The first source (sorted) keeps the base bus name,
 further sides get `<bus>@<k>`.
@@ -1082,7 +1100,7 @@ function _detectNonCancellingBoundarySides!(ctx::_MapCtx, store::CGMESStore, top
     ctx.split_sides[cn] = sides
     push!(
       ctx.messages,
-      "notice: boundary node $(base) — the two sides' equivalents do not cancel (device injections, e.g. HVDC converters); node split per side: $(join([string(basename_short(s), " → ", b) for (s, b) in sort(collect(sides))], ", "))",
+      "notice: boundary node $(base), the two sides' equivalents do not cancel (device injections, e.g. HVDC converters); node split per side: $(join([string(basename_short(s), " → ", b) for (s, b) in sort(collect(sides))], ", "))",
     )
   end
   return nothing
@@ -1135,7 +1153,7 @@ function _mapSwitches!(net, store, topo, created, svmap, ctx::_MapCtx)
       # an out-of-service switch cannot conduct, whatever its open flag says
       isopen = something(boolval(sw, :open), boolval(sw, :normalOpen), false) || !_inService(ctx, sw)
       if isopen || !(_conn(ctx, t1.connected) && _conn(ctx, t2.connected))
-        push!(ctx.messages, "notice: open $(cls) $(name) between $(t1.bus) and $(t2.bus) — buses stay separate")
+        push!(ctx.messages, "notice: open $(cls) $(name) between $(t1.bus) and $(t2.bus), buses stay separate")
         continue
       end
       b1 = _ensureBus!(net, created, topo, svmap, t1.tn)
@@ -1152,7 +1170,7 @@ function _mapSwitches!(net, store, topo, created, svmap, ctx::_MapCtx)
         length(ts) >= 1 && (net.cgmes_ids[cgmesKeyTerminal(lnkKey, 1)] = cgmesCanonicalMrid(ts[1].mrid))
         length(ts) >= 2 && (net.cgmes_ids[cgmesKeyTerminal(lnkKey, 2)] = cgmesCanonicalMrid(ts[2].mrid))
       end
-      push!(ctx.messages, "notice: closed $(cls) $(name) — bus link $(b1) = $(b2)")
+      push!(ctx.messages, "notice: closed $(cls) $(name), bus link $(b1) = $(b2)")
     end
   end
 end
@@ -1174,8 +1192,8 @@ function _firstTerminalMrid(topo::CGMESTopology, obj::CIMObject)::Union{Nothing,
 end
 
 # Structural-identity capture for single-terminal equipment. The (kind, bus)
-# counter is consumed for EVERY created unit of the class — also when there is
-# no mRID to record (mrid = nothing) — so the export, which walks the created
+# counter is consumed for EVERY created unit of the class, also when there is
+# no mRID to record (mrid = nothing), so the export, which walks the created
 # vectors in the same order, assigns identical <k> values. `children` records
 # dependent mRIDs under `<key>|<suffix>` (T1 terminal, GU, RC).
 function _captureBusEquipment!(net, ctx::_MapCtx, kind::AbstractString, bus::AbstractString, mrid::Union{Nothing,String}; children::NamedTuple = NamedTuple())
@@ -1202,7 +1220,7 @@ function _recordBranchTerminals!(ctx::_MapCtx, net, topo::CGMESTopology, eq::CIM
 end
 
 function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
-  # First-seen parallel index per bus pair — must count exactly the lines
+  # First-seen parallel index per bus pair: must count exactly the lines
   # that reach net.linesAC so the exporter (walking net.linesAC in the same
   # order) reproduces identical structural keys.
   acl_parallel = Dict{Tuple{String,String},Int}()
@@ -1212,7 +1230,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       t2 = busOfEquipment(topo, line, 2)
       name = something(str(line, :name), line.mrid)
       if t1 === nothing || t2 === nothing
-        push!(ctx.messages, "skip: $(cls) $(name) — terminal without TopologicalNode")
+        push!(ctx.messages, "skip: $(cls) $(name), terminal without TopologicalNode")
         push!(ctx.skipped, line.mrid)
         continue
       end
@@ -1229,7 +1247,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       c2 = in_service && _conn(ctx, t2.connected)
       nopen = (c1 ? 0 : 1) + (c2 ? 0 : 1)
       if nopen == 1
-        push!(ctx.messages, "notice: $(cls) $(name) has one open terminal — kept as a partially open branch (full charging at the closed bus)")
+        push!(ctx.messages, "notice: $(cls) $(name) has one open terminal, kept as a partially open branch (full charging at the closed bus)")
       end
       status = nopen == 0 ? 1 : 0
       b1 = _busForTerminal!(net, created, topo, svmap, ctx, line, 1, t1.tn)
@@ -1237,7 +1255,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       if b1 == b2
         # Self-loop within one topological node (e.g. a busbar link modeled
         # as a line): there is no longitudinal element to build, but the
-        # charging still acts at the bus — keep it as a shunt instead of
+        # charging still acts at the bus. Keep it as a shunt instead of
         # tripping the branch constructor's from!=to assertion.
         if cls == :ACLineSegment && status == 1
           g_full = num(line, :gch, 0.0)
@@ -1249,7 +1267,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
             ctx.element_by_mrid[string(line.mrid, "#charging")] = (:shunt, length(net.shuntVec))
           end
         end
-        push!(ctx.messages, "notice: $(cls) $(name) connects bus $(b1) to itself (both terminals on one topological node) — no branch created, charging kept as shunt")
+        push!(ctx.messages, "notice: $(cls) $(name) connects bus $(b1) to itself (both terminals on one topological node), no branch created, charging kept as shunt")
         push!(ctx.skipped, line.mrid)
         continue
       end
@@ -1298,11 +1316,11 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         # still a line in CGMES terms, so a branch, not a transformer
         ctx.element_by_mrid[line.mrid] = (:branch, length(net.branchVec))
         _recordBranchTerminals!(ctx, net, topo, line)
-        # the ratio branch counts as a transformer branch on this bus pair —
+        # the ratio branch counts as a transformer branch on this bus pair,
         # consume the PT counter (no capture: the source object is a line)
         # so real transformers on the same pair keep consistent <k> values
         cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
-        push!(ctx.messages, "notice: $(cls) $(name) spans $(t1.vn_kV)/$(t2.vn_kV) kV — mapped as boundary-line ratio branch ($(round(ratio; digits=4)))")
+        push!(ctx.messages, "notice: $(cls) $(name) spans $(t1.vn_kV)/$(t2.vn_kV) kV, mapped as boundary-line ratio branch ($(round(ratio; digits=4)))")
       end
     end
   end
@@ -1515,7 +1533,7 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   i2 = _terminalInfo(store, topo, e2)
   name = something(str(pt, :name), pt.mrid)
   if i1 === nothing || i2 === nothing
-    push!(ctx.messages, "skip: PowerTransformer $(name) — end terminal without TopologicalNode")
+    push!(ctx.messages, "skip: PowerTransformer $(name), end terminal without TopologicalNode")
     push!(ctx.skipped, pt.mrid)
     return
   end
@@ -1564,7 +1582,7 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   ptc_f = pt_in_service && _conn(ctx, i_f.connected)
   ptc_t = pt_in_service && _conn(ctx, i_t.connected)
   status = (ptc_f && ptc_t) ? 1 : 0
-  (ptc_f != ptc_t) && push!(ctx.messages, "notice: PowerTransformer $(name) has one open terminal — kept as a partially open branch")
+  (ptc_f != ptc_t) && push!(ctx.messages, "notice: PowerTransformer $(name) has one open terminal, kept as a partially open branch")
   from = Sparlectra.geNetBusIdx(net = net, busName = bf)
   to = Sparlectra.geNetBusIdx(net = net, busName = bt)
   ratedS = num(e1, :ratedS)
@@ -1598,7 +1616,7 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   name = something(str(pt, :name), pt.mrid)
   infos = [_terminalInfo(store, topo, e) for e in ends]
   if any(i -> i === nothing, infos)
-    push!(ctx.messages, "skip: 3W PowerTransformer $(name) — end terminal without TopologicalNode")
+    push!(ctx.messages, "skip: 3W PowerTransformer $(name), end terminal without TopologicalNode")
     push!(ctx.skipped, pt.mrid)
     return
   end
@@ -1885,17 +1903,17 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
   function _shunt_terminal(sh, clsname, name)
     t = busOfEquipment(topo, sh, 1)
     if t === nothing
-      push!(ctx.messages, "skip: $(clsname) $(name) — no TopologicalNode")
+      push!(ctx.messages, "skip: $(clsname) $(name), no TopologicalNode")
       push!(ctx.skipped, sh.mrid)
       return nothing
     end
     if !_inService(ctx, sh)
-      push!(ctx.messages, "skip: $(clsname) $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: $(clsname) $(name), out of service (SSH inService=false)")
       push!(ctx.skipped, sh.mrid)
       return nothing
     end
     if !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: $(clsname) $(name) — terminal disconnected")
+      push!(ctx.messages, "skip: $(clsname) $(name), terminal disconnected")
       push!(ctx.skipped, sh.mrid)
       return nothing
     end
@@ -1904,16 +1922,16 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
 
   # Placeholder guard for shunt admittances, same philosophy as the vset
   # plausibility band: FullGrid ships a NonlinearShuntCompensatorPoint with
-  # b = g = 0.99 S (the set's 0.99/99.99 placeholder family) — at 225 kV that
+  # b = g = 0.99 S (the set's 0.99/99.99 placeholder family), at 225 kV that
   # is a 50-GW shunt and no power flow can converge on it. The cap of
   # 10 × baseMVA is the scale the SVC rating clamp already uses; every real
   # compensator in the cached deliveries sits orders of magnitude below it.
-  # A shunt above the cap is skipped with a warning, not clamped — clamping
+  # A shunt above the cap is skipped with a warning, not clamped: clamping
   # would invent a specific size for a value that carries no information.
   shunt_cap_mva = 10.0 * net.baseMVA
   function _shunt_plausible(clsname, name, mrid, B_mvar, G_mw)::Bool
     max(abs(B_mvar), abs(G_mw)) <= shunt_cap_mva && return true
-    msg = "$(clsname) $(name) declares an implausible admittance (B $(round(B_mvar; digits = 1)) MVAr / G $(round(G_mw; digits = 1)) MW at nominal voltage, cap ±$(round(Int, shunt_cap_mva))) — placeholder suspected"
+    msg = "$(clsname) $(name) declares an implausible admittance (B $(round(B_mvar; digits = 1)) MVAr / G $(round(G_mw; digits = 1)) MW at nominal voltage, cap ±$(round(Int, shunt_cap_mva))), placeholder suspected"
     ctx.strict_guards && error("cgmes_import.placeholder_guards = strict: " * msg)
     push!(ctx.messages, "warning: " * msg * ", shunt skipped")
     push!(ctx.skipped, mrid)
@@ -1938,7 +1956,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
   # NonlinearShuntCompensator (#294 point 7): the characteristic is a set of
   # per-section points; the effective admittance at `sections = s` is the SUM
   # of the point b/g values with sectionNumber <= s (each point is one
-  # switched group — same reading as PowSyBl's conversion).
+  # switched group, same reading as PowSyBl's conversion).
   for sh in objectsOf(store, :NonlinearShuntCompensator)
     name = something(str(sh, :name), sh.mrid)
     t = _shunt_terminal(sh, "NonlinearShuntCompensator", name)
@@ -1946,7 +1964,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     sections = something(num(sh, :sections), num(sh, :normalSections, 0.0))
     pts = [pt for pt in objectsOf(store, :NonlinearShuntCompensatorPoint) if get(pt.refs, :NonlinearShuntCompensator, "") == sh.mrid]
     if isempty(pts)
-      push!(ctx.messages, "skip: NonlinearShuntCompensator $(name) — no characteristic points")
+      push!(ctx.messages, "skip: NonlinearShuntCompensator $(name), no characteristic points")
       push!(ctx.skipped, sh.mrid)
       continue
     end
@@ -2028,17 +2046,17 @@ function _mapLoads!(net, store, topo, created, svmap, ctx::_MapCtx)
       t = busOfEquipment(topo, load, 1)
       name = something(str(load, :name), load.mrid)
       if t === nothing
-        push!(ctx.messages, "skip: $(cls) $(name) — no TopologicalNode")
+        push!(ctx.messages, "skip: $(cls) $(name), no TopologicalNode")
         push!(ctx.skipped, load.mrid)
         continue
       end
       if !_inService(ctx, load)
-        push!(ctx.messages, "skip: $(cls) $(name) — out of service (SSH inService=false)")
+        push!(ctx.messages, "skip: $(cls) $(name), out of service (SSH inService=false)")
         push!(ctx.skipped, load.mrid)
         continue
       end
       if !_conn(ctx, t.connected)
-        push!(ctx.messages, "skip: $(cls) $(name) — terminal disconnected")
+        push!(ctx.messages, "skip: $(cls) $(name), terminal disconnected")
         push!(ctx.skipped, load.mrid)
         continue
       end
@@ -2058,7 +2076,7 @@ end
 # Returns `(vm_pu, voltage_controlled, remote_bus)`:
 # - local target → (target/vn, true, nothing)
 # - remote target with allow_remote (machine_control) → (target/vn_remote,
-#   true, remote bus name) — the caller wires an outer-loop controller
+#   true, remote bus name), the caller wires an outer-loop controller
 # - remote target without allow_remote → (nothing, true, nothing);
 #   the caller keeps the unit voltage-controlled at its own bus, holding the
 #   bus's SV/start voltage instead of a stale fixed SSH q
@@ -2069,8 +2087,8 @@ end
 # actual range is 0.92 .. 1.15 p.u. The band exists to catch placeholder values,
 # not to enforce an operating range.
 #
-# Svedala ships five generator nodes with targetValue = 0.001 kV (≈ 5e-5 p.u.)
-# — the same five that carry no SvVoltage, i.e. units the exporting tool did not
+# Svedala ships five generator nodes with targetValue = 0.001 kV (≈ 5e-5 p.u.):
+# the same five that carry no SvVoltage, i.e. units the exporting tool did not
 # include in its solved state. Taken literally they produce a PV/reference bus
 # at essentially zero volts, and the power flow then "converges" onto a
 # collapsed all-zero solution that is formally correct and physically nonsense.
@@ -2087,7 +2105,7 @@ Voltage setpoint of a regulating unit, as
 `(vset_pu, is_voltage_regulating, remote_bus)`.
 
 `vset_pu === nothing` together with `true` means "regulates voltage, but no
-usable local setpoint" — the caller then holds the unit PV at its own bus
+usable local setpoint", the caller then holds the unit PV at its own bus
 voltage (see `_pvVoltage`). That is the fallback for remote controls (unless
 `allow_remote` is set) and for implausible target values.
 
@@ -2121,7 +2139,7 @@ function _voltageSetpoint(
   (tn === nothing || !haskey(topo.vn_kV, tn)) && return (nothing, false, nothing)
   is_remote = tn != own_tn
   if is_remote && !allow_remote
-    push!(messages, "notice: $(something(str(obj, :name), obj.mrid)) has a remote voltage RegulatingControl (target bus $(get(topo.bus_name, tn, tn))) — held PV at its own bus (enable machine_control for remote regulation)")
+    push!(messages, "notice: $(something(str(obj, :name), obj.mrid)) has a remote voltage RegulatingControl (target bus $(get(topo.bus_name, tn, tn))), held PV at its own bus (enable machine_control for remote regulation)")
     return (nothing, true, nothing)
   end
   vn = topo.vn_kV[tn]
@@ -2131,7 +2149,7 @@ function _voltageSetpoint(
   if vset < vset_min_pu || vset > vset_max_pu
     push!(
       messages,
-      "warning: $(something(str(obj, :name), obj.mrid)) declares an implausible voltage target ($(target) kV = $(round(vset; sigdigits = 3)) pu at $(get(topo.bus_name, tn, tn)), nominal $(vn) kV) — ignored, unit held PV at the bus voltage derived from the nominal data",
+      "warning: $(something(str(obj, :name), obj.mrid)) declares an implausible voltage target ($(target) kV = $(round(vset; sigdigits = 3)) pu at $(get(topo.bus_name, tn, tn)), nominal $(vn) kV), ignored, unit held PV at the bus voltage derived from the nominal data",
     )
     return (nothing, true, nothing)
   end
@@ -2195,7 +2213,7 @@ power `p_machine` (CGMES machine convention, i.e. the raw SSH value): linear
 interpolation between curve points, clamped to the curve's P domain outside it.
 
 The interpolated `(y1, y2)` pair then goes through the SAME sign-convention
-hull as the scalar `minQ`/`maxQ` path — the ENTSO-E sets are inconsistent
+hull as the scalar `minQ`/`maxQ` path, the ENTSO-E sets are inconsistent
 about machine Q signs, and a capability curve is no more trustworthy in that
 respect than the scalars next to it. For the symmetric curves the test sets
 ship this is the identity; for asymmetric data it is deliberately safe rather
@@ -2253,10 +2271,10 @@ _SlackScan() = _SlackScan([], [], [])
 Pick the primary slack bus from the collected candidates.
 
 Fallback chain, strongest evidence first:
- 1. `referencePriority` markers — including the SV angle reference, which is
+ 1. `referencePriority` markers, including the SV angle reference, which is
     injected at priority 0.0 because it is the reference the exporting tool
     actually used;
- 2. the only / the largest `ExternalNetworkInjection` — a network equivalent is
+ 2. the only / the largest `ExternalNetworkInjection`: a network equivalent is
     the natural reference;
  3. the largest `SynchronousMachine`.
 
@@ -2278,7 +2296,7 @@ function _chooseSlack(scan::_SlackScan, messages::Vector{String})::String
       # highest referencePriority; we break the tie by rating, then by name,
       # which need not match the exporting tool's choice (RealGrid: two
       # machines at priority 1, its documentation names the other one).
-      push!(messages, "notice: $(ties) units share referencePriority $(top) — slack chosen by largest rating; the source tool may have picked a different one")
+      push!(messages, "notice: $(ties) units share referencePriority $(top), slack chosen by largest rating; the source tool may have picked a different one")
     end
     push!(messages, "slack: referencePriority marker → $(bus)")
     return bus
@@ -2302,15 +2320,15 @@ function _chooseSlack(scan::_SlackScan, messages::Vector{String})::String
 end
 
 """
-Decide the slack bus set. With `multi_slack` every **electrical** island — in
+Decide the slack bus set. With `multi_slack` every **electrical** island (in
 the sense of `electricalIslandComponents`, i.e. closed links count as
-connections — receives at most one reference: the candidate with the highest
+connections) receives at most one reference: the candidate with the highest
 `referencePriority` wins, further SV angle references in the same island are
 not promoted and keep the bus type their own injection produces (PV for a
-regulating machine, PQ otherwise — their voltage setpoint comes from the SV
+regulating machine, PQ otherwise: their voltage setpoint comes from the SV
 state anyway). Two references in one island would be physically wrong. On
-clean data the guard is a no-op — Svedala's two references sit in two
-electrical islands once `Equipment.inService` is honored — but it protects
+clean data the guard is a no-op (Svedala's two references sit in two
+electrical islands once `Equipment.inService` is honored), but it protects
 against deliveries whose island declarations and switch states disagree.
 
 An island that has a source but neither an angle reference here nor a
@@ -2327,7 +2345,7 @@ function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::
   candidates = [b for b in angle_ref_buses if b != primary && any(inj -> inj.bus == b && get(inj, :slack_candidate, true), pending)]
   isempty(candidates) && return chosen
   if !multi_slack
-    push!(ctx.messages, "notice: the SV declares further angle reference(s) ($(join(sort(candidates), ", "))) — not promoted to slack; pass multi_slack = true to give separate electrical islands their own reference")
+    push!(ctx.messages, "notice: the SV declares further angle reference(s) ($(join(sort(candidates), ", "))), not promoted to slack; pass multi_slack = true to give separate electrical islands their own reference")
     return chosen
   end
 
@@ -2337,13 +2355,13 @@ function _selectSlackBuses(net, ctx::_MapCtx, primary::String, angle_ref_buses::
   island_of = Sparlectra.electricalIslandOfBus(net)
   taken = Set{Int}()
   pi = get(island_of, get(net.busDict, primary, 0), 0)
-  # Island 0 means "bus unknown/isolated" — nothing to reserve in that case.
+  # Island 0 means "bus unknown/isolated", nothing to reserve in that case.
   pi == 0 || push!(taken, pi)
   # Sorted so the outcome does not depend on Set iteration order.
   for b in sort(candidates)
     isl = get(island_of, get(net.busDict, b, 0), 0)
     if isl == 0 || isl in taken
-      push!(ctx.messages, "notice: angle reference $(b) shares its electrical island with $(primary) — not promoted to slack (a second reference in one island would be physically wrong)")
+      push!(ctx.messages, "notice: angle reference $(b) shares its electrical island with $(primary), not promoted to slack (a second reference in one island would be physically wrong)")
       continue
     end
     push!(taken, isl)
@@ -2534,17 +2552,17 @@ _isGridFollowingUnit(ps)::Bool = ps.dynamics !== nothing && ps.dynamics.unit_typ
 """
 Angle-reference nodes declared by the SV profile: `TopologicalIsland` names
 one `AngleRefTopologicalNode` per island. That is the exporting tool's own
-reference choice — the most reliable slack information a delivery can carry,
+reference choice, the most reliable slack information a delivery can carry,
 and the only one that scales to multi-island models (ReliCapGrid/Svedala
 ships two islands).
 
 !!! warning "Two different island notions"
     A CIM `TopologicalIsland` is the exporting tool's partitioning and need
     **not** agree with the AC island Sparlectra sees after evaluating the
-    switch states — which is why `_selectSlackBuses` re-checks the references
+    switch states, which is why `_selectSlackBuses` re-checks the references
     against `electricalIslandOfBus` instead of trusting the CIM island count.
     Instructive history: Svedala *appeared* to disagree (both references in
-    one electrical island), but that was an importer artifact — switches with
+    one electrical island), but that was an importer artifact: switches with
     SSH `Equipment.inService = false` were treated as closed and merged the
     two islands. With `inService` honored, the electrical view agrees with the
     delivery's two `TopologicalIsland`s exactly. The cross-check stays: it
@@ -2561,7 +2579,7 @@ end
 
 # Do the EquivalentInjections collected on one boundary node describe the
 # same exchange seen from both sides? True only when both sides are present
-# AND their p values (approximately) cancel — the defining property of an
+# AND their p values (approximately) cancel, the defining property of an
 # assembled AC X-node pair. A non-cancelling pair is two different devices
 # (HVDC converters; the residue is the DC loss) and must be kept. The
 # tolerance only absorbs rounding in the delivery (largest observed residue of
@@ -2575,7 +2593,7 @@ end
 # Boundary-node identity of an EquivalentInjection's terminal (see the
 # ei_p_bnode comment in _mapInjections!): the terminal's ConnectivityNode if
 # that CN comes from a boundary file (CGMES 3.0 style), else its
-# TopologicalNode if that TN does (2.4.15 TP_BD style), else `nothing` — the
+# TopologicalNode if that TN does (2.4.15 TP_BD style), else `nothing`, the
 # EI does not sit on a boundary node at all (e.g. an internal equivalent).
 function _eiBoundaryNode(store::CGMESStore, topo::CGMESTopology, ei::CIMObject)::Union{Nothing,String}
   ts = get(topo.terminals, ei.mrid, nothing)
@@ -2603,7 +2621,7 @@ function _resolveMachineControlPlans!(pending::Vector{NamedTuple}, net, slack_bu
     inj.vm_pu === nothing || push!(vheld, inj.bus)
   end
   fallback = function (i, inj, reason)
-    push!(messages, "notice: $(something(get(inj, :name, nothing), inj.bus)) — remote voltage control not attachable ($(reason)); held PV at its own bus")
+    push!(messages, "notice: $(something(get(inj, :name, nothing), inj.bus)), remote voltage control not attachable ($(reason)); held PV at its own bus")
     pending[i] = merge(inj, (vm_pu = _pvVoltage(net, inj.bus, nothing), isRegulated = true, remote_target = nothing))
     push!(vheld, inj.bus)
   end
@@ -2736,13 +2754,13 @@ function _attachHvdcPairs!(net, ctx::_MapCtx, store::CGMESStore)
   for pair in _detectHvdcPairs(store)
     _push_cgmes_hvdc_link!(net, ctx, pair)
     if pair.extra != 0
-      push!(ctx.messages, "notice: HVDC component around $(pair.from) has $(pair.extra) converter(s) — only two-converter links are paired, kept as fixed injections")
+      push!(ctx.messages, "notice: HVDC component around $(pair.from) has $(pair.extra) converter(s), only two-converter links are paired, kept as fixed injections")
       continue
     end
     a_idx = get(ctx.prosumer_by_mrid, pair.from, nothing)
     b_idx = get(ctx.prosumer_by_mrid, pair.to, nothing)
     if a_idx === nothing || b_idx === nothing
-      push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to) — a converter was not imported (skipped or out of service), kept as fixed injections")
+      push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to), a converter was not imported (skipped or out of service), kept as fixed injections")
       continue
     end
     pa = net.prosumpsVec[a_idx].pVal === nothing ? 0.0 : net.prosumpsVec[a_idx].pVal
@@ -2753,7 +2771,7 @@ function _attachHvdcPairs!(net, ctx::_MapCtx, store::CGMESStore)
     to_p = net.prosumpsVec[t_idx].pVal === nothing ? 0.0 : net.prosumpsVec[t_idx].pVal
     loss = transfer - to_p
     if transfer < 0.0 || loss < 0.0
-      push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to) — SSH operating points are inconsistent (transfer $(round(transfer; digits = 1)) MW, loss $(round(loss; digits = 1)) MW), kept as fixed injections")
+      push!(ctx.messages, "notice: HVDC pair $(pair.from)/$(pair.to), SSH operating points are inconsistent (transfer $(round(transfer; digits = 1)) MW, loss $(round(loss; digits = 1)) MW), kept as fixed injections")
       continue
     end
     bus_names = Sparlectra._bus_name_by_idx(net)
@@ -2784,7 +2802,7 @@ end
 """
 Attach the surviving machine-control plans as `MachineVoltageControl`
 instances. Runs only after `refreshBusTypesFromProsumers!` and isolation
-marking, so the final node types and `isoNodes` are authoritative — a plan
+marking, so the final node types and `isoNodes` are authoritative, a plan
 whose buses did not end up solvable PQ is dropped with a notice, mirroring
 `_disableIneffectiveTapControllers!`.
 
@@ -2829,7 +2847,7 @@ function _attachMachineControls!(net, ctx::_MapCtx)
       nothing
     end
     if reason !== nothing
-      push!(ctx.messages, "notice: machine control $(plan.name) — skipped ($(reason))")
+      push!(ctx.messages, "notice: machine control $(plan.name), skipped ($(reason))")
       continue
     end
     isl = get(island_of, oidx, 0)
@@ -2857,7 +2875,7 @@ function _attachMachineControls!(net, ctx::_MapCtx)
     catch err
       # the importer degrades gracefully: an unattachable controller becomes a
       # visible notice (the machine stays a plain PQ injection with its SSH q)
-      push!(ctx.messages, "notice: machine control $(plan.name) — not attached ($(sprint(showerror, err)))")
+      push!(ctx.messages, "notice: machine control $(plan.name), not attached ($(sprint(showerror, err)))")
     end
   end
   return nothing
@@ -3441,7 +3459,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   curve_pts = _reactiveCapabilityCurvePoints(store)
   angle_refs = _svAngleRefNodes(store)
   angle_ref_buses = Set{String}(topo.bus_name[tn] for tn in angle_refs if haskey(topo.bus_name, tn))
-  isempty(angle_ref_buses) || push!(ctx.messages, "notice: SV declares $(length(angle_ref_buses)) angle-reference node(s) — used as slack candidate(s): $(join(sort(collect(angle_ref_buses)), ", "))")
+  isempty(angle_ref_buses) || push!(ctx.messages, "notice: SV declares $(length(angle_ref_buses)) angle-reference node(s), used as slack candidate(s): $(join(sort(collect(angle_ref_buses)), ", "))")
   pending = NamedTuple[]
 
   # mapped units with controlEnabled = false (machines, network injections,
@@ -3452,12 +3470,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     t = busOfEquipment(topo, sm, 1)
     name = something(str(sm, :name), sm.mrid)
     if t === nothing
-      push!(ctx.messages, "skip: SynchronousMachine $(name) — no TopologicalNode")
+      push!(ctx.messages, "skip: SynchronousMachine $(name), no TopologicalNode")
       push!(ctx.skipped, sm.mrid)
       continue
     end
     if !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: SynchronousMachine $(name) — terminal disconnected")
+      push!(ctx.messages, "skip: SynchronousMachine $(name), terminal disconnected")
       push!(ctx.skipped, sm.mrid)
       continue
     end
@@ -3465,7 +3483,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     # inService=false, no SvVoltage, placeholder regulation target. Importing
     # them added 413 MW of phantom generation in Svedala alone.
     if !_inService(ctx, sm)
-      push!(ctx.messages, "skip: SynchronousMachine $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: SynchronousMachine $(name), out of service (SSH inService=false)")
       push!(ctx.skipped, sm.mrid)
       continue
     end
@@ -3486,7 +3504,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     participation = (npf !== nothing && isfinite(npf) && npf > 0.0) ? npf : nothing
     # Q-limit source, most faithful first:
     #  1. InitialReactiveCapabilityCurve evaluated at the machine's scheduled P
-    #     (issue #294 point 1 — the first data-faithful limits; MicroGrid
+    #     (issue #294 point 1, the first data-faithful limits; MicroGrid
     #     BE-G1 writes the degenerate 0/0 scalar pair precisely because its
     #     real limits live in the curve),
     #  2. the scalar minQ/maxQ hull,
@@ -3500,7 +3518,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       cq = _curveQHull(curve_pts[curve], num(sm, :p, 0.0))
       if cq !== nothing
         qlo, qhi = cq
-        push!(ctx.messages, "notice: SynchronousMachine $(name) — Q limits [$(round(qlo; digits = 1)), $(round(qhi; digits = 1))] MVAr from its ReactiveCapabilityCurve at P = $(num(sm, :p, 0.0)) MW")
+        push!(ctx.messages, "notice: SynchronousMachine $(name), Q limits [$(round(qlo; digits = 1)), $(round(qhi; digits = 1))] MVAr from its ReactiveCapabilityCurve at P = $(num(sm, :p, 0.0)) MW")
       end
     end
     if qlo === nothing
@@ -3510,7 +3528,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     if qlo === nothing || qhi === nothing || (qhi - qlo) < 1e-6
       qlo = -qwide
       qhi = qwide
-      push!(ctx.messages, "notice: SynchronousMachine $(name) has no usable scalar minQ/maxQ — using ±$(qwide) MVAr")
+      push!(ctx.messages, "notice: SynchronousMachine $(name) has no usable scalar minQ/maxQ, using ±$(qwide) MVAr")
     end
     prio = num(sm, :referencePriority, 0.0)
     # the rating ranks the slack candidates; a placeholder rating (9999 MVA
@@ -3556,7 +3574,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
         pMin = gu_pmin,
         pMax = gu_pmax,
         # The ENTSO-E test sets are inconsistent about the sign convention of
-        # machine minQ/maxQ (MicroGrid NL: load convention like p/q — the SV
+        # machine minQ/maxQ (MicroGrid NL: load convention like p/q, the SV
         # q lies in [-maxQ, -minQ]; SmallGrid: injection convention). Stage 1
         # uses the hull of both readings so no unit is wrongly Q-pinned;
         # strict limit fidelity is a Stage-2 topic.
@@ -3575,8 +3593,8 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   end
   _noteRegulationOff!(ctx.messages, ctrl_off, :SynchronousMachine)
 
-  # AsynchronousMachine (#294 point 6) — Stage-0 model: a fixed PQ operating
-  # point from SSH (`RotatingMachine.p`/`q`, load convention — a motor
+  # AsynchronousMachine (#294 point 6), Stage-0 model: a fixed PQ operating
+  # point from SSH (`RotatingMachine.p`/`q`, load convention, a motor
   # consumes with p > 0, a generator-kind machine carries p < 0). No voltage
   # regulation and no slack candidacy: the induction machine's voltage/slip
   # dependence is a dynamics topic, not a steady-state power-flow one.
@@ -3585,17 +3603,17 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     t = busOfEquipment(topo, am, 1)
     name = something(str(am, :name), am.mrid)
     if t === nothing
-      push!(ctx.messages, "skip: AsynchronousMachine $(name) — no TopologicalNode")
+      push!(ctx.messages, "skip: AsynchronousMachine $(name), no TopologicalNode")
       push!(ctx.skipped, am.mrid)
       continue
     end
     if !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: AsynchronousMachine $(name) — terminal disconnected")
+      push!(ctx.messages, "skip: AsynchronousMachine $(name), terminal disconnected")
       push!(ctx.skipped, am.mrid)
       continue
     end
     if !_inService(ctx, am)
-      push!(ctx.messages, "skip: AsynchronousMachine $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: AsynchronousMachine $(name), out of service (SSH inService=false)")
       push!(ctx.skipped, am.mrid)
       continue
     end
@@ -3612,21 +3630,21 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     net.prosumpsVec[end].comp.cTyp = Sparlectra.AsynchronousMachine
     _captureBusEquipment!(net, ctx, "ASM", bus, am.mrid; children = (T1 = _firstTerminalMrid(topo, am),))
     # No internal staging vocabulary in user-facing importer messages.
-    push!(ctx.messages, "notice: AsynchronousMachine $(name) — fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
+    push!(ctx.messages, "notice: AsynchronousMachine $(name), fixed PQ operating point from SSH (p=$(round(p; digits = 2)) MW, q=$(round(q; digits = 2)) MVAr, load convention) at $(bus)")
   end
 
   for eni in objectsOf(store, :ExternalNetworkInjection)
     t = busOfEquipment(topo, eni, 1)
     name = something(str(eni, :name), eni.mrid)
     if t === nothing || !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: ExternalNetworkInjection $(name) — missing/disconnected terminal")
+      push!(ctx.messages, "skip: ExternalNetworkInjection $(name), missing/disconnected terminal")
       push!(ctx.skipped, eni.mrid)
       continue
     end
     # must run before the slack-candidate bookkeeping below: an out-of-service
     # network equivalent is no reference candidate
     if !_inService(ctx, eni)
-      push!(ctx.messages, "skip: ExternalNetworkInjection $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: ExternalNetworkInjection $(name), out of service (SSH inService=false)")
       push!(ctx.skipped, eni.mrid)
       continue
     end
@@ -3680,26 +3698,26 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   # on one boundary node therefore mean both sides are present and the
   # equivalents must not be applied on top of the real flows. A dangling
   # line keeps its single EI. (A count of real terminals is NOT a valid
-  # criterion — SmallGrid has X-nodes with two parallel dangling circuits
+  # criterion: SmallGrid has X-nodes with two parallel dangling circuits
   # and one EI.)
   #
   # Node identity is version-dependent. A CGMES 2.4.15 boundary set ships
   # TopologicalNodes (TP_BD), so both sides' EIs meet on one boundary TN. A
-  # CGMES 3.0 boundary carries only ConnectivityNodes — each area's own TP
+  # CGMES 3.0 boundary carries only ConnectivityNodes: each area's own TP
   # assigns its own TN to the shared CN, and the two sides need not even agree
-  # on one TN (ReliCapGrid's Espheim–Portheim border: two TNs, one CN). The
+  # on one TN (ReliCapGrid's Espheim-Portheim border: two TNs, one CN). The
   # shared identity is therefore the terminal's boundary CN when there is one,
   # the boundary TN otherwise.
   #
   # The p values are collected (not just counted) because presence of both
   # sides alone is not sufficient to discard: an assembled AC X-node pair is
   # two views of the SAME exchange and cancels exactly (measured: MicroGrid
-  # 0.0 %, ReliCapGrid AC borders 0.0–1.6 % of max|p|), while the pair at a
+  # 0.0 %, ReliCapGrid AC borders 0.0-1.6 % of max|p|), while the pair at a
   # DC crossing consists of the two CONVERTER injections whose difference is
   # the DC loss (ReliCapGrid BP_SD-EH_DC1: +94.57 / −72.60, 23.2 %). Those
-  # must survive — they are devices, not a double-counted equivalent.
+  # must survive: they are devices, not a double-counted equivalent.
   ei_p_bnode = Dict{String,Vector{Float64}}()
-  # StaticVarCompensator: a controllable reactive source with P = 0 — the
+  # StaticVarCompensator: a controllable reactive source with P = 0, the
   # MATPOWER-compatible model (generator with Pg = 0). CGMES capacitiveRating /
   # inductiveRating are REACTANCES in Ohm (RealGrid: ±202.5 Ω @ 225 kV ↔
   # 250/-100 MVAr), so the Q limits come from Q = vn²/X. The droop `slope` is
@@ -3708,12 +3726,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     t = busOfEquipment(topo, svc, 1)
     name = something(str(svc, :name), svc.mrid)
     if t === nothing || !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: StaticVarCompensator $(name) — missing/disconnected terminal")
+      push!(ctx.messages, "skip: StaticVarCompensator $(name), missing/disconnected terminal")
       push!(ctx.skipped, svc.mrid)
       continue
     end
     if !_inService(ctx, svc)
-      push!(ctx.messages, "skip: StaticVarCompensator $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: StaticVarCompensator $(name), out of service (SSH inService=false)")
       push!(ctx.skipped, svc.mrid)
       continue
     end
@@ -3727,12 +3745,12 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     qlo = qcap === nothing || qind === nothing ? -qwide : min(qcap, qind)
     qhi = qcap === nothing || qind === nothing ? qwide : max(qcap, qind)
     if max(abs(qlo), abs(qhi)) > qwide
-      push!(ctx.messages, "notice: StaticVarCompensator $(name) — implausible Q range $(round(qlo; digits=1))..$(round(qhi; digits=1)) MVAr from ratings, clamped to ±$(qwide)")
+      push!(ctx.messages, "notice: StaticVarCompensator $(name), implausible Q range $(round(qlo; digits=1))..$(round(qhi; digits=1)) MVAr from ratings, clamped to ±$(qwide)")
       qlo = max(qlo, -qwide)
       qhi = min(qhi, qwide)
     end
     slope = num(svc, :slope, 0.0)
-    slope != 0.0 && push!(ctx.messages, "notice: StaticVarCompensator $(name) — droop slope $(slope) ignored (constant-voltage model)")
+    slope != 0.0 && push!(ctx.messages, "notice: StaticVarCompensator $(name), droop slope $(slope) ignored (constant-voltage model)")
     # controlEnabled = false: PQ at the SSH q, both for a voltage
     # RegulatingControl and for the sVCControlMode/voltageSetPoint fallback
     ctrl_enabled = _regulationEnabled(svc)
@@ -3744,7 +3762,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     end
     # Consistency guard against snapshots whose control flags contradict their
     # own solved state (RealGrid: RC enabled with target 1.0 pu while the SV
-    # voltages sit at 1.008–1.031 and SSH q = 0 — the reference clearly did
+    # voltages sit at 1.008-1.031 and SSH q = 0, the reference clearly did
     # not let the SVCs regulate; importing them as PV at 1.0 fights the whole
     # 225 kV profile and breaks convergence). If the SV start voltage of the
     # bus deviates from the target by more than 0.005 pu, fall back to PQ
@@ -3753,7 +3771,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
       node = net.nodeVec[Sparlectra.geNetBusIdx(net = net, busName = bus)]
       startvm = node._vm_pu
       if startvm !== nothing && abs(startvm - vset) > 0.005
-        push!(ctx.messages, "notice: StaticVarCompensator $(name) — voltage target $(round(vset; digits=4)) pu contradicts the SV state ($(round(startvm; digits=4)) pu); imported as PQ with the SSH operating point")
+        push!(ctx.messages, "notice: StaticVarCompensator $(name), voltage target $(round(vset; digits=4)) pu contradicts the SV state ($(round(startvm; digits=4)) pu); imported as PQ with the SSH operating point")
         vctrl = false
       end
     end
@@ -3780,7 +3798,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   _noteRegulationOff!(ctx.messages, ctrl_off, :StaticVarCompensator)
 
   # HVDC converter stations, Stage-0 model: each converter becomes a fixed
-  # injection at its AC connection point with the SSH operating point — the
+  # injection at its AC connection point with the SSH operating point, the
   # industry-standard load-flow treatment of a point-to-point link (MATPOWER's
   # dcline does the same with two bounded dummy generators). The one property
   # that matters for the power flow is that HVDC has NO angle coupling: the
@@ -3788,19 +3806,19 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   # DC middle (DCLineSegment/DCNode) is deliberately NOT mapped, so two areas
   # joined only through HVDC correctly remain separate electrical islands with
   # their own angle references. The loss shows up as the difference between
-  # the two converters' setpoints (ReliCapGrid GA–BH: −100.0 / +109.1 MW).
+  # the two converters' setpoints (ReliCapGrid GA-BH: −100.0 / +109.1 MW).
   hvdc_derived_p = _hvdcDerivedSlackPower(store, ctx)
   for cls in (:VsConverter, :CsConverter)
     for conv in objectsOf(store, cls)
       t = busOfEquipment(topo, conv, 1)
       name = something(str(conv, :name), conv.mrid)
       if t === nothing || !_conn(ctx, t.connected)
-        push!(ctx.messages, "skip: $(cls) $(name) — missing/disconnected AC terminal")
+        push!(ctx.messages, "skip: $(cls) $(name), missing/disconnected AC terminal")
         push!(ctx.skipped, conv.mrid)
         continue
       end
       if !_inService(ctx, conv)
-        push!(ctx.messages, "skip: $(cls) $(name) — out of service (SSH inService=false)")
+        push!(ctx.messages, "skip: $(cls) $(name), out of service (SSH inService=false)")
         push!(ctx.skipped, conv.mrid)
         continue
       end
@@ -3827,7 +3845,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
           mrid = conv.mrid,
         ),
       )
-      push!(ctx.messages, "notice: $(cls) $(name) — HVDC converter: fixed PCC injection at $(bus) (p=$(round(-p_ssh; digits = 1)) MW, q=$(round(-q_ssh; digits = 1)) MVAr from SSH; DC side not mapped, no angle coupling)")
+      push!(ctx.messages, "notice: $(cls) $(name), HVDC converter: fixed PCC injection at $(bus) (p=$(round(-p_ssh; digits = 1)) MW, q=$(round(-q_ssh; digits = 1)) MVAr from SSH; DC side not mapped, no angle coupling)")
     end
   end
 
@@ -3849,23 +3867,23 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     t = busOfEquipment(topo, ei, 1)
     name = something(str(ei, :name), ei.mrid)
     if t === nothing
-      push!(ctx.messages, "skip: EquivalentInjection $(name) — no TopologicalNode")
+      push!(ctx.messages, "skip: EquivalentInjection $(name), no TopologicalNode")
       push!(ctx.skipped, ei.mrid)
       continue
     end
     if !_conn(ctx, t.connected)
-      push!(ctx.messages, "skip: EquivalentInjection $(name) — terminal disconnected")
+      push!(ctx.messages, "skip: EquivalentInjection $(name), terminal disconnected")
       push!(ctx.skipped, ei.mrid)
       continue
     end
     if !_inService(ctx, ei)
-      push!(ctx.messages, "skip: EquivalentInjection $(name) — out of service (SSH inService=false)")
+      push!(ctx.messages, "skip: EquivalentInjection $(name), out of service (SSH inService=false)")
       push!(ctx.skipped, ei.mrid)
       continue
     end
     bnode = _eiBoundaryNode(store, topo, ei)
     if bnode !== nothing && _eiPairCancels(get(ei_p_bnode, bnode, Float64[]))
-      push!(ctx.messages, "skip: EquivalentInjection $(name) — assembled boundary node $(topo.bus_name[t.tn]) has both sides present")
+      push!(ctx.messages, "skip: EquivalentInjection $(name), assembled boundary node $(topo.bus_name[t.tn]) has both sides present")
       push!(ctx.skipped, ei.mrid)
       continue
     end
@@ -3942,7 +3960,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   slack_bus = _chooseSlack(scan, ctx.messages)
   # One slack per island: every SV angle-reference bus that carries a unit
   # becomes a reference, not just the primary one. A multi-island delivery
-  # (ReliCapGrid/Svedala: two islands) is otherwise unsolvable — each island
+  # (ReliCapGrid/Svedala: two islands) is otherwise unsolvable, each island
   # needs its own angle reference.
   slack_buses = _selectSlackBuses(net, ctx, slack_bus, angle_ref_buses, pending, multi_slack)
   ctx.machine_control && _resolveMachineControlPlans!(pending, net, slack_buses, ctx.messages)
@@ -4011,7 +4029,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     elseif inj.type == "EXTERNALNETWORKINJECTION"
       net.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
       # EquivalentInjections arrive under the same type string without an
-      # mRID — they consume the counter but keep a minted export identity
+      # mRID: they consume the counter but keep a minted export identity
       _captureBusEquipment!(net, ctx, "ENI", inj.bus, get(inj, :mrid, nothing); children = (T1 = get(inj, :terminal_mrid, nothing), RC = get(inj, :rc_mrid, nothing)))
     elseif inj.type == "STATICVARCOMPENSATOR"
       net.prosumpsVec[end].comp.cTyp = Sparlectra.StaticVarCompensator
@@ -4038,7 +4056,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
   return slack_bus
 end
 
-# --- short-circuit harvest (§7.7 — read, not evaluated) ---------------------
+# --- short-circuit harvest (§7.7: read, not evaluated) ---------------------
 
 function _busOrNothing(topo::CGMESTopology, obj::CIMObject)
   ts = get(topo.terminals, obj.mrid, nothing)
@@ -4133,7 +4151,7 @@ function collectShortCircuitData(store::CGMESStore, topo::CGMESTopology)::CGMESS
     end
   end
   # Asynchronous machines: everything the IEC 60909-0 §6.7 motor
-  # impedance needs — locked-rotor current ratio, R/X of the locked rotor,
+  # impedance needs: locked-rotor current ratio, R/X of the locked rotor,
   # and the rated data to form S_rM (directly, or via mechanical power with
   # efficiency and power factor).
   asms = NamedTuple[]
@@ -4360,7 +4378,7 @@ function importCGMES(;
   end
   equivalent_branch_min_z_pu >= 0.0 || throw(ArgumentError("importCGMES: equivalent_branch_min_z_pu must not be negative, got $(equivalent_branch_min_z_pu)"))
   ctx = _MapCtx(tap_control, ignore_connected; machine_control = machine_control, vset_min_pu = vset_min_pu, vset_max_pu = vset_max_pu, strict_guards = strict_placeholder_guards, map_energy_source = map_energy_source, map_power_electronics = map_power_electronics, eb_min_z_pu = equivalent_branch_min_z_pu)
-  ignore_connected && push!(ctx.messages, "notice: ignore_connected = true — SSH Terminal.connected flags are overridden, everything is treated as in service")
+  ignore_connected && push!(ctx.messages, "notice: ignore_connected = true, SSH Terminal.connected flags are overridden, everything is treated as in service")
   messages = ctx.messages
   unresolved = unresolvedReferences(store)
   if !isempty(unresolved)
@@ -4368,21 +4386,26 @@ function importCGMES(;
     if topo_refs > 0 && require_boundary
       # Print the full why-analysis (supplied models, missing declared
       # dependencies, unresolved-reference histogram) for CLI users and carry
-      # it in the typed error so service runs can write it into cgmes.log —
+      # it in the typed error so service runs can write it into
+      # cgmes_import_report.md:
       # a failed customer delivery must name its own gap, wherever it fails.
       analysis = importFailureAnalysis(store)
       print(analysis)
-      hint = infer_base_voltages ? " infer_base_voltages is set — additionally set require_boundary=false to import without the boundary." : ""
-      throw(CGMESImportError("CGMES import: $(topo_refs) unresolved topology references — see the import analysis (CLI: printed above; Web UI runs: cgmes.log). Pass the missing boundary/dependency as additional path, or set require_boundary=false.$(hint)", analysis))
+      hint = infer_base_voltages ? " infer_base_voltages is set, additionally set require_boundary=false to import without the boundary." : ""
+      throw(CGMESImportError("CGMES import: $(topo_refs) unresolved topology references. See the import analysis (CLI: printed above; Web UI runs: cgmes_import_report.md). Pass the missing boundary/dependency as additional path, or set require_boundary=false.$(hint)", analysis))
     end
     push!(ctx.messages, "notice: $(length(unresolved)) unresolved references (non-fatal)")
   end
   for f in store.files
-    f.skipped && push!(ctx.messages, "file skipped: $(f.name) — $(f.skip_reason)")
+    f.skipped && push!(ctx.messages, "file skipped: $(f.name), $(f.skip_reason)")
   end
+  # a DY profile the switch leaves out is named once with the switch, so the
+  # report does not only list it as a skipped file
+  dy_off = read_dynamics ? nothing : _dynamicsNotRead(store)
+  dy_off === nothing || push!(ctx.messages, "notice: " * only(dynamicsReportLines(dy_off)))
 
   # Multi-valued references (#294 point 9): protect against silently reading
-  # the wrong value — `ref()` returns only the FIRST occurrence of a repeated
+  # the wrong value: `ref()` returns only the FIRST occurrence of a repeated
   # property; the full list is available via `refsAll`. One notice per
   # (class, property) so a future mapping that touches such a property cannot
   # fall into the last-wins trap unwarned.
@@ -4394,7 +4417,7 @@ function importCGMES(;
       counts[(o.class, key)] = get(counts, (o.class, key), 0) + 1
     end
     for ((cls, key), n) in sort!(collect(counts))
-      push!(ctx.messages, "notice: multi-valued reference $(cls).$(key) on $(n) object(s) — ref() reads the first value, the full list is in refsAll")
+      push!(ctx.messages, "notice: multi-valued reference $(cls).$(key) on $(n) object(s): ref() reads the first value, the full list is in refsAll")
     end
   end
 
@@ -4411,7 +4434,7 @@ function importCGMES(;
   if !any(tn -> !(tn.mrid in store.boundary), objectsOf(store, :TopologicalNode))
     analysis = importFailureAnalysis(store)
     print(analysis)
-    throw(CGMESImportError("CGMES import: the delivery carries no topology information, neither a TP profile (TopologicalNode) nor usable node-breaker data (ConnectivityNode plus switches). A bus-branch delivery needs its TP file; a node-breaker delivery needs its EQ connectivity. See the import analysis (CLI: printed above; Web UI runs: cgmes.log).", analysis))
+    throw(CGMESImportError("CGMES import: the delivery carries no topology information, neither a TP profile (TopologicalNode) nor usable node-breaker data (ConnectivityNode plus switches). A bus-branch delivery needs its TP file; a node-breaker delivery needs its EQ connectivity. See the import analysis (CLI: printed above; Web UI runs: cgmes_import_report.md).", analysis))
   end
 
   topo = buildTopology(store; infer_base_voltages = infer_base_voltages, messages = ctx.messages)
@@ -4437,7 +4460,7 @@ function importCGMES(;
   slack_bus = _mapInjections!(net, store, topo, created, svmap, ctx; multi_slack = multi_slack)
   # dynamic data onto the mapped machines; before the island slack choice,
   # which reads the unit type
-  read_dynamics && _mapDynamics!(net, store, ctx)
+  dynamics = read_dynamics ? _mapDynamics!(net, store, ctx) : dy_off
   # every element is mapped, so the stamps of the star rows are final
   _startStarBuses!(net, ctx, topo, svmap)
   Sparlectra.refreshBusTypesFromProsumers!(net)
@@ -4488,7 +4511,7 @@ function importCGMES(;
       # the result layer (r0.9.9)
       _push_cgmes_hvdc_link!(net, ctx, pair)
       kind = pair.segments ? "point-to-point" : "back-to-back"
-      push!(ctx.messages, "notice: HVDC pair detected ($(kind)): $(pair.from) / $(pair.to) — fixed injections (Stage 0); set cgmes_import.hvdc_mode = paired_control for a steerable pair")
+      push!(ctx.messages, "notice: HVDC pair detected ($(kind)): $(pair.from) / $(pair.to), fixed injections (Stage 0); set cgmes_import.hvdc_mode = paired_control for a steerable pair")
     end
   end
 
@@ -4534,7 +4557,7 @@ function importCGMES(;
 
   # Everything else is collected silently and inspected via result.messages.
   # "warning:" is reserved for data defects where the importer had to substitute
-  # a value to keep the model usable — those must not stay hidden in a vector
+  # a value to keep the model usable, those must not stay hidden in a vector
   # nobody reads, so they also go to the log.
   _logCGMESWarnings(ctx.messages)
 
@@ -4552,7 +4575,7 @@ function importCGMES(;
       ctx.element_by_mrid[mrid] = (:tap_controller, tap_pos[c])
     end
   end
-  return CGMESImportResult(net, store, topo, sc, slack_bus, ctx.messages, ctx.branch_side, ctx.skipped, no_sv_buses, ctx.element_by_mrid, sv_tap_step_fits)
+  return CGMESImportResult(net, store, topo, sc, slack_bus, ctx.messages, ctx.branch_side, ctx.skipped, no_sv_buses, ctx.element_by_mrid, sv_tap_step_fits, dynamics)
 end
 
 """
@@ -4566,7 +4589,7 @@ defective objects does not flood the log.
 function _logCGMESWarnings(messages::Vector{String})
   warnings = [m for m in messages if startswith(m, "warning:")]
   isempty(warnings) && return nothing
-  @warn "CGMES import: $(length(warnings)) data defect(s) — substituted values, see result.messages" details = join(warnings, "\n")
+  @warn "CGMES import: $(length(warnings)) data defect(s): substituted values, see result.messages" details = join(warnings, "\n")
   return nothing
 end
 

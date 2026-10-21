@@ -52,6 +52,10 @@ const CASES = [
   "SmallGrid BusBranch" => ([sgdir("CGMES_v2.4.15_SmallGridTestConfiguration_BaseCase_Complete_v3.0.0"), sgdir("CGMES_v2.4.15_SmallGridTestConfiguration_Boundary_v3.0.0")], "118-bus bus-branch benchmark with 176 lines and a full SV reference state."),
 ]
 
+# The MicroGrid deliveries carry a DY profile; their runs read it
+# (cgmes_import.read_dynamics, off by default) and print what it mapped.
+_read_dy(name) = startswith(name, "MicroGrid")
+
 # --- the walkthrough --------------------------------------------------------
 
 for (name, (paths, description)) in CASES
@@ -60,16 +64,22 @@ for (name, (paths, description)) in CASES
   println("="^78)
 
   # 1. Diagnose first (works on broken/incomplete deliveries too).
-  summary = summarizeCGMES(path = paths)
+  summary = summarizeCGMES(path = paths, read_dynamics = _read_dy(name))
   show(stdout, MIME"text/plain"(), summary)
 
   # 2. Import. `importCGMES` returns the Net plus the merged store, the
   #    topology, the always-harvested short-circuit data (§7.7) and the
   #    importer's notices; `createNetFromCGMES` is the Net-only shorthand.
-  res = importCGMES(path = paths, name = name)
+  res = importCGMES(path = paths, name = name, read_dynamics = _read_dy(name))
   println("\nimporter notices:")
   for m in res.messages
-    println("   ", m)
+    # the DY notices follow in their own block
+    startswith(m, "notice: DY") || println("   ", m)
+  end
+  dy_lines = dynamicsReportLines(res)
+  if !isempty(dy_lines)
+    println("dynamic data (DY profile):")
+    foreach(l -> println("   ", l), dy_lines)
   end
   sc = res.shortcircuit
   @printf("short-circuit data harvested (read, not evaluated): %d lines, %d machines, %d ENI, %d transformer ends, %d equivalent injections\n",
@@ -116,7 +126,7 @@ println("\n", "="^78)
 println("Stage 2 — tap controllers from CGMES TapChangerControl (MicroGrid BE)")
 println("="^78)
 
-res = importCGMES(path = [mgdir("BC_BE"), mgdir("BD")], tap_control = true, name = "MicroGrid BE (controlled)")
+res = importCGMES(path = [mgdir("BC_BE"), mgdir("BD")], tap_control = true, read_dynamics = true, name = "MicroGrid BE (controlled)")
 for m in res.messages
   (startswith(m, "tap control") || occursin("disabled — target bus", m)) && println("   ", m)
 end
@@ -198,7 +208,7 @@ for (label, provider) in SWEEP
   # (`imp`, not `res`: the walkthrough above owns a global `res`, and a bare
   # assignment here would hit Julia's soft-scope ambiguity warning.)
   imp = try
-    importCGMES(path = provider(), name = label)
+    importCGMES(path = provider(), name = label, read_dynamics = _read_dy(label))
   catch err
     push!(sweep_rows, _nan_row(label, "IMPORT ERR", _err_snippet(err)))
     @printf("%-28s %s\n", label, "IMPORT ERR")
@@ -226,7 +236,7 @@ for (label, provider) in SWEEP
   end
   if row === nothing
     row = try
-      imp2 = importCGMES(path = provider(), name = label)
+      imp2 = importCGMES(path = provider(), name = label, read_dynamics = _read_dy(label))
       ite2, erg2 = runpf!(imp2.net, 60, 1e-8, 0; opt_flatstart = true)
       erg2 == 0 ? _solve_stats(imp2, ite2, "ok (flat)") :
         _nan_row(label, "NO CONV", "SV and flat start both fail"; version = imp2.store.version, buses = length(imp2.net.nodeVec), iso = length(imp2.net.isoNodes), it = ite2, warnings = warnings)

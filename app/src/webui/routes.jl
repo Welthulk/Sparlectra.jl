@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -105,7 +105,7 @@ function _webui_settings_show_case_profile(query::AbstractDict, casefile::Abstra
 end
 
 # Fails open (notice stays visible) on any load error, matching
-# _powerflow_config_notice's fail-safe pattern — a broken/missing config file
+# _powerflow_config_notice's fail-safe pattern: a broken/missing config file
 # should not silently suppress an otherwise-informative notice.
 function _powerflow_show_case_settings_notice(config_file::AbstractString)::Bool
   isempty(strip(config_file)) && return true
@@ -122,7 +122,7 @@ end
 # (a nested-dict merge, so other keys/comments in the file are left as-is by
 # the merge itself; only the final YAML dump loses comments, same tradeoff as
 # the existing "Configuration refresh" writer). Requires a server-local,
-# already-existing config file — the same guard the config editor uses.
+# already-existing config file, the same guard the config editor uses.
 function _powerflow_dismiss_case_settings_notice!(config_file::AbstractString)
   isempty(strip(config_file)) && throw(ArgumentError("No configuration file was provided."))
   isfile(config_file) || throw(ArgumentError("Configuration refresh writes require a server-local file. Use a server-local selected configuration file."))
@@ -148,8 +148,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     # the case remembered by the Case page (plain nav links carry no query)
     selected_casefile = get(query, "casefile", "")
     selected_casefile = isempty(selected_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, selected_casefile)
-    case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
     selected_config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file)
+    case_profile = isempty(selected_casefile) ? nothing : _webui_load_case_settings(output_root, selected_casefile; config_file = selected_config_file, case_directory = runtime === nothing ? nothing : runtime.case_directory)
     return _webui_html(render_powerflow_form(;
       output_root,
       case_directory = runtime === nothing ? nothing : runtime.case_directory,
@@ -173,7 +173,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     # one the page reopens on the remembered case
     case_page_casefile = get(query, "casefile", "")
     case_page_casefile = isempty(case_page_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, case_page_casefile)
-    case_page_profile = isempty(case_page_casefile) ? nothing : _webui_load_case_settings(output_root, case_page_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
+    case_page_profile = isempty(case_page_casefile) ? nothing : _webui_load_case_settings(output_root, case_page_casefile; config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file), case_directory = runtime === nothing ? nothing : runtime.case_directory)
     return _webui_html(render_case_page(;
       output_root,
       case_directory = runtime === nothing ? nothing : runtime.case_directory,
@@ -189,7 +189,7 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     _webui_log_route!(log_root, "settings_page_opened", verb, path; status = "opened")
     settings_casefile = get(query, "casefile", "")
     settings_casefile = isempty(settings_casefile) ? _webui_recall_selected_case(output_root) : _webui_remember_selected_case!(output_root, settings_casefile)
-    settings_profile = isempty(settings_casefile) ? nothing : _webui_load_case_settings(output_root, settings_casefile; case_directory = runtime === nothing ? nothing : runtime.case_directory)
+    settings_profile = isempty(settings_casefile) ? nothing : _webui_load_case_settings(output_root, settings_casefile; config_file = get(query, "config_file", runtime === nothing ? "" : runtime.config_file), case_directory = runtime === nothing ? nothing : runtime.case_directory)
     return _webui_html(render_settings_page(;
       output_root,
       case_directory = runtime === nothing ? nothing : runtime.case_directory,

@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -48,7 +48,7 @@ function _webui_case_import_message(imported::Vector{String}, rejected)::String
     push!(lines, marker * entry)
   end
   for item in rejected
-    push!(lines, "❌ $(first(item)) — $(last(item))")
+    push!(lines, "❌ $(first(item)): $(last(item))")
   end
   isempty(lines) && push!(lines, "No files were selected for import.")
   header = isempty(imported) ? "" : "Imported $(length(imported)) file$(length(imported) == 1 ? "" : "s")"
@@ -330,13 +330,13 @@ const WEBUI_STATUS_AUTO_REFRESH_SECONDS = 2
 const _WEBUI_ACTIVE_RUN_STATUSES = Set(("queued", "running", "aborting"))
 
 function _format_elapsed_duration(seconds)::String
-  seconds === nothing && return "—"
+  seconds === nothing && return "-"
   elapsed = try
     Float64(seconds)
   catch
     tryparse(Float64, string(seconds))
   end
-  (elapsed === nothing || !isfinite(elapsed)) && return "—"
+  (elapsed === nothing || !isfinite(elapsed)) && return "-"
   milliseconds_total = max(0, round(Int, elapsed * 1000))
   total_seconds, milliseconds = divrem(milliseconds_total, 1000)
   hours, remainder = divrem(total_seconds, 3600)
@@ -483,7 +483,7 @@ $(latency_banner)<main class="$(main_class)"$(refresh_attrs)>$(back_button)<h1>$
           // Terminal page reached. Do a REAL reload: scripts inside a
           // DOMParser-imported <main> are inert per the HTML spec (never
           // executed), so swapping the final page in place would render it
-          // with dead JS — the case-combobox arrow, solver toggles and every
+          // with dead JS: the case-combobox arrow, solver toggles and every
           // other in-page handler would not react until the user forced a
           // navigation (the reported "works only after typing + Enter").
           window.location.reload();
@@ -993,8 +993,9 @@ function _webui_case_context(;
   submitted_form = nothing,
   show_case_settings_notice::Bool = true,
   apply_case_levels::Bool = true,
+  case_scope_from_defaults::Bool = false,
 )
-  profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form, case_directory, apply_case_levels)
+  profile_values = webui_form_state(; selected_casefile, selected_config_file, sidecar_profile = case_profile, submitted_form, case_directory, apply_case_levels, case_scope_from_defaults)
   profile_path = String(get(profile_values, "_profile_path", ""))
   profile_location = isempty(profile_path) ? "the case configuration file" : "<code>$(_webui_escape(profile_path))</code>"
   profile_notice = if isempty(profile_path) || !show_case_settings_notice
@@ -1060,7 +1061,7 @@ function _webui_case_context(;
   # "Short circuit" button gating (selectable only when
   # the data is there): CGMES case + a delivery that actually carries
   # short-circuit source data. An unresolvable path (e.g. a cgmes: alias not
-  # fetched yet) stays enabled — the service run reports missing data with an
+  # fetched yet) stays enabled: the service run reports missing data with an
   # explicit reason either way.
   sc_is_cgmes = case_format_value == "cgmes" || format_hint == :cgmes
   # a case file (#342) carries its own IEC 60909 sources, so it qualifies too
@@ -1240,7 +1241,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const isPowsyblCase = new RegExp('\\\\.(powsybl|xiidm)\$', 'i').test(effectiveValue);
     if (caseFormat !== null) {
       // Auto-set formats must fall BACK to auto when the typed case stops
-      // matching — otherwise a CGMES selection sticks after switching to a
+      // matching, otherwise a CGMES selection sticks after switching to a
       // MATPOWER case. Only formats this automation set itself are
       // reverted; a manual choice stays untouched.
       if (isDatCase) {
@@ -1276,14 +1277,14 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   updateDatCaseAssistance();
   // bfcache restores (back-navigation from a result page) skip
-  // DOMContentLoaded — re-evaluate the case-dependent gating there too.
+  // DOMContentLoaded. Re-evaluate the case-dependent gating there too.
   window.addEventListener('pageshow', updateDatCaseAssistance);
   const hideCaseLoadingBanner = function () {
     const banner = document.getElementById('case-loading-banner');
     if (banner !== null) banner.hidden = true;
   };
   // A page restored from the back/forward cache keeps the DOM as it was when
-  // the user navigated away — including the loading state. Clear it, or the
+  // the user navigated away, including the loading state. Clear it, or the
   // form looks (and on a stricter style would be) stuck after Back.
   window.addEventListener('pageshow', function () {
     document.querySelectorAll('.case-loading').forEach(function (el) { el.classList.remove('case-loading'); });
@@ -1293,7 +1294,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // Selecting a case reloads the whole page from the server (its saved
     // settings have to be applied). On a large case directory that takes a
     // moment during which the visible fields still show the OLD case's
-    // values and then jump — so say plainly that a reload is running instead
+    // values and then jump, so say plainly that a reload is running instead
     // of letting the user watch settings change under their hands.
     const form = (caseInput !== null && caseInput.form !== null ? caseInput.form : null) || document.querySelector('main');
     if (form !== null) {
@@ -1308,7 +1309,7 @@ document.addEventListener('DOMContentLoaded', function () {
         banner.id = 'case-loading-banner';
         banner.className = 'alert info case-loading-banner';
         banner.setAttribute('role', 'status');
-        banner.innerHTML = '<span class="submit-spinner" aria-hidden="true"></span> Loading case settings — please wait…';
+        banner.innerHTML = '<span class="submit-spinner" aria-hidden="true"></span> Loading case settings, please wait…';
         form.parentNode.insertBefore(banner, form);
       }
       banner.hidden = false;
@@ -1791,7 +1792,7 @@ function render_case_page(;
   case_form = """
 <form id=\"case-select-form\" method=\"post\" action=\"/powerflow/resolve-case\" class=\"panel form-grid case-select-form\">
 <input type=\"hidden\" name=\"config_file\" value=\"$(_webui_escape(config_default))\">
-<label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code> — pick one from the list, or type a case name/path and press Enter to download it into the list.<br>MATPOWER: a case name such as <code>case118.m</code>. CGMES: <code>cgmes:</code> plus one of $(join(("<code>" * a * "</code>" for a in sort(collect(keys(CGMESImporter.CGMES_TESTSET_ALIASES)))), ", ")) — fetches the ENTSO-E test configuration including its boundary set.</small></label>
+<label class="span-2">$(_webui_field_label("casefile", "Case file"))$(case_input)<button type="submit" id="resolve-case-button" formaction="/powerflow/resolve-case" formmethod="post" formnovalidate hidden>Resolve case</button><small class="field-hint">Cases from <code>$(_webui_escape(effective_case_directory))</code>. Pick one from the list, or type a case name/path and press Enter to download it into the list.<br>MATPOWER: a case name such as <code>case118.m</code>. CGMES: <code>cgmes:</code> plus one of $(join(("<code>" * a * "</code>" for a in sort(collect(keys(CGMESImporter.CGMES_TESTSET_ALIASES)))), ", ")). Fetches the ENTSO-E test configuration including its boundary set.</small></label>
 $(dat_hint_html)
 <div class=\"actions case-export-actions\">$(_webui_help_link("webui.scf_export", "Case export")) <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate title=\"Write the selected case as an SCF file (.scf.json) into the case directory: a PGM dataset plus the sparlectra block (names, taps, measurements, options).\">Export as SCF case file</button><button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/export-scf\" formmethod=\"post\" formnovalidate name=\"scf_strict_pgm\" value=\"true\" title=\"Write the plain PGM dataset (.pgm.json) for a PGM-only consumer: no sparlectra block, so names, slack roles, taps, measurements and options are lost.\">Export as plain PGM</button><a class=\"button secondary-button case-download-link\" href=\"/powerflow/case/download?case=$(_webui_urlencode(selected_casefile))\" title=\"Download the selected case file from the case directory. After an export, pick the .scf.json or .pgm.json in the selector to download it.\">Download selected case</a></div>
 <div class=\"actions case-save-as-actions\" title=\"Save the current case, its settings and any bound measurement set under a new name - a copy, nothing switched live.\"><label for=\"save_as_name\">Save case as</label> <input type=\"text\" id=\"save_as_name\" name=\"save_as_name\" placeholder=\"new case name\" pattern=\"[^/\\\\]+\"> <label class=\"inline-check\"><input type=\"checkbox\" name=\"save_as_overwrite\" value=\"true\"> overwrite</label> <label class=\"inline-check\" title=\"Solve the case once and write the solved voltages into the copy as its start state.\"><input type=\"checkbox\" name=\"save_as_start_state\" value=\"true\"> start from the solved state</label> <button type=\"submit\" class=\"secondary-button\" formaction=\"/powerflow/case/save-as\" formmethod=\"post\" formnovalidate title=\"Write &lt;name&gt;.scf.json, &lt;name&gt;.config.yaml (saved settings plus unsaved changes) and any bound measurement set as copies, then select the new case.\">Save case as</button></div>
@@ -1940,12 +1941,12 @@ $(_webui_qlimit_block_html(profile_values))
 <details id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <summary>Newton-Raphson start values</summary>
 <label class=\"check\"><input name=\"power_flow_flatstart\" type=\"hidden\" value=\"false\"><input name=\"power_flow_flatstart\" type=\"checkbox\" value=\"true\" data-flatstart-toggle$(_webui_checked(profile_values, "power_flow_flatstart", _webui_option_default("power_flow_flatstart")))>$(_webui_field_label("power_flow_flatstart", "Flat start"))</label>
-<p class=\"field-help\">Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages. The flat start sets only this profile: the start values below and the start projection still run from it when they are on; only the start angle and voltage modes are ignored (greyed) while it is set. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
-<label class=\"check\" data-nr-only-field data-flatstart-required-field><input name=\"power_flow_ratio_profile\" type=\"hidden\" value=\"false\"><input name=\"power_flow_ratio_profile\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_ratio_profile", _webui_option_default("power_flow_ratio_profile")))>$(_webui_field_label("power_flow_ratio_profile", "Ratio profile as a start candidate"))</label>
-<p class=\"field-help\">Flat start only: the start projection also tries the flat profile with each voltage level scaled by the transformer ratios on its path from the slack, and keeps it when its mismatch is at least 10 percent lower. Greyed while the flat start is off.</p>
+<p class=\"field-help\">Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages; only three-winding star points start at the ratio of their stiffest winding. The run switches the start projection, the DC start values, the start angle and voltage modes and the ratio profile off (greyed) while it is set; the ratio profile stays off in the rescue and auto stages as well. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
+<label class=\"check\" data-nr-only-field data-ratio-profile-field><input name=\"power_flow_ratio_profile\" type=\"hidden\" value=\"false\"><input name=\"power_flow_ratio_profile\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_ratio_profile", _webui_option_default("power_flow_ratio_profile")))>$(_webui_field_label("power_flow_ratio_profile", "Ratio profile as a start candidate"))</label>
+<p class=\"field-help\">A start projection candidate on a flat seed: the flat profile with each voltage level scaled by the transformer ratios on its path from the slack, kept when its mismatch is at least 10 percent lower. When it acts, it scales every PQ bus, not only three-winding star points. The flat start switches it off for the whole run. Without the flat start it acts only in the rescue ladder's alternate start (not with Start angle mode dc) and in the auto mode, so it is greyed in every other case.</p>
 <label class=\"check\" data-nr-only-field><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
 <label class=\"field-indent\">$(_webui_field_label("power_flow_apslf_start_order", "Highest coefficient (order)"))<input name=\"power_flow_apslf_start_order\" type=\"number\" min=\"1\" data-apslf-start-order value=\"$(_webui_input_value(profile_values, "power_flow_apslf_start_order", _webui_option_default("power_flow_apslf_start_order")))\"></label>
-<label class=\"check\" data-nr-only-field><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
+<label class=\"check\" data-nr-only-field data-flatstart-inactive-field><input name=\"power_flow_dc_seed_unconditional\" type=\"hidden\" value=\"false\"><input name=\"power_flow_dc_seed_unconditional\" type=\"checkbox\" value=\"true\" data-dc-seed-toggle$(_webui_checked(profile_values, "power_flow_dc_seed_unconditional", _webui_option_default("power_flow_dc_seed_unconditional")))>$(_webui_field_label("power_flow_dc_seed_unconditional", "Use DC start values"))</label>
 </details>
 <label data-nr-only-field>$(_webui_field_label("power_flow_wrong_branch_detection", "Wrong-branch detection"))$(_webui_select("power_flow_wrong_branch_detection", _webui_option_allowed_values("power_flow_wrong_branch_detection"), _webui_selected(profile_values, "power_flow_wrong_branch_detection", _webui_option_default("power_flow_wrong_branch_detection"))))</label>
 <label data-nr-only-field data-dc-seed-inactive-field data-flatstart-inactive-field>$(_webui_field_label("power_flow_start_angle_mode", "Start angle mode"))$(_webui_select("power_flow_start_angle_mode", _webui_option_allowed_values("power_flow_start_angle_mode"), _webui_selected(profile_values, "power_flow_start_angle_mode", _webui_option_default("power_flow_start_angle_mode"))))</label>
@@ -1971,7 +1972,7 @@ $(_webui_qlimit_block_html(profile_values))
 <label>$(_webui_field_label("power_flow_external_grid_source", "Sk''/R-X source"))$(_webui_select("power_flow_external_grid_source", _webui_option_allowed_values("power_flow_external_grid_source"), _webui_selected(profile_values, "power_flow_external_grid_source", _webui_option_default("power_flow_external_grid_source"))))</label>
 <label>$(_webui_field_label("power_flow_external_grid_sk_mva", "Short-circuit power Sk'' [MVA]"))<input name=\"power_flow_external_grid_sk_mva\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_external_grid_sk_mva", _webui_option_default("power_flow_external_grid_sk_mva")))\"></label>
 <label>$(_webui_field_label("power_flow_external_grid_rx", "R/X ratio"))<input name=\"power_flow_external_grid_rx\" type=\"number\" step=\"any\" min=\"0\" value=\"$(_webui_input_value(profile_values, "power_flow_external_grid_rx", _webui_option_default("power_flow_external_grid_rx")))\"></label>
-<p class=\"field-help\">The reference voltage moves to a hidden internal bus behind the feeder impedance <code>z = Un²/Sk''</code> — the former slack bus becomes an ordinary bus whose voltage droops under load. <code>auto</code> prefers the Sk''/R-X values a CGMES delivery declares on the slack bus's <code>ExternalNetworkInjection</code> and falls back to the numbers above (MATPOWER/DTF cases carry no such data); <code>config</code> always uses the numbers above. Mutually exclusive with the distributed slack — both decide who covers the imbalance, and combined the source's import would be forced to zero.</p>
+<p class=\"field-help\">The reference voltage moves to a hidden internal bus behind the feeder impedance <code>z = Un²/Sk''</code>: the former slack bus becomes an ordinary bus whose voltage droops under load. <code>auto</code> prefers the Sk''/R-X values a CGMES delivery declares on the slack bus's <code>ExternalNetworkInjection</code> and falls back to the numbers above (MATPOWER/DTF cases carry no such data); <code>config</code> always uses the numbers above. Mutually exclusive with the distributed slack: both decide who covers the imbalance, and combined the source's import would be forced to zero.</p>
 </fieldset>
 $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 <legend>Saved settings for this case</legend>
@@ -1980,7 +1981,7 @@ $(isempty(profile_path) ? "" : "<fieldset class=\"saved-case-settings\">
 </fieldset>")
 <fieldset class=\"startup-options\">
 <legend>Startup</legend>
-<p class=\"field-help\">Hidden compile runs at startup so the first real run — and the first <strong>Short circuit</strong> click — do not pay the compilation. Costs a few seconds once. Saved in the configuration file; takes effect at the <em>next</em> Web UI start.</p>
+<p class=\"field-help\">Hidden compile runs at startup so the first real run (and the first <strong>Short circuit</strong> click) do not pay the compilation. Costs a few seconds once. Saved in the configuration file; takes effect at the <em>next</em> Web UI start.</p>
 </fieldset>
 <fieldset class=\"non-convergence-options\" data-nr-only-field>
 <legend>Non-convergence handling</legend>
@@ -2059,13 +2060,28 @@ document.addEventListener('DOMContentLoaded', function () {
   const dcSeedToggle = document.querySelector('input[data-dc-seed-toggle]');
   const flatstartToggle = document.querySelector('input[data-flatstart-toggle]');
   const isFlatstartOn = function () { return flatstartToggle !== null && flatstartToggle.checked; };
-  // The flat start greys the two start-mode controls in place (the run sets
-  // both to classic while the flat start is on, #463); their values stay as
-  // they are (a greyed control is not posted, so a save keeps the stored
-  // value). The start machines are not greyed: they follow their own keys
-  // and run from the flat profile. The ratio-profile candidate is the
-  // opposite case: it acts only on a flat start, so it is greyed while the
-  // flat start is off.
+  // The flat start greys the two start-mode controls and the DC start values
+  // in place (the run switches them off while the flat start is on, see
+  // _flatstart_profile_config); their values stay as they are (a greyed
+  // control is not posted, so a save keeps the stored value). The
+  // current-iteration and APSLF starts follow their own keys and are not
+  // greyed. The ratio-profile candidate is greyed wherever it cannot act: a
+  // flat-start run switches it off for the whole run, rescue and auto stages
+  // included (_flatstart_profile_config). Without the flat start only two
+  // paths run the projection from a flat profile: the rescue ladder's
+  // alternate start, where a DC start angle mode keeps precedence over the
+  // candidate, and the auto mode. Greyed, it is not posted and a save keeps
+  // the stored value.
+  const rescueToggle = document.querySelector('input[name="power_flow_rescue"][type="checkbox"]');
+  const autoModeToggle = document.querySelector('input[name="power_flow_mode"][type="checkbox"]');
+  const angleModeSelect = document.querySelector('select[name="power_flow_start_angle_mode"]');
+  const isRatioProfileInactive = function () {
+    if (isFlatstartOn()) return true;
+    const autoOn = autoModeToggle !== null && autoModeToggle.checked;
+    const rescueOn = rescueToggle !== null && rescueToggle.checked;
+    const dcAngles = angleModeSelect !== null && angleModeSelect.value === 'dc';
+    return !(autoOn || (rescueOn && !dcAngles));
+  };
   const updateApslfStartOrder = function () {
     if (apslfStartOrderInput !== null) apslfStartOrderInput.disabled = apslfStartToggle !== null && !apslfStartToggle.checked;
   };
@@ -2091,6 +2107,15 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   if (flatstartToggle !== null) {
     flatstartToggle.addEventListener('change', function () { updateStepControlOptions('flatstart'); });
+  }
+  if (rescueToggle !== null) {
+    rescueToggle.addEventListener('change', function () { updateStepControlOptions(); });
+  }
+  if (autoModeToggle !== null) {
+    autoModeToggle.addEventListener('change', function () { updateStepControlOptions(); });
+  }
+  if (angleModeSelect !== null) {
+    angleModeSelect.addEventListener('change', function () { updateStepControlOptions(); });
   }
   const autodampToggle = document.querySelector('input[data-autodamp-toggle]');
   const trustRegionToggle = document.querySelector('input[data-trust-region-toggle]');
@@ -2146,11 +2171,12 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     const dcSeedActive = dcSeedToggle !== null && dcSeedToggle.checked;
     const flatstartActive = isFlatstartOn();
+    const ratioProfileInactive = isRatioProfileInactive();
     nrOnlyFields.forEach(function (container) {
       const dcSeedMakesInactive = dcSeedActive && container.hasAttribute('data-dc-seed-inactive-field');
       const flatstartMakesInactive = flatstartActive && container.hasAttribute('data-flatstart-inactive-field');
-      const flatstartRequired = !flatstartActive && container.hasAttribute('data-flatstart-required-field');
-      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive || flatstartRequired);
+      const ratioProfileOff = ratioProfileInactive && container.hasAttribute('data-ratio-profile-field');
+      setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive || ratioProfileOff);
     });
     updateExperimentalOptions();
     updateJacobianReuseOptions();
@@ -2334,7 +2360,7 @@ function render_settings_page(;
   # the file's old values right after "Saved settings for this case". A
   # save with target this case writes what the form shows.
   stored_profile_path = case_profile isa AbstractDict ? String(get(case_profile, "_profile_path", "")) : ""
-  ctx = _webui_case_context(; application_root, case_directory, selected_casefile, selected_config_file, case_profile, submitted_form, show_case_settings_notice, apply_case_levels = show_case_profile)
+  ctx = _webui_case_context(; application_root, case_directory, selected_casefile, selected_config_file, case_profile, submitted_form, show_case_settings_notice, apply_case_levels = show_case_profile, case_scope_from_defaults = show_case_profile)
   profile_values = ctx.profile_values
   profile_path = isempty(ctx.profile_path) ? stored_profile_path : ctx.profile_path
   error_html = _webui_error_alert_html(error_message)
@@ -2420,7 +2446,7 @@ function render_powerflow_form(;
   dat_case_assistance = ctx.dat_case_assistance
   sc_state = ctx.sc_state
   sc_disabled_attr = sc_state == "ready" ? "" : " disabled"
-  sc_title = sc_state == "ready" ? "Balanced short-circuit currents (IEC 60909-0): Ik'' max/min per bus from the delivery's harvested short-circuit data — no power-flow solve involved." :
+  sc_title = sc_state == "ready" ? "Balanced short-circuit currents (IEC 60909-0): Ik'' max/min per bus from the delivery's harvested short-circuit data, no power-flow solve involved." :
     sc_state == "missing-data" ? "This case carries no usable short-circuit source data (no machines, feeder short-circuit currents, or equivalent impedances; in a PowSyBl case no generator with the short-circuit extension or a rated power)." :
     "Short-circuit evaluation needs a CGMES delivery with harvested short-circuit data, a PowSyBl case, or a case file carrying sc_source entries."
   # the scenario
@@ -3005,7 +3031,7 @@ function _webui_import_analysis_summary(result::AbstractDict)::Union{Nothing,Str
   verdict = string(get(metadata, "import_analysis_verdict", ""))
   not_importable = string(get(result, "reason", "")) == "import_analysis_not_importable"
   badge = if not_importable
-    "<span class=\"status-badge status-error\">not importable — $(missing_deps) missing dependency(ies) · $(unresolved) unresolved reference(s)</span>"
+    "<span class=\"status-badge status-error\">not importable: $(missing_deps) missing dependency(ies) · $(unresolved) unresolved reference(s)</span>"
   elseif unresolved isa Real && unresolved > 0
     "<span class=\"status-badge status-warning\">importable · $(unresolved) non-fatal unresolved reference(s)</span>"
   else
@@ -3034,14 +3060,14 @@ function _webui_cgmes_export_summary(result::AbstractDict)::Union{Nothing,String
     badge = isempty(notices) ? "" : " <span class=\"status-badge status-warning\">$(_webui_escape(notices))</span>"
     return "<code>" * _webui_escape(text) * "</code>" * badge
   elseif status == "skipped"
-    return "<span class=\"status-badge status-warning\">skipped — $(_webui_escape(string(get(metadata, "cgmes_export_skip_reason", ""))))</span>"
+    return "<span class=\"status-badge status-warning\">skipped: $(_webui_escape(string(get(metadata, "cgmes_export_skip_reason", ""))))</span>"
   else
-    return "<span class=\"status-badge status-error\">failed — $(_webui_escape(string(get(metadata, "cgmes_export_error", ""))))</span>"
+    return "<span class=\"status-badge status-error\">failed: $(_webui_escape(string(get(metadata, "cgmes_export_error", ""))))</span>"
   end
 end
 
 # CGMES runs: compact SV-comparison summary from the run metadata (written by
-# the mandatory compareWithSV check). Returns nothing for non-CGMES runs —
+# the mandatory compareWithSV check). Returns nothing for non-CGMES runs,
 # the metadata keys only exist on the CGMES path.
 function _webui_sv_compare_summary(result::AbstractDict)::Union{Nothing,String}
   metadata = get(result, "metadata", Dict{String,Any}())

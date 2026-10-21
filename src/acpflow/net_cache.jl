@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@
 #   time. The network is always built fresh from the cached mpc, so import
 #   options need not be part of the key. The format version is reserved for
 #   a future flat Net representation.
-# - Key: SHA-256 over the component list below — cache format version,
+# - Key: SHA-256 over the component list below: cache format version,
 #   Sparlectra version, Julia VERSION, SHA-256 of the case-file bytes.
 # - Storage: <case dir>/.sparlectra_net_cache/<case base>.<key16>.v1.jls,
 #   written atomically (temp file + mv).

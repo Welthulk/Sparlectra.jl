@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 
 # file: src/adapters/cgmes/cgmes_report.jl
 # purpose: diagnostic-first reporting for the CGMES importer (Stage 0).
-# `summarizeCGMES` inspects any delivery — including broken ones — and
+# `summarizeCGMES` inspects any delivery, including broken ones, and
 # reports profiles, version, class histogram and unresolved references
 # before any Net mapping exists.
 
@@ -33,15 +33,17 @@ struct CGMESSummary
 end
 
 """
-    summarizeCGMES(; path) -> CGMESSummary
+    summarizeCGMES(; path, read_dynamics = false) -> CGMESSummary
 
-Read a CGMES delivery (folder, ZIP, or vector of paths — e.g. base case +
+Read a CGMES delivery (folder, ZIP, or vector of paths, e.g. base case +
 boundary) and produce a diagnostic summary without building a `Net`. Works
 on incomplete data sets; unresolved `TopologicalNode`/`ConnectivityNode`
-references raise the `boundary_missing_hint`.
+references raise the `boundary_missing_hint`. `read_dynamics` reads the DY
+profile as `importCGMES` does with the same keyword; without it a DY file is
+listed as skipped.
 """
-function summarizeCGMES(; path)::CGMESSummary
-  store = loadCGMES(path)
+function summarizeCGMES(; path, read_dynamics::Bool = false)::CGMESSummary
+  store = loadCGMES(path; profile_filter = read_dynamics ? IMPORT_PROFILE_TAGS_WITH_DY : IMPORT_PROFILE_TAGS)
   histogram = sort([cls => length(mrids) for (cls, mrids) in store.byclass]; by = p -> -p.second)
   unresolved = unresolvedReferences(store)
   # boundary hint: dangling refs whose key points at topology container objects
@@ -55,14 +57,14 @@ end
     compareWithSV(result::CGMESImportResult) -> NamedTuple
 
 Compare the solved state of `result.net` (after `runpf!`) with the SV
-profile of the imported data set — the numeric acceptance oracle of the
+profile of the imported data set, the numeric acceptance oracle of the
 importer.
 
 Voltages: per-bus Δvm/Δva vs `SvVoltage` (max/RMS + rows). Isolated buses
 are skipped, except a bus that a closed switch joins to a bus with a branch:
 the solver merges it with that bus, and it is compared at the voltage of its
 switch group. Angles are only
-defined up to one constant per island — an IGM cut out of the continental
+defined up to one constant per island, an IGM cut out of the continental
 CGM keeps the CGM's global angle reference while the local solve pins its
 own slack, which shows up as a uniform offset of tens of degrees that says
 nothing about the state. The comparison therefore removes the median angle
@@ -85,13 +87,13 @@ fixed injections without DC coupling.
 
 Flows (`.flows`): per-terminal comparison vs `SvPowerFlow` in the CGMES
 sign convention (power flowing *into* the equipment):
-- `:branch_from`/`:branch_to` — line/transformer terminals, model flow
+- `:branch_from`/`:branch_to`: line/transformer terminals, model flow
   computed from the solved voltages (real exchanges carry these; the
   ENTSO-E conformity sets only ship injection terminals),
 - `:shunt`: `LinearShuntCompensator` and `NonlinearShuntCompensator` at
   the solved bus voltage (the nonlinear one with the admittance the import
   summed from its characteristic points up to the SSH section),
-- `:load` — SSH load values (data-consistency check),
+- `:load`: SSH load values (data-consistency check),
 - `:units`: machines/ENIs/EquivalentInjections aggregated per closed-link
   cluster against the solved balance of the cluster (covers PV and slack
   units; a bus without links is a cluster of one).
@@ -281,7 +283,7 @@ function _compareFlowsWithSV(result::CGMESImportResult)
     tn = tnOfTerminal(t)
     bus = tn === nothing ? nothing : get(topo.bus_name, tn, nothing)
     busidx = bus === nothing ? nothing : get(net.busDict, bus, nothing)
-    # de-energized buses carry no solved state — their rows would only
+    # de-energized buses carry no solved state, their rows would only
     # measure the de-energization, not the power flow
     busidx !== nothing && busidx in iso && continue
     name = something(str(eq, :name), eqm)
@@ -448,7 +450,7 @@ end
 Per-class completeness of the harvested short-circuit source data: one row
 per element class with the record count and, per attribute, how many records
 actually carry a value (`attribute => filled/total`). Identification fields
-(`mrid`, `name`, `bus`) are excluded — coverage describes the electrical
+(`mrid`, `name`, `bus`) are excluded: coverage describes the electrical
 attributes a future IEC 60909 evaluation (issue #277) would consume.
 """
 function shortCircuitCoverage(sc::CGMESShortCircuitData)::Vector{NamedTuple}
@@ -480,8 +482,9 @@ end
     printShortCircuitCoverage(io, sc)
 
 Readable rendering of [`shortCircuitCoverage`](@ref): per class the record
-count and each attribute's fill rate, `✓` when complete. This is what
-`cgmes.log` prints under "Short-circuit source data".
+count and each attribute's fill rate, `✓` when complete. The short-circuit
+service prints it into `run.log`; the CGMES import report of a service run
+(`cgmes_import_report.md`) shows the same rows as a table.
 """
 function printShortCircuitCoverage(io::IO, sc::CGMESShortCircuitData)
   for row in shortCircuitCoverage(sc)
@@ -495,7 +498,7 @@ function printShortCircuitCoverage(io::IO, sc::CGMESShortCircuitData)
     end
     println(io, "  ", rpad(row.class, 28), row.records, " record(s)")
     for a in row.attributes
-      marker = a.filled == a.total ? "✓" : (a.filled == 0 ? "—" : string(a.filled, "/", a.total))
+      marker = a.filled == a.total ? "✓" : (a.filled == 0 ? "-" : string(a.filled, "/", a.total))
       println(io, "    ", rpad(String(a.attribute), 34), marker)
     end
   end
@@ -524,7 +527,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::CGMESSummary)
   print(io, "  unresolved references: ", s.unresolved_count)
   if s.unresolved_count > 0
     print(io, "  (sample: ", join(s.unresolved_sample, ", "), ")")
-    s.boundary_missing_hint && print(io, "\n  ⚠ topology references unresolved — boundary set likely missing")
+    s.boundary_missing_hint && print(io, "\n  ⚠ topology references unresolved, boundary set likely missing")
   end
   println(io)
 end

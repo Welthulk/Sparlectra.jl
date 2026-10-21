@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -96,14 +96,14 @@ end
     electricalIslandComponents(net) -> Vector{Vector{Int}}
 
 Connected bus components of `net` counting **both** in-service branches and
-closed links as connections — the electrical view.
+closed links as connections, the electrical view.
 
 `_active_ac_island_components` deliberately walks `branchVec` only, because
 the solver runs on a net whose link clusters are already contracted. On a raw
 imported net that is misleading: parts joined by a closed switch appear as
 separate islands (a CGMES delivery with retained switches can show several
 "islands" that are one electrical island). Use this helper whenever islands
-are judged on a net that has not been link-merged — diagnostics, and the
+are judged on a net that has not been link-merged: diagnostics, and the
 importer's slack decisions.
 """
 function electricalIslandComponents(net::Net)::Vector{Vector{Int}}

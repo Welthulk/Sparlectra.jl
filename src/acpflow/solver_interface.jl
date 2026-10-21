@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 # purpose: solver-agnostic power-flow model bridge: buildPfModel export,
 #          external solver dispatch (solvePf, runpf_external!), and
 #          applyPfSolution! write-back into Net
-# solver_interface.jl — external solver bridge
+# solver_interface.jl: external solver bridge
 #
 # Goal:
 # - Export a canonical, solver-agnostic PF model (Ybus, specs, start state, bus types).

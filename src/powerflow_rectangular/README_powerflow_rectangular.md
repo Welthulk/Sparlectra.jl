@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This directory contains helper layers for the rectangular complex-state Newton–Raphson power-flow path.
+This directory contains helper layers for the rectangular complex-state Newton-Raphson power-flow path.
 
 The rectangular implementation is split across several abstraction layers:
 

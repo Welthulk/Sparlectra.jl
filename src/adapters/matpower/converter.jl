@@ -18,8 +18,10 @@
 #          constructed by build_net like every other format. The conversion
 #          mirrors createNetFromMatPowerCase's interpretation rules field
 #          by field (classification, conventions, setpoint sources, order),
-#          and every SI value is emitted through _scf_stable so the
-#          file-unit round trip reproduces the per-unit value bit for bit.
+#          The case declares units = pu: the branch and shunt parameters
+#          are carried as stated in the MATPOWER file in the pu block of
+#          their extra entry, which build_net reads. The SI data section is
+#          a derived view for PGM readers, emitted through _scf_stable.
 
 struct MatpowerAdapter <: FormatAdapter end
 
@@ -174,6 +176,10 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   spar.meta["s_base"] = _scf_stable(baseMVA, x -> x * 1.0e6, x -> x / 1.0e6)
   spar.meta["f_nom"] = opts.f_nom
   spar.meta["source_format"] = "matpower"
+  # MATPOWER states branch and shunt parameters per unit: they travel as
+  # stated, without a conversion that would lose the last bit of about one
+  # value in ten (no exact SI preimage)
+  spar.meta["units"] = "pu"
   extra = spar.extra
   data = case.data
 
@@ -246,7 +252,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
       g_pu = pShunt / baseMVA
       b_pu = qShunt / baseMVA
       push!(data.shunt, SCFShuntRow(id = sid, node = id, status = 1, g1 = _scf_stable(g_pu, v -> v / zb_sh, to_pu), b1 = _scf_stable(b_pu, v -> v / zb_sh, to_pu)))
-      extra[string(sid)] = Dict{String,Any}("name" => string("SHUNT_", orig), "shunt_index" => length(data.shunt))
+      extra[string(sid)] = Dict{String,Any}("name" => string("SHUNT_", orig), "shunt_index" => length(data.shunt), "pu" => Dict{String,Any}("g_pu" => g_pu, "b_pu" => b_pu))
     end
   end
 
@@ -294,6 +300,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
         tan1 = 0.0,
         i_n = isfinite(ratedS) ? ratedS * 1.0e6 / (sqrt(3.0) * u_rated_by_orig[tbus]) : nothing,
       ))
+      e["pu"] = Dict{String,Any}("r_pu" => r_pu, "x_pu" => x_pu, "b_pu" => b_pu, "g_pu" => 0.0)
     else
       tap_rx = skip_tap_rx_correction ? (r_pu = r_pu, x_pu = x_pu, factor = 1.0) : calcTapCorrectedRX(r_pu = r_pu, x_pu = x_pu, tap_changer_model = opts.tap_changer_model, ratio = ratio)
       tap_correction_model = skip_tap_rx_correction ? :impedance_correction : opts.tap_changer_model
@@ -318,6 +325,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
         theta = _mpsi_deg_as_rad(angle),
         sn = isfinite(ratedS) ? _mpsi_watt(ratedS) : nothing,
       ))
+      e["pu"] = Dict{String,Any}("r_pu" => tap_rx.r_pu, "x_pu" => tap_rx.x_pu, "b_pu" => b_eff, "g_pu" => g_loss)
       loss_meta !== nothing && (e["transformer_loss_g_pu"] = g_loss)
     end
     # an unlimited rating (MATPOWER rateA = 0 arrives as Inf) has no PGM

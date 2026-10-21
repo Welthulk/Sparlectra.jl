@@ -303,14 +303,83 @@ The Sparlectra Y-bus stamps the tap on the **from** side, so
 `r_pu`/`x_pu` are referenced to the **to** side, like PGM's
 `generic_branch`.
 
+### [Unit system](@id scf_units)
+
+The numbers in `data` are base SI units:
+
+| Field group | Fields | Unit |
+|---|---|---|
+| line impedance | `line.r1`, `line.x1` | ohm |
+| line capacitance | `line.c1` | farad |
+| line loss factor | `line.tan1` (conductance over susceptance) | 1 |
+| line conductance without capacitance | `line.g1` (optional) | siemens |
+| conductance, susceptance | `g1`, `b1` of `generic_branch` and `shunt` | siemens |
+| power | `p_specified`, `q_specified` | W, var |
+| voltage base | `node.u_rated` | V (line to line) |
+| current rating | `line.i_n` | A |
+| power rating | `generic_branch.sn`, `meta.s_base` | VA |
+| angle | `theta` | rad |
+
+`sparlectra.meta.units` declares in which unit system the branch and
+shunt parameters are stated. Two values exist:
+
+- `"si"`: the values in `data` are the ones the network is built from.
+  This is what a file without the key means, so every file written before
+  the key existed reads unchanged.
+- `"pu"`: the impedances and admittances are stated per unit in a `pu`
+  block of the component's `extra` entry, and the network is built from
+  them. The `data` section stays a complete SI view for PGM readers.
+
+A `pu` block holds `r_pu`, `x_pu`, `b_pu`, `g_pu` for a `line` or
+`generic_branch` (total shunt values, on the base of the **to** node) and
+`g_pu`, `b_pu` for a `shunt`. The base is the one the file already
+carries: `meta.s_base` and the `u_rated` of the node; a `"pu"` file without
+`meta.s_base` or with a node without a positive `u_rated` is an
+`ArgumentError` naming the field, and so is a branch or shunt without its
+`pu` block. Powers, voltages, ratings and angles stay in SI in both
+systems. Powers and voltages convert by a power of ten and read back
+exactly. Ratings and phase-shift angles do not always: a line rating
+travels as `i_n` in A, a transformer rating as `sn` in VA, a shift as
+`theta` in rad, and a rating like 200 MVA can read back as
+200.00000000000003 MVA, a shift like -0.06138 degrees as
+-0.06137999999999999 degrees. The difference is in the last bit only.
+
+The declaration exists because a per-unit value converted to ohm and back
+does not always return the same number: in about one value in ten no SI
+value maps back exactly. A case that comes from per-unit data therefore
+keeps it per unit, and the only conversion happens when the network is
+built.
+
+An SI file (excerpt, node 2 rated 110 kV, 100 MVA base, 50 Hz):
+
+```json
+"data": { "line": [ { "id": 7, "from_node": 1, "to_node": 2, "r1": 1.2342, "x1": 3.0976, "c1": 1.1312e-7 } ] },
+"sparlectra": { "meta": { "s_base": 100000000.0 } }
+```
+
+The same line in a `"pu"` file:
+
+```json
+"data": { "line": [ { "id": 7, "from_node": 1, "to_node": 2, "r1": 1.2342, "x1": 3.0976, "c1": 1.1312e-7 } ] },
+"sparlectra": {
+  "meta": { "s_base": 100000000.0, "units": "pu" },
+  "extra": { "7": { "name": "ACL_1", "pu": { "r_pu": 0.0102, "x_pu": 0.0256, "b_pu": 0.0043, "g_pu": 0.0 } } }
+}
+```
+
+`exportSCF` writes SI by default and `"pu"` with `units = :pu`; the
+MATPOWER adapter (`convert_case`) and the Web UI export of a MATPOWER case
+write `"pu"`. A strict PGM file (`strict_pgm = true`) has no `sparlectra`
+block and is always SI.
+
 ### The `sparlectra` block
 
 | Key | Content |
 |---|---|
 | `format_version` | schema version of the block (`1.3`) |
-| `meta` | case name, `s_base` in VA, `f_nom` (system frequency in Hz, optional; the writer always states the frequency of the net; on read it sets the frequency of the net and wins over `model.nominal_frequency_hz`, which applies only when `f_nom` is absent, default 50 Hz; a value that is not a positive number is an `ArgumentError` naming `meta.f_nom`; see [System frequency](@ref system_frequency)), source format and reference, producer, and `intended_calculations` as the file's contract |
+| `meta` | case name, `s_base` in VA, `units` (`"si"` or `"pu"`, see [Unit system](@ref scf_units)), `f_nom` (system frequency in Hz, optional; the writer always states the frequency of the net; on read it sets the frequency of the net and wins over `model.nominal_frequency_hz`, which applies only when `f_nom` is absent, default 50 Hz; a value that is not a positive number is an `ArgumentError` naming `meta.f_nom`; see [System frequency](@ref system_frequency)), source format and reference, producer, and `intended_calculations` as the file's contract |
 | `roles` | what PGM cannot express: `slack.mode` (`single`, `distributed`, `source`) with its nodes or participation factors, auxiliary nodes, isolated nodes |
-| `extra` | per-component annotations keyed by id: `name` (the reference name every other section resolves against), `external_id` (CGMES mRID, MATPOWER index), bus/branch index, node type, ratings |
+| `extra` | per-component annotations keyed by id: `name` (the reference name every other section resolves against), `external_id` (CGMES mRID, MATPOWER index), bus/branch index, node type, ratings, and in a `"pu"` file the `pu` block of each branch and shunt |
 | `components.tap_changer` | the tap cascade PGM has no model for: per controller the step grid, position, band, and nameplate angle, plus the neutral ratio and angle. Ratio positions count on the cascade fraction grid `ratio_base / (1 + pos * step)` (nameplate data), or with `grid: "linear"` on the grid of a CGMES changer, `ratio_base + pos * step` |
 | `components.transformer3w` | three-winding transformer: either the grouping of three existing `generic_branch` legs (their star node, and which end is hv/mv/lv; the electrical values stay in the legs and are never duplicated) or a nameplate that describes the transformer directly, see below |
 | `components.sc_source` | IEC 60909 source data (external network injections, machines) that PGM's `source` cannot carry beyond `sk`/`rx_ratio` |
@@ -492,7 +561,7 @@ way, with the payload its importer put into the network.
 
 | Source | What the file carries |
 |---|---|
-| MATPOWER | bus and branch names, the `mpc.sparlectra` extensions (tap-changer nameplates as `components.tap_changer`, busbar couplers as `data.link`), branch kinds, ratings |
+| MATPOWER | branch and shunt parameters per unit (`meta.units = "pu"`) when written by the Web UI export or `convert_case`, bus and branch names, the `mpc.sparlectra` extensions (tap-changer nameplates as `components.tap_changer`, busbar couplers as `data.link`), branch kinds, ratings |
 | CGMES | mRIDs as `external_id`, the three-winding star grouping with its auxiliary node, IEC 60909 source data, the reference names of the topological nodes |
 | DTF | station reference names, transformer tap data, ratings |
 

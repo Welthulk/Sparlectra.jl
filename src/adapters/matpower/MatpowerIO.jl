@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -420,7 +420,7 @@ end
 
 # MATLAB accepts both `;` and bare newlines as matrix row separators. Official
 # MATPOWER cases terminate every row with `;`, but e.g. RTS-GMLC relies on
-# newline-separated rows only — splitting on `;` alone would silently collapse
+# newline-separated rows only: splitting on `;` alone would silently collapse
 # the whole matrix into a single row.
 const _MATPOWER_ROW_SEPARATORS = in(";\r\n")
 
@@ -446,7 +446,7 @@ end
 end
 
 # Parses up to `maxvals` whitespace-separated numbers of `row` into `dest`
-# (tokens beyond `maxvals` are ignored — MATPOWER fixed-width truncation).
+# (tokens beyond `maxvals` are ignored: MATPOWER fixed-width truncation).
 # Returns the number of parsed values; 0 means a blank row. Allocation-free:
 # tokens are SubString views of the row.
 function _parse_matpower_row!(dest::AbstractVector{Float64}, row::AbstractString, maxvals::Int)::Int

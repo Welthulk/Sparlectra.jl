@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -107,7 +107,7 @@ end
 function _copy_sparlectra_with_powerflow(cfg::SparlectraConfig, powerflow::PowerFlowConfig)::SparlectraConfig
   # Field splat instead of an explicit keyword list: the old hand-written list
   # silently dropped `cgmes` and `webui`, resetting them to defaults on every
-  # copy (latent — the previous callers never read those fields afterwards).
+  # copy (latent: the previous callers never read those fields afterwards).
   fields = NamedTuple{fieldnames(SparlectraConfig)}(getfield.(Ref(cfg), fieldnames(SparlectraConfig)))
   return SparlectraConfig(; fields..., powerflow = powerflow)
 end
@@ -122,11 +122,11 @@ end
 
 Apply `cgmes_import.start_values` to the power-flow configuration of one CGMES
 run. `:flat` forces a synthetic flat start; `:sv` keeps the imported SvVoltage
-state and force-disables every competing start-value machine — the same set the
+state and force-disables every competing start-value machine, the same set the
 fixed-reference self-check forces off in `_self_check_forced_overrides`
 (run_self_check.jl); keep the two lists aligned. Returns the adjusted config
 plus the effective config keys that were overridden (for the decision line in
-run.log/cgmes.log). MATPOWER/DTF runs never call this.
+run.log/cgmes_import_report.md). MATPOWER/DTF runs never call this.
 """
 function _cgmes_start_values_powerflow(pf_cfg::PowerFlowConfig, start_values::Symbol)
   overridden = String[]
@@ -147,36 +147,62 @@ end
 """
     _flatstart_profile_config(cfg) -> (SparlectraConfig, overridden::Vector{String})
 
-The flat start chooses the voltage PROFILE a run starts from and nothing
-else (#463): with `power_flow.flatstart = true` every bus starts at 1.0 pu
-(PV and slack buses at their setpoints) and 0 degrees instead of the
-imported voltages, and every start machine follows its own key and works
-from that flat profile: the start projection with its DC, blend and
-ratio-profile candidates (`start_mode.start_projection`), the unconditional
-DC seed (`start_mode.dc_seed_unconditional`), the current-iteration
-pre-solve (`start_current_iteration.enabled`) and the APSLF start
-(`apslf_start.enabled`). Before #463 the flat start switched all of them
-off, so "projection from a flat start" could not be configured as written.
+The one place that decides what a flat start means for a run. With
+`power_flow.flatstart = true` the run really starts flat: every PQ bus at
+1.0 pu and 0 degrees, PV and slack buses at their setpoints, and the voltages
+stored in the case file (MATPOWER `VM`/`VA`, SCF start state) are ignored.
+For this run the flat start switches off every machine that would replace
+the flat profile by another one:
 
-What the flat start still overrides are the two start MODES, because they
-choose a profile as well: `voltage_mode` and the imported-angle
-`angle_mode`s read the stored columns (the MATPOWER import applies them only
-under a flat start and would turn it into a blended imported start), and
-`angle_mode = dc` makes the DC angles a requested start that excludes the
-measured candidates. Both go `classic` for this run; the DC angles stay
-available as the projection's measured DC candidate (`try_dc_start`). The
-stored configuration is left as it is (the Web UI greys the two mode
-controls while the flat start is on); the returned list names every
-overridden key for the run log.
+- the start projection with its DC and blend candidates
+  (`start_mode.start_projection`),
+- the unconditional DC seed (`start_mode.dc_seed_unconditional`),
+- the two start modes (`start_mode.angle_mode`, `start_mode.voltage_mode`
+  go `classic`; the non-classic ones read the stored columns or request
+  DC angles),
+- the ratio-profile candidate (`start_mode.ratio_profile`). The first
+  solve runs no projection and would not use it anyway; switching it off
+  here keeps it out of the projections that the rescue ladder
+  (`:settled_qlimits`, `:dc_seed`) and the auto mode (`L3_full_projection`)
+  run from the flat profile later in the same run.
+
+One thing stays because it keeps the flat profile's meaning on networks
+with off-nominal transformers: auxiliary buses (three-winding star points)
+start at the ratio of their stiffest winding (`_aux_bus_flat_start!`, on
+every flat start of the solver). Under a flat start the ratio profile acts
+on auxiliary buses only, PQ buses keep 1.0 pu.
+
+The current-iteration pre-solve (`start_current_iteration.enabled`) and the
+APSLF start (`apslf_start.enabled`) follow their own keys, both off by
+default: they iterate from the flat vector instead of replacing it by a
+projected one, and a user who switches them on asks for them explicitly.
+
+This reverses #463 (flat start sets only the profile, every start machine
+follows its own key): the configuration template carries
+`start_projection: true`, the Web UI has no control for it, and a flat start
+selected in the Web UI still ran from the DC start (seen on sp_case118).
+
+Called at the run boundary (`import_case`, `_run_sparlectra`, the QSTS
+runners `_run_qsts` and `_run_qsts_series`), so the service, the library
+entry points, QSTS and the Web UI see the same start. A CGMES import applies
+it after the `cgmes_import.start_values` decision. The
+rescue ladder after a failed first solve and `power_flow.mode = auto` set
+their own start machines on top and are recorded as such. The stored
+configuration is left as it is; the returned list names every overridden
+key for the run log.
 """
 function _flatstart_profile_config(cfg::SparlectraConfig)
   pf = cfg.powerflow
-  pf.start_mode.flatstart || return cfg, String[]
+  sm = pf.start_mode
+  sm.flatstart || return cfg, String[]
   overridden = String[]
-  pf.start_mode.angle_mode === :classic || push!(overridden, "power_flow.start_mode.angle_mode=classic")
-  pf.start_mode.voltage_mode === :classic || push!(overridden, "power_flow.start_mode.voltage_mode=classic")
+  sm.start_projection && push!(overridden, "power_flow.start_mode.start_projection=false")
+  sm.dc_seed_unconditional && push!(overridden, "power_flow.start_mode.dc_seed_unconditional=false")
+  sm.angle_mode === :classic || push!(overridden, "power_flow.start_mode.angle_mode=classic")
+  sm.voltage_mode === :classic || push!(overridden, "power_flow.start_mode.voltage_mode=classic")
+  sm.ratio_profile && push!(overridden, "power_flow.start_mode.ratio_profile=false")
   isempty(overridden) && return cfg, overridden
-  start_mode = _copy_start_mode_with(pf.start_mode; angle_mode = :classic, voltage_mode = :classic)
+  start_mode = _copy_start_mode_with(sm; start_projection = false, dc_seed_unconditional = false, angle_mode = :classic, voltage_mode = :classic, ratio_profile = false)
   return _copy_sparlectra_with_powerflow(cfg, _copy_powerflow_with(pf; start_mode = start_mode)), overridden
 end
 
@@ -457,8 +483,8 @@ function _self_check_forced_overrides()::Dict{String,Any}
   return Dict{String,Any}(
     "power_flow" => Dict{String,Any}(
       "max_iter" => 1,
-      # `flatstart` is the legacy power_flow-level key — the only one the
-      # config schema accepts — and PowerFlowConfig merges it into the
+      # `flatstart` is the legacy power_flow-level key, the only one the
+      # config schema accepts, and PowerFlowConfig merges it into the
       # start_mode raw dict (configuration.jl), so this reliably forces
       # flatstart=false even when the base config sets `flatstart: true`
       # (observed in a WebUI configuration.yaml, where it silently wiped the
@@ -474,7 +500,7 @@ function _self_check_forced_overrides()::Dict{String,Any}
       "apslf_start" => Dict{String,Any}("enabled" => false),
       "qlimits" => Dict{String,Any}("enabled" => false),
       # The self-check measures the residual at the imported reference state
-      # by design — it is SUPPOSED to look non-converged. The rescue ladder
+      # by design: it is SUPPOSED to look non-converged. The rescue ladder
       # (on by default) would retry from other start states and leave a
       # different net behind, so the measured residual would no longer be the
       # imported model's. Same reasoning as the start-value machines above.

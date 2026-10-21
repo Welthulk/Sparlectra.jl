@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@
 # file: src/shortcircuit/native_sc_data.jl
 # purpose: native short-circuit source container for networks built without a
 #          CGMES delivery (issue #299). Field-identical to
-#          `CGMESImporter.CGMESShortCircuitData` — the short-circuit engine is
+#          `CGMESImporter.CGMESShortCircuitData`: the short-circuit engine is
 #          duck-typed over that record contract and consumes either container
 #          unchanged. Included BEFORE network.jl because `Net` carries a typed
 #          `sc_sources::NativeShortCircuitData` field.

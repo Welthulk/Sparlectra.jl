@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@
     _run_import_analysis_service(case_path, config_file, output_dir, run_id) -> SparlectraApiResult
 
 Service backend of the Web UI "Analyze import" button: loads the CGMES
-delivery files (boundary resolution shared with the power-flow path — same
+delivery files (boundary resolution shared with the power-flow path, same
 `_cgmes_delivery_paths`), builds the [`importFailureAnalysis`](@ref
 Sparlectra.CGMESImporter.importFailureAnalysis) report, and writes it as
 `import_analysis.txt` next to `run.log`. No mapping and no power-flow solve
@@ -46,7 +46,7 @@ function _run_import_analysis_service(case_path::AbstractString, config_file::Ab
   end
 
   if _detect_case_format(case_path) !== :cgmes
-    return _api_failure("import_analysis_requires_cgmes", "Import analysis reads CGMES model headers — MATPOWER/DTF cases carry none.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    return _api_failure("import_analysis_requires_cgmes", "Import analysis reads CGMES model headers. MATPOWER/DTF cases carry none.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
   paths, boundary_autodetected = _cgmes_delivery_paths(case_path, config.cgmes)
@@ -89,9 +89,9 @@ function _run_import_analysis_service(case_path::AbstractString, config_file::Ab
   )
 
   if !importable
-    # The user asked "will this import?" and the answer is no — that is a
+    # The user asked "will this import?" and the answer is no: that is a
     # FAILED run, with the full explanation in import_analysis.txt.
-    message = "Import analysis: the delivery will NOT import — $(length(missing_deps)) missing declared dependency(ies), $(unresolved_n) unresolved reference(s). $(verdict) See import_analysis.txt."
+    message = "Import analysis: the delivery will NOT import, $(length(missing_deps)) missing declared dependency(ies), $(unresolved_n) unresolved reference(s). $(verdict) See import_analysis.txt."
     return _api_failure("import_analysis_not_importable", message; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = merge(base_metadata, stats))
   end
 
@@ -105,8 +105,8 @@ function _run_import_analysis_service(case_path::AbstractString, config_file::Ab
       "run_status" => "completed",
     ),
   )
-  message = unresolved_n == 0 ? "Import analysis completed — the delivery declares no missing dependencies and resolves all references." :
-    "Import analysis completed — importable, but $(unresolved_n) non-fatal unresolved reference(s). See import_analysis.txt."
+  message = unresolved_n == 0 ? "Import analysis completed: the delivery declares no missing dependencies and resolves all references." :
+    "Import analysis completed: importable, but $(unresolved_n) non-fatal unresolved reference(s). See import_analysis.txt."
   result = _api_result(
     run_id = run_id,
     status = :succeeded,

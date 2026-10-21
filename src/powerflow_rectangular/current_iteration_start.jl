@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -173,6 +173,7 @@ function _run_guarded_apslf_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{Comp
   final_mismatch = initial_mismatch
   reason = :not_improved
   candidate = Vraw
+  diagnosis = ""
   try
     model = PFModel(
       Ybus = Ybus,
@@ -189,6 +190,10 @@ function _run_guarded_apslf_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{Comp
     # first Newton solve (measured: 3.8 s of the 17 s first runpf! on a
     # two-bus net). The barrier defers that to the first run that asks for it.
     sol = Base.inferencebarrier(solvePf)(solver, model)::PFSolution
+    # why the series did not converge; the pole bus is the internal bus
+    # index here, the generator sees no case bus numbers
+    d = sol.meta.diagnosis
+    d === nothing || (diagnosis = _apslf_diagnosis_line(d.reason, d.message, d.pole_min_abs, d.pole_pair, d.pole_bus, d.pade_change, d.order))
     if length(sol.V) == n && all(v -> isfinite(real(v)) && isfinite(imag(v)), sol.V)
       candidate = sol.V
       trial_mismatch = _max_rectangular_mismatch(Ybus, candidate, S, bus_types, Vset, slack_idx)
@@ -204,10 +209,10 @@ function _run_guarded_apslf_start(Ybus, Vraw::Vector{ComplexF64}, S::Vector{Comp
     reason = :apslf_solve_error
     verbose > 0 && @warn "APSLF start pre-solve failed; keeping incoming start values" exception = (err, catch_backtrace())
   end
-  summary = _apslf_start_summary(enabled = true, attempted = true, accepted = accepted, order = order, initial_mismatch = initial_mismatch, final_mismatch = final_mismatch, reason = reason)
+  summary = _apslf_start_summary(enabled = true, attempted = true, accepted = accepted, order = order, initial_mismatch = initial_mismatch, final_mismatch = final_mismatch, reason = reason, diagnosis = diagnosis)
   summary = _record_apslf_start_summary!(performance_profile, summary)
   _write_apslf_start_log(performance_profile, summary)
-  verbose > 0 && @info "APSLF start pre-solve" accepted = accepted reason = reason initial_mismatch = initial_mismatch final_mismatch = final_mismatch order = order
+  verbose > 0 && @info "APSLF start pre-solve" accepted = accepted reason = reason initial_mismatch = initial_mismatch final_mismatch = final_mismatch order = order diagnosis = diagnosis
   return accepted ? candidate : Vraw, summary
 end
 
