@@ -8,13 +8,17 @@ Quasi-stationary time series (QSTS), dynamic unit data.
 - QSTS on SCF time series (one zip: base case plus step deltas) and on a series of CGMES snapshots: snapshot mode (independent steps, parallel) and sequential mode (tap and bank states carried over), event lists, switching counts and limit violations, a time-series chart per element in the Web UI. See [QSTS](qsts.md).
 - Dynamic unit data `DynamicData` (inertia, droop, reserves, unit type) on generators, carried in SCF and read from the CGMES DY profile (`cgmes_import.read_dynamics`, default off). No calculation reads it yet. See [Dynamic Data](dynamic_data.md).
 - Measurement tables are bound to CGMES cases by the EQ model id instead of the file name; an assign switch at the Web UI upload binds a table to the selected case.
+- run.log and the result page name the system frequency and its source, or "not used" when no capacitance in farad entered the model. The Case page greys the frequency field for such cases.
 ## Changed
+- CGMES import: the slack follows the SV angle reference also when an EquivalentInjection holds that node (MicroGrid BE: the X-node instead of the largest machine). `cgmes_import.equivalent_injection_as_source` (default off) imports boundary EquivalentInjections as sources at their SV voltage.
+- Requires AnalyticLoadFlow 0.10.3: the APSLF solver handles phase shifting transformers.
 - CGMES import: a unit whose `DynamicData` says grid-following is no island slack; an island with only such units is switched off with a warning.
 - The Web UI window opens on the main monitor when the saved position is on a monitor that is no longer connected.
 ## Fixed
 - The Web UI sysimage rebuild did not find its build script since the package split.
 - Bus powers of coupler clusters and distributed slack shares in reports and bus CSVs.
 - CGMES: P limits of EquivalentInjection and ExternalNetworkInjection read as delivered; 2W transformer magnetizing split over both terminal arms.
+- CGMES: with several boundary sets next to a case the import takes the one that resolves it.
 
 # Version 0.50.0 - 2026-10-18
 

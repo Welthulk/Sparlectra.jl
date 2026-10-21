@@ -118,6 +118,9 @@ end
 # A CGMES delivery declares it, and so does a case file whose PGM `source`
 # states `sk`/`rx_ratio` - PGM models a source as a voltage source BEHIND
 # that impedance, so the numbers belong to the model, not to the metadata.
+# A slack made of a CGMES EquivalentInjection (an X-node holding the SV angle
+# reference) declares its feeder through its internal impedance r + jx
+# (_ei_record_sk_rx); the SCF reader keeps that record for such a source.
 # Returns nothing when the slack bus carries no usable declaration.
 function _declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTuple}
   isempty(net.slackVec) && return nothing
@@ -134,6 +137,11 @@ function _declared_slack_feeder(net::Net, shortcircuit)::Union{Nothing,NamedTupl
     rx = f.maxR1ToX1Ratio
     rxv = (rx === nothing || !isfinite(Float64(rx)) || Float64(rx) < 0.0) ? 0.1 : Float64(rx)
     return (sk_MVA = sk, rx = rxv)
+  end
+  for e in shortcircuit.equivalent_injections
+    (e.bus !== nothing && String(e.bus) == slack) || continue
+    f = _ei_record_sk_rx(e, vn)
+    f === nothing || return f
   end
   return nothing
 end

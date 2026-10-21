@@ -150,8 +150,19 @@ Rank order, highest first:
 2. `model.nominal_frequency_hz`.
 3. 50 Hz.
 
+The key acts only where a capacitance in farad becomes a susceptance (table
+below), and a frequency stated in the case file wins over it.
+
 `effective_config.yaml` records the key; the metadata in `result.json`
-names the frequency the network used (`network_nominal_frequency_hz`).
+names the frequency the network used (`network_nominal_frequency_hz`) and
+its source (`frequency_source`: `case_file`, `configuration`, or
+`not_used` when no capacitance in farad entered the model). `run.log`
+carries the same as one line, for example
+`System frequency: 50 Hz (case file)` or
+`System frequency: not used (no capacitance in farad); case file states 50 Hz`,
+and the result print as `Frequency      : 50 Hz (case file)`. Power flow,
+diagnose, QSTS, state estimation and N-1 runs write both; short circuit
+does not, it uses no frequency (table below).
 
 MATPOWER, DTF, PowSyBl IIDM and a plain power-grid-model file carry no
 frequency, so the key applies without a message. CGMES deliveries carry no

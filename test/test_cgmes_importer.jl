@@ -2285,6 +2285,157 @@ function run_cgmes_importer_tests()
         end)() end
       end
 
+      # Two boundary sets next to a base case (the Web UI case directory with
+      # the MicroGrid and the MiniGrid test configurations): the run pairs the
+      # one that resolves the case. By name alone the MicroGrid BD sorts
+      # first and the MiniGrid import failed with unresolved topology
+      # references (testbook 0.60.0, step 5).
+      local ext = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "extracted")
+      local mini_case = joinpath(ext, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3")
+      local mini_bd = joinpath(ext, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
+      local micro_bd = joinpath(ext, "MicroGrid", "BaseCase_BC", "CGMES_v2.4.15_MicroGridTestConfiguration_BD_v2")
+      if all(isdir, (mini_case, mini_bd, micro_bd))
+        println("      cgmes_importer: boundary pairing with two boundary sets RAN")
+        @testset "boundary pairing picks the set that resolves the case" begin (function ()
+          local dir = mktempdir()
+          for p in (mini_case, mini_bd, micro_bd)
+            symlink(p, joinpath(dir, basename(p)))
+          end
+          local paths, auto = Sparlectra._cgmes_delivery_paths(joinpath(dir, basename(mini_case)), Sparlectra.CGMESImportConfig())
+          @test auto
+          @test basename.(paths) == [basename(mini_case), basename(mini_bd)]
+        end)() end
+      else
+        println("      cgmes_importer: boundary pairing with two boundary sets SKIPPED (MiniGrid or MicroGrid boundary not in the CGMES cache)")
+      end
+
+      # cgmes_import.equivalent_injection_as_source (default off): the
+      # configured import, the YAML loader and the adapter options forward it
+      @test !SparlectraConfig().cgmes.equivalent_injection_as_source
+      @test Sparlectra.CGMESImportConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("equivalent_injection_as_source" => true))).equivalent_injection_as_source
+      @test Sparlectra.cgmes_adapter_options(SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(equivalent_injection_as_source = true))).equivalent_injection_as_source
+
+      # MicroGrid BE alone (CGMES cache, not in the repository): no
+      # referencePriority, no ExternalNetworkInjection, and the SV names the
+      # X-node TN_Border_ST23 as angle reference of its TopologicalIsland
+      # "Slack". The node carries only the EquivalentInjection BE-Inj-XZE_ST23
+      # (r = x = 0 in the EQ), so the slack sits there, at its SV voltage and
+      # angle (-5.58021 deg), and not at the largest machine BE-G1.
+      local be_zip = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "cases", "cgmes_microgrid_be.zip")
+      if !isfile(be_zip)
+        println("      cgmes_importer: microgrid_be angle reference from SV SKIPPED (", be_zip, " not in the CGMES cache)")
+      else
+        println("      cgmes_importer: microgrid_be angle reference from SV RAN")
+        @testset "MicroGrid BE: angle reference from SV, EquivalentInjection as source" begin (function ()
+          local x_ei = "_87ea56f3-962a-427a-85d6-13b1f9295174"
+          local x_va = -5.580210
+          local ps_x(r) = r.net.prosumpsVec[last(r.element_by_mrid[x_ei])]
+          local node_type(r, bus) = r.net.nodeVec[r.net.busDict[bus]]._nodeType
+          # a copy of the delivery: without the files `drop` names, with the
+          # EQ text changed by `edit`
+          local repack(dst; drop = n -> false, edit = (n, s) -> s) = begin
+            local rd = ZipArchives.ZipReader(read(be_zip))
+            ZipArchives.ZipWriter(dst) do w
+              for n in ZipArchives.zip_names(rd)
+                drop(n) && continue
+                ZipArchives.zip_newfile(w, n)
+                write(w, edit(n, String(ZipArchives.zip_readentry(rd, n))))
+              end
+            end
+            dst
+          end
+          # bands of the SV comparison: max |dVm| was 8.08e-5 pu with the
+          # slack at BE-G1 (0.60.0 before this change) and is 7.56e-5 pu with
+          # the slack on the X-node. The reference bus sits exactly at its SV
+          # angle. The raw angle offset (compareWithSV, median of the angle
+          # differences) is -1.42e-3 deg with the slack on the X-node and was
+          # -5.9e-4 deg with the slack at BE-G1: it is not zero, so the band
+          # below bounds it and the exact check is on the reference bus
+          local check_sv(r) = begin
+            @test last(runpf!(r.net, 40, 1e-8, 0)) == 0
+            local cmp = compareWithSV(r)
+            @test cmp.n == 11
+            @test cmp.max_dvm < 8.1e-5
+            @test abs(cmp.va_ref_offset_deg) < 5e-3
+            @test abs(only(x for x in cmp.rows if x.bus == "TN_Border_ST23").dva) < 1e-9
+            cmp
+          end
+
+          # 4a: switch off
+          local off = importCGMES(path = [be_zip], name = "be_off")
+          @test off.slack_bus == "TN_Border_ST23"
+          @test Sparlectra.isSlack(ps_x(off)) && ps_x(off).va_deg == x_va
+          @test "notice: island Slack: angle reference TN_Border_ST23 taken from SV" in off.messages
+          @test !any(m -> startswith(m, "warning:"), off.messages)
+          # the other injections keep their own bus type: BE-G1 regulates
+          # its bus and stays PV, the other X-nodes stay PQ
+          @test node_type(off, "BE-Busbar_4") == Sparlectra.PV
+          @test count(nd -> nd._nodeType == Sparlectra.Slack, off.net.nodeVec) == 1
+          check_sv(off)
+
+          # 2b on a second SV TopologicalIsland "Second" whose angle
+          # reference is the node of BE-G1, in the same electrical island: the
+          # machine outranks the EquivalentInjection, and the line names the
+          # holder's island and the island of the reference not promoted
+          local two = loadCGMES(be_zip)
+          local g1_tn = only(o.mrid for o in objectsOf(two, :TopologicalNode) if str(o, :name) == "BE-Busbar_4")
+          two.objects["_second_isl"] = Sparlectra.CGMESImporter.CIMObject("_second_isl", :TopologicalIsland, Dict{Symbol,String}(:name => "Second"), Dict{Symbol,String}(:AngleRefTopologicalNode => g1_tn), "sv_test")
+          push!(get!(Vector{String}, two.byclass, :TopologicalIsland), "_second_isl")
+          local r2 = importCGMES(path = two, name = "be_two_refs")
+          @test r2.slack_bus == "BE-Busbar_4"
+          @test count(m -> m == "notice: island Second: angle reference BE-Busbar_4, other injections keep their own bus type; the SV angle reference TN_Border_ST23 of island Slack lies in the same electrical island and is not promoted to slack", r2.messages) == 1
+          @test count(nd -> nd._nodeType == Sparlectra.Slack, r2.net.nodeVec) == 1
+
+          # 4b: switch on, every X-node of the delivery carries a source at
+          # its SV voltage and angle; the reference stays where it was
+          local on = importCGMES(path = [be_zip], name = "be_on", equivalent_injection_as_source = true)
+          @test on.slack_bus == "TN_Border_ST23"
+          local srcs = [on.net.prosumpsVec[k] for (m, (kind, k)) in on.element_by_mrid if kind == :external_grid]
+          @test length(srcs) == 5 && all(p -> p.isRegulated && p.comp.cTyp == Sparlectra.ExternalNetworkInjection, srcs)
+          local by_bus = Dict(nd.busIdx => nd for nd in on.net.nodeVec)
+          @test all(p -> p.vm_pu == by_bus[Sparlectra.getPosumerBusIndex(p)]._vm_pu && p.va_deg == by_bus[Sparlectra.getPosumerBusIndex(p)]._va_deg, srcs)
+          @test ps_x(on).va_deg == x_va
+          @test any(m -> startswith(m, "notice: 5 EquivalentInjection(s) imported as source at the SV voltage of their node"), on.messages)
+          @test any(m -> startswith(m, "notice: 5 EquivalentInjection(s) imported as source without internal impedance") && occursin("BE-Inj-XZE_ST23", m), on.messages)
+          check_sv(on)
+
+          # A6: the X-node injection with r = 4.84 ohm, x = 48.4 ohm at
+          # Un = 220 kV: |Z| = 48.4 * sqrt(1.01) ohm, so the SCF source states
+          # sk = Un^2/|Z| = 220e3^2 / (48.4 * sqrt(1.01)) = 1e9/sqrt(1.01) VA
+          # (995.04 MVA) and rx_ratio = r/x = 0.1
+          local d = mktempdir()
+          local rx_zip = repack(joinpath(d, "be_rx.zip"); edit = (n, s) -> (occursin("_EQ_", n) && !occursin("_BD_", n)) ? replace(s, r"(<cim:EquivalentInjection rdf:ID=\"_87ea56f3-962a-427a-85d6-13b1f9295174\">.*?<cim:EquivalentInjection.r>)0e\+000(</cim:EquivalentInjection.r>\s*<cim:EquivalentInjection.x>)0e\+000"s => s"\g<1>4.84\g<2>48.4") : s)
+          local rx = importCGMES(path = [rx_zip], name = "be_rx", equivalent_injection_as_source = true)
+          @test any(m -> startswith(m, "notice: 4 EquivalentInjection(s) imported as source without internal impedance") && !occursin("BE-Inj-XZE_ST23", m), rx.messages)
+          local a = exportSCF(rx.net; file = joinpath(d, "a.scf.json"), source_format = "cgmes")
+          local srow = only(r for r in Sparlectra.scf_json_parse(read(a, String))["data"]["source"] if haskey(r, "sk"))
+          @test isapprox(srow["sk"], 1e9 / sqrt(1.01); rtol = 1e-12)
+          @test isapprox(srow["rx_ratio"], 0.1; rtol = 1e-12)
+          # power_flow.external_grid (source auto) takes the same feeder for
+          # the slack from the EquivalentInjection record: 1000/sqrt(1.01) MVA
+          local fd = Sparlectra._declared_slack_feeder(rx.net, rx.net.sc_sources)
+          @test fd !== nothing && isapprox(fd.sk_MVA, 1e3 / sqrt(1.01); rtol = 1e-12) && isapprox(fd.rx, 0.1; rtol = 1e-12)
+          @test srow["u_ref"] == ps_x(rx).vm_pu && rad2deg(srow["u_ref_angle"]) == x_va
+          # 4d: the SCF round trip is a fixed point and keeps the one record
+          # of the injection: the reader takes it from the sc_source block
+          # and adds no second feeder record from the source's sk
+          local back = importSCF(a)
+          @test isempty(back.sc_sources.external_network_injections)
+          @test count(e -> e.bus == "TN_Border_ST23", back.sc_sources.equivalent_injections) == 1
+          local fb = Sparlectra._declared_slack_feeder(back, back.sc_sources)
+          @test fb !== nothing && isapprox(fb.sk_MVA, 1e3 / sqrt(1.01); rtol = 1e-12)
+          local b = exportSCF(back; file = joinpath(d, "b.scf.json"), source_format = "cgmes")
+          @test read(b, String) == read(exportSCF(importSCF(b); file = joinpath(d, "c.scf.json"), source_format = "cgmes"), String)
+
+          # 4c: the same delivery without its SV file has no angle reference
+          # in SV or SSH: the largest machine takes the slack, and the
+          # notice names the electrical island
+          local nosv = importCGMES(path = [repack(joinpath(d, "be_nosv.zip"); drop = n -> occursin("_SV_", n))], name = "be_nosv")
+          @test nosv.slack_bus == "BE-Busbar_4"
+          @test any(m -> occursin(r"^notice: electrical island \d+: no angle reference in SV or SSH, largest machine BE-G1 at BE-Busbar_4 as slack$", m), nosv.messages)
+        end)() end
+      end
+
       # The short-circuit harvest keeps the sources the import mapped. A
       # machine of SmallGrid without ratedS and maxOperatingP is the live
       # source at its bus (its row rests on defaults). A machine with a

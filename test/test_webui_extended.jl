@@ -146,6 +146,7 @@ function _webui_test_form(casefile, config_file, output_root)
     "cgmes_require_boundary" => "true",
     "cgmes_infer_base_voltages" => "false",
     "cgmes_read_dynamics" => "false",
+    "cgmes_equivalent_injection_as_source" => "false",
     "matpower_import_auto_profile" => "recommend",
     "matpower_import_ratio" => "normal",
     "matpower_import_shift_sign" => "1.0",
@@ -1963,6 +1964,7 @@ form:
         "cgmes_require_boundary" => "cgmes_import.require_boundary",
         "cgmes_infer_base_voltages" => "cgmes_import.infer_base_voltages",
         "cgmes_read_dynamics" => "cgmes_import.read_dynamics",
+        "cgmes_equivalent_injection_as_source" => "cgmes_import.equivalent_injection_as_source",
         "powsybl_import_hvdc_mode" => "powsybl_import.hvdc_mode",
         "powsybl_import_remote_regulation" => "powsybl_import.remote_regulation",
         "powsybl_import_multi_slack" => "powsybl_import.multi_slack",
@@ -3637,6 +3639,10 @@ function _webui_qsts_tests()
       @test isfile(joinpath(casedir, "sp_case14_day.control.yaml"))
       od = result["output_dir"]
       @test occursin("control section from sp_case14_day.control.yaml", read(joinpath(od, "run.log"), String))
+      # the series states 50 Hz but carries c1 = 0 on every line: the
+      # frequency never entered the model, and run.log says so
+      @test md["frequency_source"] == "not_used"
+      @test occursin("System frequency: not used (no capacitance in farad); case file states 50 Hz\n", read(joinpath(od, "run.log"), String))
       for f in ("qsts_values.csv", "qsts_steps.csv", "qsts_elements.csv", "qsts_switching.csv", "qsts_metrics.csv", "qsts_manifest.json", "qsts_view.json", "qsts_overview.html")
         @test isfile(joinpath(od, f))
       end

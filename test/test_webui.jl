@@ -848,15 +848,44 @@ function run_webui_fast_tests()
             @test rendered(body, "transformer_tap_changer_model")
             @test selected(body) == "60.0"
             @test freq_disabled(body)
-            # the disabled select is not posted: a save from the MATPOWER
-            # case page keeps the frequency stored for the case
-            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "freq_probe.m", "settings_target" => "this_case", "model_nominal_frequency_hz" => "60.0"); output_root=root, runtime=rt)
+            # the key cannot act for a MATPOWER case: a POST that carries it
+            # anyway does not store it for the case
+            freq_stored(name) = haskey(Sparlectra.load_case_config(joinpath(cases, name)), "model.nominal_frequency_hz")
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "freq_probe.m", "settings_target" => "this_case", "model_nominal_frequency_hz" => "60.0", "matpower_import_ratio" => "reciprocal"); output_root=root, runtime=rt)
+            @test Sparlectra.load_case_config(joinpath(cases, "freq_probe.m"))["matpower_import.ratio"] == "reciprocal"
+            @test !freq_stored("freq_probe.m")
+            # a value stored before (an older version saved it) shows in the
+            # disabled select; the select is not posted, and the next save
+            # of the case options removes the stored value
+            Sparlectra.write_case_config(joinpath(cases, "freq_probe.m"), merge(Sparlectra.load_case_config(joinpath(cases, "freq_probe.m")), Dict{String,Any}("model.nominal_frequency_hz" => 60.0)))
             body_m = case_page("freq_probe.m")
             @test selected(body_m) == "60.0"
+            @test freq_disabled(body_m)
             post_m = posted_fields(body_m)
             @test !haskey(post_m, "model_nominal_frequency_hz")
             @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", post_m; output_root=root, runtime=rt).status in (302, 303)
-            @test Sparlectra.load_case_config(joinpath(cases, "freq_probe.m"))["model.nominal_frequency_hz"] == 60.0
+            @test !freq_stored("freq_probe.m")
+            @test Sparlectra.load_case_config(joinpath(cases, "freq_probe.m"))["matpower_import.ratio"] == "reciprocal"
+            # an SCF time series reads its base case (sp_case14: meta.f_nom
+            # 50, every line c1 = 0): disabled at the file's 50, and a POST
+            # carrying 60 does not store it
+            cp(joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "qsts", "sp_case14_day.qsts.zip"), joinpath(cases, "sp_case14_day.qsts.zip"))
+            body_q = case_page("sp_case14_day.qsts.zip"; runtime=rt60)
+            @test freq_disabled(body_q)
+            @test selected(body_q) == "50.0"
+            @test !haskey(posted_fields(body_q), "model_nominal_frequency_hz")
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "sp_case14_day.qsts.zip", "settings_target" => "this_case", "model_nominal_frequency_hz" => "60.0"); output_root=root, runtime=rt)
+            @test !freq_stored("sp_case14_day.qsts.zip")
+            # an SCF file without meta.f_nom and without line c1: nothing
+            # the frequency could change, the select is disabled and a posted
+            # value is not stored
+            noc = Sparlectra.scf_json_parse(read(joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "scf", "sp_case14.scf.json"), String))
+            delete!(noc["sparlectra"]["meta"], "f_nom")
+            write(joinpath(cases, "noc1.scf.json"), Sparlectra.scf_json_string(noc))
+            @test freq_disabled(case_page("noc1.scf.json"))
+            SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "noc1.scf.json", "settings_target" => "this_case", "model_nominal_frequency_hz" => "60.0", "matpower_import_ratio" => "reciprocal"); output_root=root, runtime=rt)
+            @test !freq_stored("noc1.scf.json")
+            @test Sparlectra.load_case_config(joinpath(cases, "noc1.scf.json"))["matpower_import.ratio"] == "reciprocal"
             # an SCF file stating 60 Hz: the MATPOWER options do not render,
             # Export Solution (every format) does; the frequency select is
             # disabled at the file's 60 (the key is 50)
@@ -869,7 +898,7 @@ function run_webui_fast_tests()
             @test rendered(body60, "matpower_export_write_solution")
             @test selected(body60) == "60.0"
             @test freq_disabled(body60)
-            @test occursin("data-hidden-options=\"10\"", body60)
+            @test occursin("data-hidden-options=\"11\"", body60)
             @test SparlectraApp.webui_form_state(selected_casefile="freq60.scf.json", case_directory=cases)["model_nominal_frequency_hz"] == 60.0
             # an SCF file without f_nom: the select is enabled and shows the
             # configured key
@@ -911,14 +940,17 @@ function run_webui_fast_tests()
             @test "model.nominal_frequency_hz" in cfg.user_set_keys
             # saved, then run (the run form posts no frequency): the
             # Case page save above stored no frequency, so no frequency
-            # warning in run.log; 50 saved against the file's 60 gives
-            # exactly one
+            # warning in run.log. A posted 50 is not saved against the
+            # file's 60; a 50 stored before the lock still reaches the run
+            # and gives exactly one warning
             freq_warnings(run) = count(l -> occursin("meta.f_nom = 60.0 Hz", l), eachline(joinpath(String(run["output_dir"]), "run.log")))
+            freq_line(run) = only(filter(l -> startswith(l, "System frequency: "), collect(eachline(joinpath(String(run["output_dir"]), "run.log")))))
             for (posted, expected) in ((nothing, 0), ("50.0", 1))
                 if posted !== nothing
                     save = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "freq60.scf.json", "settings_target" => "this_case", "model_nominal_frequency_hz" => posted); output_root=root, runtime=rt)
                     @test save.status in (302, 303)
-                    @test Sparlectra.load_case_config(joinpath(cases, "freq60.scf.json"))["model.nominal_frequency_hz"] == parse(Float64, posted)
+                    @test !freq_stored("freq60.scf.json")
+                    Sparlectra.write_case_config(joinpath(cases, "freq60.scf.json"), merge(Sparlectra.load_case_config(joinpath(cases, "freq60.scf.json")), Dict{String,Any}("model.nominal_frequency_hz" => parse(Float64, posted))))
                 end
                 patterns = expected == 0 ? () : (r"meta\.f_nom = 60\.0 Hz.*model\.nominal_frequency_hz = 50\.0 Hz",)
                 run = run_with_expected_warnings(patterns) do
@@ -930,7 +962,37 @@ function run_webui_fast_tests()
                 # file's 60 also when the saved key says 50
                 res = Sparlectra.scf_json_parse(read(joinpath(String(run["output_dir"]), "result.json"), String))
                 @test res["metadata"]["network_nominal_frequency_hz"] == 60.0
+                # sp_case14 carries c1 = 0 on every line: the frequency never
+                # entered the model, and run.log says so instead of 60 Hz
+                @test res["metadata"]["frequency_source"] == "not_used"
+                @test freq_line(run) == "System frequency: not used (no capacitance in farad); case file states 60 Hz"
             end
+            # the next save of the case options removes the stored 50
+            @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", posted_fields(case_page("freq60.scf.json")); output_root=root, runtime=rt).status in (302, 303)
+            @test !freq_stored("freq60.scf.json")
+            # a case with line capacitance in farad (two_islands_prio, c1 > 0):
+            # the stated 50 Hz is used; without meta.f_nom the configured
+            # frequency is, and 60 Hz carries 1.2 times the line charging
+            cap = Sparlectra.scf_json_parse(read(joinpath(Sparlectra.SPARLECTRA_ROOT, "data", "scf", "two_islands_prio.scf.json"), String))
+            write(joinpath(cases, "cap_fnom.scf.json"), Sparlectra.scf_json_string(cap))
+            delete!(cap["sparlectra"]["meta"], "f_nom")
+            write(joinpath(cases, "cap_nof.scf.json"), Sparlectra.scf_json_string(cap))
+            balance(run) = only(filter(l -> occursin("total network power balance", l), collect(eachline(joinpath(String(run["output_dir"]), "run.log")))))
+            cap_runs = Dict{String,Any}()
+            for (case, cfg, source, line) in (("cap_fnom.scf.json", cfg_rt, "case_file", "50 Hz (case file)"),
+                                              ("cap_nof.scf.json", cfg_rt, "configuration", "50 Hz (configuration)"),
+                                              ("cap_nof.scf.json", cfg60, "configuration", "60 Hz (configuration)"))
+                run = SparlectraApp.start_powerflow_run(Dict("casefile" => case, "config_file" => cfg, "output_root" => joinpath(root, "cap_runs")); case_directory=cases)
+                @test run["status"] == "succeeded"
+                md = Sparlectra.scf_json_parse(read(joinpath(String(run["output_dir"]), "result.json"), String))["metadata"]
+                @test md["frequency_source"] == source
+                @test md["frequency_line"] == line
+                @test freq_line(run) == "System frequency: " * line
+                cap_runs[line] = run
+            end
+            # same file, same 50 Hz: the same solution; 60 Hz changes it
+            @test balance(cap_runs["50 Hz (case file)"]) == balance(cap_runs["50 Hz (configuration)"])
+            @test balance(cap_runs["60 Hz (configuration)"]) != balance(cap_runs["50 Hz (configuration)"])
             # cgmes_import.read_dynamics per case (default off): a CGMES
             # delivery with a DY profile (the SmallGrid fixture plus one DY
             # file with two machine models). The switch renders on the CGMES
@@ -989,6 +1051,23 @@ function run_webui_fast_tests()
                 run_cg = SparlectraApp.start_powerflow_run(Dict("casefile" => "sg_dy.zip", "config_file" => cfg_rt, "output_root" => joinpath(root, "runs_dy_" * string(checked))); case_directory=cases)
                 @test run_cg["status"] == "succeeded"
                 @test occursin(section, dy_section(run_cg))
+            end
+            # cgmes_import.equivalent_injection_as_source per case (default
+            # off), same pattern: checked, the case file stores true and the
+            # run imports the boundary EquivalentInjections of SmallGrid as
+            # sources (one importer notice counts them); unchecked, the key
+            # leaves the case file and no injection becomes a source
+            @test !rendered(body60, "cgmes_equivalent_injection_as_source")
+            @test rendered(body_cg, "cgmes_equivalent_injection_as_source")
+            @test post_cg["cgmes_equivalent_injection_as_source"] == "false"
+            for (checked, stored) in ((true, true), (false, nothing))
+                save_ei = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(post_cg, Dict{String,Any}("cgmes_equivalent_injection_as_source" => checked ? "true" : "false")); output_root=root, runtime=rt)
+                @test save_ei.status in (302, 303)
+                @test get(Sparlectra.load_case_config(joinpath(cases, "sg_dy.zip")), "cgmes_import.equivalent_injection_as_source", nothing) === stored
+                run_ei = SparlectraApp.start_powerflow_run(Dict("casefile" => "sg_dy.zip", "config_file" => cfg_rt, "output_root" => joinpath(root, "runs_ei_" * string(checked))); case_directory=cases)
+                @test run_ei["status"] == "succeeded"
+                report = replace(read(joinpath(String(run_ei["output_dir"]), "cgmes_import_report.md"), String), r"\\(.)" => s"\1")
+                @test occursin(r"notice: \d+ EquivalentInjection\(s\) imported as source", report) == checked
             end
         end)() end
 

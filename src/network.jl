@@ -30,6 +30,7 @@ constructors.
 - `name::String`: Name of the network.
 - `baseMVA::Float64`: Base MVA of the network.
 - `nominal_frequency_hz::Float64`: System frequency in Hz. Read where a value given per capacitance becomes a susceptance (`addACLinePerKm!`, the line `c1` of an SCF or PGM file). Set by an SCF file (`meta.f_nom`), otherwise by `model.nominal_frequency_hz` at import (default 50).
+- `_frequency_used::Bool`: `true` once a nonzero capacitance became a susceptance with `nominal_frequency_hz`; a network without capacitance in farad (pu values, or `c1 = 0`) leaves it `false`. Read by `nominal_frequency_line` for the run header.
 - `slackVec::Vector{Int}`: Vector containing indices of slack buses.
 - `vmin_pu::Float64`: Minimum voltage limit in per unit.
 - `vmax_pu::Float64`: Maximum voltage limit in per unit.
@@ -180,6 +181,11 @@ mutable struct Net
   # true when the case file stated the frequency (SCF meta.f_nom): the
   # configuration stamp of an import then leaves nominal_frequency_hz alone
   _frequency_from_case::Bool
+  # true once a capacitance in farad became a susceptance with
+  # nominal_frequency_hz (addACLinePerKm!, the SCF/PGM line c1): a network
+  # with susceptances in pu never reads the frequency, and the run header
+  # says so
+  _frequency_used::Bool
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance, nominal_frequency_hz::Real = model_config().nominal_frequency_hz)
@@ -234,7 +240,8 @@ mutable struct Net
         String[],                                  # tapModelNotices
         nothing,                                   # _power_cache
         Int[],                                     # _marked_iso
-        false)                                     # _frequency_from_case
+        false,                                     # _frequency_from_case
+        false)                                     # _frequency_used
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -256,6 +263,43 @@ function _check_nominal_frequency(f, context::AbstractString)
   (f isa Real && !(f isa Bool) && isfinite(f) && f > 0) || throw(ArgumentError("$(context): nominal_frequency_hz must be a positive number in Hz, got $(repr(f))."))
   return nothing
 end
+
+# the source name and the header text from the three facts, shared by the
+# Net methods below and the SCFCase methods of the SCF reader (a QSTS run
+# reports from the series base case, it keeps no Net)
+_frequency_source_name(used::Bool, from_case::Bool) = !used ? "not_used" : (from_case ? "case_file" : "configuration")
+
+# 50.0 -> "50 Hz", 59.94 -> "59.94 Hz"
+_frequency_hz_text(f::Real) = string(isinteger(f) ? Int(f) : f, " Hz")
+
+function _frequency_line_text(f::Real, used::Bool, from_case::Bool)::String
+  used && return string(_frequency_hz_text(f), from_case ? " (case file)" : " (configuration)")
+  return from_case ? string("not used (no capacitance in farad); case file states ", _frequency_hz_text(f)) : "not used (no capacitance in farad)"
+end
+
+"""
+    nominal_frequency_source(net::Net) -> String
+
+Where the system frequency of `net` came from, as the run metadata names it:
+`"case_file"` (the case file stated it, SCF `meta.f_nom`) or
+`"configuration"` (`model.nominal_frequency_hz`, or the
+`nominal_frequency_hz` argument of `Net` in a script) when a capacitance was
+converted with it, `"not_used"` when no capacitance in farad entered the
+model (susceptances in pu, or `c1 = 0` on every line).
+"""
+nominal_frequency_source(net::Net)::String = _frequency_source_name(net._frequency_used, net._frequency_from_case)
+
+"""
+    nominal_frequency_line(net::Net) -> String
+
+The system frequency for the run header (`run.log`, the result print, the
+Web UI result page): `"50 Hz (case file)"` or `"60 Hz (configuration)"`
+when a capacitance was converted with it, otherwise
+`"not used (no capacitance in farad)"`, followed by
+`"; case file states 50 Hz"` when the case file names a frequency all the
+same.
+"""
+nominal_frequency_line(net::Net)::String = _frequency_line_text(net.nominal_frequency_hz, net._frequency_used, net._frequency_from_case)
 
 const BUS_SHUNT_ADMITTANCE = :admittance
 const BUS_SHUNT_VOLTAGE_DEPENDENT_INJECTION = :voltage_dependent_injection
@@ -1095,6 +1139,7 @@ function addACLinePerKm!(; net::Net, fromBus::String, toBus::String, length_km::
   g_us_per_km === nothing || tanδ === nothing || throw(ArgumentError("addACLinePerKm!: give g_us_per_km or tanδ, not both."))
   f_hz = net.nominal_frequency_hz
   b_s = 2.0 * pi * f_hz * c_nf_per_km * 1.0e-9 * length_km
+  c_nf_per_km == 0.0 || (net._frequency_used = true)
   g_s = if g_us_per_km !== nothing
     g_us_per_km * 1.0e-6 * length_km
   elseif tanδ !== nothing
@@ -1679,7 +1724,9 @@ impedance, so the former slack bus becomes an ordinary solved bus whose
 voltage reacts to loading.
 
 Steps: the slack prosumers at the bus are demoted (reference marker and
-voltage regulation removed, their scheduled `p`/`q` injections stay), and
+voltage regulation removed, their scheduled `p`/`q` injections stay), the
+external-network and equivalent-injection short-circuit records of the bus
+are dropped (the new source replaces them), and
 `addExternalGrid!` with `internal_impedance = true` is added at the bus,
 carrying the former slack's voltage setpoint as the source's reference
 voltage. With multiple slack buses (island references) only the addressed
@@ -1732,6 +1779,12 @@ function convertSlackToExternalGrid!(;
   # side effect: the demotion must leave a consistent net on its own.
   refreshBusTypesFromProsumers!(net)
   _buildQLimits!(net)
+
+  # The new source replaces the external feeders of the bus: the short
+  # circuit stamps every external-network and equivalent-injection record of
+  # a bus, so a record left behind would count the source twice.
+  filter!(e -> e.bus != target, net.sc_sources.external_network_injections)
+  filter!(e -> e.bus != target, net.sc_sources.equivalent_injections)
 
   addExternalGrid!(net = net, busName = target, vm_pu = vref, va_deg = varef, sk_max_MVA = sk_max_MVA, sk_min_MVA = sk_min_MVA, rx_max = rx_max, rx_min = rx_min, name = name, internal_impedance = true)
   return "external grid: slack bus $(target) converted to a non-ideal source (Sk'' = $(sk_max_MVA) MVA, R/X = $(rx_max), $(demoted) slack prosumer(s) demoted; reference moved to $(target)__extgrid_int)"

@@ -816,6 +816,13 @@ Options of the `cgmes_import` configuration block, the ENTSO-E CGMES import
   `DynamicData` (inertia, damping, droop, governor time constant; see
   `importCGMES`). Off by default: the DY file is skipped. No calculation
   reads the data; the island slack choice reads the unit type.
+- `equivalent_injection_as_source::Bool`: import an `EquivalentInjection`
+  on the SV angle reference node or on a boundary node as a
+  voltage-regulating source at the SV voltage of its node (the one on the
+  SV angle reference is the slack), with the short-circuit power from its
+  `r`/`x` where the EQ states them. Off by default: the injection stays as
+  mapped (PQ at the SSH p and q, PV with `regulationStatus`, slack when it
+  holds the SV angle reference).
 - `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
   `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal
   voltage. A target outside the band is treated as a placeholder: it is ignored
@@ -850,6 +857,7 @@ Base.@kwdef struct CGMESImportConfig
   map_power_electronics::Bool = false
   shunt_control::Bool = false
   read_dynamics::Bool = false
+  equivalent_injection_as_source::Bool = false
   vset_min_pu::Float64 = 0.5
   vset_max_pu::Float64 = 1.5
   multi_slack::Bool = true
@@ -2353,6 +2361,7 @@ function CGMESImportConfig(raw::AbstractDict)
     map_power_electronics = _as_bool_cfg(_raw_get(merged, "map_power_electronics", false)),
     shunt_control = _as_bool_cfg(_raw_get(merged, "shunt_control", false)),
     read_dynamics = _as_bool_cfg(_raw_get(merged, "read_dynamics", false)),
+    equivalent_injection_as_source = _as_bool_cfg(_raw_get(merged, "equivalent_injection_as_source", false)),
     vset_min_pu = _validate_nonnegative("cgmes_import.vset_min_pu", _as_float_cfg(_raw_get(merged, "vset_min_pu", 0.5))),
     vset_max_pu = _validate_positive("cgmes_import.vset_max_pu", _as_float_cfg(_raw_get(merged, "vset_max_pu", 1.5))),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),

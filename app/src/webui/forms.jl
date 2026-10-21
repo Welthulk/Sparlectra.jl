@@ -1282,11 +1282,11 @@ function _webui_sigma_levels_from_form(form::AbstractDict)::Union{Nothing,Dict{S
   return out
 end
 
-# The SCF/PGM case file behind a case name, or nothing (no name, not a
-# .json file, no such file). A bare name not yet in the case directory is
-# looked up in the bundled sources the combobox offers, the way the run
-# resolves it before staging.
-function _webui_case_json_source(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,String}
+# The case file (or CGMES directory) behind a case name, or nothing (no
+# name, no such path). A
+# bare name not yet in the case directory is looked up in the bundled
+# sources the combobox offers, the way the run resolves it before staging.
+function _webui_case_source_file(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,String}
   name = String(strip(String(casefile)))
   isempty(name) && return nothing
   path = isabspath(name) ? name : (case_directory === nothing ? name : joinpath(String(case_directory), name))
@@ -1294,32 +1294,84 @@ function _webui_case_json_source(casefile::AbstractString, case_directory; appli
     bundled = _webui_bundled_case_source(application_root, name)
     bundled === nothing || (path = bundled)
   end
-  (lowercase(splitext(path)[2]) == ".json" && isfile(path)) || return nothing
-  return path
+  return ispath(path) ? path : nothing
 end
 
-# meta.f_nom of an SCF/PGM case file, or nothing (no such file, no
-# sparlectra block, no or an invalid statement: the import reports that).
-function _webui_case_file_frequency(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,Float64}
-  path = _webui_case_json_source(casefile, case_directory; application_root)
-  path === nothing && return nothing
+# (stated_hz, can_use) of an SCF/PGM document: its meta.f_nom (nothing when
+# absent or invalid, the import reports that), and whether the import turns
+# a capacitance into a susceptance with the frequency: an si file with a
+# line c1 != 0 (the condition that sets net._frequency_used, see
+# _scf_case_frequency); a pu file reads b_pu as it stands. Raw JSON instead
+# of an SCFCase keeps the check cheap for every Case page render.
+function _webui_scf_frequency_facts(text::AbstractString)::Tuple{Union{Nothing,Float64},Bool}
   root = try
-    scf_json_parse(read(path, String))
+    scf_json_parse(text)
   catch err
-    # a malformed file leaves the select on the configuration; the run
-    # names the parse error (Web UI form seeding falls back silently)
+    # a malformed file leaves the select as it was; the run names the parse
+    # error (Web UI form seeding falls back silently)
     err isa ArgumentError || rethrow()
-    return nothing
+    return (nothing, true)
   end
-  root isa AbstractDict || return nothing
+  root isa AbstractDict || return (nothing, true)
   spar = get(root, "sparlectra", nothing)
-  spar isa AbstractDict || return nothing
-  meta = get(spar, "meta", nothing)
-  meta isa AbstractDict || return nothing
-  v = get(meta, "f_nom", nothing)
-  (v isa Real && !(v isa Bool) && isfinite(v) && v > 0) || return nothing
-  return Float64(v)
+  meta = spar isa AbstractDict ? get(spar, "meta", nothing) : nothing
+  stated = nothing
+  units = "si"
+  if meta isa AbstractDict
+    v = get(meta, "f_nom", nothing)
+    (v isa Real && !(v isa Bool) && isfinite(v) && v > 0) && (stated = Float64(v))
+    u = get(meta, "units", "si")
+    u isa AbstractString && (units = lowercase(strip(u)))
+  end
+  data = get(root, "data", nothing)
+  lines = data isa AbstractDict ? get(data, "line", nothing) : nothing
+  has_c1(row) = row isa AbstractDict && (c = get(row, "c1", nothing); c isa Real && !(c isa Bool) && c != 0)
+  can_use = units == "si" && lines isa AbstractVector && any(has_c1, lines)
+  return (stated, can_use)
 end
+
+# (stated_hz, can_use) of a case file by content: an SCF/PGM .json file, or
+# the base case of an SCF time series zip. Every other format never uses the
+# key: MATPOWER gives line charging in per unit, DTF, CGMES and PowSyBl as
+# a susceptance; none of their imports converts a capacitance with
+# model.nominal_frequency_hz (it only becomes the meta.f_nom of an SCF
+# export, which the re-import cancels).
+function _webui_case_frequency_facts(path::AbstractString)::Tuple{Union{Nothing,Float64},Bool}
+  isfile(path) || return (nothing, false)
+  lowercase(splitext(path)[2]) == ".json" && return _webui_scf_frequency_facts(read(path, String))
+  if _webui_is_scf_series_cached(path)
+    entries = try
+      _scf_series_read_entries(path)
+    catch err
+      # a broken series zip (missing or extra entry): the run names it
+      err isa ArgumentError || rethrow()
+      return (nothing, true)
+    end
+    return _webui_scf_frequency_facts(entries["base.scf.json"])
+  end
+  return (nothing, false)
+end
+
+_webui_case_frequency_facts_cached(path::AbstractString) = _webui_file_scan_memo(_webui_case_frequency_facts, path)
+
+# (stated_hz, can_use) for a case name; a name that resolves to no file yet
+# says nothing, the select stays enabled.
+function _webui_case_frequency_state(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Tuple{Union{Nothing,Float64},Bool}
+  path = _webui_case_source_file(casefile, case_directory; application_root)
+  path === nothing && return (nothing, true)
+  return _webui_case_frequency_facts_cached(path)
+end
+
+# Whether the system frequency select is locked for a case: the file states
+# its frequency (it wins on import), or no capacitance of the case uses it.
+function _webui_case_frequency_locked(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Bool
+  stated, can_use = _webui_case_frequency_state(casefile, case_directory; application_root)
+  return stated !== nothing || !can_use
+end
+
+# meta.f_nom of an SCF/PGM case file or of the base case of an SCF time
+# series, or nothing.
+_webui_case_file_frequency(casefile::AbstractString, case_directory; application_root::AbstractString = _webui_application_root())::Union{Nothing,Float64} = first(_webui_case_frequency_state(casefile, case_directory; application_root))
 
 # the machine-scope keys an old case file carries in its in-file block:
 # ignored by the run and named in the notice so nobody expects them to act
