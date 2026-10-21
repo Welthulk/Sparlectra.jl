@@ -869,7 +869,7 @@ function run_webui_fast_tests()
             @test rendered(body60, "matpower_export_write_solution")
             @test selected(body60) == "60.0"
             @test freq_disabled(body60)
-            @test occursin("data-hidden-options=\"9\"", body60)
+            @test occursin("data-hidden-options=\"10\"", body60)
             @test SparlectraApp.webui_form_state(selected_casefile="freq60.scf.json", case_directory=cases)["model_nominal_frequency_hz"] == 60.0
             # an SCF file without f_nom: the select is enabled and shows the
             # configured key
@@ -930,6 +930,65 @@ function run_webui_fast_tests()
                 # file's 60 also when the saved key says 50
                 res = Sparlectra.scf_json_parse(read(joinpath(String(run["output_dir"]), "result.json"), String))
                 @test res["metadata"]["network_nominal_frequency_hz"] == 60.0
+            end
+            # cgmes_import.read_dynamics per case (default off): a CGMES
+            # delivery with a DY profile (the SmallGrid fixture plus one DY
+            # file with two machine models). The switch renders on the CGMES
+            # Case page only; checked, the save writes true into the case
+            # file and the run reads the DY profile; unchecked again, the
+            # hidden false equals the default, the key leaves the case file
+            # and the run skips the profile.
+            @test !rendered(body60, "cgmes_read_dynamics")
+            sg_zips = sort(filter(f -> endswith(f, ".zip"), readdir(joinpath(@__DIR__, "fixtures", "cgmes_smallgrid"); join = true)))
+            sg_store = Sparlectra.CGMESImporter.loadCGMES(sg_zips)
+            sm_mrid(name) = only(o.mrid for o in Sparlectra.CGMESImporter.objectsOf(sg_store, :SynchronousMachine) if Sparlectra.CGMESImporter.str(o, :name) == name)
+            dy_model(id, mrid) = """
+              <cim:SynchronousMachineTimeConstantReactance rdf:ID="$(id)">
+                <cim:DynamicsFunctionBlock.enabled>true</cim:DynamicsFunctionBlock.enabled>
+                <cim:RotatingMachineDynamics.inertia>4.25</cim:RotatingMachineDynamics.inertia>
+                <cim:SynchronousMachineDynamics.SynchronousMachine rdf:resource="#$(mrid)"/>
+              </cim:SynchronousMachineTimeConstantReactance>
+            """
+            dy_xml = """<?xml version="1.0" encoding="UTF-8"?>
+            <rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+              <md:FullModel rdf:about="urn:uuid:5f0e4c1a-0000-4000-8000-000000000507">
+                <md:Model.profile>http://entsoe.eu/CIM/Dynamics/3/1</md:Model.profile>
+              </md:FullModel>
+            $(dy_model("_wdy_m1", sm_mrid("Claytor SM")))$(dy_model("_wdy_m2", sm_mrid("Torrey SM")))</rdf:RDF>
+            """
+            open(joinpath(cases, "sg_dy.zip"), "w") do io
+                Sparlectra.CGMESImporter.ZipArchives.ZipWriter(io) do w
+                    for z in sg_zips
+                        Sparlectra.CGMESImporter.ZipArchives.zip_newfile(w, basename(z))
+                        write(w, read(z))
+                    end
+                    Sparlectra.CGMESImporter.ZipArchives.zip_newfile(w, "sg_DY.xml")
+                    write(w, dy_xml)
+                end
+            end
+            body_cg = case_page("sg_dy.zip")
+            @test rendered(body_cg, "cgmes_read_dynamics")
+            post_cg = posted_fields(body_cg)
+            @test post_cg["cgmes_read_dynamics"] == "false"
+            # the DY section of the import report, up to the next heading;
+            # the report escapes Markdown characters (cgmes\_import), so
+            # the backslashes go before the comparison
+            function dy_section(run)
+                t = read(joinpath(String(run["output_dir"]), "cgmes_import_report.md"), String)
+                i = findfirst("## Dynamic data (DY profile)\n", t)
+                i === nothing && return ""
+                j = findnext("\n## ", t, last(i))
+                return replace(t[last(i)+1:(j === nothing ? lastindex(t) : first(j))], r"\\(.)" => s"\1")
+            end
+            for (checked, stored, section) in ((true, true, "DY profile read (cgmes_import.read_dynamics): 2 unit(s) with dynamic data"), (false, nothing, "DY profile present (1 file(s)), not read: cgmes_import.read_dynamics = false"))
+                # the browser posts the hidden false first and, when checked,
+                # the true of the checkbox; the save parser keeps the last
+                save_cg = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(post_cg, Dict{String,Any}("cgmes_read_dynamics" => checked ? "true" : "false")); output_root=root, runtime=rt)
+                @test save_cg.status in (302, 303)
+                @test get(Sparlectra.load_case_config(joinpath(cases, "sg_dy.zip")), "cgmes_import.read_dynamics", nothing) === stored
+                run_cg = SparlectraApp.start_powerflow_run(Dict("casefile" => "sg_dy.zip", "config_file" => cfg_rt, "output_root" => joinpath(root, "runs_dy_" * string(checked))); case_directory=cases)
+                @test run_cg["status"] == "succeeded"
+                @test occursin(section, dy_section(run_cg))
             end
         end)() end
 
