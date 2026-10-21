@@ -2136,7 +2136,7 @@ form:
       @test occursin("const hideNrOnly = apslf || dc", settings_page_html)
       @test occursin("autodampGroup.classList.toggle('disabled', !autodampOn)", settings_page_html)
       @test occursin("trustRegionGroup.classList.toggle('disabled', !trustRegionOn)", settings_page_html)
-      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive || flatstartRequired)", settings_page_html)
+      @test occursin("setSolverGroupInactive(container, hideNrOnly || dcSeedMakesInactive || flatstartMakesInactive || ratioProfileOff)", settings_page_html)
       # Mutually exclusive/inapplicable fields are grayed out in place (disabled inputs,
       # opacity via the "disabled" CSS class) rather than hidden -- switching solvers no
       # longer makes parts of the form vanish or jump around.
