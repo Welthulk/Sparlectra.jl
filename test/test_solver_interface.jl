@@ -327,6 +327,41 @@ function run_solver_interface_tests()
       @test isapprox(cfg_net.nodeVec[2]._qƩGen, 1.0; atol = 1e-9)
     end)() end
 
+    @testset "Q-limit guard: a narrow band locks only at a reached limit" begin (function ()
+      # the machine at STATION1 needs q_free to hold its setpoint; a band of
+      # 1 MVAr (0.01 pu, below the 0.02 pu guard threshold) around q_free
+      # holds it, a band of 1 MVAr below q_free does not
+      solve(band, mode) = begin
+        n = createTest3BusNet()
+        band === nothing || setQLimits!(net = n, qmin_MVar = band[1], qmax_MVar = band[2], busName = "STATION1")
+        _, erg = runpf!(n, 20, 1e-6, 0; method = :rectangular, qlimit_enforcement_mode = :active_set, qlimit_guard = true, qlimit_guard_narrow_range_mode = mode)
+        (n, erg)
+      end
+      free, erg_free = solve(nothing, :lock_pq)
+      @test erg_free == 0
+      q_free = free.nodeVec[2]._qƩGen
+      vset = free.nodeVec[2]._vm_pu
+      # inside the band: lock_pq leaves the machine PV at its setpoint, no
+      # Q-limit event; prefer_pq runs it as PQ at the band middle from the
+      # start (iteration 0)
+      inside, erg_in = solve((q_free - 0.5, q_free + 0.5), :lock_pq)
+      @test erg_in == 0
+      @test getNodeType(inside.nodeVec[2]) == Sparlectra.PV
+      @test isempty(inside.qLimitLog)
+      @test isapprox(inside.nodeVec[2]._vm_pu, vset; atol = 1e-6)
+      middle, erg_mid = solve((q_free - 0.5, q_free + 0.5), :prefer_pq)
+      @test erg_mid == 0
+      @test getNodeType(middle.nodeVec[2]) == Sparlectra.PQ
+      @test [(e.iter, e.bus) for e in middle.qLimitLog] == [(0, 2)]
+      # above the band: lock_pq clamps the machine at Qmax when the active
+      # set reaches it (an iteration after 0) and keeps it there
+      above, erg_ab = solve((q_free - 1.5, q_free - 0.5), :lock_pq)
+      @test erg_ab == 0
+      @test getNodeType(above.nodeVec[2]) == Sparlectra.PQ
+      @test isapprox(above.nodeVec[2]._qƩGen, q_free - 0.5; atol = 1e-9)
+      @test all(e -> e.iter > 0 && e.side === :max, above.qLimitLog)
+    end)() end
+
     @testset "Rectangular Q-limit trace diagnostics" begin (function ()
       net = createTest3BusNet()
       setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")

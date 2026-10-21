@@ -73,8 +73,18 @@ function _start_guarded_buses_from_fixed_injection!(V0::AbstractVector{ComplexF6
   return sweeps
 end
 
-function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vector{Symbol}, S::Vector{ComplexF64}, Qload_pu::Vector{Float64}, qmin_pu::AbstractVector, qmax_pu::AbstractVector; min_q_range_pu::Float64, zero_range_mode::Symbol, narrow_range_mode::Symbol, log::Bool, verbose::Int)
-  # Guard runs once before NR to lock obviously problematic narrow-Q PV buses.
+# Guard runs once before NR. A zero range (Qmin == Qmax) runs as PQ at that
+# Q. A narrow range under :prefer_pq runs as PQ at the middle of the band
+# from the start. Under :lock_pq (the default) the machine stays PV while
+# its Q lies inside the band; the bus goes into `lock_on_hit`, and the
+# caller takes it out of the PQ->PV release, so the first limit it reaches
+# in the active set clamps it at that limit for the rest of the solve. A
+# machine inside its band does not oscillate, and running it as PQ at the
+# band middle took its voltage control and changed its Q without a reason
+# (sp_case60 with two 40 MW machines in a 0.015 pu band: the active set did
+# not converge in 80 iterations with the band-middle lock, 5 without the
+# guard). Returns the buses converted to PQ before the solve.
+function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vector{Symbol}, S::Vector{ComplexF64}, Qload_pu::Vector{Float64}, qmin_pu::AbstractVector, qmax_pu::AbstractVector; min_q_range_pu::Float64, zero_range_mode::Symbol, narrow_range_mode::Symbol, log::Bool, verbose::Int, lock_on_hit::Vector{Int} = Int[])
   min_q_range_pu >= 0.0 || error("qlimit_guard_min_q_range_pu must be >= 0 (got $(min_q_range_pu)).")
   zero_range_mode in (:lock_pq, :prefer_pq, :delayed_switch, :ignore) || error("Unsupported qlimit_guard_zero_range_mode=$(zero_range_mode). Supported: :lock_pq, :prefer_pq, :delayed_switch, :ignore.")
   narrow_range_mode in (:lock_pq, :prefer_pq, :delayed_switch, :ignore) || error("Unsupported qlimit_guard_narrow_range_mode=$(narrow_range_mode). Supported: :lock_pq, :prefer_pq, :delayed_switch, :ignore.")
@@ -89,8 +99,13 @@ function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vec
     isfinite(qmin) && isfinite(qmax) || continue
     qrange = abs(qmax - qmin)
     qrange < min_q_range_pu || continue
-    mode = qrange <= eps(Float64) ? zero_range_mode : narrow_range_mode
+    zero_range = qrange <= eps(Float64)
+    mode = zero_range ? zero_range_mode : narrow_range_mode
     mode in (:lock_pq, :prefer_pq) || continue
+    if !zero_range && mode === :lock_pq
+      push!(lock_on_hit, bus)
+      continue
+    end
 
     qclamp = 0.5 * (qmin + qmax)
     bus_types[bus] = :PQ
@@ -103,6 +118,9 @@ function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vec
   # The remaining network-integrated solver loop still performs PV→PQ switching.
   if log && verbose > 0 && !isempty(guarded)
     @printf("Q-limit guard: locked %d narrow-range PV bus(es) as PQ before rectangular NR.\n", length(guarded))
+  end
+  if log && verbose > 0 && !isempty(lock_on_hit)
+    @printf("Q-limit guard: %d narrow-range PV bus(es) stay PV inside their band and lock at the first limit they reach.\n", length(lock_on_hit))
   end
   return guarded
 end
