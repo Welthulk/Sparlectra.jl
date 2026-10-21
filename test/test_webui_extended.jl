@@ -1331,9 +1331,9 @@ form:
         cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["matpower_export_file"])), joinpath(case_directory, "ieee14_export.m"))
         cp(joinpath(iidm_exports["output_dir"], String(iidm_exports["metadata"]["cgmes_export_files"])), joinpath(case_directory, "ieee14_export_cgmes.zip"))
         magnitudes(result) = begin
-          rows = readlines(joinpath(result["output_dir"], "bus_voltages_complex.csv"))
-          column = findfirst(==("vm_pu"), split(rows[1], ","))
-          sort!([parse(Float64, split(row, ",")[column]) for row in rows[2:end]])
+          csv = run_csv(joinpath(result["output_dir"], "bus_voltages_complex.csv"))
+          column = findfirst(==("vm_pu"), csv.header)
+          sort!([csv.number(row[column]) for row in csv.rows])
         end
         source_vm = magnitudes(iidm_exports)
         for exported in ("ieee14_export.m", "ieee14_export_cgmes.zip", "ieee14.scf.json")
@@ -3349,8 +3349,8 @@ result = get_powerflow_result(run_id)
         @test run_result["metadata"]["contingency_screening_mode"] == "flag"
         csv_text = read(joinpath(root, run_result["run_id"], "contingency_n1.csv"), String)
         @test occursin("step6 triple", csv_text)
-        # default format is "technical" (comma delimiter) since issue #376
-        @test endswith(first(split(csv_text, '\n')), ",screened,screening_estimate")
+        # the last two columns mark the screened cases
+        @test run_csv(joinpath(root, run_result["run_id"], "contingency_n1.csv")).header[(end-1):end] == ["screened", "screening_estimate"]
 
         # the result page renders the N-1 table (the screened marker must be visible in the browser, not only in the
         # CSV). The file_block run carries ONE multi-op scenario, which is
@@ -3641,7 +3641,7 @@ function _webui_qsts_tests()
         @test isfile(joinpath(od, f))
       end
       # one SVG per element; the first controller's chart has a point per solved step
-      n_solved = count(l -> occursin(",solved,", l), eachline(joinpath(od, "qsts_steps.csv")))
+      n_solved = count(row -> "solved" in row, run_csv(joinpath(od, "qsts_steps.csv")).rows)
       @test n_solved == md["qsts_solved"] > 0
       default_chart = md["qsts_default_charts"][1]
       view = Sparlectra.scf_json_parse(read(joinpath(od, "qsts_view.json"), String))

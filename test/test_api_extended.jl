@@ -328,7 +328,7 @@ function run_api_extended_tests()
       @test occursin("toggle_dcline-compatible PF injections", dcline_pf_log)
       dcline_pf_csv = read(joinpath(dcline_pf_result.output_dir, "matpower_dcline.csv"), String)
       @test occursin("effective_pt_mw", dcline_pf_csv)
-      @test occursin(",8,", dcline_pf_csv)
+      @test any(row -> "8" in row, run_csv(joinpath(dcline_pf_result.output_dir, "matpower_dcline.csv")).rows)
 
       island_case = _write_api_two_island_case_ext(joinpath(tmpdir, "case_two_islands.m"))
       island_result = run_sparlectra_api(
@@ -353,7 +353,9 @@ function run_api_extended_tests()
       @test isfile(island_summary)
       @test isfile(island_one_log)
       @test isfile(island_two_log)
-      summary_text = read(island_summary, String)
+      # the cells joined by commas, whatever delimiter the locale selected
+      summary_csv = run_csv(island_summary)
+      summary_text = join([join(row, ",") for row in vcat([summary_csv.header], summary_csv.rows)], "\n")
       @test occursin("exception_type,exception_message,stacktrace_top", summary_text)
       @test !occursin("solver_exception", summary_text)
       @test !occursin("ErrorException", summary_text)
@@ -877,9 +879,9 @@ power_flow:
         self_check_summary = read(joinpath(self_check_dir, "self_check.log"), String)
         @test occursin("start values taken verbatim from import", self_check_summary)
         @test occursin("start_state_residual_inf: ", self_check_summary)
-        residuals_csv = readlines(joinpath(self_check_dir, "self_check_residuals.csv"))
-        @test residuals_csv[1] == "bus_id,bus_name,vn_kV,bus_type,vm_pu_start,va_deg_start,p_residual,q_residual,has_sv,n_transformer_terminals,n_shunts"
-        @test length(residuals_csv) - 1 == length(self_check.raw_result.net.nodeVec)
+        residuals_csv = run_csv(joinpath(self_check_dir, "self_check_residuals.csv"))
+        @test residuals_csv.header == ["bus_id", "bus_name", "vn_kV", "bus_type", "vm_pu_start", "va_deg_start", "p_residual", "q_residual", "has_sv", "n_transformer_terminals", "n_shunts"]
+        @test length(residuals_csv.rows) == length(self_check.raw_result.net.nodeVec)
 
         # Non-CGMES regression guard (load_fixture_net): the shipped
         # sp_case14 replaces the downloaded case14 here. A case configuration

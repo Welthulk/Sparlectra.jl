@@ -885,9 +885,9 @@ function run_legacy_webui_tests()
             idtap = rtap["run_id"]
             tapcsv = joinpath(root, idtap, "se_tap_estimates.csv")
             @test isfile(tapcsv)
-            taplines = readlines(tapcsv)
-            @test startswith(taplines[1], "branch,name,mrid,mode,alpha_deg,electrical_step,fixed_step")
-            @test length(taplines) == 3                     # warmup_casePST: two transformers
+            taps = run_csv(tapcsv)
+            @test taps.header[1:7] == ["branch", "name", "mrid", "mode", "alpha_deg", "electrical_step", "fixed_step"]
+            @test length(taps.rows) == 2                     # warmup_casePST: two transformers
             md = rtap["metadata"]
             # only the PST is estimable, the machine transformer stays calculated
             @test md["se_tap_count"] == 1
@@ -899,15 +899,15 @@ function run_legacy_webui_tests()
             @test md["se_tap_j_after"] < 1e-10
             # the deviated PST lands on a nonzero mechanical step; on this case
             # the Delta-u deviation is a SHIFT step, so either step column counts
-            header_cols = split(taplines[1], ",")
+            header_cols = taps.header
             step_cols = [findfirst(==(c), header_cols) for c in ("fixed_step", "fixed_shift_step")]
             @test all(i -> i !== nothing, step_cols)
-            @test any(l -> (f=split(l, ","); any(parse(Int, f[i]) != 0 for i in step_cols)), taplines[2:end])
+            @test any(f -> any(taps.number(f[i]) != 0 for i in step_cols), taps.rows)
             # the injected deviation is a CHANGE against the model position:
             # the tap CSV says so, the result table marks the row as corrected
             change_col = findfirst(==("change"), header_cols)
             @test change_col !== nothing
-            @test any(l -> (f=split(l, ","); f[change_col] != "" && f[change_col] != "0"), taplines[2:end])
+            @test any(f -> f[change_col] != "" && f[change_col] != "0", taps.rows)
             tapPage = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(idtap)", Dict{String,String}(); output_root=root, runtime=rt).body)
             @test occursin("Transformer tap estimates", tapPage)
             @test occursin("fixed (corrected)", tapPage)
@@ -933,7 +933,7 @@ function run_legacy_webui_tests()
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gross_error_k" => "10"))
             rbd = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
             @test rbd["status"] == "succeeded"
-            vrows = [split(l, ",") for l in readlines(joinpath(root, rbd["run_id"], "measurements_verdict.csv"))[2:end]]
+            vrows = run_csv(joinpath(root, rbd["run_id"], "measurements_verdict.csv")).rows
             art_by_line = Dict(r.line => r for r in readMeasurementTable(joinpath(root, rbd["run_id"], "measurements.csv")))
             elim_rows = filter(v -> v[9] == "true", vrows)
             @test length(unique(v[4] for v in elim_rows)) == rbd["metadata"]["se_eliminations"] >= 1
@@ -1052,14 +1052,14 @@ function run_legacy_webui_tests()
             mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_truth_source" => "from_run", "gen_truth_run_id" => id1))
             fr1 = read(mfile, String)
             @test occursin("# truth: run $(id1) (se,", fr1)
-            sestate = readlines(joinpath(root, id1, "se_state.csv"))
-            strow = only([l for l in sestate if startswith(l, "2,")])
-            st_vm = split(strow, ",")[2]
+            sestate = run_csv(joinpath(root, id1, "se_state.csv"))
+            strow = only([r for r in sestate.rows if r[1] == "2"])
+            st_vm = sestate.number(strow[2])
             # the table carries U in kV; read back it is the pu value of the
             # state file bit for bit
             frnet = Sparlectra._import_sparlectra_net(case_path, nothing, Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true))
             readMeasurementTable!(frnet; file=mfile, zero_injection=false)
-            @test only(m for m in frnet.measurements if m.typ == Sparlectra.VmMeas && m.busIdx == 2).value == parse(Float64, st_vm)
+            @test only(m for m in frnet.measurements if m.typ == Sparlectra.VmMeas && m.busIdx == 2).value == st_vm
             # rejections: tap deviation locked, unknown run id named
             rrej = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_truth_source" => "from_run", "gen_truth_run_id" => id1, "tap_error_steps" => "2"); output_root=root, runtime=rt)
             @test occursin("requires%20truth%20state", Dict(rrej.headers)["Location"])
@@ -1096,7 +1096,7 @@ function run_legacy_webui_tests()
             @test rleg["metadata"]["se_robust_mode"] == "staged"
             @test rst["metadata"]["se_objective"] == rleg["metadata"]["se_objective"]
             @test isfile(joinpath(root, rst["run_id"], "se_deltas.csv"))
-            @test occursin("kind,id,type,bus,from_bus,to_bus,measured,truth,estimated", read(joinpath(root, rst["run_id"], "se_deltas.csv"), String))
+            @test run_csv(joinpath(root, rst["run_id"], "se_deltas.csv")).header[1:9] == ["kind", "id", "type", "bus", "from_bus", "to_bus", "measured", "truth", "estimated"]
             rbadmode = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_robust_mode" => "bogus"))
             @test rbadmode["status"] != "succeeded"
             @test occursin("se_robust_mode", rbadmode["message"])
@@ -1208,8 +1208,7 @@ function run_legacy_webui_tests()
             @test isfinite(r2["metadata"]["se_pf_max_dvm_pu"])
             @test r2["metadata"]["se_pf_max_dvm_pu"] < 1e-6
             @test isfile(joinpath(r2["output_dir"], "se_pf_deviation.csv"))
-            devtxt = read(joinpath(r2["output_dir"], "se_pf_deviation.csv"), String)
-            @test startswith(devtxt, "bus,name,mrid,vm_se_pu,vm_pf_pu,dvm_pu,va_se_deg,va_pf_deg,dva_deg")
+            @test run_csv(joinpath(r2["output_dir"], "se_pf_deviation.csv")).header[1:9] == ["bus", "name", "mrid", "vm_se_pu", "vm_pf_pu", "dvm_pu", "va_se_deg", "va_pf_deg", "dva_deg"]
 
             # chain N-1: consumes the SE-started base case, notes the SE run id,
             # and matches the manual run on the same case
@@ -1242,13 +1241,17 @@ function run_legacy_webui_tests()
             # changed). The quote-aware reader of the Web UI keeps one field
             # per column.
             ncols = length(SparlectraApp._webui_compare_split_csv(first(lines3), csv_delim))
+            # excel_de (a direct call under a German locale) writes a decimal
+            # comma and thousands dots; without this every number would fall
+            # back to the exact-string comparison
+            csv_number(s) = tryparse(Float64, csv_delim == ';' ? replace(s, "." => "", "," => ".") : s)
             for (l3, l4) in zip(lines3, lines4)
                 f3 = SparlectraApp._webui_compare_split_csv(l3, csv_delim)
                 f4 = SparlectraApp._webui_compare_split_csv(l4, csv_delim)
                 @test length(f3) == length(f4) == ncols
                 for (a, b) in zip(f3, f4)
-                    na = tryparse(Float64, a)
-                    nb = tryparse(Float64, b)
+                    na = csv_number(a)
+                    nb = csv_number(b)
                     if na !== nothing && nb !== nothing
                         @test (isnan(na) && isnan(nb)) || isapprox(na, nb; atol=1e-9)
                     else

@@ -59,8 +59,8 @@ function run_dtf_api_webui_integration_tests()
       artifact_names = Set(a.name for a in result.artifacts)
       bus_csv = read(joinpath(direct_output, "bus_voltages_complex.csv"), String)
       branch_csv = read(joinpath(direct_output, "branch_flows.csv"), String)
-      bus_header = split(first(eachline(IOBuffer(bus_csv))), ',')
-      branch_header = split(first(eachline(IOBuffer(branch_csv))), ',')
+      bus_header = run_csv(joinpath(direct_output, "bus_voltages_complex.csv")).header
+      branch_header = run_csv(joinpath(direct_output, "branch_flows.csv")).header
       @test "original_bus_name" in bus_header
       @test all(name -> name in branch_header, ("branch_name", "original_branch_name", "from_bus_name", "to_bus_name", "original_from_bus_name", "original_to_bus_name", "branch_kind"))
       @test occursin("ALPHA", bus_csv)

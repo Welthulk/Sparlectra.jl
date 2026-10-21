@@ -19,8 +19,9 @@
 #          run_with_expected_warnings, which captures the advisories a test
 #          triggers on purpose and asserts that nothing else was logged,
 #          parallel_comparison_report, the RAN/SKIPPED line of every
-#          parallel-vs-serial comparison, and cgmes_report_plain, the
-#          rendered text of the CGMES import report
+#          parallel-vs-serial comparison, cgmes_report_plain, the
+#          rendered text of the CGMES import report, and run_csv, the cells
+#          of a run's CSV in whatever format the locale selected
 function selected_test_profile(args = ARGS, env = ENV)
   profile_args = [strip(String(arg)) for arg in args if !startswith(strip(String(arg)), "--")]
   cli_profile = isempty(profile_args) ? nothing : Symbol(first(profile_args))
@@ -219,6 +220,26 @@ function run_with_expected_warnings(f, patterns)
     Test.@test (record.message, expected) == (record.message, true)
   end
   return value
+end
+
+"""
+    run_csv(path) -> (header, rows, number)
+
+A CSV file a run wrote, split into cells. `output.csv_format = auto` follows
+the locale, so a test file called directly on a German desktop reads
+`excel_de` (`;` delimiter, decimal comma, `.` thousands) and under
+`runtests.jl` (C locale) `technical`. Comment lines (`#`, such as the
+version line of the SE files) are skipped; the delimiter comes from the
+header line; `number(cell)` parses a numeric cell in the format of this file.
+"""
+function run_csv(path::AbstractString)
+  lines = filter(line -> !startswith(line, "#"), readlines(path))
+  delimiter = occursin(';', first(lines)) ? ';' : ','
+  cells(line) = String.(split(line, delimiter))
+  # excel_de: drop the thousands dots first, then the decimal comma becomes
+  # a point (one replace call applies both pairs to the original text)
+  number(cell) = delimiter == ';' ? parse(Float64, replace(cell, "." => "", "," => ".")) : parse(Float64, cell)
+  return (header = cells(first(lines)), rows = [cells(line) for line in lines[2:end]], number = number)
 end
 
 """

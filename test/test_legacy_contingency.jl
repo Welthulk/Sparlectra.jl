@@ -112,7 +112,8 @@ function run_legacy_contingency_tests()
         @test occursin(results[2].name, txt)
         @test occursin("more row(s) not shown", txt)
         csv = joinpath(mktempdir(), "n1.csv")
-        @test writeContingencyResultsCSV(csv, results) == csv
+        # the default under the portable locale (`auto` follows the locale)
+        @test withenv(() -> writeContingencyResultsCSV(csv, results), "LC_ALL" => "C.UTF-8") == csv
         lines = readlines(csv)
         @test length(lines) == length(results) + 1
         # Since issue #376 the writer follows the same run-wide CSV format as

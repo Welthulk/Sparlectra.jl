@@ -198,12 +198,10 @@ function run_legacy_scenarios_tests()
           end
         end
         # the screening CSV appends exactly the two screening columns
-        csv = read(Sparlectra.writeContingencyResultsCSV(joinpath(d, "flag.csv"), flagged), String)
-        header = first(split(csv, '\n'))
-        # default format is "technical" (comma delimiter) since issue #376;
-        # see "printer and CSV writer" in test_contingency.jl for the excel_de
-        # (semicolon) coverage of the same writer.
-        @test endswith(header, ",screened,screening_estimate")
+        header = run_csv(Sparlectra.writeContingencyResultsCSV(joinpath(d, "flag.csv"), flagged)).header
+        # see "printer and CSV writer" in test_contingency.jl for the format
+        # coverage of the same writer
+        @test header[(end-1):end] == ["screened", "screening_estimate"]
         # :only never runs a full solve where an estimate exists; islanding
         # cases still carry real solves (start_used != :screen)
         only_res = Sparlectra.runContingencies!(net, cases14; screening_mode = :only, screening_margin_pct = 10.0)
@@ -458,10 +456,9 @@ function run_legacy_scenarios_tests()
       @test d1["metadata"]["contingency_screening_mode"] == "flag"
       @test d1["metadata"]["contingency_cases_source"] == "scenario_file_block"
       @test haskey(d1["metadata"], "contingency_screened")
-      csv1 = readlines(joinpath(dir, "run_fb", "contingency_n1.csv"))
-      # default format is "technical" (comma delimiter) since issue #376
-      @test endswith(first(csv1), ",screened,screening_estimate")
-      @test length(csv1) == 3
+      csv1 = run_csv(joinpath(dir, "run_fb", "contingency_n1.csv"))
+      @test csv1.header[(end-1):end] == ["screened", "screening_estimate"]
+      @test length(csv1.rows) == 2
       # a requested screening the network does not allow (the shipped Q(U)
       # case carries a voltage-dependent controller) says why in run.log
       qu = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14_qu.scf.json"))
@@ -477,7 +474,8 @@ function run_legacy_scenarios_tests()
       @test d2["metadata"]["contingency_screening_mode"] == "off"
       @test d2["metadata"]["contingency_cases_source"] == "scenario_external_file"
       csv2 = readlines(joinpath(dir, "run_ext", "contingency_n1.csv"))
-      @test !endswith(first(csv2), ",screened,screening_estimate")
+      # screening off: the classic columns, ending with the error column
+      @test run_csv(joinpath(dir, "run_ext", "contingency_n1.csv")).header[end] == "error"
       # #456: the scenario source solves with the configured distributed
       # slack (it used to get none while run.log announced it): the same
       # scenarios with power_flow.distributed_slack on give other rows
@@ -565,7 +563,8 @@ function run_legacy_scenarios_tests()
     wlog = read(joinpath(dir, "w", "run.log"), String)
     @test occursin("1 weight(s) stored under the generated names applied", wlog)
     @test !occursin("match no branch", wlog)
-    @test occursin("$(new_name),branch,$(new_name),2.5,", read(joinpath(dir, "w", "contingency_n1.csv"), String))
+    wcsv = run_csv(joinpath(dir, "w", "contingency_n1.csv"))
+    @test any(row -> row[1:3] == [new_name, "branch", new_name] && wcsv.number(row[4]) == 2.5, wcsv.rows)
   end)() end
 
   return true

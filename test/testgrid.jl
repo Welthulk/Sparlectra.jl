@@ -2739,14 +2739,14 @@ function test_wrong_branch_output_visibility()::Bool
   addProsumer!(net = island_net, busName = "B2", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
   refreshBusTypesFromProsumers!(island_net)
 
-  csv_text, header_fields, row_field_counts = mktempdir() do tmpdir
+  csv_text, header_fields, row_field_counts, csv_rows = mktempdir() do tmpdir
     profile = Dict{Symbol,Any}(:output_dir => tmpdir)
     island_cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, islands_enabled = true, wrong_branch_detection = :warn, wrong_branch_min_vm_pu = 1.20))
     island_result = run_sparlectra(net = island_net, config = island_cfg, performance_profile = profile)
-    island_result.final_converged || return ("", String[], Int[])
-    text = read(joinpath(tmpdir, "ac_island_solver_summary.csv"), String)
-    csv_lines = split(strip(text), '\n')
-    return (text, split(csv_lines[1], ','), [length(split(line, ',')) for line in csv_lines[2:end]])
+    island_result.final_converged || return ("", String[], Int[], Vector{String}[])
+    path = joinpath(tmpdir, "ac_island_solver_summary.csv")
+    csv = run_csv(path)
+    return (read(path, String), csv.header, [length(row) for row in csv.rows], csv.rows)
   end
   isempty(csv_text) && return false
   header_fields[(end-1):end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
@@ -2756,7 +2756,7 @@ function test_wrong_branch_output_visibility()::Bool
     ',',
   ) || return false
   all(count -> count == length(header_fields), row_field_counts) || return false
-  occursin("wrong_branch_status: warn", csv_text) || occursin(",warn,", csv_text) || return false
+  occursin("wrong_branch_status: warn", csv_text) || any(row -> "warn" in row, csv_rows) || return false
 
   return true
 end
