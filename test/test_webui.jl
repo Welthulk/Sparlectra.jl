@@ -1927,9 +1927,11 @@ function run_webui_fast_tests()
             A = SparlectraApp
             # every fetch is a stub of the same shape as the Downloads one, so
             # no test reaches the network
-            answer(status, body; headers = Dict{String,String}()) = (url; timeout) -> (status = status, headers = headers, body = body, error = "", timed_out = false)
-            failure(msg; timed_out = false) = (url; timeout) -> (status = 0, headers = Dict{String,String}(), body = "", error = msg, timed_out = timed_out)
-            release(tag) = "{\"tag_name\": \"$(tag)\", \"html_url\": \"https://github.com/Welthulk/Sparlectra.jl/releases/tag/$(tag)\", \"body\": \"notes \\u00e4\", \"assets\": []}"
+            # the fetch follows the redirect of the latest-release page; `url`
+            # is the address it ended at
+            answer(status, final_url = ""; headers = Dict{String,String}()) = (url; timeout) -> (status = status, headers = headers, url = final_url, error = "", timed_out = false)
+            failure(msg; timed_out = false) = (url; timeout) -> (status = 0, headers = Dict{String,String}(), url = "", error = msg, timed_out = timed_out)
+            release(tag) = "https://github.com/Welthulk/Sparlectra.jl/releases/tag/$(tag)"
             cur = v"0.50.0"
             check(fetch) = A.webui_check_for_update(; fetch, current = cur)
             @test check(answer(200, release("v0.50.0"))).state === :up_to_date
@@ -1938,21 +1940,24 @@ function run_webui_fast_tests()
             newer = check(answer(200, release("v0.51.0")))
             @test (newer.state, newer.latest, newer.tag) == (:newer, v"0.51.0", "v0.51.0")
             @test newer.release_url == "https://github.com/Welthulk/Sparlectra.jl/releases/tag/v0.51.0"
-            offline = check(failure("Could not resolve host: api.github.com"))
+            # the check asks the release page, never the REST API with its
+            # anonymous quota of 60 requests per hour per IP
+            asked = String[]
+            A.webui_check_for_update(; fetch = (url; timeout) -> (push!(asked, url); answer(200, release("v0.50.0"))(url; timeout)), current = cur)
+            @test asked == ["https://github.com/Welthulk/Sparlectra.jl/releases/latest"]
+            offline = check(failure("Could not resolve host: github.com"))
             @test (offline.state, offline.failure) == (:failed, :network)
             @test occursin("Could not resolve host", offline.message)
             @test check(failure("Operation timed out"; timed_out = true)).failure === :timeout
-            limited = check(answer(403, "{}"; headers = Dict("x-ratelimit-remaining" => "0", "x-ratelimit-reset" => string(round(Int, time()) + 590))))
-            @test limited.failure === :rate_limit
-            @test occursin("10 min", limited.message)
-            @test check(answer(429, "")).failure === :rate_limit
-            @test check(answer(500, "")).failure === :http
-            # an answer that is not a release: no exception, a named failure
-            for body in ("<html>proxy login</html>", "", "[1, 2]", "{\"tag_name\": 7}", "{\"tag_name\": \"latest\"}", "{\"tag_name\": \"v0.51.0\"")
-                @test (body, check(answer(200, body)).failure) == (body, :malformed)
+            @test check(answer(429)).failure === :rate_limit
+            @test check(answer(500)).failure === :http
+            @test check(answer(404)).failure === :http
+            # an address that is not a release tag of the repository: no
+            # exception, a named failure (a repository without a release ends
+            # on /releases, a proxy on its login page)
+            for final in ("", "https://github.com/Welthulk/Sparlectra.jl/releases", "https://proxy.example.com/login", "https://github.com/Welthulk/Sparlectra.jl/releases/tag/latest", "https://github.com/Welthulk/Sparlectra.jl/releases/tag/v0.51", "https://github.com/Other/Sparlectra.jl/releases/tag/v0.51.0")
+                @test (final, check(answer(200, final)).failure) == (final, :malformed)
             end
-            # a link from the answer that leaves the repository is replaced
-            @test check(answer(200, "{\"tag_name\": \"v0.51.0\", \"html_url\": \"https://example.com/x\"}")).release_url == "https://github.com/Welthulk/Sparlectra.jl/releases/tag/v0.51.0"
 
             mktempdir() do tmp
                 # --- layout detection
@@ -2064,7 +2069,7 @@ function run_webui_fast_tests()
                 @test cmd.dir == update_dir
                 script = read(updater, String)
                 @test occursin("kill -0 $(getpid())", script)
-                for line in ("SPARLECTRA_UPDATE=1", "SPARLECTRA_BUILD_SYSIMAGE=1", "SPARLECTRA_CREATE_SHORTCUT=0", "SPARLECTRA_START_WEBUI=0", "unset SPARLECTRA_SYSIMAGE_CHECKED", "SPARLECTRA_INSTALL_DIR='$(dirname(inst))'", "sh '$(joinpath(update_dir, "install_webui.sh"))'", "exec sh '$(joinpath(inst, "start_webui.sh"))'")
+                for line in ("SPARLECTRA_UPDATE=1", "SPARLECTRA_UPDATE_TAG='v0.51.0'", "SPARLECTRA_BUILD_SYSIMAGE=1", "SPARLECTRA_CREATE_SHORTCUT=0", "SPARLECTRA_START_WEBUI=0", "unset SPARLECTRA_SYSIMAGE_CHECKED", "SPARLECTRA_INSTALL_DIR='$(dirname(inst))'", "sh '$(joinpath(update_dir, "install_webui.sh"))'", "exec sh '$(joinpath(inst, "start_webui.sh"))'")
                     @test (line, occursin(line, script)) == (line, true)
                 end
                 @test read(joinpath(update_dir, "install_webui.sh"), String) == "# fixture\n"
@@ -2138,7 +2143,7 @@ function run_webui_fast_tests()
                 @test wplan.command.flags & Base.UV_PROCESS_WINDOWS_VERBATIM_ARGUMENTS != 0
                 bat = read(wplan.updater, String)
                 @test count("\r\n", bat) == count("\n", bat)
-                for line in ("tasklist /FI \"PID eq 4242\"", "set \"SPARLECTRA_BUILD_SYSIMAGE=0\"", "set \"SPARLECTRA_CREATE_SHORTCUT=1\"", "set \"SPARLECTRA_INSTALL_DIR=$(dirname(inst))\"", "call \"$(joinpath(inst, "start_webui.bat"))\"")
+                for line in ("tasklist /FI \"PID eq 4242\"", "set \"SPARLECTRA_UPDATE_TAG=v0.51.0\"", "set \"SPARLECTRA_BUILD_SYSIMAGE=0\"", "set \"SPARLECTRA_CREATE_SHORTCUT=1\"", "set \"SPARLECTRA_INSTALL_DIR=$(dirname(inst))\"", "call \"$(joinpath(inst, "start_webui.bat"))\"")
                     @test (line, occursin(line, bat)) == (line, true)
                 end
                 # the restart runs in a console with a keyboard: the update
@@ -2146,6 +2151,77 @@ function run_webui_fast_tests()
                 restart = findfirst("call \"$(joinpath(inst, "start_webui.bat"))\"", bat)
                 optout = findlast("set \"SPARLECTRA_UPDATE_CHECK=0\"", bat)
                 @test optout !== nothing && restart !== nothing && last(optout) < first(restart)
+                # the Windows updater records the result of the install script
+                # and stops with the reason before it restarts the old copy
+                for line in ("set \"RC=%ERRORLEVEL%\"", "findstr /b /c:\"Update FAILED:\"", "echo Update FAILED:%REASON%", ":update_done")
+                    @test (line, occursin(line, bat)) == (line, true)
+                end
+
+                # --- a failed update stays visible: the result file of the
+                # updater, read back with CRLF as the Windows updater writes it
+                flog = joinpath(tmp, "flogs", "operations.jsonl")
+                @test A.webui_last_update(flog) === nothing
+                @test A._webui_info_last_update(flog) == ""
+                mkpath(A.webui_update_dir(flog))
+                write(A.webui_update_status_path(flog), "failed\r\nv0.51.0\r\n download of v0.51.0 failed\r\n2026-10-22 10:00\r\n")
+                lastup = A.webui_last_update(flog)
+                @test (lastup.ok, lastup.tag, lastup.reason, lastup.finished) == (false, "v0.51.0", "download of v0.51.0 failed", "2026-10-22 10:00")
+                @test occursin("The last update to v0.51.0 failed (2026-10-22 10:00): download of v0.51.0 failed.", A._webui_info_last_update(flog))
+                @test occursin("update-last-failed", String(A.handle_webui_update_check(; operation_log = flog, fetch = answer(200, release("v0.50.0")), layout = :installed_copy, root = inst, current = cur, output_root = out).body))
+                # the start in a terminal names it even with the check switched
+                # off, as after the restart of an update
+                said = IOBuffer()
+                @test A.webui_console_update_offer(; env = Dict("SPARLECTRA_UPDATE_CHECK" => "0"), operation_log = flog, io = said) === :disabled
+                @test occursin("The last update to v0.51.0 failed", String(take!(said)))
+                write(A.webui_update_status_path(flog), "ok\nv0.51.0\n\n2026-10-22 10:05\n")
+                @test A.webui_last_update(flog).ok && A._webui_info_last_update(flog) == ""
+
+                if Sys.iswindows()
+                    println("  update: sh installer and updater runs skipped (Windows)")
+                else
+                    # --- the sh updater: a failing install script leaves the
+                    # reason in last_update.txt, a good one "ok"
+                    ulog = joinpath(tmp, "ulogs", "operations.jsonl")
+                    uplan = A.webui_update_plan(; root = inst, current = cur, tag = "v0.51.0", operation_log = ulog, pid = 999999, answers = (build_sysimage = false, create_shortcut = false), windows = false)
+                    write(uplan.installer, "echo \"Update FAILED: download of v0.51.0 failed\"\nexit 1\n")
+                    write(joinpath(inst, "start_webui.sh"), "exit 0\n")
+                    run(Cmd(`sh $(uplan.updater)`; dir = dirname(uplan.updater)))
+                    ufail = A.webui_last_update(ulog)
+                    @test (ufail.ok, ufail.tag, ufail.reason) == (false, "v0.51.0", "download of v0.51.0 failed")
+                    write(uplan.installer, "exit 0\n")
+                    run(Cmd(`sh $(uplan.updater)`; dir = dirname(uplan.updater)))
+                    @test A.webui_last_update(ulog).ok
+
+                    # --- the sh installer: an update that was asked for and
+                    # cannot finish stops with the reason and exit code 1, the
+                    # existing copy stays as it is (no network: curl fails)
+                    sandbox = joinpath(tmp, "installer")
+                    copy_dir = joinpath(sandbox, "Sparlectra")
+                    mkpath(copy_dir)
+                    write(joinpath(copy_dir, "Project.toml"), "name = \"Sparlectra\"\nversion = \"0.1.0\"\n")
+                    fakebin = joinpath(tmp, "fakebin")
+                    mkpath(fakebin)
+                    write(joinpath(fakebin, "curl"), "#!/bin/sh\nexit 22\n")
+                    chmod(joinpath(fakebin, "curl"), 0o755)
+                    script = joinpath(A.SPARLECTRA_ROOT, "tools", "install_webui.sh")
+                    # local names: a plain assignment in this closure would
+                    # rebind the variables of the enclosing testset function
+                    function run_installer(env)
+                        local buf = IOBuffer()
+                        local base = Dict("PATH" => fakebin * ":" * ENV["PATH"], "HOME" => tmp, "SPARLECTRA_INSTALL_DIR" => sandbox, "SPARLECTRA_START_WEBUI" => "0", "SPARLECTRA_CREATE_SHORTCUT" => "0")
+                        local proc = run(pipeline(ignorestatus(setenv(`sh $(script)`, merge(base, env))); stdout = buf, stderr = buf))
+                        return (proc.exitcode, String(take!(buf)))
+                    end
+                    code, text = run_installer(Dict("SPARLECTRA_UPDATE" => "1", "SPARLECTRA_UPDATE_TAG" => "v9.9.9"))
+                    @test code == 1
+                    @test occursin("Update FAILED: download of v9.9.9 failed", text)
+                    code, text = run_installer(Dict("SPARLECTRA_UPDATE" => "1"))
+                    @test code == 1
+                    @test occursin("Update FAILED: could not determine the latest release", text)
+                    @test read(joinpath(copy_dir, "Project.toml"), String) == "name = \"Sparlectra\"\nversion = \"0.1.0\"\n"
+                    @test !isdir(joinpath(sandbox, "Sparlectra.old"))
+                    println("  update: sh installer and updater runs ran")
+                end
             end
         end)() end
 

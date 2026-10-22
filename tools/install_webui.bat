@@ -75,10 +75,25 @@ rem SPARLECTRA_UPDATE=1 or =0 decides without asking). A failed check or a
 rem failed download never blocks the start with the existing copy.
 set "INSTALLED="
 for /f "usebackq delims=" %%V in (`powershell -NoProfile -Command "((Get-Content '%SPARLECTRA_DIR%\Project.toml') -match '^version')[0].Split('\"')[1]"`) do set "INSTALLED=%%V"
-set "LATEST="
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "(Invoke-RestMethod 'https://api.github.com/repos/%REPO%/tags')[0].name" 2^>nul`) do set "LATEST=%%T"
+rem The latest release comes from the redirect of the latest-release page,
+rem not from the GitHub REST API: that allows 60 anonymous requests per hour
+rem per public IP, shared by every machine behind one company NAT. An update
+rem started from the Web UI passes the tag it found as SPARLECTRA_UPDATE_TAG.
+rem An update that was asked for (SPARLECTRA_UPDATE=1, or the tag the Web UI
+rem passes) ends visibly: every failure prints "Update FAILED: <reason>" and
+rem ends with exit code 1, so the updater reports it instead of starting the
+rem old copy as if nothing happened.
+set "UPDATE_REQUESTED="
+if "%SPARLECTRA_UPDATE%"=="1" set "UPDATE_REQUESTED=1"
+if defined SPARLECTRA_UPDATE_TAG set "UPDATE_REQUESTED=1"
+set "LATEST=%SPARLECTRA_UPDATE_TAG%"
+if not defined LATEST for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "$r=[System.Net.WebRequest]::Create('https://github.com/%REPO%/releases/latest'); $r.Method='HEAD'; $x=$r.GetResponse(); $u=$x.ResponseUri.AbsoluteUri; $x.Close(); if ($u -match '/releases/tag/(v[0-9]+\.[0-9]+\.[0-9]+)$') { $Matches[1] }" 2^>nul`) do set "LATEST=%%T"
 if not defined LATEST (
-  echo Update check skipped ^(could not reach the GitHub API^).
+  if defined UPDATE_REQUESTED (
+    echo Update FAILED: could not determine the latest release ^(no answer from github.com^)
+    exit /b 1
+  )
+  echo Update check skipped ^(could not reach github.com^).
   goto have_repo
 )
 if "v%INSTALLED%"=="%LATEST%" (
@@ -100,23 +115,23 @@ rem complete download, and it survives as Sparlectra.old (one backup slot) so
 rem the update is reversible.
 powershell -NoProfile -Command "Invoke-WebRequest 'https://github.com/%REPO%/archive/refs/tags/%LATEST%.zip' -OutFile '%TEMP%\sparlectra_update.zip'; Expand-Archive '%TEMP%\sparlectra_update.zip' '%TEMP%\sparlectra_update' -Force"
 if not exist "%TEMP%\sparlectra_update" (
-  echo Update download failed - continuing with v%INSTALLED%.
-  goto have_repo
+  echo Update FAILED: download of %LATEST% failed ^(https://github.com/%REPO%/archive/refs/tags/%LATEST%.zip^), the previous copy v%INSTALLED% is unchanged
+  exit /b 1
 )
 if exist "%DIR%Sparlectra.old" rd /s /q "%DIR%Sparlectra.old"
 move "%SPARLECTRA_DIR%" "%DIR%Sparlectra.old" >nul
 rem Windows refuses to move a folder that a program still uses (an open
 rem console whose working directory it is); the copy then stays as it is
 if errorlevel 1 (
-  echo Could not move the old copy aside, a program still uses its folder - continuing with v%INSTALLED%.
-  goto have_repo
+  echo Update FAILED: could not move the old copy aside, a program still uses its folder; the previous copy v%INSTALLED% is unchanged
+  exit /b 1
 )
 powershell -NoProfile -Command "Move-Item (Get-ChildItem '%TEMP%\sparlectra_update' -Directory | Select-Object -First 1).FullName '%SPARLECTRA_DIR%'"
 if not exist "%SPARLECTRA_DIR%\Project.toml" (
-  echo Update failed - restoring the previous copy.
   if exist "%SPARLECTRA_DIR%" rd /s /q "%SPARLECTRA_DIR%"
   move "%DIR%Sparlectra.old" "%SPARLECTRA_DIR%" >nul
-  goto have_repo
+  echo Update FAILED: the download of %LATEST% holds no Sparlectra copy, the previous copy is restored
+  exit /b 1
 )
 echo Updated to %LATEST%. The previous copy is kept at %DIR%Sparlectra.old ^(delete it once the new version runs^).
 echo Note: an existing sysimage is stale after an update; the next Web UI start offers a rebuild.
@@ -127,7 +142,7 @@ goto have_repo
 
 :fresh_download
 echo Determining the latest Sparlectra release...
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "(Invoke-RestMethod 'https://api.github.com/repos/%REPO%/tags')[0].name"`) do set "LATEST=%%T"
+for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "$r=[System.Net.WebRequest]::Create('https://github.com/%REPO%/releases/latest'); $r.Method='HEAD'; $x=$r.GetResponse(); $u=$x.ResponseUri.AbsoluteUri; $x.Close(); if ($u -match '/releases/tag/(v[0-9]+\.[0-9]+\.[0-9]+)$') { $Matches[1] }"`) do set "LATEST=%%T"
 if not defined LATEST (
   echo Could not determine the latest release tag.
   pause
@@ -145,8 +160,16 @@ if not exist "%SPARLECTRA_DIR%\Project.toml" (
 rem --- 3. Dependencies ---------------------------------------------------------
 echo Resolving Julia dependencies...
 julia --project="%SPARLECTRA_DIR%" -e "using Pkg; Pkg.instantiate()"
+if errorlevel 1 if defined UPDATE_REQUESTED (
+  echo Update FAILED: resolving the Julia dependencies of %SPARLECTRA_DIR% failed
+  exit /b 1
+)
 rem the Web UI and the service layer are the SparlectraApp package under app\
 julia --project="%SPARLECTRA_DIR%\app" -e "using Pkg; Pkg.instantiate()"
+if errorlevel 1 if defined UPDATE_REQUESTED (
+  echo Update FAILED: resolving the Julia dependencies of %SPARLECTRA_DIR%\app failed
+  exit /b 1
+)
 
 rem --- 4. Sysimage -------------------------------------------------------------
 rem The image is NOT built here. start_webui.jl owns that decision on every

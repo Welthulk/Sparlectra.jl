@@ -107,12 +107,16 @@ links to the Sysimage page and checks for updates.
 
 ### [Updates](@id webui_update)
 
-**Check for updates** in the **Info** panel asks the GitHub releases API
-for the latest release of `Welthulk/Sparlectra.jl` and compares it with
-the running version. The page says up to date, names the newer release
-with its release notes, or names why the check failed (no network,
-timeout, rate limit, an answer without a release tag). The request has a
-timeout of 10 s and carries no data about the installation.
+**Check for updates** in the **Info** panel asks GitHub for the latest
+release of `Welthulk/Sparlectra.jl` (the page `releases/latest`, which
+redirects to the tag of the latest release; not the REST API, whose
+anonymous limit of 60 requests per hour is shared by every machine behind
+one network address) and compares it with the running version. The page
+says up to date, names the newer release with a link to its release notes, or names
+why the check failed (no network, timeout, HTTP error, an address without
+a release tag). The request has a timeout of 10 s and carries no data
+about the installation. An update started here hands the tag to the
+install script, which does not ask GitHub again.
 
 `start_webui.jl` started from a terminal runs the same check before the
 server starts (timeout 5 s) and, for a newer release on an installed copy,

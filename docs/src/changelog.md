@@ -22,6 +22,7 @@ Quasi-stationary time series (QSTS), dynamic unit data.
 - CGMES: P limits of EquivalentInjection and ExternalNetworkInjection read as delivered; 2W transformer magnetizing split over both terminal arms.
 - CGMES: with several boundary sets next to a case the import takes the one that resolves it.
 - CGMES: phase tap changers with `xMin`/`xMax` change their reactance with the step.
+- Web UI and installers find the latest release without the GitHub API, so the update check no longer runs into its rate limit; a failed update stops with its reason and the Web UI shows it.
 
 # Version 0.50.0 - 2026-10-18
 
