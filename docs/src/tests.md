@@ -60,6 +60,15 @@ run starts two processes at once under the one gate lock, the profiles
 extd, formats), which together are exactly `extended`; each strand prints
 its own summary, a last line adds them up, and the gate fails when either
 strand fails.
+
+`sh tools/run_gates.sh set --threads=4` is the full gate set of one commit
+under one lock: three strands at once, `set_a` (cgmes, se, config),
+`extended_b` and `set_c` (fast, legacy), the last followed by the docs
+build and the `workshops` profile in a work tree of the commit; then the
+`threads` profile alone. The three strands together are exactly `fast`
+plus `extended`. The gate prints the output of every part, one line per
+part with its exit code and summary, and one line over the test parts; it
+fails when any part fails. `install` is not part of the set.
 The service layer and the Web UI are the `SparlectraApp` package under
 `app/`; the runner puts that directory on the load path and loads the
 package for every profile, so `webui`, the service part of `extd` and the
