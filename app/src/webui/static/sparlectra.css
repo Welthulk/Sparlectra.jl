@@ -803,6 +803,13 @@ main.artifact-page {
   font-family: ui-monospace, SFMono-Regular, monospace;
 }
 
+/* a thin line at every column boundary, so the drag handle on the right
+   edge of a header cell can be found without hovering */
+.artifact-csv th:not(:last-child),
+.artifact-csv td:not(:last-child) {
+  border-right: 1px solid #cfd8e3;
+}
+
 /* the header of a number column sits right-aligned over its numbers */
 .artifact-csv td.num,
 .artifact-csv th.num {
