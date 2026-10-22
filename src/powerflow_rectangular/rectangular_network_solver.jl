@@ -766,9 +766,12 @@ function runpf_rectangular!(
   # the island then converges in 9 iterations with the guard on.
 
   guarded_qlimit_buses = Int[]
+  # narrow-range PV buses under narrow_range_mode = lock_pq: they stay PV
+  # and leave the PQ->PV release below, so a limit they reach locks them
+  qlimit_lock_on_hit_buses = Int[]
   if qlimits_enabled && qlimit_guard
     guarded_qlimit_buses = _perf_profile_time!(performance_profile, :qlimit_guard_preprocess) do
-      _apply_qlimit_guard_to_rectangular_active_set!(net, bus_types, S, build_qload_pu(net), qmin_pu, qmax_pu; min_q_range_pu = qlimit_guard_min_q_range_pu, zero_range_mode = qlimit_guard_zero_range_mode, narrow_range_mode = qlimit_guard_narrow_range_mode, log = qlimit_guard_log, verbose = verbose)
+      _apply_qlimit_guard_to_rectangular_active_set!(net, bus_types, S, build_qload_pu(net), qmin_pu, qmax_pu; min_q_range_pu = qlimit_guard_min_q_range_pu, zero_range_mode = qlimit_guard_zero_range_mode, narrow_range_mode = qlimit_guard_narrow_range_mode, log = qlimit_guard_log, verbose = verbose, lock_on_hit = qlimit_lock_on_hit_buses)
     end
     # V0 is still the start vector here (V = copy(V0) follows below), so
     # the corrected start reaches the first Newton iteration
@@ -796,6 +799,11 @@ function runpf_rectangular!(
     mask = falses(nb)
     @inbounds for k in eachindex(mask)
       mask[k] = (bus_types[k] == :PV)
+    end
+    # a narrow-range bus of the guard (lock_pq) is clamped for good at the
+    # first limit it reaches: without PV origin the release rule skips it
+    for bus in qlimit_lock_on_hit_buses
+      mask[bus] = false
     end
     mask
   end

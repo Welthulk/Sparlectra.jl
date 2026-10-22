@@ -442,6 +442,52 @@ function run_measurement_table_tests()
         dres = SparlectraApp.to_dict(res)
         @test dres["status"] == "succeeded"
         @test occursin("unknown_key 2", read(joinpath(d, "on", "measurement_import.txt"), String))
+        # a coupler ring: two closed links from a PQ bus to a new busbar
+        # with a 4 MW load. The balance fixes only the sum, so the service
+        # splits it evenly without link rows (2/2) and by the link P rows
+        # with them (3/1, sigma 0.01 against weight-1 balance rows)
+        rnet = deepcopy(net)
+        rnet._locked = false
+        pq = net.nodeVec[findfirst(n -> getNodeType(n) == Sparlectra.PQ, net.nodeVec)].comp.cName
+        addBus!(net = rnet, busName = "RB", vn_kV = rnet.nodeVec[rnet.busDict[pq]].comp.cVN)
+        addProsumer!(net = rnet, busName = "RB", type = "ENERGYCONSUMER", p = 4.0, q = 1.0)
+        addLink!(net = rnet, fromBus = pq, toBus = "RB")
+        addLink!(net = rnet, fromBus = pq, toBus = "RB")
+        _, erg_r = runpf!(rnet, 40, 1e-10, 0)
+        @test erg_r == 0
+        rcase = joinpath(d, "ring.scf.json")
+        exportSCF(rnet; file = rcase)
+        l1, l2 = (l.cName for l in rnet.linkVec)
+        # U at every bus and every branch flow of the solved ring case
+        rname = Dict(b => n for (n, b) in rnet.busDict)
+        ring_rows = Row[]
+        for m in generateMeasurementsFromPF(rnet; includePinj = false, includeQinj = false, noise = false)
+          if m.typ == Sparlectra.VmMeas
+            vn = rnet.nodeVec[m.busIdx].comp.cVN
+            push!(ring_rows, Row(("", "", "", rname[m.busIdx], "U", m.value * vn, m.sigma * vn, "test", true)))
+          elseif m.branchIdx !== nothing
+            push!(ring_rows, Row(("", "", bkey(m.branchIdx) * ":" * string(m.direction), "", m.typ == Sparlectra.PflowMeas ? "P" : "Q", m.value, m.sigma, "test", true)))
+          end
+        end
+        rfile_kcl = joinpath(d, "ring_kcl.table.csv")
+        rfile_meas = joinpath(d, "ring_meas.table.csv")
+        writeMeasurementTable(rfile_kcl, ring_rows)
+        writeMeasurementTable(rfile_meas, vcat(ring_rows, [Row(("", "", l1 * ":from", "", "P", 3.0, 0.01, "test", true)), Row(("", "", l2 * ":from", "", "P", 1.0, 0.01, "test", true))]))
+        link_p(tag, f) = begin
+          r = redirect_stdout(devnull) do
+            SparlectraApp._run_state_estimation_service(rcase, cfg, joinpath(d, tag), tag, f)
+          end
+          @test SparlectraApp.to_dict(r)["status"] == "succeeded"
+          @test occursin("link flows: se_link_flows.csv (2 closed link(s)", read(joinpath(d, tag, "run.log"), String))
+          L = readlines(joinpath(d, tag, "se_link_flows.csv"))
+          dl = occursin(';', L[1]) ? ';' : ','
+          col = findfirst(==("p_mw"), split(L[1], dl))
+          [parse(Float64, replace(split(x, dl)[col], ',' => '.')) for x in L[2:end]]
+        end
+        pk = link_p("ring_kcl", rfile_kcl)
+        @test all(isapprox.(pk, 2.0; atol = 0.01))
+        pm = link_p("ring_meas", rfile_meas)
+        @test isapprox(pm[1], 3.0; atol = 0.01) && isapprox(pm[2], 1.0; atol = 0.01)
       end
     end)()
   end
@@ -952,13 +998,37 @@ function run_measurement_table_tests()
       @test s2.counts[:unsupported] == 2
       zi = only(s2.measurements)
       @test zi.id == "ZI_PINJ_bus_3" && zi.typ == Sparlectra.PinjMeas && zi.sigma == 0.05 && !zi.active
-      # a bus link is a key that resolves to not_modelled with its reason
+      # a bus link end is a link flow target: a P row at the to end becomes
+      # a link measurement with the opposite sign (positive from the link's
+      # from bus), Q at the from end keeps its sign, I is unsupported; the
+      # set written back as a table carries both rows at the from end, an
+      # open link resolves to not_modelled
       net3 = deepcopy(net)
       net3._locked = false
       addBus!(net = net3, busName = "B4", vn_kV = 110.0)
       addLink!(net = net3, fromBus = "B3", toBus = "B4")
-      t = nameMeasurementKeys(net3).terminals[net3.linkVec[1].cName * ":from"]
-      @test t.kind === :not_modelled && occursin("no branch of the model", t.detail)
+      lname = net3.linkVec[1].cName
+      idx3 = nameMeasurementKeys(net3)
+      t = idx3.terminals[lname * ":to"]
+      @test t.kind === :link && t.branchIdx == 1 && t.direction === :to
+      f3 = test_scratch_path(".table.csv")
+      writeMeasurementTable(f3, [Row(("", "", lname * ":to", "", "P", 5.0, 0.5, "test", true)), Row(("", "", lname * ":from", "", "Q", -2.0, 0.5, "test", true)), Row(("", "", lname * ":from", "", "I", 10.0, 1.0, "test", true))])
+      s3 = only(importMeasurementTable(readMeasurementTable(f3), idx3).sets)
+      @test s3.counts[:unsupported] == 1
+      lp = only(m for m in s3.measurements if m.typ == Sparlectra.PflowMeas)
+      lq = only(m for m in s3.measurements if m.typ == Sparlectra.QflowMeas)
+      @test lp.linkIdx == 1 && lp.value == -5.0 && lp.direction === :from && lp.active && lp.branchIdx === nothing
+      @test lq.linkIdx == 1 && lq.value == -2.0
+      back3 = Sparlectra._measurement_table_from_measurements(net3, s3.measurements, idx3)
+      @test isempty(back3.problems)
+      @test sort!([(r.terminal_mrid, r.type, r.value) for r in back3.rows]) == [(lname * ":from", "P", "-5.0"), (lname * ":from", "Q", "-2.0")]
+      net3.linkVec[1].status = 0
+      @test nameMeasurementKeys(net3).terminals[lname * ":from"].kind === :not_modelled
+      # CGMES: the closed breaker of sp_casePST is a bus link; its terminals
+      # resolve to the link, one at each end
+      pst = redirect_stdout(() -> importCGMES(path = cgmes_fixture_dir("sp_casePST")), devnull)
+      lt = [t for t in values(cgmesMeasurementKeys(pst).terminals) if t.kind === :link]
+      @test length(lt) == 2 && Set(t.direction for t in lt) == Set([:from, :to]) && all(t -> t.branchIdx == 1, lt)
     end)()
   end
 
@@ -1074,10 +1144,16 @@ function run_measurement_table_tests()
       @test all(x.typ == y.typ && x.value === y.value && x.sigma === y.sigma && x.active == y.active for (x, y) in zip(refsg_ms, setsg.measurements))
       elim = _converted_same_estimate(sgnet, refsg_ms, setsg.measurements, ressg.ids)
       @test elim >= 1
-      # rows the table has no place for are listed, not dropped
+      # a link flow goes to a terminal row of its link; rows the table has
+      # no place for (a current on a link) are listed, not dropped
       link = Measurement(typ = Sparlectra.PflowMeas, value = 1.0, sigma = 0.1, direction = :from, id = "link_row", linkIdx = 1)
-      conv = Sparlectra._measurement_table_from_measurements(net, [link], nameMeasurementKeys(net))
-      @test isempty(conv.rows) && only(conv.problems).problem === :not_modelled
+      ilink = Measurement(typ = Sparlectra.ImagMeas, value = 1.0, sigma = 0.1, direction = :from, id = "link_i", linkIdx = 1)
+      lnet = deepcopy(net)
+      lnet._locked = false
+      addBus!(net = lnet, busName = "LB", vn_kV = lnet.nodeVec[1].comp.cVN)
+      addLink!(net = lnet, fromBus = lnet.nodeVec[2].comp.cName, toBus = "LB")
+      conv = Sparlectra._measurement_table_from_measurements(lnet, [link, ilink], nameMeasurementKeys(lnet))
+      @test length(conv.rows) == 1 && only(conv.rows).type == "P" && only(conv.problems).problem === :unsupported
     end)()
   end
 

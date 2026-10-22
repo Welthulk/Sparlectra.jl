@@ -18,7 +18,8 @@
 #          electrical node into two modelled buses: the SE runs on the
 #          contracted net, aggregates the cluster injections (LINKAGG), and
 #          syncs the member voltages. A link P measurement then steers the W2
-#          flow allocation (calcLinkFlowsSE!), and se_view reports the frozen
+#          flow allocation (calcLinkFlowsSE!), also from a measurement table
+#          row on the coupler terminal, and se_view reports the frozen
 #          operating point.
 
 using Sparlectra
@@ -73,7 +74,17 @@ function run_state_estimation_links_facts()
   @printf("coupler flow (no measurement) : %.3f MW  source = %s\n", p0, string(rep0[1].source))
   addPflowMeasurement!(net; value = p0 + 0.5, sigma = 0.01, linkNr = 1)
   rep1 = calcLinkFlowsSE!(net)
-  @printf("coupler flow (measured z)     : %.3f MW  source = %s  residual = %.4f MW\n\n", net.linkVec[1].pFlow_MW, string(rep1[1].source), rep1[1].p_meas_residual)
+  @printf("coupler flow (measured z)     : %.3f MW  source = %s  residual = %.4f MW\n", net.linkVec[1].pFlow_MW, string(rep1[1].source), rep1[1].p_meas_residual)
+
+  # the same kind of input from a measurement table: P on the to-end
+  # terminal of the coupler (power into the link from B1a, so the opposite
+  # sign of the flow B1 -> B1a); the table import turns it into a link
+  # measurement
+  file = joinpath(mktempdir(), "se_links_demo.table.csv")
+  writeMeasurementTable(file, [(timestamp = "", measurement_mrid = "", terminal_mrid = net.linkVec[1].cName * ":to", node_mrid = "", type = "P", value = -(p0 + 1.0), sigma = 0.01, source = "example", valid = true)])
+  readMeasurementTable!(net; file = file, zero_injection = false)
+  rep2 = calcLinkFlowsSE!(net)
+  @printf("coupler flow (table row)      : %.3f MW  source = %s  residual = %.4f MW\n\n", net.linkVec[1].pFlow_MW, string(rep2[1].source), rep2[1].p_meas_residual)
 
   # 3) the frozen operating point at a glance
   view = se_view(net)

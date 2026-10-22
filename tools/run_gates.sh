@@ -26,8 +26,13 @@
 #          deliberate local check; the lock is never skipped.
 #          --threads=N starts the test process with N threads (default: one;
 #          the threads profile always runs with four), so a profile also runs
-#          every parallel-vs-serial comparison threaded. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]
+#          every parallel-vs-serial comparison threaded. --strands=2 runs
+#          extended as two processes at once (profiles extended_a and
+#          extended_b), about a third less wall time. `set` is the full gate
+#          set of one commit under one lock: three strands at once (set_a;
+#          extended_b; set_c, then the docs build and the workshops), then
+#          the threads profile alone. Plain sh.
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs|set [--threads=N] [--strands=2] [--allow-dirty]
 #          sh tools/run_gates.sh map [--since <ref>] [<path>...]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 #          `map` runs nothing: it prints the profiles a change to the given
@@ -117,14 +122,17 @@ $a"
 fi
 allow_dirty=
 julia_threads=
+strands=1
 for arg in "$@"
 do
   case "$arg" in
     --allow-dirty) allow_dirty=--allow-dirty ;;
     --threads=[1-9]*) julia_threads=$arg ;;
+    --strands=1) strands=1 ;;
+    --strands=2) strands=2 ;;
     *)
       echo "run_gates: unknown option $arg" >&2
-      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--allow-dirty]" >&2
+      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--strands=2] [--allow-dirty]" >&2
       exit 2
       ;;
   esac
@@ -138,15 +146,20 @@ then
 fi
 
 case "$gate" in
-  fast | pf | se | config | webui | extd | cgmes | formats | legacy | install | workshops | extended | all | threads | docs) ;;
+  fast | pf | se | config | webui | extd | cgmes | formats | legacy | install | workshops | extended | all | threads | docs | set) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs [--threads=N] [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs|set [--threads=N] [--strands=2] [--allow-dirty]" >&2
     exit 2
     ;;
 esac
 if [ "$gate" = "docs" ] && [ -n "$julia_threads" ]
 then
   echo "run_gates: --threads applies to test profiles, not to the docs build" >&2
+  exit 2
+fi
+if [ "$strands" = "2" ] && [ "$gate" != "extended" ]
+then
+  echo "run_gates: --strands=2 applies to the extended profile only" >&2
   exit 2
 fi
 if [ "$gate" = "threads" ] && [ -z "$julia_threads" ]
@@ -207,7 +220,7 @@ fi
 # refuses the start (with --allow-dirty it is named and left out).
 on_commit=no
 case "$gate" in
-  docs | workshops) on_commit=yes ;;
+  docs | workshops | set) on_commit=yes ;;
 esac
 if [ "$on_commit" = "yes" ]
 then
@@ -313,7 +326,11 @@ then
     echo "run_gates: could not create the work tree $run_root" >&2
     exit 1
   fi
-  trap 'git -C "$repo_root" worktree remove --force "$run_root" >/dev/null 2>&1; rm -rf "$lockdir"' EXIT INT TERM
+  # the trap names the work tree by its own variable: set points run_root
+  # back at the repository below, and a trap on run_root would then remove
+  # the checkout the gate was started from when that is a linked work tree
+  gate_wt=$run_root
+  trap 'git -C "$repo_root" worktree remove --force "$gate_wt" >/dev/null 2>&1; rm -rf "$lockdir"' EXIT INT TERM
   for manifest in Manifest.toml app/Manifest.toml docs/Manifest.toml
   do
     if [ -f "$repo_root/$manifest" ] && [ ! -f "$run_root/$manifest" ]
@@ -323,6 +340,13 @@ then
   done
   echo "run_gates: the $gate gate runs on commit $(git -C "$repo_root" rev-parse --short HEAD) in $run_root (tracked files only)"
 fi
+# set: the docs build and the workshops run in the work tree of HEAD (above),
+# the test strands in the repository like every other test profile. The
+# dirty check below refuses uncommitted tracked files, so both trees hold
+# the same commit; the repository adds the untracked local test data (CGMES
+# cache, DTF files) that the work tree lacks.
+commit_root=$run_root
+[ "$gate" = "set" ] && run_root=$repo_root
 
 # --- one library image per source state, not one per environment ----------
 # The gate loads the library from the root environment (the probe below,
@@ -343,7 +367,7 @@ manifest_hashes() {
   awk '/^\[\[deps\./ { n = $0; gsub(/^\[\[deps\.|\]\]$/, "", n) } /^git-tree-sha1 = / { print n, $3 }' "$1" | LC_ALL=C sort -k1,1
 }
 drift_envs="app"
-[ "$gate" = "docs" ] && drift_envs="app docs"
+[ "$gate" = "docs" ] || [ "$gate" = "set" ] && drift_envs="app docs"
 for other in $drift_envs
 do
   if [ -f "$run_root/Manifest.toml" ] && [ -f "$run_root/$other/Manifest.toml" ]
@@ -379,40 +403,140 @@ done
 # change (a bigger image, nothing else changes).
 export SPARLECTRA_PRECOMPILE_WORKLOAD=full
 image_probe='mode = isdefined(M, :PRECOMPILE_WORKLOAD_MODE) ? M.PRECOMPILE_WORKLOAD_MODE : "unknown"; if mode != "full"; println("run_gates: ", NAME, " image was built with workload ", repr(mode), "; rebuilding it with the full workload (about a minute, later sessions load it too)"); t = @elapsed Base.compilecache(Base.identify_package(NAME)); println("run_gates: ", NAME, " image rebuilt in ", round(Int, t), " s"); end'
-julia --startup-file=no --project="$run_root" -e "using Sparlectra; const M = Sparlectra; const NAME = \"Sparlectra\"; $image_probe" || exit 1
-julia --startup-file=no --project="$run_root/app" -e "using SparlectraApp; const M = SparlectraApp; const NAME = \"SparlectraApp\"; $image_probe" || exit 1
+probe_roots=$run_root
+# set: the work tree of the docs build and the workshops gets its images
+# here as well, before the strands start, so no strand precompiles
+[ "$gate" = "set" ] && probe_roots="$run_root $commit_root"
+for probe_root in $probe_roots
+do
+  julia --startup-file=no --project="$probe_root" -e "using Sparlectra; const M = Sparlectra; const NAME = \"Sparlectra\"; $image_probe" || exit 1
+  julia --startup-file=no --project="$probe_root/app" -e "using SparlectraApp; const M = SparlectraApp; const NAME = \"SparlectraApp\"; $image_probe" || exit 1
+done
 
 # --startup-file=no: a gate is not an interactive session, and a personal
 # startup.jl usually loads Revise. Measured: loading Revise
 # invalidates 472 method instances of the STOCK Julia system image, which the
 # run then has to infer again, and it buys a gate nothing. (On the Sparlectra
 # sysimage the same load costs 1530 instances; see tools/sysimage_launcher.jl.)
-status=0
-if [ "$gate" = "docs" ]
-then
-  julia --startup-file=no --project="$run_root/docs" "$run_root/docs/make.jl"
-  status=$?
+# the docs build of the tree $1, with the two Web UI help checks; returns
+# the first non-zero status
+docs_build() {
+  julia --startup-file=no --project="$1/docs" "$1/docs/make.jl" || return $?
   # the Web UI help registry links into the documentation by anchor; a
   # renamed anchor or a dropped section must fail HERE, in the gate a docs
   # change runs, not in the next extd run
-  if [ "$status" -eq 0 ]
-  then
-    julia --startup-file=no --project="$run_root/app" "$run_root/tools/check_webui_doc_links.jl"
-    status=$?
-  fi
+  julia --startup-file=no --project="$1/app" "$1/tools/check_webui_doc_links.jl" || return $?
   # the help pages ship the referenced sections as generated source; an
   # edited section that was not regenerated fails here as well
-  if [ "$status" -eq 0 ]
+  julia --startup-file=no --project="$1/app" "$1/tools/generate_webui_help_excerpts.jl" --check
+}
+
+# the summary line of a part log: the profile line of a test run, the
+# result of the docs build
+part_summary() {
+  if [ "$1" = "docs" ]
   then
-    julia --startup-file=no --project="$run_root/app" "$run_root/tools/generate_webui_help_excerpts.jl" --check
-    status=$?
+    [ "$2" -eq 0 ] && echo "docs build and help checks green" || echo "docs build or help check failed"
+  else
+    grep -h "^Sparlectra.jl .* profile |" "$lockdir/part_$1.log" | tail -1 | tr -s ' '
   fi
+}
+
+status=0
+if [ "$gate" = "docs" ]
+then
+  docs_build "$run_root"
+  status=$?
+elif [ "$gate" = "set" ]
+then
+  # three strands at once on one commit under this lock: set_a (cgmes, se,
+  # config), extended_b (pf, webui, extd, formats), and set_c (fast and
+  # legacy, then the docs build and the workshops in the work tree of the
+  # commit); afterwards the threads profile alone with four threads, so
+  # its parallel-vs-serial comparisons do not compete with the strands for
+  # the cores. Every part writes into the lock directory; the logs are
+  # printed after the end, then one line per part and one summary line.
+  # Exit status: the first non-zero part.
+  echo "run_gates: set: strands set_a, extended_b and set_c (then docs, workshops) at once, then threads"
+  t0=$(date +%s)
+  SPARLECTRA_TEST_PROFILE=set_a julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/part_set_a.log" 2>&1 &
+  pid_a=$!
+  SPARLECTRA_TEST_PROFILE=extended_b julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/part_extended_b.log" 2>&1 &
+  pid_b=$!
+  (
+    SPARLECTRA_TEST_PROFILE=set_c julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/part_set_c.log" 2>&1
+    echo $? > "$lockdir/rc_set_c"
+    docs_build "$commit_root" > "$lockdir/part_docs.log" 2>&1
+    echo $? > "$lockdir/rc_docs"
+    SPARLECTRA_TEST_PROFILE=workshops julia --startup-file=no --project="$commit_root" "$commit_root/test/runtests.jl" > "$lockdir/part_workshops.log" 2>&1
+    echo $? > "$lockdir/rc_workshops"
+  ) &
+  pid_c=$!
+  trap 'pkill -P $pid_c 2>/dev/null; kill $pid_a $pid_b $pid_c 2>/dev/null; git -C "$repo_root" worktree remove --force "$gate_wt" >/dev/null 2>&1; rm -rf "$lockdir"' INT TERM
+  wait $pid_a
+  echo $? > "$lockdir/rc_set_a"
+  wait $pid_b
+  echo $? > "$lockdir/rc_extended_b"
+  wait $pid_c
+  wall_strands=$(( $(date +%s) - t0 ))
+  SPARLECTRA_TEST_PROFILE=threads julia --startup-file=no --threads=4 --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/part_threads.log" 2>&1
+  echo $? > "$lockdir/rc_threads"
+  wall=$(( $(date +%s) - t0 ))
+  for part in set_a extended_b set_c docs workshops threads
+  do
+    echo "===== part $part ====="
+    cat "$lockdir/part_$part.log"
+  done
+  for part in set_a extended_b set_c docs workshops threads
+  do
+    rc=$(cat "$lockdir/rc_$part" 2>/dev/null || echo 1)
+    echo "run_gates: part $part rc=$rc $(part_summary "$part" "$rc")"
+    [ "$status" -eq 0 ] && status=$rc
+  done
+  echo "run_gates: set wall ${wall} s (strands ${wall_strands} s, threads $(( wall - wall_strands )) s)"
+  # the test parts added up; nothing when a part ended without a summary
+  for part in set_a extended_b set_c workshops threads
+  do
+    grep -h "^Sparlectra.jl .* profile |" "$lockdir/part_$part.log" | tail -1
+  done | awk -v wall="$wall" '{ for (i = 1; i <= NF; i++) if ($i == "|") { p += $(i + 1); t += $(NF - 1); n++ } } END { if (n == 5) printf "Sparlectra.jl set (fast, extended, workshops, threads) | %d %d %ds\n", p, t, wall }'
 else
   # without --threads a profile runs single-threaded, where each parallel
   # site takes its serial loop and a parallel-vs-serial comparison checks
   # nothing threaded; the threads profile defaults to four threads (above)
   [ -n "$julia_threads" ] && echo "run_gates: test process with $julia_threads"
-  SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"
-  status=$?
+  if [ "$strands" = "2" ]
+  then
+    # extended as two processes at once (profiles extended_a and
+    # extended_b of test/runtests.jl), on the same tree under this one
+    # lock; each strand writes into the lock directory and is printed
+    # after both ended, then one summary line over both. Exit status: the
+    # first non-zero of the two. A killed gate takes both strands along.
+    echo "run_gates: extended as two strands (extended_a, extended_b) at once"
+    t0=$(date +%s)
+    SPARLECTRA_TEST_PROFILE=extended_a julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/strand_a.log" 2>&1 &
+    pid_a=$!
+    SPARLECTRA_TEST_PROFILE=extended_b julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl" > "$lockdir/strand_b.log" 2>&1 &
+    pid_b=$!
+    trap 'kill $pid_a $pid_b 2>/dev/null; rm -rf "$lockdir"' INT TERM
+    wait $pid_a
+    status_a=$?
+    wait $pid_b
+    status_b=$?
+    wall=$(( $(date +%s) - t0 ))
+    for s in a b
+    do
+      echo "===== strand extended_$s ====="
+      cat "$lockdir/strand_$s.log"
+    done
+    echo "run_gates: strand extended_a rc=$status_a, extended_b rc=$status_b, wall ${wall} s"
+    status=$status_a
+    [ "$status" -eq 0 ] && status=$status_b
+    # the summary lines of both strands, added up; nothing when a strand
+    # ended without one (a crash shows in its output above)
+    grep -h "^Sparlectra.jl extended_[ab] profile |" "$lockdir/strand_a.log" "$lockdir/strand_b.log" | awk -v wall="$wall" '{ for (i = 1; i <= NF; i++) if ($i == "|") { p += $(i + 1); t += $(NF - 1); n++ } } END { if (n == 2) printf "Sparlectra.jl extended profile (2 strands) | %d %d %ds\n", p, t, wall }'
+  else
+    SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"
+    status=$?
+  fi
 fi
 exit $status

@@ -48,6 +48,27 @@ if [ -n "${SPARLECTRA_INSTALL_DIR:-}" ]; then
   DIR=$(CDPATH= cd -- "$SPARLECTRA_INSTALL_DIR" && pwd)
 fi
 REPO_URL="https://github.com/Welthulk/Sparlectra.jl"
+# tag of the latest release from the redirect of the latest-release page,
+# not from the GitHub REST API (60 anonymous requests per hour per public
+# IP, shared behind a company NAT); empty when github.com cannot be reached
+latest_release_tag() {
+  curl -fsSLI -o /dev/null -w '%{url_effective}' "$REPO_URL/releases/latest" 2>/dev/null | sed -n 's#^.*/releases/tag/\(v[0-9][0-9.]*\)$#\1#p'
+}
+# An update that was asked for (SPARLECTRA_UPDATE=1, or the tag the Web UI
+# passes in SPARLECTRA_UPDATE_TAG) ends visibly: every failure prints
+# "Update FAILED: <reason>" and stops with exit code 1, so the updater of the
+# Web UI reports it instead of starting the old copy as if nothing happened.
+UPDATE_REQUESTED=""
+case "${SPARLECTRA_UPDATE:-}" in
+  1|y|Y|yes|YES) UPDATE_REQUESTED=1 ;;
+esac
+if [ -n "${SPARLECTRA_UPDATE_TAG:-}" ]; then
+  UPDATE_REQUESTED=1
+fi
+update_failed() {
+  echo "Update FAILED: $1"
+  exit 1
+}
 
 # --- 1. Julia ---------------------------------------------------------------
 if ! command -v julia >/dev/null 2>&1; then
@@ -98,8 +119,10 @@ else
       LATEST=$(git -C "$SPARLECTRA_DIR" tag --sort=-v:refname | head -n 1)
       [ -n "$LATEST" ] && echo "Checking out latest release: $LATEST" && git -C "$SPARLECTRA_DIR" checkout --quiet "$LATEST"
     elif command -v curl >/dev/null 2>&1; then
-      # No git: download the tarball of the latest tag via the GitHub API.
-      LATEST=$(curl -fsSL "https://api.github.com/repos/Welthulk/Sparlectra.jl/tags" | grep -m 1 '"name"' | sed 's/.*"name": *"\([^"]*\)".*/\1/')
+      # No git: download the tarball of the latest release. Its tag comes
+      # from the redirect of the latest-release page, not from the GitHub
+      # REST API (60 anonymous requests per hour per public IP).
+      LATEST=$(latest_release_tag)
       [ -n "$LATEST" ] || { echo "Could not determine the latest release tag."; exit 1; }
       echo "Downloading Sparlectra $LATEST..."
       curl -fsSL "$REPO_URL/archive/refs/tags/$LATEST.tar.gz" | tar -xz -C "$DIR"
@@ -123,6 +146,9 @@ else
       CURRENT_TAG=$(git -C "$SPARLECTRA_DIR" describe --tags --exact-match 2>/dev/null || echo "")
       if [ -n "$LATEST" ] && [ "$LATEST" != "$CURRENT_TAG" ]; then
         if [ -n "$(git -C "$SPARLECTRA_DIR" status --porcelain 2>/dev/null)" ]; then
+          if [ -n "$UPDATE_REQUESTED" ]; then
+            update_failed "the copy at $SPARLECTRA_DIR has local changes, the release $LATEST was not checked out"
+          fi
           echo "A newer release ($LATEST) exists, but the copy has local changes - keeping the current state."
         else
           DO_UPDATE="${SPARLECTRA_UPDATE:-}"
@@ -136,7 +162,9 @@ else
               ;;
             *)
               echo "Updating to $LATEST..."
-              git -C "$SPARLECTRA_DIR" checkout --quiet "$LATEST"
+              if ! git -C "$SPARLECTRA_DIR" checkout --quiet "$LATEST"; then
+                update_failed "git checkout $LATEST failed in $SPARLECTRA_DIR"
+              fi
               echo "Note: an existing sysimage is stale after an update; the next Web UI start offers a rebuild."
               ;;
           esac
@@ -144,10 +172,14 @@ else
       fi
     elif command -v curl >/dev/null 2>&1; then
       # Tarball copy (no .git): compare the installed Project.toml version
-      # against the newest tag from the GitHub API.
-      LATEST=$(curl -fsSL "https://api.github.com/repos/Welthulk/Sparlectra.jl/tags" 2>/dev/null | grep -m 1 '"name"' | sed 's/.*"name": *"\([^"]*\)".*/\1/')
+      # against the latest release (the tag the Web UI passed for an update
+      # started there, else the redirect of the latest-release page).
+      LATEST="${SPARLECTRA_UPDATE_TAG:-$(latest_release_tag)}"
       if [ -z "$LATEST" ]; then
-        echo "Update check skipped (could not reach the GitHub API)."
+        if [ -n "$UPDATE_REQUESTED" ]; then
+          update_failed "could not determine the latest release (no answer from github.com)"
+        fi
+        echo "Update check skipped (could not reach github.com)."
       elif [ "v$INSTALLED" = "$LATEST" ]; then
         echo "Already at the latest release (v$INSTALLED)."
       else
@@ -166,16 +198,23 @@ else
             # replaced after a complete download, and it survives as
             # Sparlectra.old (one backup slot) so the update is reversible.
             UPDATE_TMP=$(mktemp -d "$DIR/.sparlectra_update.XXXXXX")
-            if curl -fsSL "$REPO_URL/archive/refs/tags/$LATEST.tar.gz" | tar -xz -C "$UPDATE_TMP" 2>/dev/null && [ -d "$UPDATE_TMP"/Sparlectra.jl-* ]; then
+            if curl -fsSL "$REPO_URL/archive/refs/tags/$LATEST.tar.gz" | tar -xz -C "$UPDATE_TMP" 2>/dev/null && [ -f "$UPDATE_TMP"/Sparlectra.jl-*/Project.toml ]; then
               rm -rf "$DIR/Sparlectra.old" 2>/dev/null || true
-              mv "$SPARLECTRA_DIR" "$DIR/Sparlectra.old"
-              mv "$UPDATE_TMP"/Sparlectra.jl-* "$SPARLECTRA_DIR"
+              if ! mv "$SPARLECTRA_DIR" "$DIR/Sparlectra.old"; then
+                rm -rf "$UPDATE_TMP" 2>/dev/null || true
+                update_failed "could not move $SPARLECTRA_DIR aside, the previous copy is unchanged"
+              fi
+              if ! mv "$UPDATE_TMP"/Sparlectra.jl-* "$SPARLECTRA_DIR"; then
+                mv "$DIR/Sparlectra.old" "$SPARLECTRA_DIR" || true
+                rm -rf "$UPDATE_TMP" 2>/dev/null || true
+                update_failed "could not put the new copy in place, the previous copy is restored"
+              fi
               rmdir "$UPDATE_TMP" 2>/dev/null || true
               echo "Updated to $LATEST. The previous copy is kept at $DIR/Sparlectra.old (delete it once the new version runs)."
               echo "Note: an existing sysimage is stale after an update; the next Web UI start offers a rebuild."
             else
               rm -rf "$UPDATE_TMP" 2>/dev/null || true
-              echo "Update download failed - continuing with v$INSTALLED."
+              update_failed "download of $LATEST failed ($REPO_URL/archive/refs/tags/$LATEST.tar.gz), the previous copy v$INSTALLED is unchanged"
             fi
             ;;
         esac
@@ -186,9 +225,16 @@ fi
 
 # --- 3. Dependencies ---------------------------------------------------------
 echo "Resolving Julia dependencies..."
-julia --project="$SPARLECTRA_DIR" -e "using Pkg; Pkg.instantiate()"
+# an update that cannot resolve its dependencies has failed as well
+if ! julia --project="$SPARLECTRA_DIR" -e "using Pkg; Pkg.instantiate()"; then
+  [ -n "$UPDATE_REQUESTED" ] && update_failed "resolving the Julia dependencies of $SPARLECTRA_DIR failed"
+  exit 1
+fi
 # the Web UI and the service layer are the SparlectraApp package under app/
-julia --project="$SPARLECTRA_DIR/app" -e "using Pkg; Pkg.instantiate()"
+if ! julia --project="$SPARLECTRA_DIR/app" -e "using Pkg; Pkg.instantiate()"; then
+  [ -n "$UPDATE_REQUESTED" ] && update_failed "resolving the Julia dependencies of $SPARLECTRA_DIR/app failed"
+  exit 1
+fi
 
 # --- 4. Sysimage ------------------------------------------------------------
 # The image is NOT built here. start_webui.jl owns that decision on every

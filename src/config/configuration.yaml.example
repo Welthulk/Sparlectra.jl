@@ -384,7 +384,9 @@ power_flow:
     guard:
       enabled: true
       min_q_range_pu: 0.02
-      # Allowed values: prefer_pq, lock_pq
+      # Allowed values: prefer_pq, lock_pq. lock_pq: PV inside the band,
+      # clamped at the first limit reached; prefer_pq: PQ at the band
+      # middle from the start
       narrow_range_mode: lock_pq
       # Allowed values: lock_pq
       zero_range_mode: lock_pq

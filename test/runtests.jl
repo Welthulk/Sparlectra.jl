@@ -256,6 +256,20 @@ const TEST_PROFILES = Dict{Symbol,Vector{String}}(
 )
 TEST_PROFILES[:extended] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:webui], TEST_PROFILES[:extd], TEST_PROFILES[:cgmes], TEST_PROFILES[:formats], TEST_PROFILES[:legacy])
 TEST_PROFILES[:all] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended], TEST_PROFILES[:install], TEST_PROFILES[:workshops])
+# The two strands of extended (`tools/run_gates.sh extended --strands=2`):
+# two processes at once, together exactly extended. Split by area, so each
+# strand compiles the code of its areas once; the split is chosen so that
+# both strands take about the same time.
+TEST_PROFILES[:extended_a] = vcat(TEST_PROFILES[:cgmes], TEST_PROFILES[:se], TEST_PROFILES[:config], TEST_PROFILES[:legacy])
+TEST_PROFILES[:extended_b] = vcat(TEST_PROFILES[:pf], TEST_PROFILES[:webui], TEST_PROFILES[:extd], TEST_PROFILES[:formats])
+sort(vcat(TEST_PROFILES[:extended_a], TEST_PROFILES[:extended_b])) == sort(TEST_PROFILES[:extended]) || error("the strands extended_a and extended_b do not add up to extended")
+# The three test strands of the full gate set (`tools/run_gates.sh set`):
+# set_a and extended_b run at once with set_c, which takes fast and legacy
+# (the docs build and the workshops follow it in the same strand); the
+# threads profile runs alone afterwards. Together exactly fast + extended.
+TEST_PROFILES[:set_a] = vcat(TEST_PROFILES[:cgmes], TEST_PROFILES[:se], TEST_PROFILES[:config])
+TEST_PROFILES[:set_c] = vcat(TEST_PROFILES[:fast], TEST_PROFILES[:legacy])
+sort(vcat(TEST_PROFILES[:set_a], TEST_PROFILES[:extended_b], TEST_PROFILES[:set_c])) == sort(vcat(TEST_PROFILES[:fast], TEST_PROFILES[:extended])) || error("the strands set_a, extended_b and set_c do not add up to fast and extended")
 
 # every group sits in exactly one of the base profiles
 let seen = String[]

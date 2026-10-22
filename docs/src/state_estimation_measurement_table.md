@@ -188,9 +188,17 @@ base.
   rows `state_estimation.zero_injection` adds. Its sigma is the one of the
   row.
 - Node with `Va`: `VaMeas` at the bus.
-- A bus link (a switch or coupler joining two buses outside the Y-bus) is
-  no branch of the model: rows on its terminals are `not_modelled` with the
-  reason. Name keys: `<link name>:from`, `<link name>:to`.
+- A bus link (a closed switch or coupler joining two buses outside the
+  Y-bus): `P` and `Q` on its terminals are link flow measurements, positive
+  from the link's from bus to its to bus (a row at the to end changes
+  sign). The estimator leaves them out of the WLS; `calcLinkFlowsSE!`
+  uses them for the split of the flow among the links after the estimate,
+  which matters where links form a loop (two parallel couplers). The SE
+  service runs it after every estimate on a case with a closed link and
+  writes the split to `se_link_flows.csv`. An open
+  link is `not_modelled`, `I` on a link `unsupported`. Name keys:
+  `<link name>:from`, `<link name>:to`; in a CGMES case the terminals of
+  the switch.
 
 ## Group sums
 
@@ -439,7 +447,7 @@ in a checkout; both key the table like the SE service.
 - The comments of the v1 file move in front of the header; the ids in the
   `truth_value` and critical-row lines are rewritten to the ids of the
   import, so tap estimation and `se_deltas.csv` work as before.
-- Rows the table cannot carry (a link flow, a shunt bay at a bus with
+- Rows the table cannot carry (a flow on a link without a key, a shunt bay at a bus with
   several shunts, a negative `U` or `I`, a second row with the same key and
   type) are not written; the result and the comment lines of the table name
   each with its line.

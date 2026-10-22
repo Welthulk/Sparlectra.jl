@@ -55,6 +55,16 @@ function _measurement_table_from_measurements(net::Net, ms::AbstractVector, inde
     e = (t.branchIdx, t.direction)
     (haskey(end_key, e) && end_key[e] <= k) || (end_key[e] = k)
   end
+  # link -> terminal key of a link end, the from end preferred (a link flow
+  # measurement is positive from link.fromBus, a row at the to end carries
+  # the opposite sign)
+  link_key = Dict{Int,Tuple{String,Symbol}}()
+  for (k, t) in index.terminals
+    t.kind === :link || continue
+    cur = get(link_key, t.branchIdx, nothing)
+    better = cur === nothing || (t.direction === :from && cur[2] === :to) || (t.direction === cur[2] && k < cur[1])
+    better && (link_key[t.branchIdx] = (k, t.direction))
+  end
   shunt_members(b) = get(index.groups, (:shunt, b), String[])
   problem!(i, m, p, d) = push!(problems, (line = Int(lines[i]), id = m.id, problem = p, detail = d))
   seen = Set{Tuple{String,String,String}}()
@@ -67,8 +77,15 @@ function _measurement_table_from_measurements(net::Net, ms::AbstractVector, inde
     value = string(m.value)
     sigma = string(m.sigma)
     if m.linkIdx !== nothing
-      problem!(i, m, :not_modelled, "link flow (link $(m.linkIdx)): a bus link is no branch of the model, the table has no place for its flow")
-      continue
+      typ = m.typ == PflowMeas ? "P" : m.typ == QflowMeas ? "Q" : ""
+      lk = get(link_key, Int(m.linkIdx), nothing)
+      if isempty(typ) || lk === nothing
+        problem!(i, m, isempty(typ) ? :unsupported : :unknown_key, isempty(typ) ? "$(m.typ) on bus link $(m.linkIdx) is no table type" : "bus link $(m.linkIdx) has no terminal key in the index (open link or no name)")
+        continue
+      end
+      key = lk[1]
+      lk[2] === :to && (value = string(-m.value))
+      kind = "terminal"
     elseif m.branchIdx !== nothing
       typ = m.typ == PflowMeas ? "P" : m.typ == QflowMeas ? "Q" : m.typ == ImagMeas ? "I" : m.typ == IaMeas ? "Ia" : ""
       if isempty(typ)

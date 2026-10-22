@@ -398,6 +398,49 @@ function _tapTablePointAtStep(store::CGMESStore, tc::CIMObject, step::Float64)::
   return best
 end
 
+# Reactance curve of a linear or non-linear phase tap changer
+# (PhaseTapChangerLinear/NonLinear.xMin, xMax): the reactance follows a
+# u-shaped curve over the shift angle, xMin at the neutral step and xMax at
+# the step with the largest angle,
+#   x(a) = xMin + (xMax - xMin) * (sin(a/2) / sin(amax/2))^2,
+# with amax the larger angle of lowStep and highStep. Returns
+# (xmin, xmax, amax), or nothing when the changer carries no curve (other
+# class, attribute missing, xMin <= 0, xMin == xMax, no angle range) or when
+# xMax/xMin leaves the plausibility band of the tap corrections
+# (_phaseTapXCurveNotice! reports that case).
+function _phaseTapXCurve(store::CGMESStore, tc::CIMObject)
+  tc.class in (:PhaseTapChangerLinear, :PhaseTapChangerSymmetrical, :PhaseTapChangerAsymmetrical) || return nothing
+  xmin, xmax = num(tc, :xMin), num(tc, :xMax)
+  (xmin === nothing || xmax === nothing || xmin <= 0.0 || xmax == xmin) && return nothing
+  CGMES_TAP_CORR_MIN <= xmax / xmin <= CGMES_TAP_CORR_MAX || return nothing
+  amax = 0.0
+  for k in (:lowStep, :highStep)
+    st = num(tc, k)
+    st === nothing && continue
+    amax = max(amax, abs(last(_phaseTapRatioShift_atstep(store, tc, Int(round(st))))))
+  end
+  amax > 0.0 || return nothing
+  return (xmin = xmin, xmax = xmax, amax = amax)
+end
+
+# factor of the reactance curve at `step` relative to xMin, 1.0 without a
+# curve; the series reactance of the end stays as delivered at the neutral
+# step
+function _phaseTapXCurveFactor(store::CGMESStore, tc::CIMObject, step::Float64)::Float64
+  c = _phaseTapXCurve(store, tc)
+  c === nothing && return 1.0
+  a = last(_phaseTapRatioShift_atstep(store, tc, Int(round(step))))
+  return (c.xmin + (c.xmax - c.xmin) * (sind(a / 2) / sind(c.amax / 2))^2) / c.xmin
+end
+
+# impedance factors (r, x, g, b) of one tap changer at `step`: the table
+# point of a ratio or tabular changer, the reactance curve of a linear or
+# non-linear phase changer
+function _tapChangerImpedanceFactors(store::CGMESStore, tc::CIMObject, step::Float64)::NTuple{4,Float64}
+  tc.class in (:RatioTapChanger, :PhaseTapChangerTabular) && return _tapTablePointFactors(store, tc, step)
+  return (1.0, _phaseTapXCurveFactor(store, tc, step), 1.0, 1.0)
+end
+
 # Impedance factors of one tabular tap changer at `step`: a
 # RatioTapChangerTablePoint or PhaseTapChangerTablePoint gives r, x, g, b as
 # deviations in percent of the nominal value, so the factors are (1 + r/100)
@@ -409,11 +452,12 @@ function _tapTablePointFactors(store::CGMESStore, tc::CIMObject, step::Float64):
   return (1.0 + num(pt, :r, 0.0) / 100.0, 1.0 + num(pt, :x, 0.0) / 100.0, 1.0 + num(pt, :g, 0.0) / 100.0, 1.0 + num(pt, :b, 0.0) / 100.0)
 end
 
-# Whether the tap correction of `tc` at its step lies in the plausibility
-# band; outside it `_applyEndTaps` ignores the changer, and so do the
-# impedance factors.
+# Whether the impedance factors of `tc` apply: a ratio or tabular changer
+# whose tap correction at its step lies in the plausibility band (outside it
+# `_applyEndTaps` ignores the changer, and so do the impedance factors), or
+# a linear or non-linear phase changer with a reactance curve.
 function _tapTableChangerApplies(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject)::Bool
-  tc.class in (:RatioTapChanger, :PhaseTapChangerTabular) || return false
+  tc.class in (:RatioTapChanger, :PhaseTapChangerTabular) || _phaseTapXCurve(store, tc) !== nothing || return false
   corr = tc.class == :RatioTapChanger ? first(_ratioTapCorrectionAt(tc, _ratioTapTable(store, tc), _tapStep(tc, svsteps))) : first(_phaseTapRatioShift(store, tc, svsteps))
   return CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX
 end
@@ -428,7 +472,7 @@ function _tapTableImpedanceFactors(store::CGMESStore, svsteps::Dict{String,Float
   fr, fx, fg, fb = 1.0, 1.0, 1.0, 1.0
   for tc in _tapChangersOfEnd(store, e.mrid)
     _tapTableChangerApplies(store, svsteps, tc) || continue
-    f = _tapTablePointFactors(store, tc, _tapStep(tc, svsteps))
+    f = _tapChangerImpedanceFactors(store, tc, _tapStep(tc, svsteps))
     fr *= f[1]
     fx *= f[2]
     fg *= f[3]
@@ -592,7 +636,7 @@ function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,F
     low = Int(round(num(tc, :lowStep, 0.0)))
     high = Int(round(num(tc, :highStep, 0.0)))
     steps = low:high
-    facs = [_tapTablePointFactors(store, tc, Float64(s)) for s in steps]
+    facs = [_tapChangerImpedanceFactors(store, tc, Float64(s)) for s in steps]
     all(f -> f == (1.0, 1.0, 1.0, 1.0), facs) && continue
     ratio = tc.class == :RatioTapChanger
     name = something(str(tc, :name), tc.mrid)
@@ -600,7 +644,7 @@ function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,F
       push!(ctx.messages, "notice: tap changer $(trafo_name)/$(name), a second table on the same branch; its r/x/g/b deviations stay at the start step")
       continue
     end
-    start = _tapTablePointFactors(store, tc, _tapStep(tc, svsteps))
+    start = _tapChangerImpedanceFactors(store, tc, _tapStep(tc, svsteps))
     any(iszero, start) && (push!(ctx.messages, "notice: tap changer $(trafo_name)/$(name), the table point of the start step removes the impedance; its r/x/g/b deviations stay at the start step"); continue)
     f0 = f0 .* start
     if ratio
@@ -967,6 +1011,27 @@ function _tapCorrPlausible(kind::String, tc::CIMObject, corr::Float64, messages:
   return false
 end
 
+# notice of the reactance curve of the phase tap changer `tc` at its step;
+# a warning when xMax/xMin leave the plausibility band of the tap
+# corrections (FullGrid carries the placeholder pair 0.99/9.99), then the
+# curve is ignored and the end keeps its reactance
+function _phaseTapXCurveNotice!(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject, messages::Vector{String}; strict::Bool = false)
+  tc.class in (:PhaseTapChangerLinear, :PhaseTapChangerSymmetrical, :PhaseTapChangerAsymmetrical) || return nothing
+  xmin, xmax = num(tc, :xMin), num(tc, :xMax)
+  (xmin === nothing || xmax === nothing || xmin <= 0.0 || xmax == xmin) && return nothing
+  name = something(str(tc, :name), tc.mrid)
+  if !(CGMES_TAP_CORR_MIN <= xmax / xmin <= CGMES_TAP_CORR_MAX)
+    msg = "$(tc.class) $(name) declares an implausible reactance curve (xMin $(xmin), xMax $(xmax), band of xMax/xMin $(CGMES_TAP_CORR_MIN)..$(CGMES_TAP_CORR_MAX)), placeholder suspected"
+    strict && error("cgmes_import.placeholder_guards = strict: " * msg)
+    push!(messages, "warning: " * msg * ", reactance curve ignored")
+    return nothing
+  end
+  step = _tapStep(tc, svsteps)
+  f = _phaseTapXCurveFactor(store, tc, step)
+  f == 1.0 || push!(messages, "notice: $(tc.class) $(name): step $(step), series reactance $(round(f; digits = 5)) times the end value (xMin/xMax curve)")
+  return nothing
+end
+
 # otherwise it divides (referred through the winding).
 function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMObject, ratio::Float64, shift::Float64, on_from_side::Bool, messages::Vector{String}; strict::Bool = false)::Tuple{Float64,Float64}
   for tc in _tapChangersOfEnd(store, e.mrid)
@@ -990,6 +1055,7 @@ function _applyEndTaps(store::CGMESStore, svsteps::Dict{String,Float64}, e::CIMO
       end
       pratio, pshift = _phaseTapRatioShift(store, tc, svsteps)
       _tapCorrPlausible(String(tc.class), tc, pratio, messages; strict = strict) || continue
+      _phaseTapXCurveNotice!(store, svsteps, tc, messages; strict = strict)
       ratio = on_from_side ? ratio * pratio : ratio / pratio
       # Angle sign: an end-2 (to-side) tap angle enters NEGATED: the branch
       # ratio is t1/t2, so θ_eff = θ1 − θ2 (standard end-referral semantics;

@@ -142,6 +142,14 @@ function cgmesMeasurementKeys(result::CGMESImportResult)::Sparlectra.Measurement
     elseif cls in _MEASUREMENT_SHUNT_CLASSES
       push!(get!(Vector{String}, groups, (:shunt, b)), tk)
       Sparlectra.MeasurementTarget(:shunt, b, 0, :none, string(cls))
+    elseif (lk = get(result.element_by_mrid, eq_mrid, nothing)) !== nothing && lk[1] === :link
+      # a closed switch between two TopologicalNodes is a bus link: P and Q
+      # at its terminals are link flow measurements (flow split after the
+      # estimate, never in the WLS). A switch inside one TopologicalNode is
+      # no link and stays not modelled below
+      l = net.linkVec[lk[2]]
+      dir = b == l.fromBus ? :from : (b == l.toBus ? :to : :none)
+      dir === :none ? Sparlectra.MeasurementTarget(:not_modelled, b, 0, :none, "$(cls) terminal is at neither bus of its link") : Sparlectra.MeasurementTarget(:link, b, lk[2], dir, "$(cls) bus link")
     else
       Sparlectra.MeasurementTarget(:not_modelled, b, 0, :none, "$(cls) is not a modelled equipment")
     end

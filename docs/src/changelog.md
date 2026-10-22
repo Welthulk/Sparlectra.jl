@@ -9,16 +9,20 @@ Quasi-stationary time series (QSTS), dynamic unit data.
 - Dynamic unit data `DynamicData` (inertia, droop, reserves, unit type) on generators, carried in SCF and read from the CGMES DY profile (`cgmes_import.read_dynamics`, default off). No calculation reads it yet. See [Dynamic Data](dynamic_data.md).
 - Measurement tables are bound to CGMES cases by the EQ model id instead of the file name; an assign switch at the Web UI upload binds a table to the selected case.
 - run.log and the result page name the system frequency and its source, or "not used" when no capacitance in farad entered the model. The Case page greys the frequency field for such cases.
+- Link flow measurements: P and Q on bus couplers split the flow over coupler rings; the SE service writes `se_link_flows.csv`.
 ## Changed
 - CGMES import: the slack follows the SV angle reference also when an EquivalentInjection holds that node (MicroGrid BE: the X-node instead of the largest machine). `cgmes_import.equivalent_injection_as_source` (default off) imports boundary EquivalentInjections as sources at their SV voltage.
 - Requires AnalyticLoadFlow 0.10.3: the APSLF solver handles phase shifting transformers.
 - CGMES import: a unit whose `DynamicData` says grid-following is no island slack; an island with only such units is switched off with a warning.
 - The Web UI window opens on the main monitor when the saved position is on a monitor that is no longer connected.
+- Q-limit guard: a machine with a narrow Q band stays PV inside its band and is locked only at the limit it reaches (`narrow_range_mode: prefer_pq` keeps the old behaviour).
 ## Fixed
 - The Web UI sysimage rebuild did not find its build script since the package split.
 - Bus powers of coupler clusters and distributed slack shares in reports and bus CSVs.
 - CGMES: P limits of EquivalentInjection and ExternalNetworkInjection read as delivered; 2W transformer magnetizing split over both terminal arms.
 - CGMES: with several boundary sets next to a case the import takes the one that resolves it.
+- CGMES: phase tap changers with `xMin`/`xMax` change their reactance with the step.
+- Web UI and installers find the latest release without the GitHub API, so the update check no longer runs into its rate limit; a failed update stops with its reason and the Web UI shows it.
 
 # Version 0.50.0 - 2026-10-18
 

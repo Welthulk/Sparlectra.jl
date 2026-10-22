@@ -14,13 +14,17 @@
 
 # file: app/src/webui/update.jl
 # purpose: "Check for updates" of the Info panel and of start_webui.jl: one
-#          request to the GitHub releases API on the click or at an
+#          request to the latest-release page of GitHub on the click or at an
 #          interactive start, the comparison with the running version, how
 #          this copy was installed, and for a copy made by tools/install_webui.*
 #          the unattended update in a detached process that waits for this
 #          Web UI to stop
 
-const WEBUI_UPDATE_RELEASES_API = "https://api.github.com/repos/Welthulk/Sparlectra.jl/releases/latest"
+# The page GitHub redirects to the tag of the latest release. Not the REST
+# API: that one allows 60 anonymous requests per hour per public IP, shared
+# by every machine behind one company NAT, and the check then failed with
+# "rate limit reached" for users who never clicked it before.
+const WEBUI_UPDATE_LATEST_URL = "https://github.com/Welthulk/Sparlectra.jl/releases/latest"
 const WEBUI_UPDATE_RELEASES_PAGE = "https://github.com/Welthulk/Sparlectra.jl/releases"
 const WEBUI_UPDATE_TIMEOUT_SECONDS = 10.0
 # the check at start waits less: an offline start should not stall
@@ -38,23 +42,23 @@ const WEBUI_UPDATE_WAIT_SECONDS = 600
 """
     _webui_update_http_get(url; timeout) -> NamedTuple
 
-One GET through the Downloads standard library: `(status, headers, body,
-error, timed_out)`. `status` is 0 when no HTTP answer came back (no network,
-name resolution, TLS, timeout); `error` then carries the curl message and
-`timed_out` says whether the time ran out. Header names are lowercased. The
-request carries an `Accept` header and nothing else of its own.
+One HEAD request through the Downloads standard library, redirects
+followed: `(status, headers, url, error, timed_out)`. `url` is the address
+the redirects ended at. `status` is 0 when no HTTP answer came back (no
+network, name resolution, TLS, timeout); `error` then carries the curl
+message and `timed_out` says whether the time ran out. Header names are
+lowercased.
 """
 function _webui_update_http_get(url::AbstractString; timeout::Real = WEBUI_UPDATE_TIMEOUT_SECONDS)
-  io = IOBuffer()
   # throw = false: a transport failure comes back as a RequestError value
   # instead of an exception, so no catch is needed here
-  answer = Downloads.request(String(url); output = io, timeout = Float64(timeout), headers = ["Accept" => "application/vnd.github+json"], throw = false)
+  answer = Downloads.request(String(url); method = "HEAD", output = devnull, timeout = Float64(timeout), throw = false)
   if answer isa Downloads.RequestError
     # curl code 28 is CURLE_OPERATION_TIMEDOUT
-    return (status = 0, headers = Dict{String,String}(), body = "", error = String(answer.message), timed_out = answer.code == 28)
+    return (status = 0, headers = Dict{String,String}(), url = "", error = String(answer.message), timed_out = answer.code == 28)
   end
   headers = Dict{String,String}(lowercase(String(first(h))) => String(last(h)) for h in answer.headers)
-  return (status = Int(answer.status), headers = headers, body = String(take!(io)), error = "", timed_out = false)
+  return (status = Int(answer.status), headers = headers, url = String(answer.url), error = "", timed_out = false)
 end
 
 # The fetch the check uses. Tests put a function of the same shape here, so
@@ -62,39 +66,24 @@ end
 const _WEBUI_UPDATE_FETCH = Ref{Any}(_webui_update_http_get)
 
 """
-    _webui_update_parse_release(body) -> Union{Nothing,NamedTuple}
+    _webui_update_release_from_url(url) -> Union{Nothing,NamedTuple}
 
-`(version, tag, page)` from the JSON of the releases API, or `nothing` when
-the answer is not JSON or has no `tag_name` of the form `vX.Y.Z`. `page` is
-the `html_url` of the release when it points into the repository, otherwise
-the tag page built from the tag (no link from the answer leaves the
-repository).
+`(version, tag, page)` from the address the latest-release page redirected
+to, or `nothing` when it is not a release tag page of the repository of the
+form `.../releases/tag/vX.Y.Z` (a repository without a release ends on
+`.../releases`, a proxy or login page somewhere else).
 """
-function _webui_update_parse_release(body::AbstractString)
-  data = try
-    _parse_service_json(body)
-  catch err
-    # expected failure: an answer that is not JSON (a proxy or captive
-    # portal page, a cut-off body); the parser reports it with error(),
-    # a bad number with ArgumentError
-    (err isa ErrorException || err isa ArgumentError) || rethrow()
-    return nothing
-  end
-  data isa AbstractDict || return nothing
-  tag = get(data, "tag_name", nothing)
-  tag isa AbstractString || return nothing
-  m = match(r"^v(\d+\.\d+\.\d+)$", tag)
+function _webui_update_release_from_url(url::AbstractString)
+  m = match(r"^https://github\.com/Welthulk/Sparlectra\.jl/releases/tag/(v(\d+\.\d+\.\d+))$", url)
   m === nothing && return nothing
-  page = get(data, "html_url", "")
-  repo_prefix = "https://github.com/Welthulk/Sparlectra.jl/"
-  page = page isa AbstractString && startswith(page, repo_prefix) ? String(page) : string(WEBUI_UPDATE_RELEASES_PAGE, "/tag/", tag)
-  return (version = VersionNumber(m.captures[1]), tag = String(tag), page = page)
+  return (version = VersionNumber(m.captures[2]), tag = String(m.captures[1]), page = String(url))
 end
 
 """
     webui_check_for_update(; fetch, current, url, timeout) -> NamedTuple
 
-Ask the GitHub releases API for the latest release and compare it with the
+Ask GitHub for the latest release (the redirect of its latest-release page,
+not the REST API) and compare it with the
 running version (`current`, default the Sparlectra version). Called by
 the "Check for updates" button and by `webui_console_update_offer`
 at an interactive start. Returns `state` (`:up_to_date`, `:newer` or
@@ -103,24 +92,20 @@ at an interactive start. Returns `state` (`:up_to_date`, `:newer` or
 `:rate_limit`, `:http`, `:malformed`) with a `message` naming it. Never
 throws for a network or answer problem.
 """
-function webui_check_for_update(; fetch = _WEBUI_UPDATE_FETCH[], current::VersionNumber = version(), url::AbstractString = WEBUI_UPDATE_RELEASES_API, timeout::Real = WEBUI_UPDATE_TIMEOUT_SECONDS)
+function webui_check_for_update(; fetch = _WEBUI_UPDATE_FETCH[], current::VersionNumber = version(), url::AbstractString = WEBUI_UPDATE_LATEST_URL, timeout::Real = WEBUI_UPDATE_TIMEOUT_SECONDS)
   failed(failure, message) = (state = :failed, current = current, latest = nothing, tag = "", release_url = WEBUI_UPDATE_RELEASES_PAGE, failure = failure, message = String(message))
   answer = fetch(url; timeout = timeout)
   if answer.status == 0
     answer.timed_out && return failed(:timeout, "no answer from GitHub within $(round(Int, timeout)) s (timeout)")
-    return failed(:network, "no network connection to api.github.com ($(answer.error))")
+    return failed(:network, "no network connection to github.com ($(answer.error))")
   end
-  # GitHub answers an exhausted anonymous quota with 403 and
-  # x-ratelimit-remaining 0, a secondary limit with 429
-  if answer.status == 429 || (answer.status == 403 && get(answer.headers, "x-ratelimit-remaining", "") == "0")
-    reset = tryparse(Int, get(answer.headers, "x-ratelimit-reset", ""))
-    wait_text = reset === nothing ? "" : ", try again in $(max(1, cld(reset - round(Int, time()), 60))) min"
-    return failed(:rate_limit, "the GitHub API rate limit is reached$(wait_text)")
-  end
+  # the release pages carry no API quota; a 429 is GitHub (or a proxy)
+  # asking to slow down, and it says so
+  answer.status == 429 && return failed(:rate_limit, "GitHub answered HTTP 429 (too many requests), try again later")
   answer.status == 404 && return failed(:http, "GitHub lists no release for Welthulk/Sparlectra.jl (HTTP 404)")
   answer.status == 200 || return failed(:http, "GitHub answered HTTP $(answer.status)")
-  release = _webui_update_parse_release(answer.body)
-  release === nothing && return failed(:malformed, "the answer of GitHub carries no release tag of the form vX.Y.Z")
+  release = _webui_update_release_from_url(answer.url)
+  release === nothing && return failed(:malformed, "GitHub did not lead to a release tag of the form vX.Y.Z (ended at $(isempty(answer.url) ? "no address" : answer.url))")
   state = release.version > current ? :newer : :up_to_date
   return (state = state, current = current, latest = release.version, tag = release.tag, release_url = release.page, failure = :none, message = "")
 end
@@ -184,6 +169,45 @@ webui_update_dir(operation_log::AbstractString)::String = joinpath(dirname(webui
 
 webui_update_log_path(operation_log::AbstractString)::String = joinpath(webui_update_dir(operation_log), "update.log")
 
+# the result of the last update, written by the updater after the install
+# script ended: "ok" or "failed", the tag, the reason, the time
+webui_update_status_path(operation_log::AbstractString)::String = joinpath(webui_update_dir(operation_log), "last_update.txt")
+
+"""
+    webui_last_update(operation_log) -> Union{Nothing,NamedTuple}
+
+The result of the last update the Web UI started, read from the file the
+updater writes when the install script has ended: `(ok, tag, reason,
+finished, log)`, or `nothing` when no update ran yet. A failed update stays
+visible (Info panel, start in a terminal) until a later update succeeds.
+"""
+function webui_last_update(operation_log::AbstractString)
+  path = webui_update_status_path(operation_log)
+  isfile(path) || return nothing
+  # strip: the Windows updater writes CRLF and the reason after a blank
+  lines = [String(strip(l)) for l in readlines(path)]
+  isempty(lines) && return nothing
+  line(i) = i <= length(lines) ? lines[i] : ""
+  return (ok = line(1) == "ok", tag = line(2), reason = line(3), finished = line(4), log = webui_update_log_path(operation_log))
+end
+
+# the Info panel line of a failed last update (nothing after a good one)
+function _webui_info_last_update(operation_log::AbstractString)::String
+  text = _webui_last_update_failure_text(operation_log)
+  isempty(text) && return ""
+  return "<div class=\"alert alert-error update-last-failed\" role=\"alert\">$(_webui_escape(text))</div>"
+end
+
+# one line on a failed last update, "" otherwise
+function _webui_last_update_failure_text(operation_log::AbstractString)::String
+  last = webui_last_update(operation_log)
+  (last === nothing || last.ok) && return ""
+  to = isempty(last.tag) ? "" : " to $(last.tag)"
+  at = isempty(last.finished) ? "" : " ($(last.finished))"
+  reason = isempty(last.reason) ? "no reason recorded" : last.reason
+  return "The last update$(to) failed$(at): $(reason). This copy was not changed by it. Log: $(last.log)"
+end
+
 """
     _webui_update_answers(; flavor_kind, sysimage_path, app_root, home, windows) -> NamedTuple
 
@@ -241,7 +265,9 @@ Nothing is started: `command` is the detached command
 request in its name, one file per update.
 
 The updater waits until the process `pid` (this Web UI) has ended, runs the
-copy of the install script with `SPARLECTRA_UPDATE=1`, the sysimage and
+copy of the install script with `SPARLECTRA_UPDATE=1`, the release `tag`
+of the check as `SPARLECTRA_UPDATE_TAG` (the install script then downloads
+that tag and does not ask GitHub again), the sysimage and
 shortcut answers of `answers`, `SPARLECTRA_INSTALL_DIR` (the folder that
 holds `Sparlectra`) and `SPARLECTRA_START_WEBUI=0`, and then starts the
 Web UI through `start_webui.sh` / `start_webui.bat` of the copy. The install
@@ -262,6 +288,9 @@ function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::Ve
   update_dir = webui_update_dir(operation_log)
   mkpath(update_dir)
   log = joinpath(update_dir, "update.log")
+  status = webui_update_status_path(operation_log)
+  # a result from an earlier update must not stand for this one
+  rm(status; force = true)
   installer = joinpath(update_dir, _webui_update_installer_name(; windows))
   cp(joinpath(dir, "tools", _webui_update_installer_name(; windows)), installer; force = true)
   requested = Dates.now()
@@ -313,14 +342,37 @@ function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::Ve
       "set \"SPARLECTRA_SYSIMAGE_CHECKED=\"",
       "set \"SPARLECTRA_INSTALL_DIR=$(q(install_dir))\"",
       "set \"SPARLECTRA_UPDATE=1\"",
+      "set \"SPARLECTRA_UPDATE_TAG=$(q(tag))\"",
       "set \"SPARLECTRA_BUILD_SYSIMAGE=$(b(answers.build_sysimage))\"",
       "set \"SPARLECTRA_CREATE_SHORTCUT=$(b(answers.create_shortcut))\"",
       "set \"SPARLECTRA_START_WEBUI=0\"",
       "echo Running the install script, this takes a few minutes. Its output goes to \"%LOG%\" ...",
       "call \"$(q(installer))\" >>\"%LOG%\" 2>&1 <nul",
+      "set \"RC=%ERRORLEVEL%\"",
       "type \"%LOG%\"",
+      "if not \"%RC%\"==\"0\" goto update_failed",
+      ">\"$(q(status))\" echo ok",
+      ">>\"$(q(status))\" echo $(q(tag))",
+      ">>\"$(q(status))\" echo.",
+      ">>\"$(q(status))\" echo %DATE% %TIME%",
+      "echo Update to $(q(tag)) finished.",
+      "goto update_done",
+      ":update_failed",
+      "rem the reason the install script printed, else its exit code; the reason keeps its leading blank",
+      "set \"REASON= the install script ended with exit code %RC%\"",
+      "for /f \"tokens=1,* delims=:\" %%A in ('findstr /b /c:\"Update FAILED:\" \"%LOG%\"') do set \"REASON=%%B\"",
+      ">\"$(q(status))\" echo failed",
+      ">>\"$(q(status))\" echo $(q(tag))",
+      ">>\"$(q(status))\" echo%REASON%",
+      ">>\"$(q(status))\" echo %DATE% %TIME%",
+      "echo.",
+      "echo Update FAILED:%REASON%",
+      "echo The previous version starts again. Log: \"%LOG%\"",
+      "pause",
+      ":update_done",
       "set \"SPARLECTRA_INSTALL_DIR=\"",
       "set \"SPARLECTRA_UPDATE=\"",
+      "set \"SPARLECTRA_UPDATE_TAG=\"",
       "set \"SPARLECTRA_BUILD_SYSIMAGE=\"",
       "set \"SPARLECTRA_CREATE_SHORTCUT=\"",
       "set \"SPARLECTRA_START_WEBUI=\"",
@@ -360,13 +412,24 @@ function webui_update_plan(; root::AbstractString = SPARLECTRA_ROOT, current::Ve
     unset SPARLECTRA_SYSIMAGE_CHECKED
     SPARLECTRA_INSTALL_DIR=$(qs(install_dir))
     SPARLECTRA_UPDATE=1
+    SPARLECTRA_UPDATE_TAG=$(qs(tag))
     SPARLECTRA_BUILD_SYSIMAGE=$(b(answers.build_sysimage))
     SPARLECTRA_CREATE_SHORTCUT=$(b(answers.create_shortcut))
     SPARLECTRA_START_WEBUI=0
-    export SPARLECTRA_INSTALL_DIR SPARLECTRA_UPDATE SPARLECTRA_BUILD_SYSIMAGE SPARLECTRA_CREATE_SHORTCUT SPARLECTRA_START_WEBUI
+    export SPARLECTRA_INSTALL_DIR SPARLECTRA_UPDATE SPARLECTRA_UPDATE_TAG SPARLECTRA_BUILD_SYSIMAGE SPARLECTRA_CREATE_SHORTCUT SPARLECTRA_START_WEBUI
     sh $(qs(installer))
-    echo "Install script finished with exit code \$?."
-    unset SPARLECTRA_INSTALL_DIR SPARLECTRA_UPDATE SPARLECTRA_BUILD_SYSIMAGE SPARLECTRA_CREATE_SHORTCUT SPARLECTRA_START_WEBUI
+    rc=\$?
+    if [ \$rc -eq 0 ]; then
+      printf 'ok\\n%s\\n\\n%s\\n' $(qs(tag)) "\$(date '+%Y-%m-%d %H:%M')" > $(qs(status))
+      echo "Update to $(tag) finished."
+    else
+      # the reason the install script printed, else its exit code
+      reason=\$(grep '^Update FAILED: ' $(qs(log)) | tail -n 1 | sed 's/^Update FAILED: //')
+      [ -n "\$reason" ] || reason="the install script ended with exit code \$rc"
+      printf 'failed\\n%s\\n%s\\n%s\\n' $(qs(tag)) "\$reason" "\$(date '+%Y-%m-%d %H:%M')" > $(qs(status))
+      echo "Update FAILED: \$reason. The previous version starts again."
+    fi
+    unset SPARLECTRA_INSTALL_DIR SPARLECTRA_UPDATE SPARLECTRA_UPDATE_TAG SPARLECTRA_BUILD_SYSIMAGE SPARLECTRA_CREATE_SHORTCUT SPARLECTRA_START_WEBUI
     echo "Starting the Web UI: $(joinpath(dir, "start_webui.sh"))"
     exec sh $(qs(joinpath(dir, "start_webui.sh")))
     """
@@ -444,6 +507,10 @@ Never throws for a network problem. `fetch`, `ask`, `port_busy`,
 `sysimage_busy` and `spawn` are replaced in tests.
 """
 function webui_console_update_offer(; args::AbstractVector{<:AbstractString} = ARGS, env::AbstractDict = ENV, interactive::Bool = isa(stdin, Base.TTY), fetch = _WEBUI_UPDATE_FETCH[], current::VersionNumber = version(), timeout::Real = WEBUI_CONSOLE_UPDATE_TIMEOUT_SECONDS, layout::Union{Nothing,Symbol} = nothing, root::AbstractString = SPARLECTRA_ROOT, ask = _webui_console_read_answer, port_busy = () -> _webui_port_holds_sparlectra("127.0.0.1", 8080), sysimage_busy = () -> sysimage_build_active(), operation_log::AbstractString = default_webui_operation_log_path(), answers = nothing, spawn = nothing, io::IO = stdout, windows::Bool = Sys.iswindows())::Symbol
+  # a failed last update is named at every start, also when the check is off
+  # (the restart after an update switches it off)
+  failed_update = _webui_last_update_failure_text(operation_log)
+  isempty(failed_update) || println(io, failed_update)
   opted_out = WEBUI_CONSOLE_UPDATE_FLAG in args || get(env, "SPARLECTRA_UPDATE_CHECK", "1") == "0" || lowercase(get(env, "JULIA_PKG_OFFLINE", "")) == "true"
   opted_out && return :disabled
   # piped input, CI or a service: no request and no question, so nothing is
@@ -517,6 +584,8 @@ function render_webui_update_check(check; layout::Symbol, root::AbstractString =
   e = _webui_escape
   dir = rstrip(String(root), ['/', '\\'])
   parts = String[]
+  failed_update = _webui_last_update_failure_text(operation_log)
+  isempty(failed_update) || push!(parts, "<div class=\"alert alert-error update-last-failed\" role=\"alert\">$(e(failed_update))</div>")
   if check.state === :failed
     push!(parts, "<div class=\"alert alert-error update-check-result\" role=\"alert\"><span>Update check failed: $(e(check.message)). Running $(e(string(check.current))). <a href=\"$(e(WEBUI_UPDATE_RELEASES_PAGE))\" target=\"_blank\" rel=\"noopener noreferrer\">Releases on GitHub</a></span></div>")
   elseif check.state === :up_to_date
@@ -525,7 +594,7 @@ function render_webui_update_check(check; layout::Symbol, root::AbstractString =
     push!(parts, "<div class=\"alert alert-info update-check-result\" role=\"status\"><strong>$(e(string(check.latest))) available</strong> (running $(e(string(check.current)))). <a href=\"$(e(check.release_url))\" target=\"_blank\" rel=\"noopener noreferrer\">Release notes</a></div>")
     push!(parts, _webui_update_install_section(check; layout, dir, operation_log, active_job, sysimage_busy, started_by_script, answers, windows))
   end
-  push!(parts, "<p class=\"field-help\">The check asks the GitHub releases API once per click, and start_webui.jl asks once per start from a terminal (off with --no-update-check or SPARLECTRA_UPDATE_CHECK=0); nothing about this installation is sent.</p>")
+  push!(parts, "<p class=\"field-help\">The check asks GitHub for its latest-release page once per click, and start_webui.jl asks once per start from a terminal (off with --no-update-check or SPARLECTRA_UPDATE_CHECK=0); nothing about this installation is sent.</p>")
   return _webui_layout("Check for updates", "<section class=\"panel update-check\">$(join(parts, ""))</section>"; show_back = true)
 end
 
