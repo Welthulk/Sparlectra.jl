@@ -100,18 +100,6 @@ function run_dc_powerflow_tests()
     @test isapprox(only(v for (k, v) in pf if k[1] in (3, 4) || k[2] in (3, 4)), 8.0; atol = 1e-6)
   end)() end
 
-  @testset "Config validation: power_flow.solver=dc / power_flow.dc.*" begin (function ()
-    default_cfg = Sparlectra.SparlectraConfig()
-    @test default_cfg.powerflow.dc.angle_reference_deg == 0.0
-    @test default_cfg.powerflow.dc.ignore_out_of_service === true
-
-    cfg_dc = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "dc", "dc" => Dict("angle_reference_deg" => 3.5))))
-    @test cfg_dc.powerflow.solver === :dc
-    @test cfg_dc.powerflow.dc.angle_reference_deg == 3.5
-
-    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "not_a_solver")))
-  end)() end
-
   @testset "Controller + DC solver rejection" begin (function ()
     # load_fixture_net: the shipped sp_case14 carries a REAL declared tap
     # controller, so the rejection is tested against the file's own
@@ -146,6 +134,10 @@ function run_dc_powerflow_tests()
     for (b0, br) in zip(report0.branches, reportr.branches)
       @test isapprox(br.p_from_MW, b0.p_from_MW; atol = 1e-9)
     end
+    # a DC run fills the DC status of the net and leaves the AC one empty
+    @test dc_pf_status(net0) !== nothing
+    @test dc_pf_status(net0).solver === :dc
+    @test Sparlectra.rectangular_pf_status(net0) === nothing
   end)() end
 
   @testset "seed_ac_start: DC-seeded AC Newton-Raphson solve" begin (function ()
@@ -162,9 +154,10 @@ function run_dc_powerflow_tests()
     @test dc_pf_status(net).numerical_converged
   end)() end
 
-  @testset "Config validation: power_flow.start_mode.dc_seed_unconditional" begin (function ()
-    default_cfg = Sparlectra.SparlectraConfig()
-    @test default_cfg.powerflow.start_mode.dc_seed_unconditional === false
+  @testset "Config validation: solver=dc, dc.angle_reference_deg, dc_seed_unconditional" begin (function ()
+    cfg_dc = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "dc", "dc" => Dict("angle_reference_deg" => 3.5))))
+    @test cfg_dc.powerflow.solver === :dc
+    @test cfg_dc.powerflow.dc.angle_reference_deg == 3.5
 
     cfg_seed = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("start_mode" => Dict("dc_seed_unconditional" => true))))
     @test cfg_seed.powerflow.start_mode.dc_seed_unconditional === true
@@ -178,12 +171,19 @@ function run_dc_powerflow_tests()
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true), "start_mode" => Dict("dc_seed_unconditional" => true))))
   end)() end
 
-  @testset "DC power-flow status registry is separate from the AC one" begin (function ()
-    net = _dc3_net()
-    rundcpf!(net)
-    @test dc_pf_status(net) !== nothing
-    @test dc_pf_status(net).solver === :dc
-    @test Sparlectra.rectangular_pf_status(net) === nothing
+  @testset "closed busbar couplers are contracted" begin (function ()
+    # the two sections of a CLOSED coupler are one DC node: on sp_case60
+    # they get identical angles by construction (solved apart, they were
+    # 3.1 deg off)
+    rep60 = rundcpf!(load_fixture_net("sp_case60"))
+    va = Dict(row.bus_name => row.va_deg for row in rep60.nodes)
+    @test va["Neubach_110"] == va["Neubach_110b"]
+    # warmup_casePST: the second section hangs on the link alone, so a
+    # missing contraction splits off an island without reference; it
+    # solves, and the lossless injections balance to zero
+    rep_pst = rundcpf!(load_fixture_net("warmup_casePST"))
+    @test rep_pst.metadata.converged
+    @test isapprox(sum(row.p_gen_MW - row.p_load_MW for row in rep_pst.nodes), 0.0; atol = 1e-6)
   end)() end
 
 end

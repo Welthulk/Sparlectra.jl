@@ -182,41 +182,60 @@ Q-limit-switching options do not apply and are ignored, since APSLF always
 starts from its own canonical analytic germ and performs its own internal
 PV/Q-limit handling.
 
-Callers must reject active controllers before calling this function; it does
-not check for them itself. That covers the outer-loop tap/PST controllers and
-the voltage-dependent Q(U)/P(U) controllers, which are not outer-loop: they
-act inside the rectangular Newton step and have no counterpart here.
+No controller is evaluated here: the outer-loop tap/PST controllers are not
+run, and the Q(U)/P(U) controllers and voltage-dependent shunts, which act
+inside the rectangular Newton step, have no counterpart; every unit enters
+with its static set point, with and without closed links. The caller
+(`_execute_sparlectra_powerflow!`) names what is left out in one warning.
 """
 function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)::Tuple{Int,Int}
   solver = _apslf_solver_from_config(pf_cfg)
   include_limits = !pf_cfg.qlimits.ignore_q_limits
 
+  # The merged copy carries the static set points of every unit, as an
+  # unmerged net does: buildPfModel reads the node powers and the Y-bus and
+  # never a Q(U)/P(U) characteristic, on any net. The refusal of
+  # voltage-dependent injections on a merged net that stood here (a391e34f)
+  # outlived the caller's own refusal, which became a warning in 0.40.0, so
+  # a closed coupler turned that warning into an error.
   wnet, reps, has_merges = _merged_pf_net(net)
   refreshBusTypesFromProsumers!(wnet)
-  if has_merges && has_voltage_dependent_control(wnet)
-    error("power_flow.solver=apslf: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling. Disable merges or use a topology without internal isolated buses.")
-  end
   island_report = detect_ac_islands(wnet)
   # same rule as the rectangular entry: one angle reference per synchronous
   # island, rejected early with an actionable message
   _validate_single_reference_per_island!(wnet, island_report)
   multi_island = length(island_report.rows) > 1 && any(row -> row.n_branch > 0, island_report.rows)
 
+  # The solve writes slack P/Q and PV Q onto the merged copy, and the
+  # clamps are recorded there too; all of it goes back split over the
+  # members as in the rectangular entry (_split_merged_bus_powers!, which
+  # rebuilds the Q-limit log of the net from the copy). Before 0.60.0 only
+  # the voltages went back and the solved generation stayed on the copy:
+  # sp_case60 (coupler Neubach_110 to Neubach_110b) reported 0.0 MVAr at
+  # Birkkamp_110, where the same net with the coupler resolved by hand gives
+  # 7.258 MVAr, and the generation of the slack Altau_220 differed by 19.99
+  # (MW or MVAr, the larger of the two). converged = false: APSLF applies no
+  # Q(U)/P(U) characteristic, so a member keeps its schedule instead of the
+  # characteristic at the voltage.
   sync_merges_back! = () -> begin
     for i in eachindex(net.nodeVec)
       src = wnet.nodeVec[reps[i]]
       net.nodeVec[i]._vm_pu = src._vm_pu
       net.nodeVec[i]._va_deg = src._va_deg
     end
+    _split_merged_bus_powers!(net, wnet, reps; converged = false)
     updateShuntPowers!(net = net)
   end
 
-  # a fresh Q-limit log per solve, like the rectangular entry
+  # a fresh Q-limit log per solve, like the rectangular entry; the clamps
+  # are recorded on the solved net (the merged copy, which is a copy of the
+  # net with the log of the last solve)
   resetQLimitLog!(net)
+  has_merges && resetQLimitLog!(wnet)
   snapshotPVQLimits!(net)
   if !multi_island
     iters, status, sol = runpf_external!(wnet, solver; tol = pf_cfg.tol, flatstart = wnet.flatstart, include_limits = include_limits, verbose = verbose)
-    switches = _apslf_record_clamps!(net, sol, iters)
+    switches = _apslf_record_clamps!(wnet, sol, iters)
     diag = _apslf_diagnosis_status(sol, wnet)
     _set_rectangular_pf_status!(net, _apslf_pf_status(status == 0, sol.residual_inf, iters; extra = merge(_apslf_radius_status(sol, wnet), diag, (pv_pq_switching_events = switches,))))
     has_merges && sync_merges_back!()
@@ -266,7 +285,7 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
       # an island net numbers its buses 1..n_island (busIdx_net of its model
       # is island-local): the clamps go to the run's net through row.buses,
       # the radius buses to case numbers through the island's busOrigIdxDict
-      island_switches = _apslf_record_clamps!(net, sol, it; buses = row.buses)
+      island_switches = _apslf_record_clamps!(wnet, sol, it; buses = row.buses)
       total_switches += island_switches
       worst_radius = _apslf_worst_radius(worst_radius, _apslf_radius_status(sol, inet))
       if status != 0

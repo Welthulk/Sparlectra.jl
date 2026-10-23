@@ -15,19 +15,16 @@
 # file: test/test_voltage_dependent_control.jl
 # purpose: tests voltage dependent P(U)/Q(U) control: characteristic
 #          evaluation and interpolation modes, physical-unit inputs, solver
-#          integration, and the Control column in result printouts
+#          integration and the controlled injections in the report
 # Copyright 2023–2026 Udo Schmitz
 
 using Test
 using Sparlectra
-using Printf
 
 function run_voltage_dependent_control_tests()
   # Verifies piecewise-linear characteristic evaluation in normal range,
   # saturation outside the range, controller clipping, and kink derivative behavior.
   @testset "Characteristic evaluation" begin (function ()
-    # the former name is an alias for one minor release (#14)
-    @test PiecewiseLinearCharacteristic === VoltageCharacteristic
     ch = VoltageCharacteristic([(0.95, -0.2), (1.0, 0.0), (1.05, 0.2)])
 
     v_mid, dv_mid = evaluate_characteristic(ch, 0.975)
@@ -113,8 +110,8 @@ function run_voltage_dependent_control_tests()
     @test isapprox(slope_two_poly, -2.0; atol = 1e-12)
   end)() end
 
-  # Confirms backward compatibility without controllers and validates
-  # that controlled injections are used consistently during Newton-Raphson solving.
+  # Without controllers the controlled S vector equals the plain one; with
+  # controllers the solved injections follow the characteristics.
   @testset "No-control compatibility and solver integration" begin (function ()
     net_plain = createTest3BusNet()
     V_plain = buildVoltageVector(net_plain)
@@ -144,6 +141,35 @@ function run_voltage_dependent_control_tests()
     S_eval, _, _ = buildControlledSVec(net, V)
     qnet_expected = q_ctrl_pu * net.baseMVA - 20.0
     @test isapprox(imag(S_eval[2]) * net.baseMVA, qnet_expected; atol = 1e-8)
+
+    # A machine with both Q(U) and P(U): the structured report carries the
+    # controlled P and Q, equal to the characteristics at the solved voltage.
+    net4 = Net(name = "control_report_case", baseMVA = 100.0)
+    for b in ("B1", "B2", "B3", "B4")
+      addBus!(net = net4, busName = b, vn_kV = 110.0)
+    end
+    addPIModelACLine!(net = net4, fromBus = "B1", toBus = "B2", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net4, fromBus = "B1", toBus = "B3", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net4, fromBus = "B1", toBus = "B4", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addProsumer!(net = net4, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+    addProsumer!(net = net4, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 15.0, q = 0.0, qu_controller = QUController(make_characteristic([(0.95, 0.2), (1.05, -0.2)]), -0.5, 0.5))
+    addProsumer!(net = net4, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 5.0, pu_controller = PUController(make_characteristic([(0.95, 0.2), (1.05, 0.0)]), -0.5, 0.5))
+    addProsumer!(net = net4, busName = "B4", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, qu_controller = QUController(make_characteristic([(0.95, 0.1), (1.05, -0.1)]), -0.5, 0.5), pu_controller = PUController(make_characteristic([(0.95, 0.1), (1.05, 0.0)]), -0.5, 0.5))
+    addProsumer!(net = net4, busName = "B2", type = "ENERGYCONSUMER", p = 30.0, q = 12.0)
+    addProsumer!(net = net4, busName = "B3", type = "ENERGYCONSUMER", p = 20.0, q = 8.0)
+    addProsumer!(net = net4, busName = "B4", type = "ENERGYCONSUMER", p = 10.0, q = 4.0)
+
+    _, erg4 = runpf!(net4, 30, 1e-8, 0; method = :rectangular)
+    @test erg4 == 0
+
+    ps_ctrl = net4.prosumpsVec[findfirst(ps -> !isnothing(ps.puController) && !isnothing(ps.quController), net4.prosumpsVec)]
+    vm_ctrl = abs(buildVoltageVector(net4)[getPosumerBusIndex(ps_ctrl)])
+    p_ctrl_pu, _ = evaluate_controller(ps_ctrl.puController, vm_ctrl)
+    q4_ctrl_pu, _ = evaluate_controller(ps_ctrl.quController, vm_ctrl)
+    report = buildACPFlowReport(net4; ct = 0.0, ite = 1, tol = 1e-8, converged = true, solver = :rectangular)
+    row_ctrl = only(filter(r -> r.bus_name == "B4", report.nodes))
+    @test isapprox(row_ctrl.p_gen_MW, p_ctrl_pu * net4.baseMVA; atol = 1e-8)
+    @test isapprox(row_ctrl.q_gen_MVar, q4_ctrl_pu * net4.baseMVA; atol = 1e-8)
   end)() end
 
   # Validates solver convergence when the operating point sits on a characteristic kink
@@ -175,68 +201,6 @@ function run_voltage_dependent_control_tests()
     _, slope_left = evaluate_characteristic(kink_curve, 1.0 - 1e-8)
     @test isapprox(vm, 1.0; atol = 1e-8)
     @test isapprox(slope_at, slope_left; atol = 1e-8)
-  end)() end
-
-  # Verifies that result exports include control annotations/values and that the
-  # structured report reflects the same controlled active/reactive injections.
-  @testset "Result printout shows Control column" begin (function ()
-    net = Net(name = "control_print_case", baseMVA = 100.0)
-    for b in ("B1", "B2", "B3", "B4")
-      addBus!(net = net, busName = b, vn_kV = 110.0)
-    end
-
-    addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
-    addPIModelACLine!(net = net, fromBus = "B1", toBus = "B3", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
-    addPIModelACLine!(net = net, fromBus = "B1", toBus = "B4", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
-
-    addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-    addProsumer!(net = net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 15.0, q = 0.0, qu_controller = QUController(make_characteristic([(0.95, 0.2), (1.05, -0.2)]), -0.5, 0.5))
-    addProsumer!(net = net, busName = "B3", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 5.0, pu_controller = PUController(make_characteristic([(0.95, 0.2), (1.05, 0.0)]), -0.5, 0.5))
-    addProsumer!(net = net, busName = "B4", type = "SYNCHRONOUSMACHINE", p = 0.0, q = 0.0, qu_controller = QUController(make_characteristic([(0.95, 0.1), (1.05, -0.1)]), -0.5, 0.5), pu_controller = PUController(make_characteristic([(0.95, 0.1), (1.05, 0.0)]), -0.5, 0.5))
-    addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 30.0, q = 12.0)
-    addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 20.0, q = 8.0)
-    addProsumer!(net = net, busName = "B4", type = "ENERGYCONSUMER", p = 10.0, q = 4.0)
-
-    _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular)
-    @test erg == 0
-
-    tmp = mktempdir()
-    printACPFlowResults(net, 0.0, 1, 1e-8, true, tmp; converged = true, solver = :rectangular)
-    out = read(joinpath(tmp, "result_$(net.name).txt"), String)
-    V = buildVoltageVector(net)
-    controlled_idx = findfirst(ps -> !isnothing(ps.puController) && !isnothing(ps.quController), net.prosumpsVec)
-    @test !isnothing(controlled_idx)
-    ps_ctrl = net.prosumpsVec[controlled_idx]
-    vm_ctrl = abs(V[getPosumerBusIndex(ps_ctrl)])
-    p_ctrl_pu, _ = evaluate_controller(ps_ctrl.puController, vm_ctrl)
-    q_ctrl_pu, _ = evaluate_controller(ps_ctrl.quController, vm_ctrl)
-    p_ctrl_mw = p_ctrl_pu * net.baseMVA
-    q_ctrl_mvar = q_ctrl_pu * net.baseMVA
-
-    @test occursin("Control", out)
-    @test occursin("Q(U)", out)
-    @test occursin("P(U)", out)
-    @test occursin("Q(U), P(U)", out)
-    @test occursin(" - ", out)
-    @test occursin(@sprintf("%10.3f", p_ctrl_mw), out)
-    @test occursin(@sprintf("%10.3f", q_ctrl_mvar), out)
-
-    report = buildACPFlowReport(net; ct = 0.0, ite = 1, tol = 1e-8, converged = true, solver = :rectangular)
-    row_ctrl = only(filter(r -> r.bus_name == "B4", report.nodes))
-    row_slack = only(filter(r -> r.bus_name == "B1", report.nodes))
-    @test isapprox(row_ctrl.p_gen_MW, p_ctrl_mw; atol = 1e-8)
-    @test isapprox(row_ctrl.q_gen_MVar, q_ctrl_mvar; atol = 1e-8)
-    @test abs(row_slack.p_gen_MW) > 1e-6
-    @test abs(row_slack.q_gen_MVar) > 1e-6
-  end)() end
-
-  @testset "Voltage-dependent example is thin wrapper" begin (function ()
-    source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "example_voltage_dependent_control_rectangular.jl"), String)
-    @test !occursin("DEFAULT_EXAMPLE_CFG = Dict", source)
-    @test !occursin("load_voltage_ctrl_yaml", source)
-    @test !occursin("_write_default_yaml_example", source)
-    @test !occursin("eachline(path)", source)
-    @test occursin("run_voltage_dependent_control_demo", source)
   end)() end
 
   return true

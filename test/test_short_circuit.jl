@@ -13,15 +13,13 @@
 # limitations under the License.
 #
 # file: test/test_short_circuit.jl
-# purpose: short-circuit verification — hand-derived IEC 60909-0 reference cases
-#          (analytic derivations in the comments, computed independently of
-#          the implementation), the safety-flag contract (default + warning
-#          + result flag), asynchronous-machine lower-bound flagging, and
+# purpose: short-circuit verification beyond the hand values of
+#          fast/ref_hand_calculations.jl: bus selection and argument checks,
+#          the safety-flag contract (default, warning, result flag),
+#          asynchronous-machine lower-bound flagging, converter sources,
 #          short_circuit.c_factor and converter_current_factor config
 #          coverage, and the contraction of closed-link groups. This file
-#          needs no CGMES
-#          fixtures; the plausibility sweep on a real delivery returns with
-#          self-built CGMES deliveries in test_cgmes_importer.jl.
+#          needs no CGMES fixtures.
 
 using Test
 using Sparlectra
@@ -42,20 +40,13 @@ _sc_pec(; bus, maxIFault = nothing, ratedS = nothing, ratedU = nothing, name = "
 
 _sc_data(; enis = NamedTuple[], machines = NamedTuple[], asms = NamedTuple[], pecs = NamedTuple[]) = _SC(enis, machines, NamedTuple[], NamedTuple[], NamedTuple[], asms, pecs)
 
-# Single 110 kV bus fed by one network feeder.
-function _sc_single_bus_net()
-  net = Net(name = "sc_single", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  return net
-end
-
 # 110 kV feeder bus with one line to a second 110 kV bus.
 function _sc_two_bus_net(; r_pu = 0.05, x_pu = 0.5)
   net = Net(name = "sc_two_bus", baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
   addBus!(net = net, busName = "B2", vn_kV = 110.0)
   # b_pu deliberately non-zero: IEC drops line charging, so it must not
-  # change the result (asserted below).
+  # change the result (asserted in fast/ref_hand_calculations.jl).
   addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = r_pu, x_pu = x_pu, b_pu = 0.2, status = 1)
   return net
 end
@@ -93,61 +84,20 @@ end
 
 function run_short_circuit_tests()
   @testset "Short circuit (IEC 60909-0)" begin (function ()
-    @testset "feeder reproduces its declared current at the connection point" begin (function ()
-      # Hand derivation: Z_Q = c·Un/(√3·Ik_declared); at the feeder bus the
-      # whole short-circuit impedance IS Z_Q, so Ik'' = c·Un/(√3·Z_Q)
-      # = Ik_declared exactly — the c factor cancels. This is the IEC
-      # semantics of the declared feeder current and independent of every
-      # per-unit conversion in the implementation.
-      net = _sc_single_bus_net()
-      sc = _sc_data(enis = [_sc_feeder(bus = "B1", ikmax_A = 10_000.0, ikmin_A = 8_000.0, rx_max = 0.1, rx_min = 0.1)])
-      rmax = runShortCircuit!(net, sc; case = :max)
-      @test length(rmax.rows) == 1
-      row = rmax.rows[1]
-      @test row.status === :ok
-      @test row.contains_defaulted_data == false
-      @test isapprox(row.ik_kA, 10.0; rtol = 1e-9)
-      # Sk'' = √3·Un·Ik'' = √3·110·10 = 1905.2558... MVA (hand value)
-      @test isapprox(row.sk_MVA, sqrt(3.0) * 110.0 * 10.0; rtol = 1e-9)
-      # R/X = 0.1 → κ_b = 1.02 + 0.98·e^(−0.3) = 1.746002…;
-      # 1.15·κ_b = 2.0079… → HV cap 2.0 applies; i_p = 2.0·√2·10 = 28.284… kA
-      @test isapprox(row.rx_ratio, 0.1; rtol = 1e-9)
-      @test isapprox(row.kappa, 2.0; rtol = 1e-12)
-      @test isapprox(row.ip_kA, 2.0 * sqrt(2.0) * 10.0; rtol = 1e-9)
-      rmin = runShortCircuit!(net, sc; case = :min)
-      @test isapprox(rmin.rows[1].ik_kA, 8.0; rtol = 1e-9)
-      @test rmin.rows[1].c == 1.00   # IEC Table 1, HV c_min
-      @test rmax.rows[1].c == 1.10   # IEC Table 1, HV c_max
-    end)() end
-
-    @testset "line impedance adds per hand-derived series model" begin (function ()
-      # Hand derivation on 100 MVA / 110 kV (Z_base = 121 Ω):
-      #   Z_Q  = 1.10·110000/(√3·10000) Ω, split X_Q = Z_Q/√(1+0.1²),
-      #          R_Q = 0.1·X_Q  (independent arithmetic below)
-      #   Z_L  = (0.05 + j0.5)·121 Ω
-      #   Zk(B2) = Z_Q + Z_L, Ik'' = 1.10·110/(√3·|Zk|) kA.
-      # Line charging (b_pu = 0.2) must NOT enter — IEC drops shunts.
+    @testset "bus selection, argument checks and system frequency" begin (function ()
+      # the hand values of this two-bus net are in fast/ref_hand_calculations.jl;
+      # here only what the reference does not cover
       net = _sc_two_bus_net()
       sc = _sc_data(enis = [_sc_feeder(bus = "B1", ikmax_A = 10_000.0, rx_max = 0.1)])
       r = runShortCircuit!(net, sc; case = :max)
-      zq = 1.10 * 110_000.0 / (sqrt(3.0) * 10_000.0)
-      xq = zq / sqrt(1.0 + 0.1^2)
-      rq = 0.1 * xq
-      zl = (0.05 + 0.5im) * 121.0
-      zk = (rq + im * xq) + zl
-      ik_expected = 1.10 * 110.0 / (sqrt(3.0) * abs(zk))
       row2 = only(row for row in r.rows if row.bus == "B2")
       @test row2.status === :ok
-      @test isapprox(row2.zk_ohm, abs(zk); rtol = 1e-9)
-      @test isapprox(row2.ik_kA, ik_expected; rtol = 1e-9)
-      @test isapprox(row2.rx_ratio, real(zk) / imag(zk); rtol = 1e-9)
-      # buses list variant selects a single bus
+      # buses list variant selects a single bus and gives the all-bus value
       rb = runShortCircuit!(net, sc; buses = ["B2"], case = :max)
       @test length(rb.rows) == 1 && rb.rows[1].bus == "B2"
-      @test isapprox(rb.rows[1].ik_kA, ik_expected; rtol = 1e-12)
+      @test isapprox(rb.rows[1].ik_kA, row2.ik_kA; rtol = 1e-12)
       @test_throws ArgumentError runShortCircuit!(net, sc; buses = ["NOPE"], case = :max)
       @test_throws ArgumentError runShortCircuit!(net, sc; case = :typical)
-
       # System frequency: Ik'' uses R and X as given (X already at the network
       # frequency), drops the line capacitance, and kappa by method b,
       # 1.02 + 0.98·e^(-3R/X), contains no f. A line from per-km capacitance
@@ -165,29 +115,6 @@ function run_short_circuit_tests()
       @test [row.ik_kA for row in r60.rows] == [row.ik_kA for row in r50.rows]
       @test [row.kappa for row in r60.rows] == [row.kappa for row in r50.rows]
       @test [row.ip_kA for row in r60.rows] == [row.ip_kA for row in r50.rows]
-    end)() end
-
-    @testset "synchronous machine per hand-derived x''d conversion" begin (function ()
-      # Hand derivation (10.5 kV machine bus, Sbase 100 MVA):
-      #   x''d = 0.15 pu on 50 MVA / 10.5 kV → x_net = 0.15·(100/50)·(10.5/10.5)² = 0.3 pu
-      #   R_Gf = 0.07·x  (HV machine < 100 MVA, IEC 60909-0 §6.6.3)
-      #   Z_base = 10.5²/100 Ω; Ik'' = 1.10·10.5/(√3·|Z|·Z_base) — independent below.
-      net = Net(name = "sc_machine", baseMVA = 100.0)
-      addBus!(net = net, busName = "M1", vn_kV = 10.5)
-      sc = _sc_data(machines = [_sc_machine(bus = "M1", xdpp = 0.15, ratedS = 50.0, ratedU = 10.5)])
-      r = runShortCircuit!(net, sc; case = :max)
-      x_pu = 0.15 * (100.0 / 50.0)
-      z_pu = 0.07 * x_pu + im * x_pu
-      z_ohm = abs(z_pu) * (10.5^2 / 100.0)
-      ik_expected = 1.10 * 10.5 / (sqrt(3.0) * z_ohm)
-      row = r.rows[1]
-      @test row.status === :ok
-      @test row.contains_defaulted_data == false
-      @test isapprox(row.ik_kA, ik_expected; rtol = 1e-9)
-      # scalar c-factor override replaces the table linearly
-      r2 = runShortCircuit!(net, sc; case = :max, c_factor = 1.0)
-      @test isapprox(r2.rows[1].ik_kA, ik_expected / 1.10; rtol = 1e-9)
-      @test_throws ArgumentError runShortCircuit!(net, sc; c_factor = 1.4)
     end)() end
 
     @testset "safety-flag contract: default + warning + result flag" begin (function ()
@@ -294,27 +221,11 @@ function run_short_circuit_tests()
       @test SparlectraApp._sc_source_data_state(_sc_data(machines = [sized((ratedS_MVA = 141421.2, converter_unit = "WindGeneratingUnit"))])).total == 0
     end)() end
 
-    @testset "asynchronous machine per hand-derived IEC §6.7 motor impedance" begin (function ()
-      # Hand derivation (10 kV motor bus, Sbase 100 MVA):
-      #   Z_M = (1/ilr)·U_rM²/S_rM = (1/5)·10²/5 = 4 Ω, R/X = 0.1
-      #   → X = 4/√1.01, R = 0.1·X; Ik'' = 1.10·10/(√3·|Z_M|) at the bus.
+    @testset "asynchronous machine: default R/X, missing data, minimum case" begin (function ()
+      # the hand motor impedance Z_M and S from P/(eta cos phi) are in
+      # fast/ref_hand_calculations.jl
       net = Net(name = "sc_motor", baseMVA = 100.0)
       addBus!(net = net, busName = "M1", vn_kV = 10.0)
-      sc = _sc_data(asms = [_sc_asm(bus = "M1", ilr = 5.0, rx = 0.1, ratedS = 5.0, ratedU = 10.0)])
-      r = runShortCircuit!(net, sc; case = :max)
-      row = r.rows[1]
-      @test row.status === :ok
-      @test row.contains_defaulted_data == false
-      @test isapprox(row.zk_ohm, 4.0; rtol = 1e-9)
-      @test isapprox(row.ik_kA, 1.10 * 10.0 / (sqrt(3.0) * 4.0); rtol = 1e-9)
-      @test isapprox(row.rx_ratio, 0.1; rtol = 1e-9)
-
-      # S_rM via mechanical power: P_rM/(η·cosφ) = 3.6/(0.9·0.8) = 5 MVA —
-      # must reproduce the ratedS path exactly.
-      sc_p = _sc_data(asms = [_sc_asm(bus = "M1", ilr = 5.0, rx = 0.1, ratedU = 10.0, p_mech = 3.6, efficiency = 90.0, cosphi = 0.8)])
-      rp = runShortCircuit!(net, sc_p; case = :max)
-      @test isapprox(rp.rows[1].ik_kA, row.ik_kA; rtol = 1e-12)
-      @test rp.rows[1].contains_defaulted_data == false
 
       # Missing locked-rotor R/X: §6.7.2 default (0.10 — MV, ≥ 1 MW per pole
       # pair) is substituted AND flagged; the motor still contributes.
@@ -524,39 +435,20 @@ function run_short_circuit_tests()
           @test r["C"].ik_kA == r["B"].ik_kA
           @test r["C"].island == r["B"].island
           @test isfinite(r["C"].ik_kA)
-        end
-      end
-
-      @testset "source on a switch-only bus feeds its neighbour (hand values, ring)" begin
-        # Hand derivation on 110 kV (Z_base = 121 Ω), c = 1.10 (max) / 1.00 (min):
-        #   Z_Q = c·Un/(√3·Ik_declared), X_Q = Z_Q/√(1+0.1²), R_Q = 0.1·X_Q
-        #   Z_L = (0.01 + j0.1)·121 Ω per line
-        #   without source at C: Z_B = Z_QA + Z_L∥(2·Z_L) = Z_QA + (2/3)·Z_L
-        #   with source at C:    Z_B' = Z_QC ∥ Z_B (C and B are one node)
-        #   Ik'' = c·Un/(√3·|Z|)
-        # Every impedance has R/X = 0.1, so the two shares are in phase and
-        # the feeder at C adds exactly its declared current (5 kA, 4 kA min).
-        zq(c, ik_A) = (z = c * 110_000.0 / (sqrt(3.0) * ik_A); x = z / sqrt(1.0 + 0.1^2); 0.1 * x + im * x)
-        zl = (0.01 + 0.1im) * 121.0
-        net = link_net(true)
-        for (case, c, ia, ic) in ((:max, 1.10, 10_000.0, 5_000.0), (:min, 1.00, 8_000.0, 4_000.0))
-          zb = zq(c, ia) + (2.0 / 3.0) * zl
-          zb_c = 1.0 / (1.0 / zq(c, ic) + 1.0 / zb)
-          ik_without = c * 110.0 / (sqrt(3.0) * abs(zb))
-          ik_with = c * 110.0 / (sqrt(3.0) * abs(zb_c))
-          r0 = rows(net, [feeder_a], case)
+          ring || continue
+          # a source on the switch-only bus C: the hand Ik'' with and without
+          # it is in fast/ref_hand_calculations.jl. Here the impedance of the
+          # contracted node, Z_B' = Z_QC parallel (Z_QA + (2/3) Z_L) with
+          # Z_Q = c Un/(sqrt(3) Ik_declared) at R/X 0.1 and Z_L = (0.01 + j0.1) 121 ohm,
+          # and the selected-inverse sweep on the same contracted matrix
+          c, ia, ic = case === :max ? (1.10, 10_000.0, 5_000.0) : (1.00, 8_000.0, 4_000.0)
+          zq = ik_A -> (z = c * 110_000.0 / (sqrt(3.0) * ik_A); x = z / sqrt(1.0 + 0.1^2); 0.1 * x + im * x)
+          zb_c = 1.0 / (1.0 / zq(ic) + 1.0 / (zq(ia) + (2.0 / 3.0) * (0.01 + 0.1im) * 121.0))
           r1 = rows(net, [feeder_a, feeder_c], case)
-          @test isapprox(r0["B"].ik_kA, ik_without; rtol = 1e-9)
-          @test isapprox(r1["B"].ik_kA, ik_with; rtol = 1e-9)
-          @test isapprox(r1["B"].ik_kA - r0["B"].ik_kA, ik_with - ik_without; rtol = 1e-7)
-          @test isapprox(r1["B"].ik_kA - r0["B"].ik_kA, ic / 1000.0; rtol = 1e-9)
           @test isapprox(r1["B"].zk_ohm, abs(zb_c); rtol = 1e-9)
           @test r1["C"].ik_kA == r1["B"].ik_kA
-          # the selected-inverse sweep works on the same contracted matrix
           rt = rows(net, [feeder_a, feeder_c], case; sweep = :takahashi)
-          for b in ("A", "B", "C", "D")
-            @test isapprox(rt[b].ik_kA, r1[b].ik_kA; rtol = 1e-10)
-          end
+          @test all(isapprox(rt[b].ik_kA, r1[b].ik_kA; rtol = 1e-10) for b in ("A", "B", "C", "D"))
         end
       end
 
@@ -601,14 +493,16 @@ function run_short_circuit_tests()
       @test Sparlectra.load_sparlectra_config(ok_yaml; reload = true).shortcircuit.c_factor == 1.05
       bad_yaml = test_scratch_path(".yaml")
       write(bad_yaml, "config_version: 1\nshort_circuit:\n  c_factor: 1.4\n")
-      err = try
-        Sparlectra.load_sparlectra_config(bad_yaml; reload = true)
-        nothing
-      catch e
-        e
-      end
-      @test err isa ArgumentError
-      @test occursin("short_circuit.c_factor", sprint(showerror, err))
+      err = @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_yaml; reload = true)
+      @test occursin("short_circuit.c_factor", sprint(showerror, err.value))
+      # the run keyword: a scalar c factor replaces the IEC table (1.10 for
+      # the maximum case at 10.5 kV) linearly, 1.4 is out of range
+      netm = Net(name = "sc_machine", baseMVA = 100.0)
+      addBus!(net = netm, busName = "M1", vn_kV = 10.5)
+      scm = _sc_data(machines = [_sc_machine(bus = "M1", xdpp = 0.15, ratedS = 50.0, ratedU = 10.5)])
+      ik_table = runShortCircuit!(netm, scm; case = :max).rows[1].ik_kA
+      @test isapprox(runShortCircuit!(netm, scm; case = :max, c_factor = 1.0).rows[1].ik_kA, ik_table / 1.10; rtol = 1e-9)
+      @test_throws ArgumentError runShortCircuit!(netm, scm; c_factor = 1.4)
       # converter current factor: off by default, a positive multiple
       # accepted, a negative one rejected with the key named
       @test Sparlectra.ShortCircuitConfig().converter_current_factor == 0.0

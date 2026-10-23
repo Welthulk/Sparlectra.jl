@@ -34,7 +34,9 @@
 # file has no such block and reads unchanged. 1.3 also brings the unit
 # declaration meta.units ("si", the default, or "pu") with the pu block
 # extra.<branch or shunt>.pu; a 1.2 reader refuses a 1.3 file by its
-# revision, so it never reads pu values as SI.
+# revision, so it never reads pu values as SI. 1.3 also carries the optional
+# key `estimation` in sparlectra.tap_changer_models entries (the tap changer
+# sets of the state estimation, 0.60.0).
 const SCF_FORMAT_VERSION = "1.3"
 
 # Configuration groups a case file may NOT carry: they describe the machine
@@ -1069,6 +1071,10 @@ function _scf_tap_model_dict(br::Branch, w::PowerTransformerWinding)
     d["phase"] = p
   end
   br.tap_correction === :ideal || (d["tap_changer_model"] = String(br.tap_correction))
+  # the winding ratio and shift the models move from (the resolver's base);
+  # k and theta of the data row are the live values with the steps applied
+  d["base_ratio"] = something(w.ratio, 1.0)
+  d["base_shift_deg"] = something(w.shift_degree, 0.0)
   return d
 end
 
@@ -1079,15 +1085,51 @@ function _scf_table_point_dict(r::TapTablePoint)
   return pt
 end
 
+# The tap changer set an import stored on a branch for the tap estimation
+# (Branch.se_tap_changers) as a plain JSON object under the key
+# `estimation`: origin, neutral ratio and shift, and one object per changer
+# with every field that is set. Optional numbers that are `nothing` are left
+# out (JSON has no NaN); `x_curve` carries its form (without a curve the
+# form is not used and reads back as sin2). An empty changer list is
+# written: it declares "no tap changer", the branch is never released.
+function _scf_se_tap_changers_dict(set::SETapChangerSet, bid)
+  # the reader takes only the sets of an import (cgmes, powsybl)
+  set.origin in (:cgmes, :powsybl) || throw(ArgumentError("SCF: branch $(bid): a stored tap changer set has origin $(repr(set.origin)); only :cgmes and :powsybl sets are written."))
+  chs = Any[]
+  for ch in set.changers
+    c = Dict{String,Any}("name" => ch.name, "mrid" => ch.mrid, "kind" => String(ch.kind), "role" => String(ch.role), "side" => String(ch.side), "neutral" => ch.neutral, "low" => ch.low, "high" => ch.high, "step" => ch.step, "impedance" => String(ch.impedance))
+    ch.additive && (c["additive"] = true)
+    for (key, v) in (("du", ch.du), ("alpha_deg", ch.alpha_deg), ("dphi_deg", ch.dphi_deg), ("step_abs", ch.step_abs), ("outside_du", ch.outside_du))
+      v === nothing || (c[key] = v)
+    end
+    if ch.x_curve !== nothing
+      c["x_curve"] = Dict{String,Any}("x_min" => ch.x_curve[1], "x_max" => ch.x_curve[2], "a_max_deg" => ch.x_curve[3], "form" => String(ch.x_curve_form))
+    end
+    ch.rx_correction && (c["rx_correction"] = true)
+    ch.table === nothing || (c["table"] = Any[Dict{String,Any}("step" => p.step, "ratio" => p.ratio, "angle_deg" => p.angle_deg, "r" => p.r, "x" => p.x, "g" => p.g, "b" => p.b) for p in ch.table])
+    push!(chs, c)
+  end
+  return Dict{String,Any}("origin" => String(set.origin), "ratio_n" => set.ratio_n, "shift_n_deg" => set.shift_n_deg, "changers" => chs)
+end
+
+# One entry per transformer branch with typed models (the typed dict) or a
+# stored tap changer set (key `estimation`, 0.60.0), or both. A branch with
+# neither has no entry. Sets derived on demand (origins typed and fields)
+# are never on the branch and are not written: they come back from the
+# typed block or the nameplate rows.
 function _scf_tap_changer_models(net::Net, ids::ScfIdMap)
   out = Dict{String,Any}()
   for i in eachindex(net.branchVec)
     br = net.branchVec[i]
     w = br.tap_winding
-    (w !== nothing && (w.taps !== nothing || w.phase_taps !== nothing)) || continue
+    typed = w !== nothing && (w.taps !== nothing || w.phase_taps !== nothing)
+    stored = br.se_tap_changers !== nothing && _scf_is_transformer(br)
+    (typed || stored) || continue
     id = get(ids.branch, i, nothing)
     id === nothing && continue
-    out[string(id)] = _scf_tap_model_dict(br, w)
+    d = typed ? _scf_tap_model_dict(br, w) : Dict{String,Any}()
+    stored && (d["estimation"] = _scf_se_tap_changers_dict(br.se_tap_changers, id))
+    out[string(id)] = d
   end
   return out
 end
@@ -1099,8 +1141,11 @@ function _scf_tap_changers(net::Net, ids::ScfIdMap)
     id === nothing && continue
     br = net.branchVec[i]
     controllers = Vector{Any}()
+    # a Delta-u changer divides the live ratio, so with one present the
+    # ratio position comes from the split, not from tap_ratio
+    du_split = (br.has_phase_tap && br.phase_du_step > 0.0) ? _du_tap_split(br, br.tap_est_alpha_deg) : nothing
     if br.has_ratio_tap && br.tap_step > 0.0
-      cur = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
+      cur = du_split !== nothing ? du_split[1] : (br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio)
       if br.tap_ratio_grid === :linear && _tap_r1_model(br) === nothing
         # a CGMES changer: positions on the grid of the branch, counted
         # from ratio_base as the tap estimation reports them
@@ -1135,10 +1180,7 @@ function _scf_tap_changers(net::Net, ids::ScfIdMap)
       if br.phase_du_step > 0.0
         # Delta-u phase shifter: the position lives on the additional-voltage
         # grid, the shift angle is a consequence (atan), not the grid
-        psi = deg2rad(br.tap_est_alpha_deg)
-        tbase = (br.ratio == 0.0 ? 1.0 : br.ratio) * cis(deg2rad(br.angle))
-        tlive = (br.tap_ratio == 0.0 ? abs(tbase) : br.tap_ratio) * cis(deg2rad(br.phase_shift_deg))
-        r2 = real((tbase / tlive - 1.0) * cis(-psi))
+        r2 = du_split[2]
         push!(controllers, Dict{String,Any}(
           "index" => 2,
           "alpha_deg" => br.tap_est_alpha_deg,
@@ -1165,6 +1207,19 @@ function _scf_tap_changers(net::Net, ids::ScfIdMap)
           "pos_max" => Int(round(br.phase_max_deg / br.phase_step_deg, RoundNearestTiesAway)),
         ))
       end
+      # a phase changer no nameplate row declared (the constructor grid of a
+      # MATPOWER branch, a CGMES phase range) is marked: the reader takes a
+      # phase controller as declared nameplate data, and the re-read branch
+      # would join the mass release of the tap estimation
+      if !br.phase_tap_declared && !isempty(controllers) && controllers[end]["index"] == 2
+        controllers[end]["declared"] = false
+      end
+    end
+    # the same for a ratio changer no nameplate row declared (the default
+    # ratio grid of a MATPOWER branch): without the mark the re-read branch
+    # counts as a case with tap changers (_case_has_tap_changers)
+    if !br.ratio_tap_declared && !isempty(controllers) && controllers[1]["index"] == 1
+      controllers[1]["declared"] = false
     end
     isempty(controllers) && continue
     row = Dict{String,Any}(
@@ -1423,6 +1478,10 @@ function net_to_scf(
   isempty(source_reference) || (meta["source_reference"] = String(source_reference))
   isempty(notes) || (meta["notes"] = String(notes))
   isempty(created_at) || (meta["created_at"] = String(created_at))
+  # the CGMES mRID registry of an imported delivery: the reader restores it,
+  # so the extra records of a re-read keep their mRIDs and source_id_kind
+  # and the first export of a CGMES import is the fixed point of the writer
+  isempty(net.cgmes_ids) || (meta["cgmes_ids"] = Dict{String,Any}(String(k) => String(v) for (k, v) in net.cgmes_ids))
 
   spar = Dict{String,Any}("format_version" => SCF_FORMAT_VERSION, "meta" => meta, "roles" => _scf_roles(net, ids), "extra" => _scf_extra(net, ids))
   units === :pu && _scf_write_pu_blocks!(spar, net, ids)
@@ -1505,7 +1564,11 @@ function net_to_scf(
     end
     haskey(spar, "measurements") && push!(dropped, "measurement rows")
     haskey(spar, "branch_shunt_split") && push!(dropped, "asymmetric branch shunt split")
-    haskey(spar, "tap_changer_models") && push!(dropped, "typed tap-changer models")
+    if haskey(spar, "tap_changer_models")
+      models = values(spar["tap_changer_models"])
+      any(d -> haskey(d, "ratio") || haskey(d, "phase"), models) && push!(dropped, "typed tap-changer models")
+      any(d -> haskey(d, "estimation"), models) && push!(dropped, "tap changer sets of the state estimation")
+    end
     any(ps -> has_qu_controller(ps) || has_pu_controller(ps), net.prosumpsVec) && push!(dropped, "voltage-dependent Q(U)/P(U) control")
     haskey(spar, "start_state") && push!(dropped, "start state")
     (haskey(spar, "scenarios") || haskey(spar, "short_circuit")) && push!(dropped, "study definitions")
@@ -1584,11 +1647,22 @@ end
 # series-FACTS control run stamps its compensated impedance onto r_pu/x_pu
 # while r_base_pu/x_base_pu keep the physical value. Writing a compensated
 # net would silently misrepresent the network, so it is a hard error.
+# A typed winding sets r_pu/x_pu from its model at the live step (impedance
+# correction, reactance curve). The file carries the base and the model, and
+# the reader resolves the model values, so both the base pair (after
+# restoreBaseImpedances!, or the :off write-back of a tap estimation started
+# at a factor of 1) and the model pair describe the same equipment there.
 function _scf_assert_base_impedances(net::Net)
+  near(a, b) = isapprox(a, b; atol = 1e-12, rtol = 1e-9)
   for (i, br) in enumerate(net.branchVec)
-    if !isapprox(br.r_pu, br.r_base_pu; atol = 1e-12, rtol = 1e-9) || !isapprox(br.x_pu, br.x_base_pu; atol = 1e-12, rtol = 1e-9)
+    near(br.r_pu, br.r_base_pu) && near(br.x_pu, br.x_base_pu) && continue
+    res = (br.taps_derived && br.tap_winding !== nothing) ? resolve_winding_taps(br.tap_winding; tap_changer_model = br.tap_correction) : nothing
+    if res === nothing
       throw(ArgumentError("exportSCF: branch $(i) ($(getCompName(br.comp))) carries a FACTS-compensated impedance (r_pu/x_pu differ from r_base_pu/x_base_pu). A case file must describe the equipment, not an operating point; call restoreBaseImpedances!(net) before exporting."))
     end
+    x_model = res.x_alpha === nothing ? br.x_base_pu * res.rx_factor : res.x_alpha
+    near(br.r_pu, br.r_base_pu * res.rx_factor) && near(br.x_pu, x_model) && continue
+    throw(ArgumentError("exportSCF: branch $(i) ($(getCompName(br.comp))) has r_pu/x_pu that match neither r_base_pu/x_base_pu nor its typed tap changer model at the live step. A case file must describe the equipment, not an operating point; call restoreBaseImpedances!(net) before exporting."))
   end
   return nothing
 end
@@ -1598,8 +1672,8 @@ end
 
 Write `net` as a Sparlectra Case Format file (`.scf.json`, issue #342) and
 return the path. The `data` section is a valid power-grid-model input
-dataset in SI units; everything Sparlectra adds (slack roles, tap-changer
-cascade, names and source ids, measurement detail) lives under the
+dataset in SI units; everything Sparlectra adds (slack roles, tap changers
+and their sets, names and source ids, measurement detail) lives under the
 namespaced `sparlectra` key. Case-scope configuration travels in the case
 configuration file next to the case (`write_case_config`), not inside it.
 

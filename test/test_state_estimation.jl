@@ -1394,261 +1394,6 @@ function test_state_estimation_diagnostics_unification()::Bool
   return true
 end
 
-function test_state_estimation_measurement_csv()::Bool
-  # Measurement CSV v1 layout: the writer and the private parse stay for
-  # convertMeasurementsV1; the public reader readMeasurementsCSV! was removed
-  # in 0.50.0, and since 0.50.0 the SE run artifact is a measurement table.
-  # Lossless roundtrip over all types and location groups, line-precise
-  # errors, version guard, and the removal (a v1 file is refused with the
-  # converter named).
-  @testset "State estimation measurement CSV v1" begin
-  (function ()
-    # the private parse into the net, as the converter sees the file
-    v1read!(n, file) = (v = Sparlectra._read_measurements_csv_v1(n, file); empty!(n.measurements); append!(n.measurements, v.measurements); (counts = v.counts, total = length(v.measurements)))
-    @test !isdefined(Sparlectra, Symbol("readMeasurementsCSV!"))
-    net = create_se_link_net(shunt_buses = ["B2"])
-    runpf!(net, 40, 1e-10, 0; method = :rectangular)
-    m = generateMeasurementsFromPF(net; includeImag = true, includeShuntQ = true, includeVa = true, noise = true, rng = MersenneTwister(3))
-    append!(net.measurements, m)
-    addImagMeasurement!(net; value = 120.0, sigma = 2.0, busName = "B2")   # shunt-bay current
-    addPflowMeasurement!(net; value = 12.5, sigma = 0.4, linkNr = 1)        # link flow
-    addMeasurement!(net; typ = Sparlectra.VmMeas, value = 1.0, sigma = 0.01, busIdx = 2, active = false, id = "inactive_probe")
-    orig = copy(net.measurements)
-
-    dir = mktempdir()
-    f = joinpath(dir, "meas.csv")
-    w = writeMeasurementsCSV(net; file = f)
-    @test w.count == length(orig)
-    r = v1read!(net, f)
-    @test r.total == length(orig)
-    # bitwise-equal measurement vectors (all fields, incl. linkIdx and active)
-    @test length(net.measurements) == length(orig)
-    @test all(a == b for (a, b) in zip(orig, net.measurements))
-    @test sum(values(r.counts)) == r.total
-    @test haskey(r.counts, Sparlectra.ShuntQMeas) && haskey(r.counts, Sparlectra.ImagMeas)
-
-    # the file follows output.csv_format like every other CSV: under excel_de
-    # the header and the rows carry semicolons and decimal commas, and the
-    # reader restores the same measurement vector bitwise; a technical file
-    # still reads (a German Excel user found commas in
-    # measurements.csv next to semicolon result tables)
-    fde = joinpath(dir, "meas_de.csv")
-    writeMeasurementsCSV(net; file = fde, format = "excel_de")
-    de_lines = readlines(fde)
-    @test de_lines[1] == "# sparlectra-measurements v1"
-    @test de_lines[2] == "type;bus;from_bus;to_bus;branch_nr;link_nr;direction;value;sigma;active;id"
-    @test any(l -> occursin(r";\d+,\d+;", l), de_lines[3:end])
-    @test !occursin(",", de_lines[2])
-    @test all(l -> length(split(l, ";")) == 11, filter(l -> !startswith(l, "#") && !isempty(l), de_lines[3:end]))
-    rde = v1read!(net, fde)
-    @test rde.total == length(orig)
-    @test all(a == b for (a, b) in zip(orig, net.measurements))
-    writeMeasurementsCSV(net; file = f, format = "technical")
-    @test readlines(f)[2] == "type,bus,from_bus,to_bus,branch_nr,link_nr,direction,value,sigma,active,id"
-    v1read!(net, f)
-    @test all(a == b for (a, b) in zip(orig, net.measurements))
-    # diagnostic columns behind id (bad_data and status of a run artifact
-    # before 0.50.0): written on request, ignored by the converter's parse,
-    # so the annotated file is still the same measurement set, in either
-    # delimiter
-    for fmt in ("technical", "excel_de")
-      fa = joinpath(dir, "annotated_$(fmt).csv")
-      writeMeasurementsCSV(net; file = fa, format = fmt, extraHeader = ["bad_data", "status"], extraCells = (i, m) -> (m.id == "inactive_probe" ? "*" : "", m.typ == Sparlectra.ImagMeas ? "critical measurement" : ""))
-      lines_a = readlines(fa)
-      @test endswith(lines_a[2], fmt == "excel_de" ? ";bad_data;status" : ",bad_data,status")
-      @test any(l -> occursin("inactive_probe", l) && endswith(l, fmt == "excel_de" ? ";*;" : ",*,"), lines_a)
-      @test any(l -> endswith(l, "critical measurement"), lines_a)
-      v1read!(net, fa)
-      @test length(net.measurements) == length(orig)
-      @test all(a == b for (a, b) in zip(orig, net.measurements))
-    end
-    @test_throws ErrorException writeMeasurementsCSV(net; file = joinpath(dir, "x.csv"), extraHeader = ["bad_data"])
-
-    # the removal: where a measurement file is read, a v1 file is refused
-    # with the converter named; the state stays
-    before_v1 = copy(net.measurements)
-    for call in (() -> Sparlectra._read_measurement_file!(net, f),)
-      err = try
-        call()
-        nothing
-      catch e
-        e
-      end
-      @test err isa ArgumentError && occursin("convertMeasurementsV1", err.msg) && occursin("0.50.0", err.msg)
-    end
-    @test net.measurements == before_v1
-    # a byte order mark before the version comment (Windows editors) is no
-    # reason to miss a v1 file: recognized, and the converter's parse reads it
-    fbom = joinpath(dir, "bom.csv")
-    write(fbom, "﻿" * read(f, String))
-    @test Sparlectra._is_measurement_csv_v1(fbom)
-    @test Sparlectra._read_measurements_csv_v1(net, fbom).measurements == Sparlectra._read_measurements_csv_v1(net, f).measurements
-
-    # version guard: v0 and a missing comment reject the file
-    bad = joinpath(dir, "bad.csv")
-    open(io -> println(io, "# sparlectra-measurements v0"), bad, "w")
-    errV = try
-      v1read!(net, bad)
-      nothing
-    catch e
-      sprint(showerror, e)
-    end
-    @test errV !== nothing && occursin("unknown measurement file version", errV)
-
-    # line-precise errors, atomic import: net.measurements stays untouched
-    lines = readlines(f)
-    lines[5] = replace(lines[5], r"^[A-Za-z]+," => "BogusMeas,")
-    broken = joinpath(dir, "broken.csv")
-    open(io -> foreach(l -> println(io, l), lines), broken, "w")
-    before = copy(net.measurements)
-    errL = try
-      v1read!(net, broken)
-      nothing
-    catch e
-      sprint(showerror, e)
-    end
-    @test errL !== nothing
-    @test occursin("broken.csv:5", errL)
-    @test occursin("unknown measurement type", errL)
-    @test net.measurements == before   # nothing imported
-
-    # malformed number, line-precise (field 8 = value in the branch_nr header)
-    lines2 = readlines(f)
-    parts = split(lines2[6], ",")
-    parts[8] = "not_a_number"
-    lines2[6] = join(parts, ",")
-    broken2 = joinpath(dir, "broken2.csv")
-    open(io -> foreach(l -> println(io, l), lines2), broken2, "w")
-    errN = try
-      v1read!(net, broken2)
-      nothing
-    catch e
-      sprint(showerror, e)
-    end
-    @test errN !== nothing && occursin("broken2.csv:6", errN) && occursin("not a number", errN)
-
-    # parallel branches (CGMES-typical): branch_nr keeps each measurement on
-    # its own branch where pair resolution must reject
-    pnet = Net(name = "csv_parallel", baseMVA = 100.0)
-    addBus!(net = pnet, busName = "P1", vn_kV = 110.0)
-    addBus!(net = pnet, busName = "P2", vn_kV = 110.0)
-    addProsumer!(net = pnet, busName = "P1", type = "EXTERNALNETWORKINJECTION", referencePri = "P1", vm_pu = 1.0, va_deg = 0.0)
-    addProsumer!(net = pnet, busName = "P2", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
-    addPIModelACLine!(net = pnet, fromBus = "P1", toBus = "P2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-    addPIModelACLine!(net = pnet, fromBus = "P1", toBus = "P2", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
-    addPflowMeasurement!(pnet; branchNr = 1, value = 12.0, sigma = 0.5, direction = :from)
-    addPflowMeasurement!(pnet; branchNr = 2, value = 8.0, sigma = 0.5, direction = :from)
-    porig = copy(pnet.measurements)
-    fpar = joinpath(dir, "parallel.csv")
-    writeMeasurementsCSV(pnet; file = fpar)
-    v1read!(pnet, fpar)
-    @test [m.branchIdx for m in pnet.measurements] == [1, 2]
-    @test all(a == b for (a, b) in zip(porig, pnet.measurements))
-    # a branch_nr pointing at a branch with other endpoints is rejected
-    plines = readlines(fpar)
-    # the file follows output.csv_format (excel_de by default since 0.30.2:
-    # semicolon cells, decimal comma), so split on the delimiter it carries
-    pdelim = occursin(';', plines[3]) ? ";" : ","
-    pparts = split(plines[3], pdelim)
-    pparts[5] = "3"
-    plines[3] = join(pparts, pdelim)
-    badnr = joinpath(dir, "badnr.csv")
-    open(io -> foreach(l -> println(io, l), plines), badnr, "w")
-    errB = try
-      v1read!(pnet, badnr)
-      nothing
-    catch e
-      sprint(showerror, e)
-    end
-    @test errB !== nothing && occursin("badnr.csv:3", errB) && occursin("branch_nr", errB)
-
-    # first-cut v1 header (no branch_nr column) is still read via pair
-    # resolution: rebuild the roundtrip file without column 5
-    legacy = joinpath(dir, "legacy.csv")
-    open(legacy, "w") do io
-      for (i, l) in enumerate(readlines(f))
-        if i == 1
-          println(io, l)
-        elseif i == 2
-          println(io, "type,bus,from_bus,to_bus,link_nr,direction,value,sigma,active,id")
-        else
-          c = split(l, ","; limit = 11)
-          println(io, join(vcat(c[1:4], c[6:end]), ","))
-        end
-      end
-    end
-    v1read!(net, legacy)
-    @test length(net.measurements) == length(orig)
-    @test all(a == b for (a, b) in zip(orig, net.measurements))
-
-    # whitespace-decorated bus names (CGMES): the reader strips CSV fields,
-    # so resolution must match busDict keys whitespace-insensitively
-    @test Sparlectra._measurement_csv_bus_key(net, "B2") == "B2"
-    net.busDict["WSPAD "] = net.busDict["B2"]
-    @test Sparlectra._measurement_csv_bus_key(net, "WSPAD") == "WSPAD "
-    delete!(net.busDict, "WSPAD ")
-
-    # relative sigmas (percent of reading): per row sigma = max(f*|value|,
-    # floor), floors bind on tiny readings, Va stays absolute
-    rnet = create_se_link_net()
-    runpf!(rnet, 40, 1e-10, 0; method = :rectangular)
-    fr = measurementStdDevs(vm = 0.005, pinj = 0.02, qinj = 0.01, pflow = 0.02, qflow = 0.01, va = 0.02, imag = 0.02)
-    fl = measurementSigmaFloors()
-    rmeas = generateMeasurementsFromPF(rnet; includeImag = true, includeVa = true, noise = false, stddev = fr, relativeSigma = true, sigmaFloor = fl)
-    for mm in rmeas
-      if mm.typ == Sparlectra.VaMeas
-        @test mm.sigma == 0.02   # absolute even in relative mode
-      else
-        @test mm.sigma == max(fr[mm.typ] * abs(mm.value), fl[mm.typ])
-      end
-    end
-    # a dominating floor wins on every row
-    bigfl = measurementSigmaFloors(vm = 10.0, pinj = 1e3, qinj = 1e3, pflow = 1e3, qflow = 1e3, imag = 1e6)
-    rmeas2 = generateMeasurementsFromPF(rnet; includeImag = true, noise = false, stddev = fr, relativeSigma = true, sigmaFloor = bigfl)
-    @test all(mm.sigma == bigfl[mm.typ] for mm in rmeas2)
-    # absolute mode is bitwise unchanged by the new keywords' defaults
-    a1 = generateMeasurementsFromPF(rnet; noise = false, stddev = fr)
-    a2 = generateMeasurementsFromPF(rnet; noise = false, stddev = fr, relativeSigma = false)
-    @test all(x == y for (x, y) in zip(a1, a2))
-
-    # header comments round-trip: written after the version line, skipped by
-    # the reader, sniffer still recognizes the file
-    empty!(rnet.measurements)
-    append!(rnet.measurements, a1)
-    fcm = joinpath(dir, "commented.csv")
-    writeMeasurementsCSV(rnet; file = fcm, headerComments = ["transformer taps at generation:", "transformer branch 1 A-B tap_ratio=1.0"])
-    lines_cm = readlines(fcm)
-    @test startswith(lines_cm[2], "# transformer taps")
-    rcm = v1read!(rnet, fcm)
-    @test rcm.total == length(a1)
-    @test all(x == y for (x, y) in zip(a1, rnet.measurements))
-
-    # component-id fallback: a bus referenced by its comp cID (CGMES-style
-    # divergence between busDict key and component id) still resolves
-    cid = rnet.nodeVec[geNetBusIdx(net = rnet, busName = "B2")].comp.cID
-    @test !isempty(String(cid))
-    @test Sparlectra._measurement_csv_bus_key(rnet, String(cid)) == "B2"
-
-    # mRID reference mode (CGMES ENTSO-E UUIDs preserved in net.cgmes_ids):
-    # the writer references buses by UUID (name fallback where none is
-    # recorded), the reader resolves them back; roundtrip bitwise
-    rnet.cgmes_ids["TN|B2"] = "11111111-2222-3333-4444-555555555555"
-    @test Sparlectra._bus_mrid(rnet, geNetBusIdx(net = rnet, busName = "B2")) == "11111111-2222-3333-4444-555555555555"
-    empty!(rnet.measurements)
-    append!(rnet.measurements, a1)
-    fmr = joinpath(dir, "mrid.csv")
-    writeMeasurementsCSV(rnet; file = fmr, busReference = :mrid)
-    @test occursin("11111111-2222-3333-4444-555555555555", read(fmr, String))
-    v1read!(rnet, fmr)
-    @test length(rnet.measurements) == length(a1)
-    @test all(x == y for (x, y) in zip(a1, rnet.measurements))
-    empty!(rnet.cgmes_ids)
-  end)()
-  end
-
-  return true
-end
-
 function test_state_estimation_se_chain()::Bool
   # PF started from the SE result. :se_state starts from
   # the estimated voltages (model injections authoritative), :se_snapshot
@@ -1753,6 +1498,50 @@ function _se_two_island_net()
   return net
 end
 
+# two disconnected copies of the meshed tap topology (branches per island
+# block: 1/2 lines, 3/4 trafos (a), 5/6 lines, 7/8 trafos (b)), every
+# transformer with the fraction grid of `step`
+function _se_two_island_tap_net(step::Float64)::Net
+  net = Net(name = "tap_islands", baseMVA = 100.0)
+  for sfx in ("a", "b")
+    for (b, vn) in (("H1", 110.0), ("H2", 110.0), ("L1", 20.0), ("L2", 20.0))
+      addBus!(net = net, busName = b * sfx, vn_kV = vn)
+    end
+    addProsumer!(net = net, busName = "H1" * sfx, type = "EXTERNALNETWORKINJECTION", referencePri = "H1" * sfx, vm_pu = 1.02, va_deg = 0.0)
+    addProsumer!(net = net, busName = "L1" * sfx, type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
+    addProsumer!(net = net, busName = "L2" * sfx, type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
+    addPIModelACLine!(net = net, fromBus = "H1" * sfx, toBus = "H2" * sfx, r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "L1" * sfx, toBus = "L2" * sfx, r_pu = 0.02, x_pu = 0.1, b_pu = 0.0, status = 1)
+    addPIModelTrafo!(net = net, fromBus = "H1" * sfx, toBus = "L1" * sfx, r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+    addPIModelTrafo!(net = net, fromBus = "H2" * sfx, toBus = "L2" * sfx, r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  end
+  for br in net.branchVec
+    br.ratio == 0.0 && continue
+    br.has_ratio_tap = true
+    br.tap_step = step
+  end
+  return net
+end
+
+# largest deviation in MW/MVAr of the branch flows (both ends) and losses of
+# `net` from those of the solved truth net `tnet` (same topology); Inf when
+# a value is missing, for example on a net that never got flows. The truth
+# flows come from calcNetLosses! on the solved truth voltages (runpf! leaves
+# the branch flows empty).
+function _se_flow_deviation(net::Net, tnet::Net)::Float64
+  _val(x) = x === nothing ? Inf : x
+  calcNetLosses!(tnet)
+  dev = 0.0
+  for (br, tb) in zip(net.branchVec, tnet.branchVec)
+    for (a, b) in ((br.fBranchFlow, tb.fBranchFlow), (br.tBranchFlow, tb.tBranchFlow))
+      (a === nothing || b === nothing) && return Inf
+      dev = max(dev, abs(_val(a.pFlow) - _val(b.pFlow)), abs(_val(a.qFlow) - _val(b.qFlow)))
+    end
+    dev = max(dev, abs(_val(br.pLosses) - _val(tb.pLosses)), abs(_val(br.qLosses) - _val(tb.qLosses)))
+  end
+  return dev
+end
+
 function test_state_estimation_islands_parallel()::Bool
   # The island-wise SE on worker threads against the serial island loop. Run
   # in the se profile and, repeated with four threads, in the threads profile
@@ -1786,6 +1575,48 @@ function test_state_estimation_islands_parallel()::Bool
       @test [i.iterations for i in se_par.islands] == [i.iterations for i in se_serial.islands]
     end
     parallel_comparison_report("SE, two islands (5 repeats)")
+
+    # tap regulators on worker threads (0.60.0): island a releases a set
+    # derived from the branch fields (fraction grid, truth +2 steps), island
+    # b a stored set (CGMES-like ratio changer of 1 %, truth -3 steps);
+    # update_taps writes the fixed steps back through the island mirror. Rows
+    # and the written-back taps equal the serial run, repeated.
+    stored(step) = Sparlectra.SETapChangerSet(ratio_n = 1.0, changers = [Sparlectra.SETapChanger(name = "RTC", mrid = "_rtc_b", kind = :ratio, role = :ratio, side = :from, du = 0.01, neutral = 0, low = -8, high = 8, step = step)], origin = :cgmes)
+    function _tap_island_net(truth::Bool)
+      n = _se_two_island_tap_net(0.00625)
+      a, b = n.branchVec[3], n.branchVec[7]
+      truth && (a.tap_ratio = a.ratio / (1.0 + 2 * 0.00625))
+      # the CGMES ratio formula 1 + (step - neutral) * stepVoltageIncrement / 100
+      b.se_tap_changers = stored(truth ? -3 : 0)
+      truth && (b.tap_ratio = 1.0 + (-3) * 0.01)
+      return n
+    end
+    tmeas = _tap_truth_meas(_tap_island_net(true); islands = true)
+    function _tap_islands_with(parallel::Bool)
+      n = _tap_island_net(false)
+      setTapEstimation!(n; trafo = 3, mode = :ratio)
+      setTapEstimation!(n; trafo = 7, mode = :ratio)
+      active = Sparlectra.active_sparlectra_config()
+      pf = Sparlectra._copy_powerflow_with(active.powerflow; islands_parallel_min_buses = 1)
+      rt = Sparlectra.RuntimeConfig(parallel = Sparlectra.ParallelRuntimeConfig(enabled = parallel))
+      cfg = Sparlectra._sparlectra_config_with(active; powerflow = pf, runtime = rt)
+      r = Sparlectra.with_sparlectra_config(cfg) do
+        with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false, update_taps = true) do
+          runse!(n, tmeas)
+        end
+      end
+      return r, (n.branchVec[3].tap_ratio, n.branchVec[7].tap_ratio, n.branchVec[7].se_tap_changers.changers[1].step)
+    end
+    tap_serial, wb_serial = _tap_islands_with(false)
+    @test [t.step_fixed for t in tap_serial.tapEstimates] == [2.0, -3.0]
+    @test wb_serial[1] == 1.0 / (1.0 + 2 * 0.00625) && isapprox(wb_serial[2], 0.97; rtol = 1e-14) && wb_serial[3] == -3.0
+    for _ = 1:5
+      tap_par, wb_par = _tap_islands_with(true)
+      @test tap_par.tapEstimates == tap_serial.tapEstimates
+      @test tap_par.voltages == tap_serial.voltages
+      @test wb_par == wb_serial
+    end
+    parallel_comparison_report("SE with tap regulators, two islands (5 repeats)")
   end)() end
 
   return true
@@ -1887,7 +1718,7 @@ function test_state_estimation_ia_measurements()::Bool
   return true
 end
 
-function _tap_gate_net(; taps::Union{Nothing,PowerTransformerTaps} = nothing)::Net
+function _tap_gate_net(; taps::Union{Nothing,PowerTransformerTaps} = nothing, phase_taps::Union{Nothing,PhaseTapChangerModel} = nothing, model::Symbol = :ideal)::Net
   # two voltage levels, meshed through two parallel transformer paths (the
   # closed loop that makes a tap observable), lines on both levels
   net = Net(name = "tap_gate", baseMVA = 100.0)
@@ -1899,21 +1730,680 @@ function _tap_gate_net(; taps::Union{Nothing,PowerTransformerTaps} = nothing)::N
   addProsumer!(net = net, busName = "L2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
   addPIModelACLine!(net = net, fromBus = "H1", toBus = "H2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
   addPIModelACLine!(net = net, fromBus = "L1", toBus = "L2", r_pu = 0.02, x_pu = 0.1, b_pu = 0.0, status = 1)
-  # `taps`: a typed ratio model on the first transformer, which then takes
-  # its grid from the model
-  addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, taps = taps)
+  # `taps`, `phase_taps`: typed models on the first transformer, which then
+  # takes its changers from the models (`model` = model.tap_changer_model)
+  addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, taps = taps, phase_taps = phase_taps, tap_changer_model = model)
   addPIModelTrafo!(net = net, fromBus = "H2", toBus = "L2", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
   net.branchVec[3].has_ratio_tap = true
   taps === nothing && (net.branchVec[3].tap_step = 0.00625)
   return net
 end
 
-## r2 producing EXACTLY the shift n * phase_step_deg under direction alpha:
-## with phi = -shift (the regulating-vector angle) the closed form
-## r2 = sin(phi)/sin(alpha - phi) satisfies angle(1 + r2 cis alpha) = phi
-function _tap_r2_for_shift(shift_deg::Float64, alpha_deg::Float64)::Float64
-  ϕ = -deg2rad(shift_deg)
-  return sin(ϕ) / sin(deg2rad(alpha_deg) - ϕ)
+# the gate net with a declared nameplate changer pair on branch 3: the
+# fraction ratio changer of 0.625 % (-14..17, the constructor band) at step
+# `nr` and a Delta-u changer of 1 % along `psi` (-10..10) at step `np`
+function _tap_gate_pair_net(nr::Real, np::Real; psi::Float64 = 90.0)::Net
+  net = _tap_gate_net()
+  applyTapNameplate!(net.branchVec[3]; tap_step = 0.00625, tap_min_step = -14.0, tap_max_step = 17.0, tap_current_step = Float64(nr), phase_du_step = 0.01, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(np), psi_deg = psi)
+  return net
+end
+
+# a small in-memory CGMES store of tap changer objects; the tests evaluate
+# the truth with the importer's own functions on it (cgmes_mapping.jl)
+function _tap_cim_store(objs)
+  C = Sparlectra.CGMESImporter
+  byclass = Dict{Symbol,Vector{String}}()
+  for o in objs
+    push!(get!(Vector{String}, byclass, o.class), o.mrid)
+  end
+  return C.CGMESStore(Dict(o.mrid => o for o in objs), byclass, C.CGMESFileInfo[], "2.4.15", Set{String}(), C.CGMESMultiRefs())
+end
+_tap_cim(m, cls, attrs; refs = Dict{Symbol,String}()) = Sparlectra.CGMESImporter.CIMObject(m, cls, Dict{Symbol,String}(attrs), refs, "u1")
+
+# the meshed gate net plus a radial branch: bus R (20 kV, load) hangs on
+# bus L2 through branch 5, a transformer whose changers the guard tests set
+function _tap_radial_net()::Net
+  net = _tap_gate_net()
+  net.branchVec[3].has_ratio_tap = false
+  addBus!(net = net, busName = "R", vn_kV = 20.0)
+  addProsumer!(net = net, busName = "R", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+  addPIModelTrafo!(net = net, fromBus = "L2", toBus = "R", r_pu = 0.004, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
+  net.branchVec[4].has_ratio_tap = false
+  net.branchVec[5].has_ratio_tap = false
+  return net
+end
+
+# exact measurements of `net` after a power flow (both flow ends, currents,
+# optionally Va and Ia; `islands` solves a net of several islands)
+function _tap_truth_meas(net::Net; includeVa::Bool = false, includeIa::Bool = false, noise::Bool = false, rng = Random.MersenneTwister(11), islands::Bool = false)
+  ite, erg = runpf!(net, 40, 1e-12, 0; method = :rectangular, islands_enabled = islands)
+  @test erg == 0
+  return generateMeasurementsFromPF(net; includeImag = true, includeVa = includeVa, includeIa = includeIa, noise = noise, rng = rng)
+end
+
+# one tap estimation with the impedance rule `imp` and the run settings
+function _tap_se_run(net::Net, meas; imp::Symbol = :auto, max_iter::Int = 40, kw...)
+  return with_state_estimation_config(max_iter = max_iter, tol = 1e-10, update_net = false, tap_estimation = Sparlectra.TapEstimationConfig(impedance_correction = imp); kw...) do
+    runse!(net, meas)
+  end
+end
+
+# Transformer branch with nameplate data (applyTapNameplate!) on the meshed
+# tap topology; ratio and angle are the neutral point the steps count from
+function _tcd_nameplate_branch(; ratio::Float64 = 1.032, angle::Float64 = 2.0, kw...)::Branch
+  br = _tap_gate_net().branchVec[3]
+  br.ratio = ratio
+  br.tap_ratio = ratio
+  br.angle = angle
+  br.phase_shift_deg = angle
+  applyTapNameplate!(br; kw...)
+  return br
+end
+
+# Transformer branch whose winding carries typed tap models, resolved at
+# build (taps_derived)
+function _tcd_typed_branch(; taps = nothing, phase_taps = nothing, model::Symbol = :ideal)::Branch
+  net = Net(name = "tcd_typed", baseMVA = 100.0)
+  addBus!(net = net, busName = "H", vn_kV = 110.0)
+  addBus!(net = net, busName = "L", vn_kV = 20.0)
+  addProsumer!(net = net, busName = "H", type = "EXTERNALNETWORKINJECTION", referencePri = "H", vm_pu = 1.0, va_deg = 0.0)
+  addPIModelTrafo!(net = net, fromBus = "H", toBus = "L", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.02, shift_deg = 1.5, status = 1, taps = taps, phase_taps = phase_taps, tap_changer_model = model)
+  return net.branchVec[1]
+end
+
+# central difference of f at s (scalar or complex valued, or a tuple)
+_tcd_fd(f, s::Float64; h::Float64 = 1e-4) = (f(s + h) .- f(s - h)) ./ (2h)
+_tcd_close(a, b; rtol::Float64 = 1e-7, atol::Float64 = 1e-11) = all(abs.(a .- b) .<= rtol .* abs.(b) .+ atol)
+
+function test_tap_changer_data()::Bool
+  # Tap changer data of the tap estimation: the set evaluation
+  # s -> (ratio, shift) of every changer kind and side against the
+  # importers' own functions at every whole step of a band (the set code is
+  # never its own truth), the analytic slopes and tangents against central
+  # differences at an off-step s, the impedance slopes against central
+  # differences, the derived sets of nameplate rows, typed windings and
+  # constructor defaults, and the start position search.
+  @testset "Tap changer data: s -> t(s)" begin (function ()
+    S = Sparlectra
+    rs(set, s) = S._tap_set_ratio_shift(set, s)
+    # ratio relative 1e-12, angle absolute 1e-12 deg against a truth (R, Phi)
+    agrees(got, R, Phi) = isapprox(got[1], R; rtol = 1e-12) && abs(got[2] - Phi) <= 1e-12
+
+    # --- validation: an ArgumentError names the field
+    @test_throws ArgumentError S.SETapChanger(kind = :quadrature, role = :phase, side = :from, neutral = 0, low = -1, high = 1, step = 0)
+    @test_throws ArgumentError S.SETapChanger(kind = :asymmetrical, role = :phase, side = :from, du = 0.01, neutral = 0, low = -1, high = 1, step = 0)
+    @test_throws ArgumentError S.SETapChanger(kind = :ratio, role = :ratio, side = :to, du = 0.01, neutral = 0, low = 2, high = 1, step = 0)
+    thrown = @test_throws ArgumentError S.SETapChanger(kind = :linear, role = :phase, side = :from, neutral = 0, low = -1, high = 1, step = 0)
+    @test occursin("dphi_deg", thrown.value.msg)
+    add = S.SETapChanger(kind = :ratio, role = :ratio, side = :from, additive = true, step_abs = 0.01, du = 0.01, neutral = 0, low = -2, high = 2, step = 0)
+    rat = S.SETapChanger(kind = :ratio, role = :ratio, side = :to, du = 0.01, neutral = 0, low = -2, high = 2, step = 0)
+    @test_throws ArgumentError S.SETapChangerSet(ratio_n = 1.0, changers = [rat, add], origin = :cgmes)
+
+    # --- (a) nameplate fraction grid: base / (1 + n tap_step), side :to
+    let set = S._effective_tap_changers(_tcd_nameplate_branch(tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0, tap_current_step = 3.0))
+      @test set.origin === :fields && length(set.changers) == 1
+      ch = set.changers[1]
+      @test (ch.kind, ch.side, ch.low, ch.high) == (:ratio, :to, -8, 8) && isapprox(ch.step, 3.0; atol = 1e-12)
+      @test all(agrees(rs(set, [n]), _tcd_nameplate_branch(tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0, tap_current_step = Float64(n)).tap_ratio, 2.0) for n in -8:8)
+    end
+    # --- (a) nameplate linear grid: base + n tap_step, additive
+    let set = S._effective_tap_changers(_tcd_nameplate_branch(tap_step = 0.01, tap_min_step = -5.0, tap_max_step = 5.0, tap_current_step = -2.0, tap_ratio_grid = :linear))
+      ch = set.changers[1]
+      @test ch.additive && (ch.low, ch.high) == (-5, 5) && isapprox(ch.step, -2.0; atol = 1e-12)
+      @test all(agrees(rs(set, [n]), _tcd_nameplate_branch(tap_step = 0.01, tap_min_step = -5.0, tap_max_step = 5.0, tap_current_step = Float64(n), tap_ratio_grid = :linear).tap_ratio, 2.0) for n in -5:5)
+    end
+    # --- (b) nameplate pair: fraction ratio changer and Delta-u changer at psi 60, both divide
+    pair(nr, np; grid = :fraction) = _tcd_nameplate_branch(tap_step = 0.0125, tap_min_step = -4.0, tap_max_step = 4.0, tap_current_step = Float64(nr), phase_du_step = 0.01, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(np), psi_deg = 60.0, tap_ratio_grid = grid)
+    for grid in (:fraction, :linear)
+      set = S._effective_tap_changers(pair(3, -7; grid = grid))
+      @test [c.kind for c in set.changers] == [:ratio, :asymmetrical]
+      @test set.changers[2].side === :to && set.changers[2].alpha_deg == 60.0 && (set.changers[2].low, set.changers[2].high) == (-10, 10)
+      @test isapprox(set.changers[1].step, 3.0; atol = 1e-9) && isapprox(set.changers[2].step, -7.0; atol = 1e-9)
+      @test S._tap_release_mode(pair(3, -7; grid = grid)) === :both
+      ok = true
+      for nr in -4:4, np in -10:10
+        tb = pair(nr, np; grid = grid)
+        ok &= agrees(rs(set, [nr, np]), tb.tap_ratio, tb.phase_shift_deg)
+      end
+      @test ok
+    end
+    # --- (b) nameplate Delta-u changer alone (no ratio changer, has_ratio_tap false)
+    du_only(np) = _tcd_nameplate_branch(phase_du_step = 0.01, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(np), psi_deg = 60.0)
+    let br = du_only(4), set = S._effective_tap_changers(br)
+      @test !br.has_ratio_tap && [c.kind for c in set.changers] == [:asymmetrical] && set.changers[1].side === :to
+      @test (set.changers[1].low, set.changers[1].high) == (-10, 10) && isapprox(set.changers[1].step, 4.0; atol = 1e-9)
+      @test all(agrees(rs(set, [np]), du_only(np).tap_ratio, du_only(np).phase_shift_deg) for np in -10:10)
+    end
+    # --- (f) nameplate degree form: angle + n step, magnitude untouched
+    let set = S._effective_tap_changers(_tcd_nameplate_branch(phase_step_deg = 1.5, phase_min_step = -6.0, phase_max_step = 6.0, phase_current_step = 4.0, psi_deg = 30.0))
+      @test [c.kind for c in set.changers] == [:linear] && set.changers[1].side === :from && (set.changers[1].low, set.changers[1].high) == (-6, 6)
+      @test all(agrees(rs(set, [n]), 1.032, _tcd_nameplate_branch(phase_step_deg = 1.5, phase_min_step = -6.0, phase_max_step = 6.0, phase_current_step = Float64(n), psi_deg = 30.0).phase_shift_deg) for n in -6:6)
+      @test rs(set, [2.5])[1] === 1.032
+    end
+
+    # --- constructor defaults: the fraction grid 0.9/1.1 of 0.00625, no undeclared phase changer
+    let net = _tap_gate_net()
+      set = S._effective_tap_changers(net.branchVec[4])
+      @test length(set.changers) == 1 && set.changers[1].side === :to && (set.changers[1].low, set.changers[1].high) == (-14, 17)
+      @test S._tap_release_mode(net.branchVec[4]) === :ratio
+      @test S._effective_tap_changers(net.branchVec[1]) === nothing && S._tap_release_mode(net.branchVec[1]) === nothing
+      net.branchVec[4].has_ratio_tap = false
+      @test isempty(S._effective_tap_changers(net.branchVec[4]).changers) && S._tap_release_mode(net.branchVec[4]) === nothing
+    end
+
+    # --- typed windings against resolve_winding_taps at every step
+    ratio_taps() = PowerTransformerTaps(Vn_kV = 110.0, step = 12, lowStep = 1, highStep = 19, neutralStep = 10, voltageIncrement_kV = 1.65)
+    asym(conv) = PhaseTapChangerModel(kind = :asymmetrical, step = 3, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.012, winding_connection_angle_deg = 60.0, x_min = 0.05, x_max = 0.08, convention = conv)
+    symm(conv) = PhaseTapChangerModel(kind = :symmetrical, step = -2, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.02, x_min = 0.05, x_max = 0.09, convention = conv)
+    table = [TapTablePoint(step = k, ratio = 1.0 + 0.002 * k^2, angle_deg = 3.0 * k - 0.1 * k^2, x_pu = 0.06 + 0.001 * k^2) for k in -4:5]
+    tabular() = PhaseTapChangerModel(kind = :tabular, step = 2, neutralStep = 0, table = table)
+    inphase() = PhaseTapChangerModel(kind = :asymmetrical, step = 4, lowStep = -9, highStep = 9, neutralStep = 0, voltage_step_increment = 0.01, winding_connection_angle_deg = 180.0)
+    typed_cases = [
+      ("ratio + asymmetrical reciprocal", ratio_taps(), asym(:reciprocal_from_side), :ideal, [:ratio, :asymmetrical], [:from, :to]),
+      ("asymmetrical direct, rx correction", nothing, asym(:direct_regulating_vector), :impedance_correction, [:asymmetrical], [:from]),
+      ("symmetrical reciprocal", nothing, symm(:reciprocal_from_side), :ideal, [:symmetrical], [:to]),
+      ("symmetrical direct", ratio_taps(), symm(:direct_regulating_vector), :ideal, [:ratio, :symmetrical], [:from, :from]),
+      ("tabular", nothing, tabular(), :ideal, [:tabular], [:from]),
+      ("DTF in-phase psi 180, rx correction", nothing, inphase(), :impedance_correction, [:ratio], [:to]),
+    ]
+    for (label, t, m, model, kinds, sides) in typed_cases
+      br = _tcd_typed_branch(taps = t, phase_taps = m, model = model)
+      set = S._effective_tap_changers(br)
+      w = br.tap_winding
+      @test set.origin === :typed && [c.kind for c in set.changers] == kinds && [c.side for c in set.changers] == sides
+      # the start position is the model step and reproduces the branch
+      s0 = S._tap_s_from_branch(set, br)
+      @test s0 == [c.step - c.neutral for c in set.changers]
+      res0 = S.resolve_winding_taps(w; tap_changer_model = model)
+      F0 = S._tap_impedance_factors(set, s0)
+      ok = true
+      rsteps = t === nothing ? [0] : collect(t.lowStep:t.highStep)
+      psteps = m.kind === :tabular ? [p.step for p in m.table] : collect(m.lowStep:m.highStep)
+      for rstep in rsteps, pstep in psteps
+        # the truth moves the model steps the way a tap controller does and
+        # resolves the winding (the resolver reads a table's reactance at the
+        # model step, not at its phase_step keyword)
+        t === nothing || (w.taps.step = rstep)
+        w.phase_taps.step = pstep
+        res = S.resolve_winding_taps(w; tap_changer_model = model)
+        s = Float64[]
+        t === nothing || push!(s, rstep - t.neutralStep)
+        push!(s, pstep - m.neutralStep)
+        ok &= agrees(rs(set, s), res.ratio, res.shift_deg)
+        # impedance: r scales with rx_factor, x with the model's X(alpha) where it has one
+        F = S._tap_impedance_factors(set, s)
+        xr = rr -> rr.x_alpha === nothing ? rr.rx_factor : rr.x_alpha
+        ok &= isapprox(F[1] / F0[1], res.rx_factor / res0.rx_factor; rtol = 1e-12) && isapprox(F[2] / F0[2], xr(res) / xr(res0); rtol = 1e-12)
+      end
+      @test ok
+      ok || println("      typed case failed: ", label)
+    end
+
+    # --- stored sets (CGMES-like) against the importer's own functions
+    # (cgmes_mapping.jl): the truths come from tap changer objects in a small
+    # in-memory store, evaluated by _phaseTapRatioShift_atstep (asymmetrical,
+    # symmetrical, linear), _ratioTapTable and _ratioTapCorrectionAt (ratio
+    # table). The importer applies a changer on the from side as it is and on
+    # end 2 as 1 / t with the angle negated (_applyEndTaps).
+    C = S.CGMESImporter
+    cim(m, cls, attrs; refs = Dict{Symbol,String}()) = C.CIMObject(m, cls, Dict{Symbol,String}(attrs), refs, "u1")
+    ptc_asym = cim("_ptc_a", :PhaseTapChangerAsymmetrical, [:neutralStep => "13", :lowStep => "1", :highStep => "25", :voltageStepIncrement => "1.25", :windingConnectionAngle => "90"])
+    ptc_sym = cim("_ptc_s", :PhaseTapChangerSymmetrical, [:neutralStep => "0", :lowStep => "-8", :highStep => "8", :voltageStepIncrement => "2"])
+    ptc_lin = cim("_ptc_l", :PhaseTapChangerLinear, [:neutralStep => "0", :lowStep => "-10", :highStep => "10", :stepPhaseShiftIncrement => "1.2"])
+    rtc_ratio(k) = 1.0 + 0.011 * (k - 3) + 0.0007 * (k - 3)^2
+    rtc_obj = cim("_rtc", :RatioTapChanger, [:neutralStep => "3", :lowStep => "-2", :highStep => "8", :stepVoltageIncrement => "1"]; refs = Dict(:RatioTapChangerTable => "_rtct"))
+    rtc_rows = [cim("_rtct_$k", :RatioTapChangerTablePoint, [:step => string(k), :ratio => string(rtc_ratio(k))]; refs = Dict(:RatioTapChangerTable => "_rtct")) for k in 1:5]
+    # a one-point ratio table for the slope check further down
+    rtc1_obj = cim("_rtc1", :RatioTapChanger, [:neutralStep => "0", :lowStep => "-5", :highStep => "5", :stepVoltageIncrement => "1"]; refs = Dict(:RatioTapChangerTable => "_rtct1"))
+    rtc1_row = cim("_rtct1_0", :RatioTapChangerTablePoint, [:step => "0", :ratio => "1.004"]; refs = Dict(:RatioTapChangerTable => "_rtct1"))
+    objs = vcat([ptc_asym, ptc_sym, ptc_lin, rtc_obj, rtc1_obj], rtc_rows, [rtc1_row])
+    byclass = Dict{Symbol,Vector{String}}()
+    for o in objs
+      push!(get!(Vector{String}, byclass, o.class), o.mrid)
+    end
+    store = C.CGMESStore(Dict(o.mrid => o for o in objs), byclass, C.CGMESFileInfo[], "2.4.15", Set{String}(), C.CGMESMultiRefs())
+    imp(ptc, k) = C._phaseTapRatioShift_atstep(store, ptc, k)
+    # PhaseTapChangerAsymmetrical: from side multiplies, end 2 divides and negates the angle
+    asym_ch(side) = S.SETapChanger(name = "PTC", kind = :asymmetrical, role = :phase, side = side, du = 0.0125, alpha_deg = 90.0, neutral = 13, low = 1, high = 25, step = 16)
+    tn = 1.0526315789
+    from_set = S.SETapChangerSet(ratio_n = tn, changers = [asym_ch(:from)], origin = :cgmes)
+    to_set = S.SETapChangerSet(ratio_n = tn, changers = [asym_ch(:to)], origin = :cgmes)
+    @test all(agrees(rs(from_set, [k - 13]), tn * imp(ptc_asym, k)[1], imp(ptc_asym, k)[2]) for k in 1:25)
+    @test all(agrees(rs(to_set, [k - 13]), tn / imp(ptc_asym, k)[1], -imp(ptc_asym, k)[2]) for k in 1:25)
+    # RatioTapChangerTable: the point ratio inside the table, outside the
+    # linear formula of stepVoltageIncrement
+    rtc_pts = [S.SETapPoint(step = k, ratio = rtc_ratio(k), r = 1.0 + 0.01 * k, x = 1.0 + 0.02 * k) for k in 1:5]
+    rtc = S.SETapChanger(name = "RTC", kind = :tabular, role = :ratio, side = :from, neutral = 3, low = -2, high = 8, step = 4, table = rtc_pts, outside_du = 0.01, impedance = :table)
+    rtc_set = S.SETapChangerSet(ratio_n = 1.0, changers = [rtc], origin = :cgmes)
+    rtc_table = C._ratioTapTable(store, rtc_obj)
+    rtc_truth(k) = C._ratioTapCorrectionAt(rtc_obj, rtc_table, Float64(k))[1]
+    @test length(rtc_table) == 5
+    @test all(agrees(rs(rtc_set, [k - 3]), rtc_truth(k), 0.0) for k in -2:8)
+    @test S._tap_band(rtc) == (-5.0, 5.0)
+    # between the end point and the next whole step the curve is continuous
+    @test isapprox(rs(rtc_set, [2.0 + 1e-9])[1], rtc_truth(5); atol = 1e-10) && isapprox(rs(rtc_set, [3.0 - 1e-9])[1], rtc_truth(6); atol = 1e-10)
+    # a one-point ratio table: on its point the slope is the one of the
+    # interval to the right, linear to the formula value 1 + 0.01 at s = 1,
+    # not 0
+    one = S.SETapChanger(kind = :tabular, role = :ratio, side = :from, neutral = 0, low = -5, high = 5, step = 0, table = [S.SETapPoint(step = 0, ratio = 1.004)], outside_du = 0.01)
+    rtc1_table = C._ratioTapTable(store, rtc1_obj)
+    @test all(isapprox(S._tap_changer_factor(one, Float64(k))[1], C._ratioTapCorrectionAt(rtc1_obj, rtc1_table, Float64(k))[1]; rtol = 1e-12) for k in -5:5)
+    @test _tcd_close(S._tap_changer_slope(one, 0.0), (1.01 - 1.004, 0.0)) && _tcd_close(S._tap_changer_slope(one, 0.0), S._tap_changer_slope(one, 0.5))
+    # PhaseTapChangerLinear (the set's nominal angle -5 deg adds to the
+    # changer angle) and Symmetrical, both on the from side
+    lin_set = S.SETapChangerSet(ratio_n = 1.0, shift_n_deg = -5.0, changers = [S.SETapChanger(kind = :linear, role = :phase, side = :from, dphi_deg = 1.2, neutral = 0, low = -10, high = 10, step = 0)], origin = :cgmes)
+    @test all(agrees(rs(lin_set, [k]), imp(ptc_lin, k)[1], -5.0 + imp(ptc_lin, k)[2]) for k in -10:10)
+    sym_set = S.SETapChangerSet(ratio_n = 1.0, changers = [S.SETapChanger(kind = :symmetrical, role = :phase, side = :from, du = 0.02, neutral = 0, low = -8, high = 8, step = 0)], origin = :cgmes)
+    @test all(agrees(rs(sym_set, [k]), imp(ptc_sym, k)[1], imp(ptc_sym, k)[2]) for k in -8:8)
+
+    # --- slopes of every kind against central differences, off-step
+    xtan = (0.05, 0.07, 9.0)
+    phase_pts = [S.SETapPoint(step = k, ratio = 1.0 + 0.003 * k^2, angle_deg = 2.5 * k, r = 1.0 + 0.004 * k^2, x = 1.0 + 0.01 * k^2, g = 1.0 - 0.002 * k, b = 1.0 + 0.003 * k) for k in -3:3]
+    kinds = [
+      S.SETapChanger(kind = :ratio, role = :ratio, side = :to, du = -0.0121, neutral = 0, low = -9, high = 9, step = 0),
+      S.SETapChanger(kind = :asymmetrical, role = :phase, side = :from, du = 0.01, alpha_deg = 60.0, neutral = 0, low = -9, high = 9, step = 0, x_curve = xtan, x_curve_form = :tan2, impedance = :x_curve, rx_correction = true),
+      S.SETapChanger(kind = :asymmetrical, role = :phase, side = :to, du = 0.015, alpha_deg = 90.0, neutral = 0, low = -9, high = 9, step = 0),
+      S.SETapChanger(kind = :symmetrical, role = :phase, side = :from, du = 0.02, neutral = 0, low = -9, high = 9, step = 0, x_curve = (0.1, 0.13, 20.0), impedance = :x_curve),
+      S.SETapChanger(kind = :tabular, role = :phase, side = :from, neutral = 0, low = -3, high = 3, step = 0, table = phase_pts, impedance = :table),
+      S.SETapChanger(kind = :linear, role = :phase, side = :to, dphi_deg = 2.0, neutral = 0, low = -9, high = 9, step = 0, x_curve = (0.1, 0.13, 18.0), impedance = :x_curve),
+      S.SETapChanger(kind = :ratio, role = :ratio, side = :from, du = 0.01, neutral = 0, low = -9, high = 9, step = 0, rx_correction = true),
+    ]
+    for ch in kinds, s in (2.37, -1.61, 4.2)
+      @test _tcd_close(S._tap_changer_slope(ch, s), _tcd_fd(x -> S._tap_changer_factor(ch, x), s))
+      single = S.SETapChangerSet(ratio_n = 1.03, shift_n_deg = 1.0, changers = [ch], origin = :cgmes)
+      t1 = x -> (v = rs(single, [x]); v[1] * cis(deg2rad(v[2])))
+      @test _tcd_close(S._tap_set_tangent(single, [s], 1), _tcd_fd(t1, s))
+      @test _tcd_close(S._tap_impedance_slope(single, [s], 1), _tcd_fd(x -> S._tap_impedance_factors(single, [x]), s))
+    end
+    # composed sets: the tangent and impedance slope of each changer with
+    # the others held (additive followed by a Delta-u changer, fraction
+    # pair, curve plus table)
+    sets = [
+      S._effective_tap_changers(pair(2, -3; grid = :linear)),
+      S._effective_tap_changers(pair(2, -3)),
+      S.SETapChangerSet(ratio_n = 0.98, shift_n_deg = -2.0, changers = [kinds[2], kinds[5]], origin = :cgmes),
+    ]
+    for set in sets, c in 1:2
+      sbase = [1.37, -2.41]
+      at = x -> (v = copy(sbase); v[c] = x; v)
+      t2 = x -> (v = rs(set, at(x)); v[1] * cis(deg2rad(v[2])))
+      @test _tcd_close(S._tap_set_tangent(set, sbase, c), _tcd_fd(t2, sbase[c]))
+      @test _tcd_close(S._tap_impedance_slope(set, sbase, c), _tcd_fd(x -> S._tap_impedance_factors(set, at(x)), sbase[c]))
+    end
+
+    # --- TapStepImpedance (:tsi): the recorded factor at each whole step,
+    # the slope against central differences with the other changer held at s0
+    let br = _tcd_nameplate_branch(tap_step = 0.0125, tap_min_step = -4.0, tap_max_step = 4.0, tap_current_step = 1.0, phase_step_deg = 1.5, phase_min_step = -6.0, phase_max_step = 6.0, phase_current_step = 0.0, psi_deg = 30.0)
+      steps = -4:4
+      vals = [1.032 / (1.0 + n * 0.0125) for n in steps]
+      facs = [(1.0 + 0.01 * n, 1.0 + 0.02 * n + 0.001 * n^2, 1.0, 1.0 - 0.005 * n) for n in steps]
+      br.tap_step_impedance = S.TapStepImpedance(br.r_pu, br.x_pu, 0.0, 0.0, 0.0, 0.0, vals, facs, Float64[], NTuple{4,Float64}[])
+      set = S._effective_tap_changers(br)
+      tsi = br.tap_step_impedance
+      @test [c.impedance for c in set.changers] == [:tsi, :none]
+      s0 = [1.0, 0.0]
+      @test all(_tcd_close(S._tap_impedance_factors(set, [Float64(n), 0.0]; s0 = s0, tsi = tsi), facs[n + 5]; rtol = 1e-12, atol = 1e-12) for n in steps)
+      # the actuator is read with the phase changer at s0: moving it does not move the factors
+      @test S._tap_impedance_factors(set, [2.3, 3.0]; s0 = s0, tsi = tsi) == S._tap_impedance_factors(set, [2.3, 0.0]; s0 = s0, tsi = tsi)
+      @test _tcd_close(S._tap_impedance_slope(set, [2.3, 0.0], 1; s0 = s0, tsi = tsi), _tcd_fd(x -> S._tap_impedance_factors(set, [x, 0.0]; s0 = s0, tsi = tsi), 2.3))
+      @test S._tap_impedance_slope(set, [2.3, 0.0], 2; s0 = s0, tsi = tsi) == (0.0, 0.0, 0.0, 0.0)
+    end
+
+    # --- start position search on a moved branch
+    let br = _tap_gate_net().branchVec[3]
+      br.ratio = tn
+      br.se_tap_changers = from_set
+      # the stored step reproduces the branch: returned as it is
+      br.tap_ratio, br.phase_shift_deg = tn * imp(ptc_asym, 16)[1], imp(ptc_asym, 16)[2]
+      @test S._tap_s_from_branch(S._effective_tap_changers(br), br) == [3.0]
+      # moved to step 20 after the import (a controller, a write-back)
+      br.tap_ratio, br.phase_shift_deg = tn * imp(ptc_asym, 20)[1], imp(ptc_asym, 20)[2]
+      s = S._tap_s_from_branch(from_set, br)
+      @test s !== nothing && isapprox(s[1], 7.0; atol = 1e-8)
+      # off the curve: a pure quadrature changer cannot give this branch
+      br.tap_ratio = 1.2
+      @test S._tap_s_from_branch(from_set, br) === nothing
+      # two ratio changers of one branch cannot be told apart from t
+      two = S.SETapChangerSet(ratio_n = 1.0, changers = [rat, S.SETapChanger(kind = :ratio, role = :ratio, side = :from, du = 0.01, neutral = 0, low = -2, high = 2, step = 0)], origin = :cgmes)
+      @test S._tap_separable_mask(two, [0.0, 0.0]) == [true, false]
+      br.tap_ratio, br.phase_shift_deg = 1.0 / 1.01, 0.0
+      @test S._tap_s_from_branch(two, br) === nothing
+    end
+
+    # --- degree-form phase changers of an SCF file with alpha_deg 0 are
+    # declared by their row (0.60.0): the changer list decides the release,
+    # not psi (until 0.60.0 psi 0 kept them out). Every transformer of the
+    # Zeng/Chiang case carries a ratio row and a degree row at alpha 0.
+    let net = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "case14_zeng_p306_activeSet_A.scf.json"))
+      trafos = [br for br in net.branchVec if br.ratio != 0.0]
+      @test !isempty(trafos) && all(br -> br.tap_est_alpha_deg == 0.0 && br.phase_step_deg == 1.25, trafos)
+      @test all(br -> S._tap_release_mode(br) === :both && [c.kind for c in S._effective_tap_changers(br).changers] == [:ratio, :linear], trafos)
+      # the constructor's own phase grid is not declared
+      @test S._tap_release_mode(_tap_gate_net().branchVec[3]) === :ratio
+    end
+
+    # --- small helpers
+    @test S._tap_band(kinds[5]) == (-3.0, 3.0) && S._tap_band(asym_ch(:from)) == (-12.0, 12.0)
+    @test S._tap_scale(kinds[1]) == 0.0121 && S._tap_scale(kinds[6]) == deg2rad(2.0)
+    @test S._tap_deviation_changer(sets[3]) == 1 && S._tap_deviation_changer(S.SETapChangerSet(ratio_n = 1.0, changers = [kinds[3], kinds[1]], origin = :cgmes)) == 2
+    @test S._tap_deviation_changer(S.SETapChangerSet(ratio_n = 1.0, origin = :cgmes)) == 0
+  end)() end
+  return true
+end
+
+# The changer cases of the tap estimation tests, each on
+# branch 3 of the meshed gate net: `build(net, n, zstep)` puts the branch at
+# step n (relative to neutral) through the importer's own path (nameplate
+# rows through applyTapNameplate!, typed models through
+# resolve_branch_taps!, CGMES-like stored sets with the ratio, angle and
+# impedance of the CGMES functions on an in-memory store), with the
+# impedance of step n (`zstep`) or of the start step 0. `imp` says whether
+# the case has per-step impedance data, so auto and off differ.
+function _tap_changer_cases()
+  C = Sparlectra.CGMESImporter
+  S = Sparlectra
+  ptc(m, cls, attrs) = _tap_cim(m, cls, attrs)
+  asym60 = ptc("_pa60", :PhaseTapChangerAsymmetrical, [:neutralStep => "0", :lowStep => "-10", :highStep => "10", :voltageStepIncrement => "1.0", :windingConnectionAngle => "60", :xMin => "10", :xMax => "13"])
+  asym90 = ptc("_pa90", :PhaseTapChangerAsymmetrical, [:neutralStep => "0", :lowStep => "-10", :highStep => "10", :voltageStepIncrement => "1.0", :windingConnectionAngle => "90", :xMin => "10", :xMax => "14"])
+  sym = ptc("_ps", :PhaseTapChangerSymmetrical, [:neutralStep => "0", :lowStep => "-8", :highStep => "8", :voltageStepIncrement => "2", :xMin => "10", :xMax => "12"])
+  lin = ptc("_pl", :PhaseTapChangerLinear, [:neutralStep => "0", :lowStep => "-10", :highStep => "10", :stepPhaseShiftIncrement => "1.2", :xMin => "10", :xMax => "12.5"])
+  tab = _tap_cim("_pt", :PhaseTapChangerTabular, [:neutralStep => "0", :lowStep => "-4", :highStep => "5"]; refs = Dict(:PhaseTapChangerTable => "_ptt"))
+  # a non-uniform table: ratio and angle bend with the step, r and x move
+  tabpts = [_tap_cim("_ptt_$k", :PhaseTapChangerTablePoint, [:step => string(k), :ratio => string(1.0 + 0.002 * k^2), :angle => string(3.0 * k - 0.1 * k^2), :r => string(2.0 * k), :x => string(3.0 * k + 0.5 * k^2)]; refs = Dict(:PhaseTapChangerTable => "_ptt")) for k in -4:5]
+  rtc = ptc("_rtc", :RatioTapChanger, [:neutralStep => "10", :lowStep => "1", :highStep => "21", :stepVoltageIncrement => "1.25"])
+  store = _tap_cim_store(vcat([asym60, asym90, sym, lin, tab, rtc], tabpts))
+  curve(o) = (c = C._phaseTapXCurve(store, o); (c.xmin, c.xmax, c.amax))
+  function stored!(br, ch, obj, n, zstep, neutral)
+    br.se_tap_changers = S.SETapChangerSet(ratio_n = br.ratio, changers = [ch(neutral + n)], origin = :cgmes)
+    m, a = obj.class == :RatioTapChanger ? (C._ratioTapCorrectionAt(obj, nothing, Float64(neutral + n))[1], 0.0) : C._phaseTapRatioShift_atstep(store, obj, neutral + n)
+    br.tap_ratio = br.ratio * m
+    br.phase_shift_deg = br.angle + a
+    zstep || return br
+    if obj.class == :PhaseTapChangerTabular
+      f, f0 = C._tapTablePointFactors(store, obj, Float64(n)), C._tapTablePointFactors(store, obj, 0.0)
+      br.r_pu *= f[1] / f0[1]
+      br.x_pu *= f[2] / f0[2]
+    elseif obj.class != :RatioTapChanger
+      br.x_pu *= C._phaseTapXCurveFactor(store, obj, Float64(n)) / C._phaseTapXCurveFactor(store, obj, 0.0)
+    end
+    return br
+  end
+  asymch(o, alpha) = st -> S.SETapChanger(name = o.mrid, kind = :asymmetrical, role = :phase, side = :from, du = 0.01, alpha_deg = alpha, neutral = 0, low = -10, high = 10, step = st, x_curve = curve(o), impedance = :x_curve)
+  tabch = st -> S.SETapChanger(name = "_pt", kind = :tabular, role = :phase, side = :from, neutral = 0, low = -4, high = 5, step = st, table = [S.SETapPoint(step = k, ratio = 1.0 + 0.002 * k^2, angle_deg = 3.0 * k - 0.1 * k^2, r = 1.0 + 2.0 * k / 100, x = 1.0 + (3.0 * k + 0.5 * k^2) / 100) for k in -4:5], impedance = :table)
+  typed_asym() = PhaseTapChangerModel(kind = :asymmetrical, step = 0, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, winding_connection_angle_deg = 60.0, convention = :reciprocal_from_side)
+  cases = [
+    (name = "a nameplate fraction grid", mode = :ratio, n = 3, imp = false, net = () -> _tap_gate_net(), build = (net, n, z) -> applyTapNameplate!(net.branchVec[3]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0, tap_current_step = Float64(n))),
+    (name = "a CGMES ratio changer", mode = :ratio, n = -4, imp = false, net = () -> _tap_gate_net(), build = (net, n, z) -> stored!(net.branchVec[3], st -> S.SETapChanger(name = "_rtc", kind = :ratio, role = :ratio, side = :from, du = 0.0125, neutral = 10, low = 1, high = 21, step = st), rtc, n, z, 10)),
+    (name = "b nameplate Delta-u psi 60", mode = :pst, n = 4, imp = false, net = () -> _tap_gate_net(), build = (net, n, z) -> applyTapNameplate!(net.branchVec[3]; phase_du_step = 0.01, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(n), psi_deg = 60.0)),
+    (name = "b CGMES asymmetrical 60 with x curve", mode = :pst, n = 4, imp = true, net = () -> _tap_gate_net(), build = (net, n, z) -> stored!(net.branchVec[3], asymch(asym60, 60.0), asym60, n, z, 0)),
+    (name = "c nameplate Delta-u psi 90", mode = :pst, n = -3, imp = false, net = () -> _tap_gate_net(), build = (net, n, z) -> applyTapNameplate!(net.branchVec[3]; phase_du_step = 0.01, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(n), psi_deg = 90.0)),
+    (name = "c CGMES quadrature with x curve", mode = :pst, n = -3, imp = true, net = () -> _tap_gate_net(), build = (net, n, z) -> stored!(net.branchVec[3], asymch(asym90, 90.0), asym90, n, z, 0)),
+    (name = "d CGMES symmetrical with x curve", mode = :pst, n = 5, imp = true, net = () -> _tap_gate_net(), build = (net, n, z) -> stored!(net.branchVec[3], st -> S.SETapChanger(name = "_ps", kind = :symmetrical, role = :phase, side = :from, du = 0.02, neutral = 0, low = -8, high = 8, step = st, x_curve = curve(sym), impedance = :x_curve), sym, n, z, 0)),
+    (name = "e CGMES phase table with r and x", mode = :pst, n = 3, imp = true, net = () -> _tap_gate_net(), build = (net, n, z) -> stored!(net.branchVec[3], tabch, tab, n, z, 0)),
+    (name = "f nameplate degree form", mode = :pst, n = -5, imp = false, net = () -> _tap_gate_net(), build = (net, n, z) -> applyTapNameplate!(net.branchVec[3]; phase_step_deg = 1.5, phase_min_step = -8.0, phase_max_step = 8.0, phase_current_step = Float64(n), psi_deg = 30.0)),
+    (name = "f CGMES linear with x curve", mode = :pst, n = 6, imp = true, net = () -> _tap_gate_net(), build = (net, n, z) -> stored!(net.branchVec[3], st -> S.SETapChanger(name = "_pl", kind = :linear, role = :phase, side = :from, dphi_deg = 1.2, neutral = 0, low = -10, high = 10, step = st, x_curve = curve(lin), impedance = :x_curve), lin, n, z, 0)),
+    # typed asymmetrical model under model.tap_changer_model = impedance_correction:
+    # the power flow scales r and x with |1 + f e^(j psi)|^2 at every step
+    (name = "b typed asymmetrical, impedance correction", mode = :pst, n = 7, imp = true, net = () -> _tap_gate_net(phase_taps = typed_asym(), model = :impedance_correction), build = function (net, n, z)
+      br = net.branchVec[3]
+      r0, x0 = br.r_pu, br.x_pu
+      br.tap_winding.phase_taps.step = n
+      Sparlectra.resolve_branch_taps!(br, br.tap_winding; tap_changer_model = :impedance_correction)
+      z || (br.r_pu = r0; br.x_pu = x0)
+      return br
+    end),
+  ]
+  return cases
+end
+
+function test_tap_estimation_changer_types()::Bool
+  # Tap estimation per changer type: every kind a to f, from a model at the
+  # start step 0 to the true step with exact measurements on both sides:
+  # the estimate comes back to 1e-6 steps, the fixation lands on the true
+  # step, J below 1e-9 before and after. Run with impedance_correction auto
+  # and off (there is no on, auto takes its role); the truth of the off run
+  # keeps the impedance of the start step. A case with
+  # per-step impedance data runs off once more against the truth with the
+  # step impedance: the step still comes back, J is no longer zero. The
+  # nameplate fraction case is a regression guard (the fraction cascade of
+  # 0.10.0 recovered it as well).
+  @testset "Tap estimation per changer type" begin (function ()
+    for c in _tap_changer_cases()
+      for imp in (:auto, :off)
+        truth = c.net()
+        c.build(truth, c.n, imp === :auto)
+        meas = _tap_truth_meas(truth)
+        model = c.net()
+        c.build(model, 0, true)
+        rel = setTapEstimation!(model; trafo = 3, mode = c.mode)
+        @test rel.s0 == [0.0]
+        res = _tap_se_run(model, meas; imp = imp)
+        row = only(res.tapEstimates)
+        ok = res.converged && abs(row.s_est - c.n) <= 1e-6 && row.step_fixed == row.neutral_step + c.n && row.deviation_steps == c.n && res.tapFixation.j_before < 1e-9 && res.tapFixation.j_after < 1e-9 && row.frozen_reason === :none
+        @test ok
+        ok || println("      tap changer case failed: ", c.name, " (", imp, "): s ", row.s_est, ", J ", res.tapFixation.j_before, " / ", res.tapFixation.j_after)
+      end
+      c.imp || continue
+      truth = c.net()
+      c.build(truth, c.n, true)
+      meas = _tap_truth_meas(truth)
+      model = c.net()
+      c.build(model, 0, true)
+      setTapEstimation!(model; trafo = 3, mode = c.mode)
+      # the impedance left out of the model shows as a J rise of the
+      # fixation; a rise above the 95 % quantile of chi2(1) warns and sets
+      # the flag (seen on two of these cases), and the run warns about
+      # nothing else
+      logger = Test.TestLogger(min_level = Logging.Warn)
+      res = Logging.with_logger(() -> _tap_se_run(model, meas; imp = :off), logger)
+      warned = [r.message for r in logger.logs if r.level >= Logging.Warn]
+      row = only(res.tapEstimates)
+      ok = res.converged && row.step_fixed == row.neutral_step + c.n && res.tapFixation.j_after > 1e-9
+      ok &= all(m -> occursin("above the 95 % quantile 3.841; one step state", m), warned) && length(warned) == (res.tapFixation.j_rise_exceeds_quantile ? 1 : 0)
+      @test ok
+      ok || println("      tap changer case failed: ", c.name, " (off against the step impedance): step ", row.step_fixed, ", J ", res.tapFixation.j_after)
+    end
+    # update_taps on a typed model: with auto the branch gets r and x
+    # of the fixed step, with off it keeps r and x of the run (the resolver
+    # of the typed winding rewrites them, the write-back puts them back)
+    ct = only(cc for cc in _tap_changer_cases() if cc.name == "b typed asymmetrical, impedance correction")
+    for imp in (:auto, :off)
+      truth = ct.net()
+      ct.build(truth, ct.n, imp === :auto)
+      meas = _tap_truth_meas(truth)
+      model = ct.net()
+      ct.build(model, 0, true)
+      r0, x0 = model.branchVec[3].r_pu, model.branchVec[3].x_pu
+      setTapEstimation!(model; trafo = 3, mode = ct.mode)
+      res = _tap_se_run(model, meas; imp = imp, update_taps = true)
+      br = model.branchVec[3]
+      rx = imp === :auto ? (truth.branchVec[3].r_pu, truth.branchVec[3].x_pu) : (r0, x0)
+      ok = res.converged && res.tapFixation.fixed && br.tap_winding.phase_taps.step == ct.n && abs(br.r_pu - rx[1]) <= 1e-12 && abs(br.x_pu - rx[2]) <= 1e-12 && (imp === :off || abs(rx[1] - r0) > 1e-6)
+      @test ok
+      ok || println("      typed write-back (", imp, "): step ", br.tap_winding.phase_taps.step, ", r ", br.r_pu, " x ", br.x_pu, " expected ", rx)
+    end
+  end)() end
+  return true
+end
+
+function test_tap_estimation_jacobian()::Bool
+  # The tap column of the FD Jacobian (the chain rule: dh/dt by forward
+  # difference along the analytic tangent dt/ds) against a central
+  # difference of the exact prediction over s, with
+  # impedance_correction auto (the column includes the impedance part), at
+  # an off-step s, for an asymmetrical changer with a reactance curve (b)
+  # and a phase table with r and x (e).
+  @testset "Tap estimation Jacobian column" begin (function ()
+    S = Sparlectra
+    cases = _tap_changer_cases()
+    for (name, soff) in (("b CGMES asymmetrical 60 with x curve", 1.37), ("e CGMES phase table with r and x", 0.61))
+      c = only(cc for cc in cases if cc.name == name)
+      truth = c.net()
+      c.build(truth, c.n, true)
+      meas = _tap_truth_meas(truth)
+      net = c.net()
+      c.build(net, 0, true)
+      runpf!(net, 40, 1e-12, 0; method = :rectangular)
+      setTapEstimation!(net; trafo = 3, mode = c.mode)
+      nbus = length(net.nodeVec)
+      slack = S._find_slack_idx(net)
+      Ybus = createYBUS(net = net)
+      map, _, _ = S._build_tap_state_map(net, (nbus - 1) + nbus + 1, :auto)
+      @test map !== nothing && map.trafos[1].impedance
+      S._tap_unstamp!(Ybus, net, map)
+      x = S._initial_state_vector(net, slack; flatstart = false, tapSInit = [soff])
+      col = map.trafos[1].cols[1]
+      H, _, _ = S._measurement_jacobian_fd(meas, net, x, slack, nbus, Ybus; eps = 1e-6, tapMap = map)
+      hat(sv) = (xv = copy(x); xv[col] = sv; S._predict_measurements(meas, net, S._state_to_voltage(xv, slack, nbus), Ybus; tapOverlay = S._tap_overlay(xv, map, net)))
+      fd = (hat(soff + 1e-4) .- hat(soff - 1e-4)) ./ 2e-4
+      # the column is a forward difference of step jac_eps / du = 1e-4
+      # steps: measured 9.9e-5 relative for b (as large as the exact forward
+      # difference of that step, the curvature of h, not the tangent) and
+      # 2.2e-6 for e
+      err = norm(Vector(H[:, col]) .- fd) / norm(fd)
+      @test err < 1e-3
+      err < 1e-3 || println("      Jacobian column ", name, ": relative error ", err)
+    end
+  end)() end
+  return true
+end
+
+function test_tap_estimation_t2_line()::Bool
+  # An asymmetrical changer of 1 % at psi 60 on a radial transformer with
+  # t_n 1.0320366, true step 10, Vm on both sides and no angle measurement.
+  # The factor of the tapped winding is the straight line 1 + s du e^(j psi):
+  # at step 10 the branch angle is 4.715004 deg; the r1/r2 cascade of 0.10.0
+  # put the same |t| on a circle at 5.841 deg.
+  @testset "Tap estimation T2 line" begin (function ()
+    S = Sparlectra
+    C = S.CGMESImporter
+    t2 = _tap_cim("_t2", :PhaseTapChangerAsymmetrical, [:neutralStep => "0", :lowStep => "-16", :highStep => "16", :voltageStepIncrement => "1", :windingConnectionAngle => "60"])
+    store = _tap_cim_store([t2])
+    tn = 1.0320366
+    function t2net(n::Int)
+      net = Net(name = "t2", baseMVA = 100.0)
+      addBus!(net = net, busName = "H", vn_kV = 110.0)
+      addBus!(net = net, busName = "L", vn_kV = 110.0)
+      addProsumer!(net = net, busName = "H", type = "EXTERNALNETWORKINJECTION", referencePri = "H", vm_pu = 1.02, va_deg = 0.0)
+      addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 40.0, q = 12.0)
+      addPIModelTrafo!(net = net, fromBus = "H", toBus = "L", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = tn, shift_deg = 0.0, status = 1)
+      br = net.branchVec[1]
+      br.se_tap_changers = S.SETapChangerSet(ratio_n = tn, changers = [S.SETapChanger(name = "T2", kind = :asymmetrical, role = :phase, side = :from, du = 0.01, alpha_deg = 60.0, neutral = 0, low = -16, high = 16, step = n)], origin = :cgmes)
+      # the importer: t_n times the factor of the PhaseTapChangerAsymmetrical
+      m, a = C._phaseTapRatioShift_atstep(store, t2, n)
+      br.tap_ratio = tn * m
+      br.phase_shift_deg = a
+      return net
+    end
+    meas = _tap_truth_meas(t2net(10))
+    net = t2net(0)
+    setTapEstimation!(net; trafo = 1, mode = :pst)
+    res = _tap_se_run(net, meas)
+    row = only(res.tapEstimates)
+    @test res.converged && row.frozen_reason === :none
+    @test row.step_fixed == 10 && abs(row.s_est - 10.0) < 1e-6
+    @test abs(row.angle_est_deg - 4.715004) < 1e-6
+    @test isapprox(row.angle_est_deg, C._phaseTapRatioShift_atstep(store, t2, 10)[2]; atol = 1e-6)
+    # a tree edge without an angle anchor, but the magnitude of the factor
+    # moves at psi 60: released, and at step 10 no vertex notice
+    @test row.notice == ""
+  end)() end
+  return true
+end
+
+function test_tap_estimation_microgrid_be()::Bool
+  # MicroGrid BE: the phase shifter BE-TR2_1
+  # (PhaseTapChangerAsymmetrical, 1.25 %, psi 90, steps 1 to 25, neutral 13,
+  # SvTapStep 16) on the changer set the import stores. Truth: the same
+  # delivery with its SvTapStep at 2, re-imported; exact measurements of
+  # that state on the normal import (step 16), BE-TR2_1 released alone: the
+  # estimate comes back to step 2 on the absolute band 1 to 25. The
+  # relative reading of 0.10.0 gave the band 4 to 28 (the SV step minus
+  # neutral moved it by 3 steps) and clamped this truth at 4 (spec probe,
+  # not rerun). Every stored set gives the ratio and shift of its branch at
+  # the import steps, and every transformer branch without a changer
+  # carries an empty set. Needs the MicroGrid package in the CGMES cache:
+  # RAN or SKIPPED is printed.
+  @testset "Tap estimation MicroGrid BE" begin (function ()
+    S = Sparlectra
+    C = S.CGMESImporter
+    zip = joinpath(C.cgmesTestSetCacheDir(), "cases", "cgmes_microgrid_be.zip")
+    if !isfile(zip)
+      println("      tap estimation MicroGrid BE: SKIPPED (", zip, " not in the CGMES cache)")
+      return
+    end
+    println("      tap estimation MicroGrid BE: RAN")
+    store = C.loadCGMES(zip)
+    ptc = only(tc for tc in C.objectsOf(store, :PhaseTapChangerAsymmetrical) if C.str(tc, :name) == "BE-TR2_1")
+    model = redirect_stdout(() -> importCGMES(path = deepcopy(store), name = "be"), devnull)
+    k = only(i for (i, b) in enumerate(model.net.branchVec) if b.se_tap_changers !== nothing && any(c -> c.mrid == ptc.mrid, b.se_tap_changers.changers))
+    ch = only(model.net.branchVec[k].se_tap_changers.changers)
+    @test (ch.kind, ch.side, ch.du, ch.alpha_deg, ch.neutral, ch.low, ch.high, ch.step) == (:asymmetrical, :from, 0.0125, 90.0, 13, 1, 25, 16.0)
+    @test S._tap_band(ch) == (-12.0, 12.0)
+    trafos = [b for b in model.net.branchVec if b.ratio != 0.0]
+    @test all(b -> b.se_tap_changers !== nothing && b.se_tap_changers.origin === :cgmes, trafos)
+    @test count(b -> isempty(b.se_tap_changers.changers), trafos) == 7
+    ok = true
+    for b in trafos
+      set = b.se_tap_changers
+      R, P = S._tap_set_ratio_shift(set, Float64[c.step - c.neutral for c in set.changers])
+      ok &= isapprox(R, b.tap_ratio; rtol = 1e-12) && abs(P - b.phase_shift_deg) <= 1e-12
+    end
+    @test ok
+    truth_store = deepcopy(store)
+    sv = only(o for o in C.objectsOf(truth_store, :SvTapStep) if get(o.refs, :TapChanger, "") == ptc.mrid)
+    @test C.num(sv, :position) == 16.0
+    sv.attrs[:position] = "2"
+    truth = redirect_stdout(() -> importCGMES(path = truth_store, name = "be_step2"), devnull)
+    meas = _tap_truth_meas(truth.net)
+    net = deepcopy(model.net)
+    @test setTapEstimation!(net; trafo = k, mode = :pst).s0 == [3.0]
+    res = _tap_se_run(net, meas)
+    row = only(res.tapEstimates)
+    @test res.converged && row.frozen_reason === :none
+    @test abs(row.s_est + 11.0) < 1e-6 && row.step_fixed == 2.0 && row.deviation_steps == -14.0
+    @test res.tapFixation.fixed && res.tapFixation.j_after < 1e-9
+
+    # strongly coupled steps: br9 and br12 both leave bus 3 (br12 into the
+    # star point of a three-winding transformer). Truth: the four regulators
+    # (br8 phase, br9, br10, br12 ratio) 2 steps above their SV steps, noisy
+    # measurements of seed 240, no Va. The continuous estimate s9 -0.744,
+    # s12 2.530 (J 50.1) rounded at once gives (-1, 3) and J 3761, a rise far
+    # above the 95 % quantile 9.49 of chi2(4); the truth (-1, 2) has J 58.17.
+    # The rise gives a warning and the flag, the steps are fixed one at a
+    # time (the one closest to its physical step first, the rest estimated
+    # again) and the smaller J is kept: every step at the truth, J equal to
+    # a plain run with the true taps (before the sequential fixation the
+    # rounded result stayed, with an info line only)
+    cfg = S.resolve_config(S.DEFAULT_SPARLECTRA_CONFIG_PATH, zip).config
+    mg = redirect_stdout(() -> S.import_case(zip, cfg; run_kind = :state_estimation), devnull)
+    empty!(mg.net.measurements)
+    regs = [8, 9, 10, 12]
+    tn = deepcopy(mg.net)
+    for k in regs
+      br = tn.branchVec[k]
+      set = S._effective_tap_changers(br)
+      s0 = S._tap_s_from_branch(set, br)
+      S._tap_apply_position!(br, set, round.(s0) .+ 2.0; s_from = s0, impedance = mg.config.state_estimation.tap_estimation.impedance_correction)
+    end
+    _, erg = redirect_stdout(() -> runpf!(tn; config = S._copy_powerflow_with(mg.config.powerflow; tol = 1e-10, max_iter = 40)), devnull)
+    @test erg == 0
+    meas = generateMeasurementsFromPF(tn; noise = true, stddev = measurementStdDevs(vm = 0.002, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5), relativeSigma = false, rng = Random.MersenneTwister(240))
+    net = deepcopy(mg.net)
+    for k in regs
+      setTapEstimation!(net; trafo = k, mode = S._tap_release_mode(net.branchVec[k]))
+    end
+    seRun(n) = S.with_sparlectra_config(mg.config) do
+      with_state_estimation_config(() -> runse!(n, meas); max_iter = 50, tol = 1e-6, update_net = false)
+    end
+    res = @test_logs (:warn, r"above the 95 % quantile 9\.488; sequential fixation") match_mode = :any seRun(net)
+    tf = res.tapFixation
+    ref = seRun(deepcopy(tn))
+    @test res.converged && tf.j_rise_exceeds_quantile && tf.sequential && tf.j_simultaneous > 3000.0
+    @test all(t -> t.fixed && t.deviation_steps == 2.0, res.tapEstimates)
+    @test abs(tf.j_after - ref.objectiveJ) < 1e-6 && tf.dof_after == ref.dof
+  end)() end
+  return true
 end
 
 function test_state_estimation_tap_islands()::Bool
@@ -1925,36 +2415,15 @@ function test_state_estimation_tap_islands()::Bool
   @testset "State estimation tap estimation across islands" begin (function ()
     step = 0.00625
 
-    function _two_island_tap_net()
-      net = Net(name = "tap_islands", baseMVA = 100.0)
-      for sfx in ("a", "b")
-        for (b, vn) in (("H1", 110.0), ("H2", 110.0), ("L1", 20.0), ("L2", 20.0))
-          addBus!(net = net, busName = b * sfx, vn_kV = vn)
-        end
-        addProsumer!(net = net, busName = "H1" * sfx, type = "EXTERNALNETWORKINJECTION", referencePri = "H1" * sfx, vm_pu = 1.02, va_deg = 0.0)
-        addProsumer!(net = net, busName = "L1" * sfx, type = "ENERGYCONSUMER", p = 25.0, q = 8.0)
-        addProsumer!(net = net, busName = "L2" * sfx, type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
-        addPIModelACLine!(net = net, fromBus = "H1" * sfx, toBus = "H2" * sfx, r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-        addPIModelACLine!(net = net, fromBus = "L1" * sfx, toBus = "L2" * sfx, r_pu = 0.02, x_pu = 0.1, b_pu = 0.0, status = 1)
-        addPIModelTrafo!(net = net, fromBus = "H1" * sfx, toBus = "L1" * sfx, r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-        addPIModelTrafo!(net = net, fromBus = "H2" * sfx, toBus = "L2" * sfx, r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
-      end
-      for br in net.branchVec
-        br.ratio == 0.0 && continue
-        br.has_ratio_tap = true
-        br.tap_step = step
-      end
-      return net
-    end
+    _two_island_tap_net() = _se_two_island_tap_net(step)
 
     # branch layout per island block: 1/2 lines, 3/4 trafos (a), 5/6 lines,
     # 7/8 trafos (b). Truth: +2 steps on trafo 3 (island a), -1 on trafo 7.
     tnet = _two_island_tap_net()
     for (k, n) in ((3, 2.0), (7, -1.0))
       br = tnet.branchVec[k]
-      ct = Sparlectra._cascade_tap(br, n * step, 0.0, 0.0)
-      br.tap_ratio = ct.tap_ratio
-      br.phase_shift_deg = ct.phase_shift_deg
+      # the fraction grid of the constructor: ratio / (1 + n step)
+      br.tap_ratio = br.ratio / (1.0 + n * step)
     end
     ite, erg = runpf!(tnet, 40, 1e-12, 0; islands_enabled = true)
     @test erg == 0
@@ -1972,13 +2441,33 @@ function test_state_estimation_tap_islands()::Bool
     rowA = only(t for t in res.tapEstimates if t.branch == 3)
     rowB = only(t for t in res.tapEstimates if t.branch == 7)
     @test rowA.island != rowB.island
-    @test rowA.fixed_step_1 == 2
-    @test rowB.fixed_step_1 == -1
+    @test rowA.step_fixed == 2
+    @test rowB.step_fixed == -1
     @test rowA.fixed && rowB.fixed
+    # every row field travels through the island merge (the field list
+    # there used to drop the model steps)
+    @test rowA.step_model == 0 && rowA.deviation_steps == 2 && rowA.notice == ""
+    @test res.tapFixation.iterations_estimation >= res.tapFixation.iterations_fixation >= 1
     tf = res.tapFixation
     @test tf.fixed
     @test tf.dof_after == tf.dof_before + 2   # one freed state per island
     @test tf.j_after < 1e-10
+
+    # since 0.60.0, with update_net and update_taps the island path mirrors
+    # the fixed steps onto the parent net and recomputes the parent flows
+    # and losses with them. The parent first carries the flows of a power
+    # flow on the model taps; after the run its flows equal the truth.
+    netW = _two_island_tap_net()
+    ite, erg = runpf!(netW, 40, 1e-12, 0; islands_enabled = true)
+    @test erg == 0
+    calcNetLosses!(netW)
+    setTapEstimation!(netW; trafo = 3, mode = :ratio)
+    setTapEstimation!(netW; trafo = 7, mode = :ratio)
+    resW = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = true, update_taps = true) do
+      runse!(netW, meas)
+    end
+    @test resW.converged && resW.islands !== nothing && length(resW.islands) == 2
+    @test _se_flow_deviation(netW, tnet) < 1e-6
 
     # numerical isolation: releasing ONLY island a's trafo must reproduce
     # island a's voltages bitwise (island b's model discrepancy stays in b)
@@ -1989,7 +2478,7 @@ function test_state_estimation_tap_islands()::Bool
     end
     @test resA.converged
     @test length(resA.tapEstimates) == 1
-    @test resA.tapEstimates[1].fixed_step_1 == 2
+    @test resA.tapEstimates[1].step_fixed == 2
     @test res.voltages[1:4] == resA.voltages[1:4]
   end)() end
 
@@ -2003,14 +2492,17 @@ function test_state_estimation_tap_completion()::Bool
   @testset "State estimation tap completion" begin (function ()
     step = 0.00625
 
-    function _truth_meas(r1; noise = false, rng = Random.MersenneTwister(1), grossQ = 0.0, includeIa = false)
+    function _truth_net(r1)
       tnet = _tap_gate_net()
       br = tnet.branchVec[3]
-      ct = Sparlectra._cascade_tap(br, r1, 0.0, 0.0)
-      br.tap_ratio = ct.tap_ratio
-      br.phase_shift_deg = ct.phase_shift_deg
+      # the fraction grid of the constructor: ratio / (1 + n step)
+      br.tap_ratio = br.ratio / (1.0 + r1)
       ite, erg = runpf!(tnet, 40, 1e-12, 0; method = :rectangular)
       @test erg == 0
+      return tnet
+    end
+    function _truth_meas(r1; noise = false, rng = Random.MersenneTwister(1), grossQ = 0.0, includeIa = false)
+      tnet = _truth_net(r1)
       meas = generateMeasurementsFromPF(tnet; includeImag = true, includeIa = includeIa, noise = noise, rng = rng)
       if grossQ != 0.0
         gi = findfirst(m -> m.typ == Sparlectra.QflowMeas && m.branchIdx == 3, meas)
@@ -2030,7 +2522,7 @@ function test_state_estimation_tap_completion()::Bool
     res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
       runse!(net, meas)
     end
-    @test res.converged && res.tapEstimates[1].fixed_step_1 == 2
+    @test res.converged && res.tapEstimates[1].step_fixed == 2
     @test net.branchVec[3].tap_ratio === ratio0            # bitwise protection
     res = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_taps = true) do
       runse!(net, meas)
@@ -2038,22 +2530,24 @@ function test_state_estimation_tap_completion()::Bool
     @test res.converged
     expect = net.branchVec[3].ratio / (1.0 + 2 * step)
     @test isapprox(net.branchVec[3].tap_ratio, expect; atol = 1e-14)
+    # since 0.60.0 the flows and losses on the net use the written-back tap,
+    # so they equal the truth power flow (before, calcNetLosses! ran with
+    # the old tap and the voltages of the fixed-tap solve)
+    @test _se_flow_deviation(net, _truth_net(2 * step)) < 1e-6
     net.branchVec[3].tap_est_mode = :none                  # no release: the written-back model
     res2 = with_state_estimation_config(() -> runse!(net, meas); max_iter = 40, tol = 1e-10)     # explains the set by itself
     @test res2.converged
     @test res2.objectiveJ < 1e-10
 
-    # 2) PMU synergy: on a TWO-REGULATOR release the phase
-    # regulator r2 lives in the angle information; an accurate current
-    # PHASOR pair on the released trafo shrinks its estimate spread over
-    # noisy realizations (a magnitude-only set leaves the angle soft)
-    r2true = _tap_r2_for_shift(-1.25, 90.0)   # one shift step down
+    # 2) PMU synergy: on a TWO-REGULATOR release (declared nameplate pair:
+    # fraction ratio changer and Delta-u changer at psi 90) the phase
+    # regulator lives in the angle information; an accurate current PHASOR
+    # pair on the released trafo shrinks its estimate spread over noisy
+    # realizations (a magnitude-only set leaves the angle soft). Until
+    # 0.60.0 the truth sat on the degree grid of an undeclared branch,
+    # which a :both release now refuses.
     function _truth_both()
-      tn = _tap_gate_net()
-      br = tn.branchVec[3]
-      ct = Sparlectra._cascade_tap(br, 2 * step, r2true, 90.0)
-      br.tap_ratio = ct.tap_ratio
-      br.phase_shift_deg = ct.phase_shift_deg
+      tn = _tap_gate_pair_net(2, -1)
       ite2, erg2 = runpf!(tn, 40, 1e-12, 0; method = :rectangular)
       @test erg2 == 0
       return tn
@@ -2065,7 +2559,7 @@ function test_state_estimation_tap_completion()::Bool
       out = Float64[]
       for seed = 1:6
         m = generateMeasurementsFromPF(_truth_both(); includeImag = true, noise = true, rng = Random.MersenneTwister(seed))
-        n = _tap_gate_net()
+        n = _tap_gate_pair_net(0, 0)
         withPMU && addCurrentPhasorMeasurement!(n; i_A = abs(IendB), ia_deg = rad2deg(angle(IendB)), branchNr = 3, direction = :from, sigmaI = 0.5, sigmaIa = 0.02)
         setTapEstimation!(n; trafo = 3, mode = :both, alpha_deg = 90.0)
         append!(n.measurements, m)
@@ -2073,7 +2567,7 @@ function test_state_estimation_tap_completion()::Bool
           runse!(n)
         end
         @test r.converged
-        push!(out, r.tapEstimates[1].electrical_step_2)
+        push!(out, only(t for t in r.tapEstimates if t.role === :phase).s_est)
       end
       return out
     end
@@ -2098,7 +2592,7 @@ function test_state_estimation_tap_completion()::Bool
       runse!(net)
     end
     @test res.converged
-    @test abs(res.tapEstimates[1].electrical_step_1 - 2.0) < 0.5
+    @test abs(res.tapEstimates[1].s_est - 2.0) < 0.5
 
     # 4) machine-trafo back-calculation: mutually exclusive with a release,
     # needs a registered SE, and recovers the GSU position from the AVR
@@ -2109,11 +2603,10 @@ function test_state_estimation_tap_completion()::Bool
     addPIModelTrafo!(net = gnet, fromBus = "H2", toBus = "G1", r_pu = 0.001, x_pu = 0.09, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
     gnet.branchVec[5].has_ratio_tap = true
     gnet.branchVec[5].tap_step = step
-    # TRUE machine tap: 2 steps; the machine holds 1.02 pu at G1
+    # TRUE machine tap: 2 steps on the fraction grid; the machine holds
+    # 1.02 pu at G1
     brg = gnet.branchVec[5]
-    ctg = Sparlectra._cascade_tap(brg, 2 * step, 0.0, 0.0)
-    brg.tap_ratio = ctg.tap_ratio
-    brg.phase_shift_deg = ctg.phase_shift_deg
+    brg.tap_ratio = brg.ratio / (1.0 + 2 * step)
     ite, erg = runpf!(gnet, 40, 1e-12, 0; method = :rectangular)
     @test erg == 0
     gmeas = generateMeasurementsFromPF(gnet; includeImag = true, noise = false)
@@ -2137,21 +2630,23 @@ function test_state_estimation_tap_completion()::Bool
     @test rse.converged
     bt = calcMachineTrafoTapFromSE(gnet; trafo = 5, v_machine_pu = vg, q_mvar = q_scada)
     @test bt.fixed_step == 2
-    @test abs(bt.electrical_step - 2.0) < 0.25
+    @test abs(bt.electrical_step - 2.0) < 0.25 && bt.s_est == bt.electrical_step
     @test bt.machine_bus == 5
     @test bt.q_residual_mvar < 0.1
 
-    # 5) se_view lists the release with mode and alpha
-    vnet = _tap_gate_net()
+    # 5) se_view lists the release with its mode and one entry per released
+    # regulator (declared Delta-u changer at psi 30 next to the ratio changer)
+    vnet = _tap_gate_pair_net(0, 0; psi = 30.0)
     setTapEstimation!(vnet; trafo = 3, mode = :both, alpha_deg = 30.0)
     view = se_view(vnet)
     @test length(view.taps) == 1
-    @test view.taps[1].branch == 3 && view.taps[1].mode == :both && view.taps[1].alpha_deg == 30.0
+    @test view.taps[1].branch == 3 && view.taps[1].mode == :both
+    @test [g.kind for g in view.taps[1].regulators] == [:ratio, :asymmetrical] && view.taps[1].regulators[2].alpha_deg == 30.0
     io = IOBuffer()
     print_se_view(io, view)
     out = String(take!(io))
     @test occursin("Tap estimation releases: 1", out)
-    @test occursin("mode both, alpha 30.0 deg", out)
+    @test occursin("mode both; ratio (a) du 0.00625 side to; asymmetrical (b) alpha 30.0 du 0.01 side to", out)
   end)() end
 
   return true
@@ -2167,7 +2662,9 @@ the former greedy sweep removed the least redundant row itself and needed
 many removals per critical row. Protected zero-injection rows are never
 removed, and the footer comments name the target, the critical rows and
 the removed rows. The invalid option combinations throw at construction
-of the options, before any case is imported.
+of the options, before any case is imported. The relative sigmas of
+`generateMeasurementsFromPF` are checked here too: per row
+sigma = max(f*|value|, floor), Va stays absolute, a dominating floor wins.
 """
 function test_measurement_generator_critical_thinning()::Bool
   @testset "Measurement generator critical thinning" begin (function ()
@@ -2258,6 +2755,167 @@ function test_measurement_generator_critical_thinning()::Bool
         @test jm !== nothing && parse(Float64, jm.captures[1]) < 1e-6
       end
     end
+    # relative sigmas (percent of reading): per row sigma = max(f*|value|,
+    # floor), floors bind on tiny readings, Va stays absolute (moved from
+    # the removed measurement CSV v1 testset)
+    rnet = create_se_link_net()
+    runpf!(rnet, 40, 1e-10, 0; method = :rectangular)
+    fr = measurementStdDevs(vm = 0.005, pinj = 0.02, qinj = 0.01, pflow = 0.02, qflow = 0.01, va = 0.02, imag = 0.02)
+    fl = measurementSigmaFloors()
+    rmeas = generateMeasurementsFromPF(rnet; includeImag = true, includeVa = true, noise = false, stddev = fr, relativeSigma = true, sigmaFloor = fl)
+    for mm in rmeas
+      if mm.typ == Sparlectra.VaMeas
+        @test mm.sigma == 0.02   # absolute even in relative mode
+      else
+        @test mm.sigma == max(fr[mm.typ] * abs(mm.value), fl[mm.typ])
+      end
+    end
+    # a dominating floor wins on every row
+    bigfl = measurementSigmaFloors(vm = 10.0, pinj = 1e3, qinj = 1e3, pflow = 1e3, qflow = 1e3, imag = 1e6)
+    rmeas2 = generateMeasurementsFromPF(rnet; includeImag = true, noise = false, stddev = fr, relativeSigma = true, sigmaFloor = bigfl)
+    @test all(mm.sigma == bigfl[mm.typ] for mm in rmeas2)
+  end)() end
+  return true
+end
+
+# The net of the tap changer set test of the CGMES import (A4b in
+# test/test_cgmes_importer.jl): a chain A..H of seven transformers with a
+# typed asymmetrical phase changer (step 16 of 1..25, neutral 13, 1.25 %,
+# psi 90), a symmetrical one with an xMin/xMax curve, a phase table
+# (-3..3 at `tab_step`), a RatioTapChanger, one transformer without changer,
+# a fixed shift (the export's single-step PhaseTapChangerLinear) and a
+# transformer tapped on both ends; the ENI at A makes A-B a machine
+# transformer. Written by writeCGMESFiles and zipped into `dir`.
+function _generator_a4b_delivery(dir::AbstractString, name::AbstractString; tab_step::Int)::String
+  net = Net(name = name, baseMVA = 100.0)
+  for b in ("A", "B", "C", "D", "E", "F", "G", "H")
+    addBus!(net = net, busName = b, vn_kV = 110.0)
+  end
+  addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = net, busName = "H", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+  asym() = PhaseTapChangerModel(kind = :asymmetrical, step = 16, lowStep = 1, highStep = 25, neutralStep = 13, voltage_step_increment = 0.0125, winding_connection_angle_deg = 90.0, convention = :direct_regulating_vector)
+  sym = PhaseTapChangerModel(kind = :symmetrical, step = 3, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.02, x_min = 0.05, x_max = 0.06, convention = :direct_regulating_vector)
+  tab = PhaseTapChangerModel(kind = :tabular, step = tab_step, neutralStep = 0, convention = :direct_regulating_vector, table = [TapTablePoint(step = k, ratio = 1.0 + 0.001 * k^2, angle_deg = 2.0 * k) for k in -3:3])
+  rtc = PowerTransformerTaps(Vn_kV = 110.0, step = 2, lowStep = -5, highStep = 5, neutralStep = 0, voltageIncrement_kV = 1.1)
+  tr(f, t; shift = 0.0, phase_taps = nothing, taps = nothing) = addPIModelTrafo!(net = net, fromBus = f, toBus = t, r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = shift, phase_taps = phase_taps, taps = taps)
+  tr("A", "B"; phase_taps = asym())
+  tr("B", "C"; phase_taps = sym)
+  tr("C", "D"; phase_taps = tab)
+  tr("D", "E"; taps = rtc)
+  tr("E", "F")
+  tr("F", "G"; shift = -3.0)
+  tr("G", "H"; phase_taps = asym())
+  net.trafos[end].side2.taps = PowerTransformerTaps(Vn_kV = 110.0, step = -1, lowStep = -4, highStep = 4, neutralStep = 0, voltageIncrement_kV = 1.65)
+  return _generator_zip_delivery(net, dir, name)
+end
+
+# writeCGMESFiles of `net` into dir/name, zipped to dir/name.zip
+function _generator_zip_delivery(net::Net, dir::AbstractString, name::AbstractString)::String
+  files = joinpath(dir, name)
+  mkpath(files)
+  writeCGMESFiles(net; path = files)
+  z = joinpath(dir, name * ".zip")
+  ZipArchives.ZipWriter(z) do w
+    for file in sort(readdir(files; join = true))
+      ZipArchives.zip_newfile(w, basename(file))
+      write(w, read(file))
+    end
+  end
+  return z
+end
+
+"""
+The measurement generator moves the tap changer the tap estimation
+estimates: on a CGMES delivery the deviation goes onto the
+stored changer set of each drawn transformer (the first ratio changer, else
+the first phase changer), its ratio, angle and, under the default
+`impedance_correction = auto`, the reactance of the x curve follow the
+changer data, and the default run with every tap released recovers it: the
+phase regulators fix two steps off their model step and J after the fixation
+is zero (noise-free set). Under `off` the truth keeps the start impedance,
+the set differs from the `auto` one and the `off` run recovers it as well.
+The taps table of the set lists the transformers with a changer only, in
+absolute steps. A table changer has no position off its points: a
+deviation there is refused. A delivery whose transformers have no changer
+(the last pool) gets no deviation and a note.
+"""
+function test_measurement_generator_tap_changer_sets()::Bool
+  @testset "Measurement generator tap deviation on the changer set" begin (function ()
+    opts(; kw...) = SparlectraApp.MeasurementGeneratorOptions(; noise = false, gross_k = 0.0, include_i = true, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.05, kw...)
+    cfg = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+    tap_rows(path) = [split(l[3:end], ",") for l in readlines(path) if occursin(r"^# \d+,", l)]
+    data_rows(path) = [l for l in readlines(path) if !startswith(l, "#")]
+    mktempdir() do d
+      # the phase table sits at step 2 of -3..3: two steps up is no point
+      z2 = _generator_a4b_delivery(d, "a4b_tab2"; tab_step = 2)
+      @test_throws ArgumentError SparlectraApp._se_generate_measurement_set(z2, joinpath(d, "refused.csv"), opts(; tap_steps = 2.0, tap_count = 7))
+      # table at step 1: every drawn changer has room for two steps
+      z = _generator_a4b_delivery(d, "a4b"; tab_step = 1)
+      runs = Dict{Symbol,String}()
+      for imp in (:auto, :off)
+        case = z
+        if imp === :off
+          case = joinpath(d, "a4b_off.zip")
+          cp(z, case)
+          Sparlectra.write_case_config(case, Dict{String,Any}("state_estimation.tap_estimation.impedance_correction" => "off"))
+        end
+        set = joinpath(d, "a4b_$(imp).csv")
+        runs[imp] = set
+        g = SparlectraApp._se_generate_measurement_set(case, set, opts(; tap_steps = 2.0, tap_count = 7))
+        # A-B is a machine transformer (ENI at A), E-F and F-G have no
+        # changer: four transformers are drawn, the deviation of the branch
+        # tapped on both ends goes onto its ratio changer
+        @test occursin("phase deviation 2.0 step(s) (0.02 pu each, symmetrical) on PST branch 2", g.tap_note)
+        @test occursin("phase deviation 2.0 table step(s) on PST branch 3", g.tap_note)
+        @test occursin("tap deviation 2.0 steps (~1.96% ratio) on transformer branch 4", g.tap_note)
+        @test occursin("on transformer branch 7", g.tap_note)
+        @test occursin("limited to 4 eligible transformer(s), max 7 requested", g.tap_note)
+        # taps table: no row for the changerless E-F and F-G; absolute
+        # steps after the deviation (A-B stays at 16, the RTC of G-H moves
+        # from -1 to 1), step column du, neutral ratio of the set (0.985 on
+        # G-H, the export's end-2 correction)
+        rows = tap_rows(set)
+        @test [(r[1], r[6], r[7], r[8], r[9], r[11]) for r in rows] == [("1", "1.0", "0.0125", "16.0", "16", "0.0"), ("2", "1.0", "0.02", "5.0", "5", "2.0"), ("3", "1.0", "0.03790658503988655", "3.0", "3", "2.0"), ("4", "1.0", "0.01", "4.0", "4", "2.0"), ("7", "0.985", "0.015", "1.0", "1", "2.0")]
+        res = redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(case, cfg, joinpath(d, "run_$(imp)"), "a5b_$(imp)", set; tap_estimation = true, max_iter = 50)
+        end
+        dd = SparlectraApp.to_dict(res)
+        @test dd["status"] == "succeeded"
+        md = dd["metadata"]
+        @test md["se_tap_impedance_correction"] == String(imp)
+        @test md["se_tap_j_after"] < 1e-9
+        regs = Dict((t["branch"], t["regulator"]) => t for t in md["se_tap_estimates"] if get(t, "source", "") == "estimated")
+        # the phase regulators of B-C and C-D: role phase, fixed two steps
+        # off the model step; the ratio regulators of D-E and G-H as well,
+        # the phase changer of G-H stays at its model step
+        for (b, role, dev) in ((2, "phase", 2), (3, "phase", 2), (4, "ratio", 2), (7, "phase", 0))
+          r = regs[(b, 1)]
+          @test (r["role"], r["deviation_steps"], r["fixed"], r["frozen_reason"]) == (role, dev, true, "none")
+        end
+        @test (regs[(7, 2)]["role"], regs[(7, 2)]["deviation_steps"]) == ("ratio", 2)
+      end
+      # the x curve of B-C moves the reactance of the auto truth only
+      @test data_rows(runs[:auto]) != data_rows(runs[:off])
+
+      # a delivery whose transformers have no changer: only the last pool,
+      # each drawn transformer is skipped with a note, the set has no
+      # deviation and its taps block says why
+      net = Net(name = "plain", baseMVA = 100.0)
+      for b in ("A", "B", "C")
+        addBus!(net = net, busName = b, vn_kV = 110.0)
+      end
+      addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "C", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+      addPIModelTrafo!(net = net, fromBus = "A", toBus = "B", r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0)
+      addPIModelTrafo!(net = net, fromBus = "B", toBus = "C", r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = -3.0)
+      zp = _generator_zip_delivery(net, d, "plain")
+      setp = joinpath(d, "plain.csv")
+      gp = SparlectraApp._se_generate_measurement_set(zp, setp, opts(; tap_steps = 2.0, tap_count = 2))
+      @test occursin("transformer branch 1 (A-B) has no tap changer, no deviation", gp.tap_note)
+      @test occursin("transformer branch 2 (B-C) has no tap changer, no deviation", gp.tap_note)
+      @test isempty(tap_rows(setp))
+      @test any(==("# case has no tap changers (no tap steps to estimate)"), readlines(setp))
+    end
   end)() end
   return true
 end
@@ -2324,11 +2982,13 @@ end
 # with its boundary, packed as `cgmes_minigrid.zip`, the name the sets are
 # bound to; never downloaded here), the set goes through the SE service with
 # tap estimation, and the expected warnings of these sets (zero-injection
-# rows at the two isolated buses of the base case) are captured. Everything
-# else is re-emitted for the runner's warning check. `f` receives the
-# result dict, run.log and se_diagnostics.md; without the cache the run is
-# reported as SKIPPED and `f` is not called.
-function _minigrid_fallback_run(f::Function, set::AbstractString, name::AbstractString; staged::Bool = false)
+# rows at the two isolated buses of the base case) are captured. A warning
+# matching one of `expected` is captured too, and at least one such warning
+# per pattern must come. Everything else is re-emitted for the runner's
+# warning check. `f` receives the result dict, run.log and
+# se_diagnostics.md; without the cache the run is reported as SKIPPED and
+# `f` is not called.
+function _minigrid_fallback_run(f::Function, set::AbstractString, name::AbstractString; staged::Bool = false, expected::Vector{String} = String[])
   root = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "extracted", "MiniGrid", "BusBranch")
   base = joinpath(root, "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_v3")
   boundary = joinpath(root, "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
@@ -2352,8 +3012,12 @@ function _minigrid_fallback_run(f::Function, set::AbstractString, name::Abstract
         SparlectraApp._run_state_estimation_service(z, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, out, name, set; tap_estimation = true, max_iter = 50, tap_staged_start = staged)
       end
     end
+    for p in expected
+      @test any(record -> occursin(p, record.message), logger.logs)
+    end
     for record in logger.logs
       occursin("excluded (its bus is isolated)", record.message) && continue
+      any(p -> occursin(p, record.message), expected) && continue
       @warn record.message
     end
     f(SparlectraApp.to_dict(res), read(joinpath(out, "run.log"), String), read(joinpath(out, "se_diagnostics.md"), String))
@@ -2363,8 +3027,8 @@ end
 
 # The reported block of se_diagnostics.md describes the frozen-tap run the
 # status line reports: same run id, case, set, iterations, J and dof as
-# run.log and the metadata.
-function _assert_minigrid_fallback_report(dd, log::AbstractString, diag::AbstractString, name::AbstractString, set::AbstractString)
+# run.log and the metadata. `case` is the case name the block shows.
+function _assert_tap_fallback_report(dd, log::AbstractString, diag::AbstractString, name::AbstractString, set::AbstractString; case::AbstractString = "cgmes_minigrid.zip")
   @test dd["status"] == "succeeded"
   @test get(dd["metadata"], "se_tap_estimation_fallback", false) == true
   @test occursin("repeating WITHOUT tap estimation", log)
@@ -2376,7 +3040,7 @@ function _assert_minigrid_fallback_report(dd, log::AbstractString, diag::Abstrac
   @test occursin("**Converged:** true in $(jm.captures[1]) iteration(s)", diag)
   @test occursin("**Objective J:** $(jm.captures[2]) (dof=$(jm.captures[3])), every tap frozen at its model position", diag)
   @test occursin("- **Run:** $(name)", diag)
-  @test occursin("- **Case:** cgmes_minigrid.zip", diag)
+  @test occursin("- **Case:** $(case)", diag)
   @test occursin("- **Measurement set:** $(basename(set))", diag)
   @test occursin("- **J/dof:** $(round(parse(Float64, jm.captures[2]) / parse(Int, jm.captures[3]); digits = 2))", diag)
   @test occursin("## Diagnostics pass (every row active, before any elimination)", diag)
@@ -2410,8 +3074,12 @@ artifact used to describe the failed attempt (the diverged J at the dof
 with tap states, the frozen run's J on the page); now the diagnostics
 repeat on the frozen taps and the artifact opens with the reported
 numbers. This set confirms
-all three of its eliminations and stops at `max_eliminations`. Needs the
-conformity package in the local cache: RAN or SKIPPED is printed.
+all three of its eliminations and stops at `max_eliminations`. On the set
+`cgmes_minigrid_tap_rejected` the staged estimate was rejected
+(`worse_fit`) before the sequential fixation; it is now kept
+with the fixation flags. The rejection itself is checked on an off-grid
+sp_case14 in `test_state_estimation_tap_fallback`.
+Needs the conformity package in the local cache: RAN or SKIPPED is printed.
 """
 function test_state_estimation_tap_fallback_diagnostics_consistent()::Bool
   @testset "Tap fallback: diagnostics artifact matches the reported run (MiniGrid)" begin
@@ -2423,29 +3091,56 @@ function test_state_estimation_tap_fallback_diagnostics_consistent()::Bool
     # the COLD mass release (no staged start) does not converge here and
     # falls back; the fixture pins that path's report
     _minigrid_fallback_run(set, "minigrid_fb") do dd, log, diag
-      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_fb", set)
+      _assert_tap_fallback_report(dd, log, diag, "minigrid_fb", set)
       @test occursin("- **Eliminated rows:** 3 ", diag)
       @test occursin("(stop: max_eliminations)", diag)
       @test !occursin("Reverted:", diag)
       @test !occursin("Not eliminated", diag)
     end
-    # the acceptance rule of the staged start: on this set the staged
-    # estimate converges but its fixed taps fit worse than the model
-    # positions (measured J 48298 at dof 75 against 46692 at dof 78), so it
-    # is rejected and the run falls back with its own reason and note on
-    # every surface. Until a5121638 this set kept its estimate: the two
-    # 380 kV legs of the three-winding transformers (1 % steps, 1 to 33,
-    # neutral 17) fixed on the constructor grid of 0.625 %, where the
-    # estimate fit better than the model; since a5121638 they fix on their
-    # delivered 1 % steps (-1 instead of -2 steps of 0.625 % on branch 14)
-    _minigrid_fallback_run(set, "minigrid_fb_staged"; staged = true) do dd, log, diag
-      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_fb_staged", set)
+    # the staged start on this set keeps its estimate: the import stores
+    # the changers of the delivery (0.60.0), so only the two 380 kV legs of
+    # the three-winding transformers with a RatioTapChanger are released
+    # (1 % steps, 1 to 33, neutral 17), no longer the eight transformer
+    # branches of the constructor grid; their fixed steps give J 10752.1 at
+    # dof 75 against 46692.2 at dof 78 with the model positions (with the
+    # eight releases the estimate was rejected, J 48298.6 at dof 75)
+    # The fixation of each solve here (the estimate and the three
+    # eliminations) raises J by about 9 against the 95 % quantile 5.99 of
+    # chi2(2) on this set (J/dof 140 to 620), so each warns
+    _minigrid_fallback_run(set, "minigrid_fb_staged"; staged = true, expected = ["above the 95 % quantile 5.991"]) do dd, log, _
+      @test dd["status"] == "succeeded"
       @test get(dd["metadata"], "se_tap_staged_start", false) == true
-      @test get(dd["metadata"], "se_tap_estimation_fallback_reason", "") == "worse_fit"
-      @test occursin("tap estimation rejected:", log)
-      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, diag)
-      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, SparlectraApp._webui_se_summary(dd))
-      @test occursin(SparlectraApp._webui_escape(SparlectraApp._SE_TAP_REJECTED_NOTE), SparlectraApp._webui_se_tap_section(dd))
+      @test get(dd["metadata"], "se_tap_estimation_fallback", false) == false
+      @test occursin("staged start, one solve with the 2 released tap(s) frozen", log)
+    end
+    # the set `cgmes_minigrid_tap_rejected` (generated on this case by the SE
+    # measurement generator: fresh solve, gaussian noise of seed 165, sigma
+    # U 0.5 %, P and Q 1 %, no tap deviation and no gross error, so the
+    # model steps are the truth): the two released legs leave bus 1 into
+    # the star points of two three-winding transformers and are strongly
+    # coupled. Their estimates sit at -0.498 and -0.503 steps; rounded at
+    # once to 0 and -1 they gave J 68770 at dof 82 against 73.44 with the
+    # model positions, and the staged estimate was rejected (worse_fit)
+    # before the sequential fixation. Now the rise above the 95 % quantile of
+    # chi2(2) warns and the steps are fixed one at a time: -0.503 first to
+    # -1, the other leg follows to -1. The pair (16, 16) one step below the
+    # truth gives J 73.43, the data barely see the common step of the two
+    # legs; the estimate is kept with the flags in the metadata and the
+    # notice in run.log. Seeds 1 to 150 of the same generator options give
+    # no rejection either; the worse_fit fallback is checked on an off-grid
+    # sp_case14 in test_state_estimation_tap_fallback
+    rejected = joinpath(@__DIR__, "fixtures", "measurements", "cgmes_minigrid_tap_rejected.measurements.csv")
+    _minigrid_fallback_run(rejected, "minigrid_rej_staged"; staged = true, expected = ["above the 95 % quantile 5.991; sequential fixation"]) do dd, log, _
+      @test dd["status"] == "succeeded"
+      @test get(dd["metadata"], "se_tap_staged_start", false) == true
+      @test get(dd["metadata"], "se_tap_estimation_fallback", false) == false
+      @test get(dd["metadata"], "se_tap_j_rise_exceeds_quantile", false) == true && get(dd["metadata"], "se_tap_sequential_fixation", false) == true
+      @test occursin("kept the sequential result", log)
+      legs = [t for t in dd["metadata"]["se_tap_estimates"] if get(t, "source", "") == "estimated"]
+      @test length(legs) == 2 && all(t -> t["fixed"] == true && abs(t["deviation_steps"]) <= 1, legs) && legs[1]["step_fixed"] == legs[2]["step_fixed"]
+      # J of the kept pair against the solve at the model steps of the staged start
+      jm = match(r"staged start, one solve with the 2 released tap\(s\) frozen \(\d+ iteration\(s\), J = ([0-9.eE+-]+)", log)
+      @test jm !== nothing && dd["metadata"]["se_tap_j_after"] <= parse(Float64, jm.captures[1]) * (1.0 + 1e-6)
     end
   end
   return true
@@ -2466,15 +3161,18 @@ function test_state_estimation_elimination_reverted()::Bool
   @testset "Tap fallback: an unconfirmed elimination is reverted (MiniGrid)" begin
     set = joinpath(@__DIR__, "fixtures", "measurements", "cgmes_minigrid_elimination_reverted.measurements.csv")
     _minigrid_fallback_run(set, "minigrid_rev") do dd, log, diag
-      _assert_minigrid_fallback_report(dd, log, diag, "minigrid_rev", set)
+      _assert_tap_fallback_report(dd, log, diag, "minigrid_rev", set)
       @test occursin("- **Eliminated rows:** 2 ", diag)
       @test occursin("- **Not eliminated:** `", diag)
       @test occursin("(stop: not_converged)", diag)
       @test occursin("Reverted:", diag)
     end
     # the staged start (the service default) converges on the same set, and
-    # the fixed taps fit better than the model positions (measured J 35006
-    # at dof 75 against 39952 at dof 78), so the estimate is kept. Until
+    # the fixed taps fit better than the model positions (measured J 19177
+    # at dof 75 against 39952 at dof 78), so the estimate is kept. With the
+    # changers the import stores (0.60.0) only the two 380 kV legs with a
+    # RatioTapChanger are released; with the eight transformer branches of
+    # the constructor grid released the kept estimate had J 34251. Until
     # a5121638 this set was rejected (J 46180 against 39952): the 380 kV
     # legs fixed on the constructor grid of 0.625 % instead of their
     # delivered 1 % steps
@@ -2566,14 +3264,17 @@ function test_state_estimation_tap_fallback()::Bool
       trafo = findfirst(b -> b.ratio != 0.0 && b.tap_step > 0.0 && b.tap_min > 0.0 && b.tap_max > 0.0, tnet.branchVec)
       if trafo !== nothing
         setTapEstimation!(tnet; trafo = trafo, mode = :ratio, enabled = true)
-        tmap = Sparlectra._build_tap_state_map(tnet, 1)
+        tmap, _, _ = Sparlectra._build_tap_state_map(tnet, 1, :auto)
         @test tmap !== nothing
-        limits = Sparlectra._tap_step_limits(tmap, tnet)
+        limits = Sparlectra._tap_step_limits(tmap)
         @test !isempty(limits)
         br = tnet.branchVec[trafo]
-        full = abs((1.0 / br.tap_min - 1.0) - (1.0 / br.tap_max - 1.0))
-        # a quarter of the full travel, and strictly positive so a released
-        # regulator can still move
+        # the step band of the nameplate row in steps of the fraction grid:
+        # tap_min = ratio / (1 + pos_max step), tap_max = ratio / (1 + pos_min step)
+        full = round((br.ratio / br.tap_min - 1.0) / br.tap_step) - round((br.ratio / br.tap_max - 1.0) / br.tap_step)
+        # a quarter of the full travel in steps (until 0.60.0 in units of
+        # the fraction r1), and strictly positive so a released regulator
+        # can still move
         for (_, lim) in limits
           @test lim > 0.0
           @test lim ≈ 0.25 * full atol = 1e-12
@@ -2602,16 +3303,42 @@ function test_state_estimation_tap_fallback()::Bool
       SparlectraApp._se_generate_measurement_set(shipped, set, SparlectraApp.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
         include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0,
         sigma_ia_deg = 0.0, seed = 42))
-      # the staged start itself: flat start, cap 4, the mass release
-      # converges WITHOUT the fallback
-      res_st = redirect_stdout(devnull) do
-        SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
-          joinpath(d, "st"), "tapst188", set; tap_estimation = true, max_iter = 4, flatstart = true)
+      # the staged start itself: flat start, cap 4, the mass release of the
+      # 13 ratio changers converges WITHOUT the fallback. Since 0.60.0 the
+      # degree rows of the SCF tap changers (1.25 deg, -24..24, alpha 0) are
+      # declared changers and join the release (13 transformers, 26 states),
+      # pinned on the shipped case; the ratio-only release the shipped case
+      # had until 0.60.0 runs on a copy without the degree rows (measured: no
+      # fallback at cap 4). With the degree rows the staged estimate was
+      # rejected (worse_fit) while the mesh-edge degree regulators were
+      # rounded although only relative to frozen ones and the steps were
+      # rounded at once (J 1043.0 at dof 1052
+      # against 1001.6 at dof 1057 with the model positions). Now five
+      # regulators stay states, the rise above the 95 % quantile of chi2(13)
+      # warns, the steps fixed one at a time give J 996.3, and the estimate
+      # is kept
+      ratio_only = joinpath(d, "sp_case188.scf.json")
+      write(ratio_only, replace(read(shipped, String), r",\s*\{\s*\"alpha_deg\": 0\.0,\s*\"index\": 2,[^}]*\}" => ""))
+      for (case, tag, rise) in ((ratio_only, "st", false), (shipped, "stdeg", true))
+        logger = Test.TestLogger(min_level = Logging.Warn)
+        res_st = Logging.with_logger(logger) do
+          redirect_stdout(devnull) do
+            SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+              joinpath(d, tag), "tapst188", set; tap_estimation = true, max_iter = 4, flatstart = true)
+          end
+        end
+        rises = [r.message for r in logger.logs if r.level >= Logging.Warn && occursin("above the 95 % quantile", r.message)]
+        @test isempty(rises) == !rise && all(m -> occursin("kept the sequential result", m), rises)
+        # every other warning goes to the capture of the test set
+        for r in logger.logs
+          (r.level >= Logging.Warn && !(r.message in rises)) && @warn r.message
+        end
+        dst = SparlectraApp.to_dict(res_st)
+        @test dst["status"] == "succeeded"
+        @test get(dst["metadata"], "se_tap_staged_start", false) == true
+        @test get(dst["metadata"], "se_tap_estimation_fallback", false) == false
+        @test get(dst["metadata"], "se_tap_j_rise_exceeds_quantile", false) == rise && get(dst["metadata"], "se_tap_sequential_fixation", false) == rise
       end
-      dst = SparlectraApp.to_dict(res_st)
-      @test dst["status"] == "succeeded"
-      @test get(dst["metadata"], "se_tap_staged_start", false) == true
-      @test get(dst["metadata"], "se_tap_estimation_fallback", false) == false
       res = redirect_stdout(devnull) do
         SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
           joinpath(d, "fb"), "tapfb188", set; tap_estimation = true, max_iter = 2, flatstart = false)
@@ -2640,6 +3367,43 @@ function test_state_estimation_tap_fallback()::Bool
       @test SparlectraApp._powerflow_run_index_solver(res) == "wls"
     end
 
+    # The acceptance rule of the staged start (worse_fit): the fixed steps
+    # are kept only if they fit at least as well as the model positions.
+    # Trigger: sp_case14 with the ratio changer of branch 31 at the model
+    # position 4.4, between two physical steps, and exact measurements of
+    # that state. The estimate comes back to 4.4, the fixation can only reach
+    # step 4: J 0.233 against 4.4e-16 at the model positions (dof 83 both),
+    # so the estimate is rejected and the run falls back with its own reason
+    # and note on every surface. The rise stays below the 95 % quantile 5.99
+    # of chi2(2), so no warning. A noisy set of the same state was kept
+    # (seed 42: J 77.94 fixed against 78.09 at the model positions), and the
+    # MiniGrid set cgmes_minigrid_tap_rejected no longer triggers the rule
+    # since the sequential fixation
+    mktempdir() do d
+      offgrid = joinpath(d, "sp_case14_offgrid.scf.json")
+      txt = read(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"), String)
+      write(offgrid, replace(txt, r"(\"branch\": 31,[^\]]*?\"pos\": )4," => s"\g<1>4.4,"))
+      @test read(offgrid, String) != txt
+      set = joinpath(d, "gen14.csv")
+      SparlectraApp._se_generate_measurement_set(offgrid, set, SparlectraApp.MeasurementGeneratorOptions(; noise = false, gross_k = 0.0, tap_steps = 0.0,
+        include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0,
+        sigma_ia_deg = 0.0, seed = 42))
+      res = redirect_stdout(devnull) do
+        SparlectraApp._run_state_estimation_service(offgrid, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+          joinpath(d, "rej"), "offgrid_rej", set; tap_estimation = true, max_iter = 50)
+      end
+      dd = SparlectraApp.to_dict(res)
+      log = read(joinpath(d, "rej", "run.log"), String)
+      diag = read(joinpath(d, "rej", "se_diagnostics.md"), String)
+      _assert_tap_fallback_report(dd, log, diag, "offgrid_rej", set; case = basename(offgrid))
+      @test get(dd["metadata"], "se_tap_staged_start", false) == true
+      @test get(dd["metadata"], "se_tap_estimation_fallback_reason", "") == "worse_fit"
+      @test occursin("tap estimation rejected: the 2 estimated tap(s)", log)
+      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, diag)
+      @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, SparlectraApp._webui_se_summary(dd))
+      @test occursin(SparlectraApp._webui_escape(SparlectraApp._SE_TAP_REJECTED_NOTE), SparlectraApp._webui_se_tap_section(dd))
+    end
+
     # the helpers the fallback is built from
     net = SparlectraApp._se_import_case_net(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"),
       Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true))
@@ -2666,10 +3430,14 @@ end
       ("Robust R modification", test_state_estimation_robust_r),
       ("Wilson-Hilferty band test", test_state_estimation_wilson_hilferty),
       ("Diagnostics unification", test_state_estimation_diagnostics_unification),
-      ("Measurement CSV v1", test_state_estimation_measurement_csv),
       ("SE-to-PF chain", test_state_estimation_se_chain),
       ("Island-wise SE, parallel against serial", test_state_estimation_islands_parallel),
       ("Current-angle measurements (IaMeas)", test_state_estimation_ia_measurements),
+      ("Tap changer data: s -> t(s)", test_tap_changer_data),
+      ("Tap estimation per changer type", test_tap_estimation_changer_types),
+      ("Tap estimation Jacobian column", test_tap_estimation_jacobian),
+      ("Tap estimation T2 line", test_tap_estimation_t2_line),
+      ("Tap estimation MicroGrid BE", test_tap_estimation_microgrid_be),
       ("Tap estimation across islands", test_state_estimation_tap_islands),
       ("Tap completion (write-back, PMU, machine trafo)", test_state_estimation_tap_completion),
       ("DTF case through the SE service", test_state_estimation_dtf_service),
@@ -2677,6 +3445,7 @@ end
       ("Tap fallback: diagnostics artifact matches the reported run (MiniGrid)", test_state_estimation_tap_fallback_diagnostics_consistent),
       ("Tap fallback: an unconfirmed elimination is reverted (MiniGrid)", test_state_estimation_elimination_reverted),
       ("Measurement generator critical thinning", test_measurement_generator_critical_thinning),
+      ("Measurement generator tap deviation on the changer set", test_measurement_generator_tap_changer_sets),
     ]
 
     for (name, testfn) in tests

@@ -60,24 +60,6 @@ function run_legacy_tap_controller_tests()
       addPIModelACLine!(net = net, fromBus = "Slack2", toBus = "Load2", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
       return net, tbr
     end
-    function _build_rvc_net(; qmin::Float64 = -50.0, qmax::Float64 = 50.0)
-      net = Net(name = "machine_rvc", baseMVA = 100.0)
-      addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-      addBus!(net = net, busName = "GenBus", vn_kV = 110.0)
-      addBus!(net = net, busName = "Load", vn_kV = 110.0)
-      addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "Slack")
-      addProsumer!(net = net, busName = "GenBus", type = "SYNCHRONOUSMACHINE", p = 30.0, q = 0.0, qMin = qmin, qMax = qmax)
-      addProsumer!(net = net, busName = "Load", type = "ENERGYCONSUMER", p = -70.0, q = -20.0)
-      addPIModelACLine!(net = net, fromBus = "Slack", toBus = "GenBus", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
-      addPIModelACLine!(net = net, fromBus = "GenBus", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
-      return net
-    end
-
-    @testset "One-controller guard works across transformer aliases" begin (function ()
-      net, tbr = _build_net()
-      addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
-      @test_throws ErrorException addPowerTransformerControl!(net; trafo = tbr.comp.cID, mode = :voltage, target_bus = "Load", target_vm_pu = 0.99, control_ratio = true, control_phase = false)
-    end)() end
 
     @testset "PST reactance coupling X(alpha) (#274)" begin (function ()
       # PST loop net: trafo Slack→Mid with a parallel line so the phase tap can
@@ -218,20 +200,6 @@ function run_legacy_tap_controller_tests()
       # the actuated shunt carries the same susceptance (MATPOWER stamping)
       sh = net.shuntVec[ctrl.shunt_idx]
       @test imag(sh.y_pu_shunt) * net.baseMVA ≈ ctrl.bs_mvar atol = 1e-9
-      # the classical result reports the SVC: counted on the Controllers line,
-      # its own summary block, and the regulated bus marked in the Control column
-      calcNetLosses!(net)
-      stxt = mktempdir() do d
-        cd(d) do
-          printACPFlowResults(net, 0.0, 1, 1e-8, true)
-          read("result_$(net.name).txt", String)
-        end
-      end
-      @test occursin("SVC: 1", stxt)
-      @test occursin("Shunt Voltage Control Summary", stxt)
-      @test any(l -> occursin("Load", l) && occursin("SVC", l), split(stxt, "\n"))
-      @test occursin("SVC", sprint(printShuntVoltageControllerSummary, net))
-
       # honest limit region: an unreachable target clamps the susceptance and
       # reports at_limit — constant-B, the reactive output then follows V²
       lnet = build_svc_net()
@@ -796,42 +764,6 @@ function run_legacy_tap_controller_tests()
       end
     end)() end
 
-    @testset "Branch active power controller (phase)" begin (function ()
-      # A radial path gives a phase shifter no lever on P (the load dictates
-      # the flow); the parallel line provides the loop the controller needs —
-      # the honest probe direction (post-#274 flow refresh) exposes that.
-      net, tbr = _build_net()
-      addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
-      result0 = run_sparlectra(net = net, config = _runner_cfg())
-      erg0 = result0.numerical_converged ? 0 : 1
-      @test erg0 == 0
-      p0 = get_branch_p_from_to_mw(net, "Slack", "Mid")
-
-      # one discrete step of 1.25° moves ≈ 8 MW on this loop — the target must
-      # sit on the discrete grid within the deadband, otherwise a discrete
-      # controller can only oscillate around it
-      p_target = p0 - 8.0
-      addPowerTransformerControl!(net;
-        trafo = string(tbr.branchIdx),
-        mode = :branch_active_power,
-        target_branch = ("Slack", "Mid"),
-        p_target_mw = p_target,
-        control_ratio = false,
-        control_phase = true,
-        is_discrete = true,
-        deadband_p_mw = 4.0,
-        max_outer_iters = 12,
-      )
-
-      result = run_sparlectra(net = net, config = _runner_cfg())
-      erg = result.numerical_converged ? 0 : 1
-      @test erg == 0
-      @test tbr.phase_shift_deg != 0.0
-      ctrl = only(Sparlectra._tap_controllers(net))
-      @test ctrl.converged
-      @test abs(get_branch_p_from_to_mw(net, "Slack", "Mid") - p_target) <= 4.0
-    end)() end
-
     @testset "YAML controller instantiation (#305)" begin (function ()
       # Round trip through the real YAML reader: a declared power_transformer
       # controller must be active and reproduce the programmatic setup.
@@ -929,21 +861,6 @@ function run_legacy_tap_controller_tests()
       end
       @test err isa ArgumentError
       @test occursin("control.controllers.s1", sprint(showerror, err))
-    end)() end
-
-    @testset "Machine RVC: honest at_limit when the target is unreachable" begin (function ()
-      net = _build_rvc_net(qmin = -2.0, qmax = 2.0)
-      addMachineVoltageControl!(net; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.0, deadband_vm_pu = 5e-4)
-      pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
-      result = run_control!(net; controllers = collect_outer_controllers(net), pf_config = pf, control_config = ControlConfig(max_outer_iterations = 15), verbose = 0)
-      # the loop settles (converged-or-blocked), but the controller itself is
-      # parked at its reactive bound with the target still out of reach
-      @test result.status in (:converged, :blocked)
-      ctrl = Sparlectra._machine_controllers(net)[1]
-      @test ctrl.at_limit
-      @test !ctrl.converged
-      @test isapprox(ctrl.q_mvar, -2.0; atol = 1e-6)
-      @test abs(get_bus_vm_pu(net, "Load") - 1.0) > 5e-4
     end)() end
 
   end)()

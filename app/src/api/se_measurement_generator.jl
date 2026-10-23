@@ -134,8 +134,12 @@ calls a solver directly). With the settings in `opts` (see
 [`MeasurementGeneratorOptions`](@ref) for every field): import the case
 through the shared SE import paths, optionally shift up to `tap_count`
 seed-randomly selected in-service transformers by `tap_steps` MECHANICAL
-steps each on their own grids (the seed decides WHICH transformers,
-non-machine declared changers are drawn first), obtain the truth state
+steps each, on one changer of the changer set the tap estimation uses (the
+first ratio changer, else the first phase changer; ratio, angle and, under
+`state_estimation.tap_estimation.impedance_correction = auto`, the
+impedance per step follow its data; the seed decides WHICH transformers,
+releasable non-machine transformers are drawn first, a transformer without
+tap changer is skipped with a note), obtain the truth state
 (`truth_source = :fresh_solve` solves the configured power flow at
 reference tightness; `:from_run` adopts the solved voltages of run
 `run_id` under `run_root` without re-solving), optionally keep only one
@@ -159,7 +163,9 @@ sigma, `measurements` is the generated set before it is written and
 `not_written` lists the rows the table cannot carry (a negative current
 magnitude drawn by the noise), also named in the file. Side effect: writes `out_path`. Throws `ArgumentError`
 with a user-readable text when the case has no in-service transformer for a
-requested deviation, the requested run state is missing or bound to
+requested deviation, a fractional deviation on a table or typed changer,
+a deviation onto a step that is no position of the changer's table, the
+requested run state is missing or bound to
 another case, or the power flow does not converge; the option combination
 itself is already validated by the constructor of `opts`.
 """
@@ -189,11 +195,15 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     # the GSU behind the slack: 320 MVar of unexplainable imbalance).
     # Selection: up to tap_count transformers, drawn SEED-randomly (the
     # user sets how many at most, the seed decides which) with the class
-    # priority preserved: non-machine declared changers (ratio tap, or
-    # nameplate phase tap of a PST) fill first, then declared changers on
-    # machine trafos, then any transformer at all (the run warns there)
-    pool1 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && (br.has_ratio_tap || _declared_phase_tap(br)) && _branch_terminal_state(br) == :closed && !_is_machine_transformer(net, k))]
-    pool2 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && (br.has_ratio_tap || _declared_phase_tap(br)) && _branch_terminal_state(br) == :closed && !(k in pool1))]
+    # priority preserved: non-machine transformers the tap estimation can
+    # release (a non-empty changer set, _tap_release_mode) fill first, then
+    # releasable machine transformers, then any transformer at all. A
+    # transformer of the last class has no tap changer (an empty set, for
+    # example a CGMES transformer without changer), so it is skipped with a
+    # note and the set carries no deviation there
+    estimable(br) = _tap_release_mode(br) !== nothing
+    pool1 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && estimable(br) && _branch_terminal_state(br) == :closed && !_is_machine_transformer(net, k))]
+    pool2 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && estimable(br) && _branch_terminal_state(br) == :closed && !(k in pool1))]
     pool3 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && _branch_terminal_state(br) == :closed && !(k in pool1) && !(k in pool2))]
     isempty(pool1) && isempty(pool2) && isempty(pool3) && throw(ArgumentError("tap deviation requested but the case has no in-service transformer"))
     # a dedicated RNG stream keeps the transformer draw independent of the
@@ -210,42 +220,57 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     rng_tap = Random.MersenneTwister(seed * 4093 + 11)
     pool = !isempty(pool1) ? pool1 : (!isempty(pool2) ? pool2 : pool3)
     picks = _seeded_permutation(rng_tap, pool)
-    tap_branches = sort!(picks[1:min(tap_count, length(picks))])
-    tap_limit_note = length(tap_branches) < tap_count ? " (limited to $(length(tap_branches)) eligible transformer(s), max $(tap_count) requested)" : ""
+    picked = sort!(picks[1:min(tap_count, length(picks))])
+    tap_limit_note = length(picked) < tap_count ? " (limited to $(length(picked)) eligible transformer(s), max $(tap_count) requested)" : ""
     nby = _bus_name_by_idx(net)
+    # the impedance of the truth follows the run's impedance rule
+    # (state_estimation.tap_estimation.impedance_correction of the case), so
+    # the default run reproduces its own generated set
+    tap_imp = config.state_estimation.tap_estimation.impedance_correction
     notes = String[]
-    for ti in tap_branches
+    for ti in picked
       br = net.branchVec[ti]
-      if br.has_ratio_tap || !_declared_phase_tap(br)
-        base_tap = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
-        # n steps from the live position on the ratio grid of the branch
-        # (the fraction grid of nameplate data, the steps of a CGMES or typed
-        # changer), so the truth is a mechanical position of the estimator's
-        # fixation grid
-        (!isinteger(tap_steps) && (br.taps_derived || br.tap_ratio_points !== nothing)) && throw(ArgumentError("tap deviation of $(tap_steps) steps on transformer branch $(ti): a tabular or modelled tap changer has no fractional positions"))
-        p_live = round(_tap_r1_position(br, br.ratio / base_tap - 1.0), RoundNearestTiesAway)
-        br.tap_ratio = br.ratio / (1.0 + _tap_r1_at(br, p_live + tap_steps))
-        pct_note = " (~$(round((br.tap_ratio / base_tap - 1.0) * 100.0; digits = 2))% ratio)"
-        push!(notes, "tap deviation $(tap_steps) steps$(pct_note) on transformer branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
-      else
-        # pure phase shifter (PST): the deviation lives on the changer's OWN
-        # mechanical grid. Delta-u PST: n additional-voltage steps through
-        # the cascade (the shift angle follows via atan, it is NOT the
-        # grid); degree-grid PST: additive degrees.
-        if br.phase_du_step > 0.0
-          ψ = deg2rad(br.tap_est_alpha_deg)
-          tbase = (br.ratio == 0.0 ? 1.0 : br.ratio) * cis(deg2rad(br.angle))
-          tlive = (br.tap_ratio == 0.0 ? abs(tbase) : br.tap_ratio) * cis(deg2rad(br.phase_shift_deg))
-          r2live = real((tbase / tlive - 1.0) * cis(-ψ))
-          tnew = tbase / (1.0 + (r2live + tap_steps * br.phase_du_step) * cis(ψ))
-          br.tap_ratio = abs(tnew)
-          br.phase_shift_deg = rad2deg(angle(tnew))
-          push!(notes, "phase deviation $(tap_steps) Delta-u step(s) ($(br.phase_du_step) pu each, psi $(br.tap_est_alpha_deg) deg) on PST branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
-        else
-          br.phase_shift_deg += tap_steps * br.phase_step_deg
-          push!(notes, "phase deviation $(tap_steps) step(s) ($(br.phase_step_deg) deg each) on PST branch $(ti) ($(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus)))))")
-        end
+      ends = "$(get(nby, Int(br.fromBus), string(Int(br.fromBus))))-$(get(nby, Int(br.toBus), string(Int(br.toBus))))"
+      # the deviation moves one changer of the set the tap estimation
+      # uses (the first ratio changer, else the first phase changer; the
+      # SE service's auto release takes the same one)
+      set = _effective_tap_changers(br)
+      c = _tap_deviation_changer(set)
+      if c == 0
+        push!(notes, "transformer branch $(ti) ($(ends)) has no tap changer, no deviation")
+        continue
       end
+      s0 = _tap_s_from_branch(set, br)
+      if s0 === nothing
+        push!(notes, "transformer branch $(ti) ($(ends)): its ratio and angle do not lie on the curves of its tap changer data, no deviation")
+        continue
+      end
+      ch = set.changers[c]
+      (!isinteger(tap_steps) && (ch.kind === :tabular || set.origin === :typed)) && throw(ArgumentError("tap deviation of $(tap_steps) steps on transformer branch $(ti): a tabular or modelled tap changer has no fractional positions"))
+      # n steps from the live position, rounded to a whole step first, so
+      # the truth is a physical step of the estimator's fixation
+      s_new = copy(s0)
+      s_new[c] = round(s0[c], RoundNearestTiesAway) + tap_steps
+      # a table has only its points (a ratio table also the whole steps of
+      # its formula outside the table range)
+      (ch.kind === :tabular && _tap_fixed_position(ch, s_new[c]) != s_new[c]) && throw(ArgumentError("tap deviation of $(tap_steps) steps on transformer branch $(ti): step $(ch.neutral + s_new[c]) is no position of its tap changer table"))
+      ratio_old = br.tap_ratio
+      _tap_apply_position!(br, set, s_new; s_from = s0, impedance = tap_imp)
+      if ch.role === :ratio
+        pct_note = " (~$(round((br.tap_ratio / ratio_old - 1.0) * 100.0; digits = 2))% ratio)"
+        push!(notes, "tap deviation $(tap_steps) steps$(pct_note) on transformer branch $(ti) ($(ends))")
+      elseif ch.kind === :asymmetrical
+        # Delta-u PST: n additional-voltage steps along its direction, the
+        # shift angle follows
+        push!(notes, "phase deviation $(tap_steps) Delta-u step(s) ($(ch.du) pu each, psi $(ch.alpha_deg) deg) on PST branch $(ti) ($(ends))")
+      elseif ch.kind === :symmetrical
+        push!(notes, "phase deviation $(tap_steps) step(s) ($(ch.du) pu each, symmetrical) on PST branch $(ti) ($(ends))")
+      elseif ch.kind === :linear
+        push!(notes, "phase deviation $(tap_steps) step(s) ($(ch.dphi_deg) deg each) on PST branch $(ti) ($(ends))")
+      else
+        push!(notes, "phase deviation $(tap_steps) table step(s) on PST branch $(ti) ($(ends))")
+      end
+      push!(tap_branches, ti)
     end
     tap_note = string(", ", join(notes, "; "), tap_limit_note)
   end
@@ -569,37 +594,35 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   end
   tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["sparlectra-taps v1", "branch,mrid,name,from_bus,to_bus,neutral_ratio,step,electrical_step,fixed_step,transferred_step,generation_deviation_steps"])
   ntr = 0
+  nrows = 0
   for (k, br) in enumerate(net.branchVec)
     br.ratio != 0.0 || continue
     ntr += 1
-    # electrical step on the trafo's own mechanical grid, the same grid the
-    # estimator's fixation uses, so an injected integer deviation reads
-    # back exactly: ratio taps on the FRACTION grid (r = base/current - 1
-    # over tap_step), declared PSTs on the PHASE grid (degrees off the
-    # neutral shift over phase_step_deg; the step column then carries
-    # phase_step_deg)
-    if br.has_ratio_tap || !_declared_phase_tap(br)
-      cur = br.tap_ratio == 0.0 ? br.ratio : br.tap_ratio
-      el = br.tap_step > 0.0 ? round((br.ratio / cur - 1.0) / br.tap_step; digits = 3) : NaN
-      stepcol = br.tap_step
-    elseif br.phase_du_step > 0.0
-      # Delta-u PST: position in additional-voltage steps (the shift angle
-      # is a consequence, not the grid)
-      ψt = deg2rad(br.tap_est_alpha_deg)
-      tbaset = (br.ratio == 0.0 ? 1.0 : br.ratio) * cis(deg2rad(br.angle))
-      tlivet = (br.tap_ratio == 0.0 ? abs(tbaset) : br.tap_ratio) * cis(deg2rad(br.phase_shift_deg))
-      el = round(real((tbaset / tlivet - 1.0) * cis(-ψt)) / br.phase_du_step; digits = 3)
-      stepcol = br.phase_du_step
-    else
-      el = round((br.phase_shift_deg - br.angle) / br.phase_step_deg; digits = 3)
-      stepcol = br.phase_step_deg
-    end
-    fx = isnan(el) ? "" : string(Int(round(el, RoundNearestTiesAway)))
-    push!(tapcomments, string(k, ",", get(trmrids, k, ""), ",", getCompName(br.comp), ",", bn2(br.fromBus), ",", bn2(br.toBus), ",", br.ratio, ",", stepcol, ",", isnan(el) ? "" : el, ",", fx, ",", fx, ",", k in tap_branches ? tap_steps : 0.0))
+    # one row per transformer with a tap changer: the position of the
+    # changer a deviation moves (_tap_deviation_changer, the first ratio
+    # changer, else the first phase changer) on the changer set of the tap
+    # estimation, absolute steps as the estimator reports them, so an
+    # injected deviation reads back exactly. neutral_ratio is the ratio of
+    # the set with every changer at neutral; step is the changer's du (a
+    # degree-form changer: degrees per step, a table: its mean step size).
+    # A transformer without changer (empty set) has no position and no row.
+    set = _effective_tap_changers(br)
+    c = _tap_deviation_changer(set)
+    c == 0 && continue
+    nrows += 1
+    ch = set.changers[c]
+    stepcol = ch.kind === :linear ? ch.dphi_deg : (ch.kind === :tabular ? _tap_scale(ch; ratio_n = set.ratio_n) : something(ch.du, ch.step_abs))
+    s = _tap_s_from_branch(set, br)
+    # off its changer curves the branch has no step (the estimator freezes
+    # it with :model_mismatch): the step columns stay empty
+    el = s === nothing ? "" : string(round(ch.neutral + s[c]; digits = 3))
+    fx = s === nothing ? "" : string(Int(round(ch.neutral + _tap_fixed_position(ch, s[c]))))
+    push!(tapcomments, string(k, ",", get(trmrids, k, ""), ",", getCompName(br.comp), ",", bn2(br.fromBus), ",", bn2(br.toBus), ",", set.ratio_n, ",", stepcol, ",", el, ",", fx, ",", fx, ",", k in tap_branches ? tap_steps : 0.0))
   end
   # keep the in-file case binding (and the generator provenance) even when
-  # the case has no transformers at all
+  # the case has no transformers or no tap changers at all
   ntr == 0 && (tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["case has no transformer branches (no tap steps to estimate)"]))
+  (ntr > 0 && nrows == 0) && (tapcomments = vcat(String["case: $(basename(case_path))"], gencomments, String["case has no tap changers (no tap steps to estimate)"]))
   # the bulky per-branch and per-row blocks (flow_end choices, truth values)
   # follow the taps table, so the summary and the taps table stay at the top
   # The set is written as a measurement table (0.50.0) through the row

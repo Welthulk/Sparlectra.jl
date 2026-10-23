@@ -224,4 +224,30 @@ function run_repository_hygiene_tests()
         end
         @test true
     end)() end
+    # an own testset, so an error in the checks above does not skip these
+    @testset "Web UI layering and demo case files" begin (function ()
+        repo = _repository_root()
+        # layering: the Web UI reaches the solver only through the service
+        # layer, so no file under app/src/webui calls a power-flow entry point
+        webui_src = filter(f -> endswith(f, ".jl"), split(chomp(read(`git -C $repo ls-files app/src/webui`, String)), "\n"))
+        solver_calls = ["run" * "pf!", "run" * "pf_rectangular!", "run_complex_nr_" * "rectangular"]
+        layering = String[f for f in webui_src if any(name -> occursin(name, read(joinpath(repo, f), String)), solver_calls)]
+        @test isempty(layering)
+        # the shipped demo cases: provenance in the file, a case config that
+        # pins the tolerance (machine-neutral), the bad-data twin, and the
+        # size budget (420 kB per bundle since the place names, 900 kB total)
+        scf_dir = joinpath(repo, "data", "scf")
+        for name in ("sp_case5", "sp_case14", "sp_case60", "sp_case188")
+          scf_path = joinpath(scf_dir, "$(name).scf.json")
+          @test isfile(scf_path)
+          @test occursin("Self-built Sparlectra demo network", read(scf_path, String))
+          @test occursin("scope: case", read(Sparlectra.case_config_path(scf_path), String))
+          @test Sparlectra.load_case_config(scf_path)["power_flow.tol"] == 1.0e-8
+          bundle = filter(f -> startswith(f, name), readdir(scf_dir))
+          @test sum(filesize(joinpath(scf_dir, f)) for f in bundle) < 420_000
+          baddata = joinpath(scf_dir, "$(name).measurements.baddata.csv")
+          @test isfile(baddata) && occursin("baddata", read(baddata, String))
+        end
+        @test sum(filesize(joinpath(scf_dir, f)) for f in filter(f -> startswith(f, "sp_case"), readdir(scf_dir))) < 900_000
+    end)() end
 end

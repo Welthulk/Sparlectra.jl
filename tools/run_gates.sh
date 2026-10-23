@@ -63,16 +63,17 @@ map_path() {
     ext/*) echo "fast pf" ;;
     test/fast/* | test/test_docstrings.jl) echo "fast" ;;
     test/runtests.jl | test/test_runner_helpers.jl) echo "fast config" ;;
+    test/test_state_estimation.jl | test/test_observability.jl | test/test_legacy_topology_validation.jl | test/test_measurement_table.jl) echo "se" ;;
     test/test_legacy_* | test/extended/test_legacy_*) echo "legacy" ;;
-    test/test_state_estimation.jl | test/test_observability.jl | test/test_topology_validation.jl | test/test_measurement_table.jl) echo "se" ;;
     test/test_configuration_* | test/test_repository_hygiene.jl) echo "config" ;;
     test/test_cgmes_*) echo "cgmes" ;;
-    test/test_powsybl_importer.jl | test/test_scf* | test/test_matpower_* | test/test_net_cache.jl | test/test_synthetic_grids.jl | test/extended/*) echo "formats" ;;
+    test/test_powsybl_importer.jl | test/test_scf* | test/test_matpower_* | test/test_synthetic_grids.jl | test/extended/*) echo "formats" ;;
     test/test_api*.jl | test/test_demo_cases.jl) echo "extd" ;;
     test/test_webui*.jl) echo "webui" ;;
     test/test_install.jl | test/test_example_suites.jl) echo "install" ;;
     test/test_workshops.jl) echo "workshops" ;;
     test/fixtures/*) echo "cgmes formats pf" ;;
+    test/testgrid.jl) echo "pf legacy" ;;
     test/*) echo "pf" ;;
     docs/lit/*) echo "workshops docs" ;;
     tools/* | Project.toml | app/Project.toml | .github/*) echo "install" ;;
@@ -283,7 +284,6 @@ then
   echo "Move the case files to the directory the suite reads them from, and delete the rest:" >&2
   echo "  mkdir -p \"\${SPARLECTRA_LARGE_CASES_DIR:-\$HOME/sparlectra-cases}\"" >&2
   echo "  mv data/mpower/*.m data/mpower/*.jl data/mpower/*.DAT \"\${SPARLECTRA_LARGE_CASES_DIR:-\$HOME/sparlectra-cases}\"/" >&2
-  echo "  rm -rf data/mpower/.sparlectra_net_cache" >&2
   echo "(keep data/mpower/README.md, warmup_casePST.m and warmup_casePST.measurements.csv: those are tracked)" >&2
   exit 1
 fi

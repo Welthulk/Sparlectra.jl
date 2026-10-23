@@ -13,34 +13,13 @@
 # limitations under the License.
 
 # file: test/test_piline_g.jl
-# purpose: tests the AC line builders: the optional shunt conductance g on
-#          PI-model lines (explicit g on ACLineSegment and addPIModelACLine!,
-#          defaults, effect on branch and YBUS), and the physical input of
+# purpose: tests the AC line builders: the shunt conductance g of
+#          addPIModelACLine! on branch and YBUS, the per-terminal shunt split,
+#          and the physical input of
 #          addACLine! (ohm and siemens totals) and addACLinePerKm! (values per
 #          km, b from the capacitance at the system frequency of the net)
 
 function run_piline_g_tests()
-  @testset "ACLineSegment explicit g (PI path)" begin (function ()
-    seg = ACLineSegment(vn_kv = 110.0, from = 1, to = 2, r = 0.01, x = 0.1, b = 0.02, g = 0.004, isPIModel = true)
-    r, x, b, g = getLineRXBG(seg)
-    @test r == 0.01 && x == 0.1
-    @test b == 0.02
-    @test g == 0.004
-  end)() end
-
-  @testset "edge case g > 0 with b = 0 (network equivalents)" begin (function ()
-    seg = ACLineSegment(vn_kv = 110.0, from = 1, to = 2, r = 0.01, x = 0.1, b = 0.0, g = 0.004, isPIModel = true)
-    _, _, b, g = getLineRXBG(seg)
-    @test b == 0.0
-    @test g == 0.004
-  end)() end
-
-  @testset "default stays 0.0 (backward compatible)" begin (function ()
-    seg = ACLineSegment(vn_kv = 110.0, from = 1, to = 2, r = 0.01, x = 0.1, b = 0.02, isPIModel = true)
-    _, _, _, g = getLineRXBG(seg)
-    @test g == 0.0
-  end)() end
-
   # 0.50.0: addACLine! takes ohm and siemens totals, addACLinePerKm! values
   # per km. Before, addACLine! read r, x, b as per unit, multiplied them by
   # the length up to 1 km, read the siemens value derived from the
@@ -138,34 +117,29 @@ function run_piline_g_tests()
     back = with_sparlectra_config(() -> Sparlectra.scf_to_net(root), cfg60)
     @test isapprox(back.branchVec[end].b_pu, n60.branchVec[end].b_pu; rtol = 1e-14)
 
-    # the keywords of the per-unit form are refused by name, never translated
-    err = try
-      addACLine!(net = newnet(), fromBus = "B1", toBus = "B2", length = 10.0, r = 0.02, x = 0.2)
-      nothing
-    catch e
-      e
-    end
-    @test err isa ArgumentError
-    @test occursin("length, r, x", err.msg) && occursin("addACLinePerKm!", err.msg) && occursin("addPIModelACLine!", err.msg)
+    # mixed or incomplete input is refused
     @test_throws ArgumentError addACLine!(net = newnet(), fromBus = "B1", toBus = "B2", r_ohm = 1.0, x_ohm = 2.0, c_nf_per_km = 9.5)
-    @test_throws ArgumentError addACLinePerKm!(net = newnet(), fromBus = "B1", toBus = "B2", length = 10.0, r = 0.02, x = 0.2, c_nf_per_km = 9.5)
     @test_throws ArgumentError addACLinePerKm!(net = newnet(), fromBus = "B1", toBus = "B2", length_km = len, r_ohm_per_km = r_km, x_ohm_per_km = x_km, c_nf_per_km = c_km, tanδ = 0.002, g_us_per_km = 0.05)
     @test_throws ArgumentError addACLinePerKm!(net = newnet(), fromBus = "B1", toBus = "B2", length_km = 0.0, r_ohm_per_km = r_km, x_ohm_per_km = x_km, c_nf_per_km = c_km)
   end)() end
 
+  # Y11 = y_ser + (g + jb)/2 and Y12 = -y_ser by hand; the second row is
+  # g > 0 with b = 0 (network equivalents), which must reach the matrix too
   @testset "addPIModelACLine! end-to-end into branch and YBUS" begin (function ()
-    net = Net(name = "piline_g_test", baseMVA = 100.0)
-    addBus!(net = net, busName = "B1", vn_kV = 110.0)
-    addBus!(net = net, busName = "B2", vn_kV = 110.0)
-    addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.1, b_pu = 0.02, g_pu = 0.004, status = 1)
-    br = net.branchVec[end]
-    @test br.g_pu == 0.004
-    @test br.b_pu == 0.02
-
-    Y = createYBUS(net = net, sparse = false)
     yser = 1.0 / (0.01 + 0.1im)
-    @test isapprox(Y[1, 1], yser + 0.5 * (0.004 + 0.02im); atol = 1e-12)
-    @test isapprox(Y[1, 2], -yser; atol = 1e-12)
+    for (b_pu, g_pu) in ((0.02, 0.004), (0.0, 0.004))
+      net = Net(name = "piline_g_test", baseMVA = 100.0)
+      addBus!(net = net, busName = "B1", vn_kV = 110.0)
+      addBus!(net = net, busName = "B2", vn_kV = 110.0)
+      addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.1, b_pu = b_pu, g_pu = g_pu, status = 1)
+      br = net.branchVec[end]
+      @test br.g_pu == g_pu
+      @test br.b_pu == b_pu
+
+      Y = createYBUS(net = net, sparse = false)
+      @test isapprox(Y[1, 1], yser + 0.5 * (g_pu + b_pu * im); atol = 1e-12)
+      @test isapprox(Y[1, 2], -yser; atol = 1e-12)
+    end
   end)() end
 
   # per-terminal charging admittance (0.20.0): the symmetric half is the

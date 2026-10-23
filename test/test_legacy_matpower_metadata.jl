@@ -22,62 +22,6 @@ using Test
 
 function run_legacy_matpower_metadata_tests()
   # cut from the runner function
-  @testset "Parser tokenizer and comment stripping edge cases" begin (function ()
-    # Guards the allocation-reduced tokenizer/comment paths (issue #292)
-    # against the legacy split/join semantics.
-    strip_comments = Sparlectra.MatpowerIO._strip_matlab_comments
-    @test strip_comments("no comments\nat all\n") === "no comments\nat all\n"
-    @test strip_comments("abc%x\ndef\n") == "abc\ndef\n"
-    @test strip_comments("abc%x\r\ndef\n") == "abc\ndef\n"
-    @test strip_comments("%full line\nkeep\n") == "\nkeep\n"
-    @test strip_comments("tail%no newline") == "tail"
-    @test strip_comments("a%%b\nc%d") == "a\nc"
-    @test strip_comments("ümläut%kommentar\nzeile") == "ümläut\nzeile"
-
-    mktempdir() do dir
-      path = joinpath(dir, "case_tokenizer_edges.m")
-      write(path, """
-function mpc = case_tokenizer_edges
-mpc.version = '2';
-mpc.baseMVA = 100.0; % inline comment after statement
-% full-line comment
-mpc.bus = [
-\t1\t3\t0.0\t0.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95; % row comment
-
-\t2\t1\t10.0\t3.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95
-\t3\t1\t5.0\t1.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95\t99.0\t88.0
-\t4\t1\t2.0
-];
-mpc.gen = [
-\t1\t10.0\t3.0\t99\t-99\t1.0\t100.0\t1\t99\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
-];
-mpc.branch = [
-\t1\t2\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360;
-\t2\t3\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360;
-\t3\t4\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360
-];
-mpc.gencost = [
-\t2\t0\t0\t3\t0.1\t5.0\t0.0;
-\t2\t0\t0\t2\t4.0\t0.0
-];
-""")
-      mpc = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
-      # blank line + comment-only rows ignored; short row zero-padded;
-      # overlong row truncated to the fixed 13 columns
-      @test size(mpc.bus) == (4, 13)
-      @test mpc.bus[3, 13] == 0.95
-      @test mpc.bus[4, 3] == 2.0
-      @test mpc.bus[4, 4] == 0.0
-      # auto-width block: ragged rows padded with 0.0 to maxcols
-      @test size(mpc.gencost) == (2, 7)
-      @test mpc.gencost[2, 5] == 4.0
-      @test mpc.gencost[2, 7] == 0.0
-      # legacy sort: pre-sorted case returns identical data
-      mpc_sorted = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = true)
-      @test mpc_sorted.bus == mpc.bus
-    end
-  end)() end
-
   @testset "Generator costs: import, export, SCF (#471)" begin (function ()
     # the shipped sp_case9 carries a gencost block: model 2 and model 1 P
     # rows plus Q rows, padded to the width of the piecewise linear row

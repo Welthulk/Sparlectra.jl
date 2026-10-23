@@ -643,3 +643,33 @@ function _sync_island_solution!(net::Net, inet::Net, row)
     net.qLimitEvents[row.buses[bus]] = side
   end
 end
+
+# The Q-limit outcome of one rectangular island solve, handed to the net:
+# the bus types the solve set (PV to PQ at a reached limit, a new reference
+# under the classic modes) and the scheduled Q the classic modes clamp on
+# the unit (rectangular_qlimit_outer_loop.jl). Without it a clamped bus of
+# an island-wise run stayed PV on the net and the report took the node Q of
+# the base solve: two_islands_prio under classic_simultaneous with a
+# -5 .. 5 MVAr band at Brunntal_110 and Kesselau_110 reported 9.645 and
+# -30.325 MVAr for the two machines clamped at +5 and -5 MVAr. The
+# reference an island without one promotes (_prepare_island_net) belongs to
+# the island solve, not to the net: that bus keeps the type of the net
+# while it stays the reference, and takes PQ when a classic mode clamped it
+# and moved the reference on (Fennwiese_110 of the same run, clamped at its
+# Qmax of 30 MVAr, was reported with the 41.80 MVAr of the base solve). Called
+# by the rectangular island path only; the DC path (no Q limits) and the
+# APSLF path, which share _sync_island_solution!, are left as they are.
+function _sync_island_qlimit_outcome!(net::Net, inet::Net, row)
+  # the island units in the order _prepare_island_net copied them
+  for (k, ips) in zip(_island_prosumer_indices(net, Set(row.buses)), inet.prosumpsVec)
+    ps = net.prosumpsVec[k]
+    ps.qVal == ips.qVal || (ps.qVal = ips.qVal)
+  end
+  promoted = row.n_ref == 0 ? row.chosen_ref_bus : 0
+  for (new, bus) in enumerate(row.buses)
+    t = getNodeType(inet.nodeVec[new])
+    bus == promoted && t == Slack && continue
+    t in (Slack, PV, PQ) && (net.nodeVec[bus]._nodeType = t)
+  end
+  return nothing
+end

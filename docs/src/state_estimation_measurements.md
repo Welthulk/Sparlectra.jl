@@ -73,7 +73,7 @@ the topology hypothesis test asks for a new run instead of reading it.
 | comment | written by | content |
 |---|---|---|
 | `# case: <name>` | generator | the case binding: the SE service refuses a set bound to a different case up front, a set without a binding still runs, with a log note |
-| `sparlectra-taps v1` | generator | the transformer tap positions of the generation state (electrical, fixed and transferred step, deviation percentage) |
+| `sparlectra-taps v1` | generator | one row per transformer with a tap changer: the changer the deviation moves, its neutral ratio and step size, the absolute electrical, fixed and transferred step of the generation state and the deviation in steps |
 | `# truth_value,...` | generator | the noise-free truth value of every row (source of `se_deltas.csv`, see [Measurement generator v2](@ref se-generator-v2)) |
 | `# flow_end,...` | generator | the flow-end choice per branch |
 | `# generator: v2` | generator | the set's provenance (truth source, flow-end choices, passive handling) |
@@ -85,7 +85,8 @@ of a run are in `se_tap_estimates.csv`. Eliminated rows are inactive in
 the reported run (its `J` is the `J` without them); `se_diagnostics.md` names the run, the case, the set and
 the reported numbers, then the pass that found them ("Diagnostics pass").
 An elimination counts only when the control solve without the row
-converges; otherwise the row stays active, the attempt is named
+converges, with released taps also without `runse!` freezing them again
+where the run before kept them released; otherwise the row stays active, the attempt is named
 ("Reverted") and the sequence stops with `not_converged`. After a
 tap-estimation fallback the diagnostics run again on the frozen taps,
 without the rows the first pass removed; the rows of both passes are
@@ -138,13 +139,18 @@ given number of mechanical tap steps off the model position (0 = off;
 whole steps only); the model file stays untouched. **Transformers (max)**
 bounds how many transformers deviate; the seed picks them from the
 transformers whose deviation the tap estimation can absorb (in service,
-non-machine, with a declared changer), and the message names the affected
-branches. A machine transformer is used only when the case has nothing
-else, because the Web UI mass release skips it and the deviation would
-leave an unexplainable model error (`J` far above `dof`); the estimator run
+non-machine, with a tap changer the estimation can release), and the
+message names the affected branches. The deviation moves one changer per
+transformer, the first ratio changer, else the first phase changer, the
+same one the SE service releases for a documented deviation. A machine
+transformer is used only when the case has nothing else, because the Web
+UI mass release skips it and the deviation would leave an unexplainable
+model error (`J` far above `dof`); the estimator run
 warns in that case.
 
-The deviation lies on the ratio grid the estimator fixes on, so
+The deviation lies on a physical step of the changer (ratio, angle and,
+under `state_estimation.tap_estimation.impedance_correction = auto`, the
+impedance follow the changer data), the step the estimator fixes on, so
 tap estimation recovers it exactly and the fixation run ends near `J = 0`;
 without tap estimation the band test reports `:high` with the suspects
 clustered at that transformer. Off-grid positions are not a generator
@@ -208,8 +214,9 @@ critical measurements are configurable in the Web UI form.
 - **Delta file.** An SE run on a set with `# truth_value,...` comments
   writes `se_deltas.csv`: per measurement the measured, truth and estimated
   values with the three deltas, the sigma, the normalized residual and the
-  elimination flag, plus one row per released tap comparing the documented
-  deviation with the fixed step.
+  elimination flag, plus one row per released tap changer comparing the
+  documented deviation (0 for a changer the generator did not move) with
+  the deviation of the fixed step.
 
 ## [Case files carry their own measurements](@id se-case-file-measurements)
 

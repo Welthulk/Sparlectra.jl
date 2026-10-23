@@ -609,6 +609,31 @@ Base.@kwdef struct ObservabilityConfig
 end
 
 """
+    TapEstimationConfig(; impedance_correction = :auto)
+
+Settings of the transformer tap estimation, the
+`state_estimation.tap_estimation` block of the configuration.
+
+`impedance_correction` (`:auto` or `:off`, see
+`STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES`) decides whether a
+released regulator moves the transformer impedance with its step. `:auto`
+uses the per-step data the model has (tap table rows, the reactance curve of
+a phase tap changer with `xMin`/`xMax`, `TapStepImpedance` factors, and the
+impedance correction of typed models under
+`model.tap_changer_model = impedance_correction`); `:off` keeps the
+impedance of the start position. There is no `:on`: without per-step data
+there is no curve to force.
+
+Library callers set it for one call with
+`with_state_estimation_config(tap_estimation = TapEstimationConfig(impedance_correction = :off)) do ... end`.
+The keyword constructor does not validate; the configuration parser and the
+override validation refuse other values with the key named.
+"""
+Base.@kwdef struct TapEstimationConfig
+  impedance_correction::Symbol = :auto
+end
+
+"""
     SESigmaLevel(; vn_kv, p_mw = nothing, q_mvar = nothing, i_a = nothing, u_kv = nothing, rel_pct = 0.0)
 
 One row of `state_estimation.sigma_by_voltage_level`: the measurement
@@ -777,6 +802,7 @@ Base.@kwdef struct StateEstimationConfig
   topology_kcl_k::Float64 = 4.0
   topology_cluster_min::Int = 3
   observability::ObservabilityConfig = ObservabilityConfig()
+  tap_estimation::TapEstimationConfig = TapEstimationConfig()
 end
 
 """
@@ -955,8 +981,7 @@ artifact. `auto_profile_max_fit_pu` (default 0.1) is the largest power
 mismatch (pu, worst bus) at which the stored VM/VA columns still count as a
 solved state: when the best of the eight convention readings scores above
 it, the scan recommends no convention change, because a state that fits no
-reading says nothing about the file's convention. `net_cache_enabled` gates
-the binary net cache (active only while `auto_profile` is `:off`).
+reading says nothing about the file's convention.
 `preallocate_network`/`preallocate_min_buses` control container
 preallocation for large cases.
 
@@ -972,7 +997,6 @@ Base.@kwdef struct ModelConfig
   auto_profile::Symbol = :off
   auto_profile_log::Bool = true
   auto_profile_max_fit_pu::Float64 = 0.1
-  net_cache_enabled::Bool = false
   preallocate_network::Symbol = :auto
   preallocate_min_buses::Int = 500
   nominal_frequency_hz::Float64 = 50.0
@@ -1342,10 +1366,6 @@ const POWSYBL_REMOTE_REGULATION_VALUES = (:hold_local, :pq, :remote)
 const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
 const QLIMIT_START_MODE_VALUES = (:iteration, :auto, :iteration_or_auto)
 const QLIMIT_ENFORCEMENT_MODE_VALUES = (:active_set, :classic_simultaneous, :classic_one_at_a_time)
-const QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES = Dict(
-  :matpower_simultaneous => :classic_simultaneous,
-  :matpower_one_at_a_time => :classic_one_at_a_time,
-)
 const QLIMIT_GUARD_ZERO_RANGE_MODE_VALUES = (:lock_pq,)
 const QLIMIT_GUARD_NARROW_RANGE_MODE_VALUES = (:prefer_pq, :lock_pq)
 const QLIMIT_GUARD_VIOLATION_MODE_VALUES = (:delayed_switch, :lock_pq)
@@ -1363,6 +1383,8 @@ const STATE_ESTIMATION_ROBUST_MODE_VALUES = (:off, :staged, :replacement)
 const STATE_ESTIMATION_ZERO_INJECTION_VALUES = (:on, :off, :constraint)
 const STATE_ESTIMATION_PMU_REF_OFFSET_VALUES = (:auto, :off)
 const STATE_ESTIMATION_LINEAR_SOLVER_VALUES = (:umfpack, :klu)
+# no :on, see TapEstimationConfig
+const STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES = [:auto, :off]
 const MATPOWER_PV_VOLTAGE_SOURCE_VALUES = (:gen_vg, :bus_vm, :auto, :strict_check)
 const MATPOWER_COMPARE_VOLTAGE_REFERENCE_VALUES = (:bus_vm, :gen_vg, :imported_setpoint, :hybrid)
 const MATPOWER_SHIFT_UNIT_VALUES = (:deg, :rad)
@@ -1371,18 +1393,6 @@ const MATPOWER_BUS_SHUNT_MODEL_VALUES = (:admittance, :voltage_dependent_injecti
 const MATPOWER_AUTO_PROFILE_VALUES = (:off, :recommend, :apply)
 const MATPOWER_DCLINE_MODE_VALUES = (:reject_active, :ignore_inactive, :pf_injections, :paired_control)
 
-# `reject_active` was the shipped template default of early releases, so
-# stored user/Web UI configuration files still carry it without it ever
-# having been a deliberate choice. Loading it verbatim would abort every
-# DC-line case (e.g. case_SyntheticUSA) for exactly those users. The
-# configuration surface therefore normalizes it to the current default with
-# a warning. The strict fail-fast behavior stays available programmatically:
-# createNetFromMatPowerCase(matpower_dcline_mode = :reject_active).
-function _normalize_dcline_mode(requested::Symbol)::Symbol
-  requested === :reject_active || return requested
-  @warn "matpower_import.matpower_dcline_mode: reject_active is deprecated in configuration files and loads as pf_injections (active mpc.dcline rows import as per-terminal injection pairs). Remove the key or set pf_injections to silence this warning."
-  return :pf_injections
-end
 const TRANSFORMER_TAP_CHANGER_MODEL_VALUES = (:ideal, :impedance_correction)
 const PERFORMANCE_LEVEL_VALUES = (:off, :summary, :iteration, :full)
 const OUTPUT_CONSOLE_AUTO_PROFILE_VALUES = (:off, :compact, :full)
@@ -1706,12 +1716,8 @@ function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::
 end
 
 function _canonical_qlimit_enforcement_mode(value::Symbol)::Symbol
-  canonical = get(QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES, value, value)
-  if canonical in QLIMIT_ENFORCEMENT_MODE_VALUES
-    return canonical
-  end
-  legacy_aliases = ["$(alias) -> $(target)" for (alias, target) in sort(collect(QLIMIT_ENFORCEMENT_MODE_LEGACY_ALIASES); by = first)]
-  throw(ArgumentError("power_flow.qlimits.enforcement_mode must be one of $(collect(QLIMIT_ENFORCEMENT_MODE_VALUES)); got $(value). Legacy aliases accepted: $(legacy_aliases)."))
+  value in QLIMIT_ENFORCEMENT_MODE_VALUES && return value
+  throw(ArgumentError("power_flow.qlimits.enforcement_mode must be one of $(collect(QLIMIT_ENFORCEMENT_MODE_VALUES)); got $(value)."))
 end
 
 ## power_flow.tol_MW: the tolerance in physical
@@ -2293,6 +2299,17 @@ function ObservabilityConfig(raw::AbstractDict)
   return ObservabilityConfig(enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)))
 end
 
+# `raw` is the merged state_estimation section. A scalar where the block
+# belongs (`tap_estimation: true`, the shape of the Web UI checkbox) is
+# refused with the full path; `_raw_section` would name only "tap_estimation".
+function TapEstimationConfig(raw::AbstractDict)
+  section = _raw_get(raw, "tap_estimation", nothing)
+  section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.tap_estimation must be a block with the key impedance_correction; got $(repr(section))."))
+  merged = _merged_section(raw, "tap_estimation")
+  key = "state_estimation.tap_estimation.impedance_correction"
+  return TapEstimationConfig(impedance_correction = _validate_allowed_symbol(key, _as_symbol_cfg(_raw_get(merged, "impedance_correction", :auto)), STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES))
+end
+
 function StateEstimationConfig(raw::AbstractDict)
   merged = _merged_section(raw, "state_estimation")
   if haskey(merged, "sparse") || haskey(merged, :sparse)
@@ -2345,6 +2362,7 @@ function StateEstimationConfig(raw::AbstractDict)
     topology_kcl_k = Float64(_validate_positive("state_estimation.topology_kcl_k", _as_float_cfg(_raw_get(merged, "topology_kcl_k", 4.0)))),
     topology_cluster_min = Int(_validate_positive("state_estimation.topology_cluster_min", _as_int_cfg(_raw_get(merged, "topology_cluster_min", 3)))),
     observability = ObservabilityConfig(merged),
+    tap_estimation = TapEstimationConfig(merged),
   )
 end
 
@@ -2426,7 +2444,7 @@ function MatpowerImportConfig(raw::AbstractDict)
     apply_branch_names = _as_bool_cfg(_raw_get(merged, "apply_branch_names", false)),
     apply_branch_kind = _as_bool_cfg(_raw_get(merged, "apply_branch_kind", false)),
     import_for001_contingencies = _as_bool_cfg(_raw_get(merged, "import_for001_contingencies", true)),
-    matpower_dcline_mode = _normalize_dcline_mode(_validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES)),
+    matpower_dcline_mode = _validate_allowed_symbol("matpower_import.matpower_dcline_mode", _as_symbol_cfg(_raw_get(merged, "matpower_dcline_mode", :pf_injections)), MATPOWER_DCLINE_MODE_VALUES),
   )
 end
 
@@ -2438,7 +2456,6 @@ function ModelConfig(raw::AbstractDict)
     auto_profile = _validate_allowed_symbol("model.auto_profile", _as_auto_profile_symbol_cfg(_raw_get(merged, "auto_profile", :off)), MATPOWER_AUTO_PROFILE_VALUES),
     auto_profile_log = _as_bool_cfg(_raw_get(merged, "auto_profile_log", true)),
     auto_profile_max_fit_pu = _validate_nonnegative("model.auto_profile_max_fit_pu", _as_float_cfg(_raw_get(merged, "auto_profile_max_fit_pu", 0.1))),
-    net_cache_enabled = _as_bool_cfg(_raw_get(merged, "net_cache_enabled", false)),
     preallocate_network = _validate_allowed_symbol("model.preallocate_network", _as_symbol_cfg(_raw_get(merged, "preallocate_network", :auto)), [:off, :on, :auto]),
     preallocate_min_buses = _as_int_cfg(_raw_get(merged, "preallocate_min_buses", 500)),
     nominal_frequency_hz = _validate_positive("model.nominal_frequency_hz", _as_float_cfg(_raw_get(merged, "nominal_frequency_hz", 50.0))),
@@ -2789,15 +2806,6 @@ const _TABLE_VALUED_CONFIG_KEYS = ("state_estimation.sigma_by_voltage_level",)
 # saved configuration and case sidecar of 0.19.0.
 const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", "powsybl_import.python_exe")
 
-# Removed keys that are ignored WITH one line naming what replaced them
-# (the 0.20.0 rule: a removed key is a warning, never a failure).
-# power_flow.islands.mode, 0.30.2: islands run in parallel by size when
-# Julia has more than one thread; there is no mode to choose.
-const _REMOVED_NOTED_CONFIG_KEYS = Dict(
-  "power_flow.apslf.use_pade" => "AnalyticLoadFlow 0.10.0 evaluates the series with Padé approximants only (Sparlectra 0.31.0); remove the key.",
-  "power_flow.islands.mode" => "islands of one network run in parallel when Julia has more than one thread and at least two islands have power_flow.islands.parallel_min_buses buses (runtime.parallel.enabled is the master switch); remove the key.",
-)
-
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
   "diagnostics.console_auto_profile" => "output.console_auto_profile",
@@ -2824,7 +2832,6 @@ const _CONFIG_ALIASES = Dict{Int,Vector{Pair{String,String}}}(
     "matpower_import.bus_shunt_model" => "model.bus_shunt_model",
     "matpower_import.auto_profile" => "model.auto_profile",
     "matpower_import.auto_profile_log" => "model.auto_profile_log",
-    "matpower_import.net_cache.enabled" => "model.net_cache_enabled",
     "matpower_import.preallocate_network" => "model.preallocate_network",
     "matpower_import.preallocate_min_buses" => "model.preallocate_min_buses",
     "transformer.tap_changer_model" => "model.tap_changer_model",
@@ -3028,14 +3035,6 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       continue
     end
     current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
-    if haskey(_REMOVED_NOTED_CONFIG_KEYS, current_path)
-      # once per key and process: one run loads the configuration several
-      # times, and a stored file repeated the same line on every load (the
-      # service writes the key into each run.log instead)
-      @warn "Configuration key $(current_path) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[current_path])" maxlog = 1 _id = Symbol("removed_config_key_", current_path)
-      push!(drop, key)
-      continue
-    end
     if !haskey(defaults, skey)
       strict && throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
       @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)." maxlog = 1 _id = Symbol("unknown_config_key_", current_path)
@@ -3080,8 +3079,8 @@ function _load_and_validate_config(default_path::AbstractString, user_path::Abst
   _validate_known_config_keys(overrides, defaults)
   canon_user = Dict{String,Any}(String(_canonical_config_key(_config_key(k))) => v for (k, v) in user)
   if case_scope_from_defaults
-    # Runs with a case configuration file (issue #1 point 1, decided for
-    # `defaults`; format independent): the general file's CASE-scope keys
+    # Runs with a case configuration file (resolved against `defaults`,
+    # format independent): the general file's CASE-scope keys
     # do not participate, so the same case-plus-config pair reads to the
     # same numbers on every installation. A case-scope key resolves
     # case configuration -> packaged defaults; only machine-scope keys
@@ -3154,8 +3153,6 @@ function _remove_superfluous_config_keys!(user::AbstractDict, defaults::Abstract
       "deprecated and ignored; use $(_DEPRECATED_CONFIG_KEYS[current_path])"
     elseif current_path in _REMOVED_SILENT_CONFIG_KEYS
       "no longer a configuration key"
-    elseif haskey(_REMOVED_NOTED_CONFIG_KEYS, current_path)
-      _REMOVED_NOTED_CONFIG_KEYS[current_path]
     elseif !haskey(defaults, skey)
       "not a key of this Sparlectra version"
     else
@@ -3344,17 +3341,6 @@ function _normalize_deprecated_config_aliases!(root::Dict{String,Any})::Vector{S
       push!(normalized, "power_flow.start_mode.voltage_mode")
       push!(normalized, "power_flow.start_mode.profile_source")
     end
-    qlimits = get(pf, "qlimits", nothing)
-    if qlimits isa Dict{String,Any}
-      mode = get(qlimits, "enforcement_mode", nothing)
-      if mode in ("matpower_simultaneous", :matpower_simultaneous)
-        qlimits["enforcement_mode"] = "classic_simultaneous"
-        push!(normalized, "power_flow.qlimits.enforcement_mode")
-      elseif mode in ("matpower_one_at_a_time", :matpower_one_at_a_time)
-        qlimits["enforcement_mode"] = "classic_one_at_a_time"
-        push!(normalized, "power_flow.qlimits.enforcement_mode")
-      end
-    end
   end
   # The deprecated diagnostics.* duplicates of output.* are DROPPED, not
   # migrated: they were never read, so copying their values into output.*
@@ -3459,7 +3445,7 @@ function _print_config_section(io::IO, name::AbstractString, value; indent::Abst
   child_indent = string(indent, "  ")
   for field in fieldnames(typeof(value))
     field_value = getfield(value, field)
-    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig
+    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig
       _print_config_section(io, String(field), field_value; indent = child_indent)
     else
       println(io, child_indent, field, ": ", field_value)

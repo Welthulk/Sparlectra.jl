@@ -661,27 +661,61 @@ function _sparlectra_tap_changer_rows(net::Net)::Vector{NTuple{14,Float64}}
     on_neutral = br.tap_ratio == base && br.phase_shift_deg == br.angle
     (grid_default && on_neutral) && continue
     tstep = br.has_ratio_tap ? br.tap_step : 0.0
+    psi = br.tap_est_alpha_deg
+    du = br.phase_du_step
+    # a Delta-u changer divides the live ratio, so with one present the
+    # ratio position and the Delta-u position come from the split. A single
+    # changer reads psi 0 as 90 like the reader; a pair passes psi as it is,
+    # so a pair whose psi a caller set to 0 is split exactly at Delta-u
+    # position 0 and refused off it (_du_tap_split), not split along a
+    # guessed 90 (setTapEstimation! keeps the stored psi)
+    du_split = du > 0.0 ? _du_tap_split(br, (psi == 0.0 && tstep == 0.0) ? 90.0 : psi) : nothing
+    # A single changer whose model lies along psi 0 (an SCF file that states
+    # alpha_deg 0) has its Delta-u part on the real axis. The projection on
+    # 90 gives position 0 for it, and the psi 0 written here reads back as
+    # 90, so the row would be wrong either way: refuse it. A 90 model whose
+    # psi a caller set to 0 has no real part and passes.
+    if du > 0.0 && psi == 0.0 && tstep == 0.0
+      rpar = _du_tap_split(br, 0.0)[2]
+      abs(rpar) > 1e-9 && throw(ArgumentError("branch $(br.fromBus)-$(br.toBus): a Delta-u changer along psi 0 off position 0 ($(rpar / du) steps): MATPOWER reads psi 0 as 90 and cannot carry it; write the case as SCF."))
+    end
+    # The psi column knows only 0 = not given, which the reader takes as 90.
+    # At Delta-u position 0 a stated psi 0 and a psi set to 0 cannot be told
+    # apart (t is the neutral tap either way), so the row goes out with t
+    # right but the direction comes back as 90: warn. A pair gets here only
+    # at position 0 (_du_tap_split throws otherwise). A single changer off
+    # position 0 that gets here is a 90 model whose psi a caller set to 0:
+    # split along 90 and read back at 90, nothing is lost.
+    if du > 0.0 && psi == 0.0 && abs(du_split[2]) <= 1e-9
+      @warn "MATPOWER export: Delta-u changer with psi 0 at Delta-u position 0 on branch $(br.fromBus)-$(br.toBus) is written as psi 0, which the reader takes as not given and builds at 90 deg; a stated psi 0 is lost, write the case as SCF to keep it" branch = k
+    end
+    rlive = du_split !== nothing ? du_split[1] : br.tap_ratio
     linear = tstep > 0.0 && br.tap_ratio_grid === :linear && _tap_r1_model(br) === nothing && br.tap_ratio_points === nothing
     if linear
       lo, hi = _tap_r1_band(br)
       tminS = _matpower_snap_position(lo)
       tmaxS = _matpower_snap_position(hi)
-      tcur = _matpower_snap_position(_tap_r1_position(br, base / br.tap_ratio - 1.0))
+      tcur = _matpower_snap_position(_tap_r1_position(br, base / rlive - 1.0))
     else
       tminS = tstep > 0.0 ? (base / br.tap_max - 1.0) / tstep : 0.0
       tmaxS = tstep > 0.0 ? (base / br.tap_min - 1.0) / tstep : 0.0
-      tcur = tstep > 0.0 ? (base / br.tap_ratio - 1.0) / tstep : 0.0
+      tcur = tstep > 0.0 ? (base / rlive - 1.0) / tstep : 0.0
     end
-    psi = br.tap_est_alpha_deg
-    du = br.phase_du_step
     if du > 0.0
-      ψ = deg2rad(psi == 0.0 ? 90.0 : psi)
-      tbase = base * cis(deg2rad(br.angle))
-      tlive = (br.tap_ratio == 0.0 ? base : br.tap_ratio) * cis(deg2rad(br.phase_shift_deg))
       pstep = 0.0
       pminS = br.phase_du_min_step
       pmaxS = br.phase_du_max_step
-      pcur = real((tbase / tlive - 1.0) * cis(-ψ)) / du
+      pcur = du_split[2] / du
+      if tstep > 0.0
+        # the split leaves rounding noise on both positions, and the band
+        # ends of the fraction grid carry their own: a ratio step at the band
+        # end came out above or below the band and the reader refused it.
+        # Snap the band ends with the position (the linear grid does above).
+        tminS = _matpower_snap_position(tminS)
+        tmaxS = _matpower_snap_position(tmaxS)
+        tcur = _matpower_snap_position(tcur)
+        pcur = _matpower_snap_position(pcur)
+      end
     else
       pstep = br.has_phase_tap ? br.phase_step_deg : 0.0
       pminS = pstep > 0.0 ? br.phase_min_deg / pstep : 0.0

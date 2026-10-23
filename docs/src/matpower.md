@@ -160,7 +160,7 @@ The keys of a MATPOWER run: the case selectors, the import profile that recommen
 | `matpower_import.apply_branch_names` | Bool | `false` | `true`, `false` | Attach `mpc.branch_name` to `net.matpower_branch_metadata` (outage and contingency mapping). |
 | `matpower_import.apply_branch_kind` | Bool | `false` | `true`, `false` | Use `mpc.branch_kind` to override the line/transformer classification; accepts `L`/`LINE`/`ACL` and `T`/`TRAFO`/`TRANSFORMER`/`2WT`. |
 | `matpower_import.import_for001_contingencies` | Bool | `true` | `true`, `false` | Preserve `mpc.for001_contingencies` (FOR001/FOR002 validation); `mpc.branch_name` enables index mapping. |
-| `matpower_import.matpower_dcline_mode` | Symbol/String | `pf_injections` | `reject_active` (deprecated), `ignore_inactive`, `pf_injections`, `paired_control` | Handling of active `mpc.dcline` rows, see [DC lines and disconnected AC islands](#DC-lines-and-disconnected-AC-islands). A configuration file carrying the deprecated `reject_active` loads as `pf_injections` with a warning; the strict fail-fast check stays available programmatically: `createNetFromMatPowerCase(matpower_dcline_mode = :reject_active)`. |
+| `matpower_import.matpower_dcline_mode` | Symbol/String | `pf_injections` | `reject_active`, `ignore_inactive`, `pf_injections`, `paired_control` | Handling of active `mpc.dcline` rows, see [DC lines and disconnected AC islands](#DC-lines-and-disconnected-AC-islands). |
 
 Example configuration for a case-conversion or validation workflow:
 
@@ -253,7 +253,7 @@ become voltage-controlled where MATPOWER would make them PV; reference
 buses stay reference buses and isolated buses are not activated. API and
 Web UI runs write `matpower_dcline.csv` describing the mapping.
 
-- `reject_active` (deprecated as a configuration value): an active row
+- `reject_active`: an active row
   (`status != 0`) aborts before solving with
   `failure_reason = unsupported_matpower_dcline`.
 - `ignore_inactive`: the same active-row rejection. Empty or
@@ -370,13 +370,18 @@ Two phase-changer flavors exist, and declaring both grids at once is
 rejected: `phase_step_deg` steps the shift angle in degrees; `phase_du_step`
 is an additional-voltage stepper (the common Delta-u PST): each step adds
 `phase_du_step` per unit of additional voltage in the direction `psi_deg`,
-the shift angle follows from the cascade (`atan`), and the step columns
-count Delta-u steps. The tap estimation fixes a Delta-u PST linearly on that
-grid.
+the complex tap is divided by `1 + n * phase_du_step * e^(j psi_deg)`,
+and the step columns count Delta-u steps. The tap estimation estimates a
+Delta-u PST on these steps, along the line of the additional voltage.
 
 A `tap_step` of `0` declares a pure phase shifter, which keeps it out of
 the estimator's ratio mass release; declared phase changers join the mass
-release in `:pst` mode along their nameplate direction. Current steps may
+release (`:pst`, or `:both` next to a ratio changer) with their nameplate
+direction, which is never estimated. The tap estimation reads the row as
+tap changers: the ratio step as a ratio changer on the to side (with
+`ratio_grid` 1 an additive linear grid), `phase_du_step` as an asymmetrical
+changer with direction `psi_deg`, `phase_step_deg` as a linear changer in
+degrees ([Transformer tap estimation](@ref se-tap-estimation)). Current steps may
 be fractional; short rows are zero-padded like MATPOWER optional trailing
 columns. Exports write the block for every transformer off neutral or with
 a non-default grid, always with 14 columns. Rows referencing
@@ -477,9 +482,3 @@ citations in their headers. Case names in this documentation (`case300.m`,
 you obtain from MATPOWER or the original data sources under their license,
 citation and redistribution terms.
 
-## Binary case cache (`model.net_cache_enabled`)
-
-`model.net_cache_enabled: true` is inert (every importer builds its
-network directly from its own format) and logs a warning; the key stays
-readable for old configuration files, and leftover `.sparlectra_net_cache`
-directories can be deleted.

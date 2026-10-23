@@ -208,6 +208,25 @@ function run_ref_openloadflow_tests()
     @test checked == length(ln.id)
   end)() end
 
+  # Y-bus of the PowSyBl ieee14 against MATPOWER case14, read from the
+  # shipped OLF input case14.m (branch r, x, b, ratio and bus Gs, Bs are the
+  # MATPOWER values; the file adds names and flat voltages). Branches 7-8
+  # (14/20 kV) and 7-9 (14/12 kV) carry tap 1 in MATPOWER and are lines
+  # between voltage levels in PowSyBl's IEEE-CDF import, with large opposite
+  # b1/b2 that turn the physical conductor into the nominal-ratio
+  # transformer; the per-terminal arms of the branch reproduce them without
+  # any bus shunt, so the identity holds everywhere.
+  @testset "PowSyBl ieee14: Y-bus against MATPOWER case14" begin (function ()
+    tables = read_powsybl_bundle(_ref_powsybl_fixture("ieee14"))
+    net, _ = build_net_from_powsybl(tables, PowsyblAdapterOptions())
+    mp = createNetFromMatPowerFile(filename = joinpath(_REF_OLF_NETS, "case14.m"))
+    # bus-breaker ids B1..B14 in bus order, MATPOWER buses 1..14 in bus order
+    order = sortperm([parse(Int, match(r"(\d+)$", b).match) for b in tables.bus_breaker_view_buses.id])
+    Y = Matrix(createYBUS(net = net))[order, order]
+    Ym = Matrix(createYBUS(net = mp))
+    @test maximum(abs.(Y .- Ym)) <= 1e-9
+  end)() end
+
   # Bands: the models are identical (the export script checks the Y-bus of
   # the written rows against createYBUS to 1e-12), so the bands are the
   # existing exact-model bands of ieee14: 1e-6 pu, 1e-4 deg, 1e-3 MW/Mvar.

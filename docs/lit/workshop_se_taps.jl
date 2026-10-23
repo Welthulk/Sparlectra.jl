@@ -15,7 +15,7 @@
 # file: docs/lit/workshop_se_taps.jl                                          #src
 # purpose: Literate.jl source of the third state-estimation workshop and its  #src
 #          Documenter page: what J means next to its degrees of freedom, tap  #src
-#          estimation (ratio, phase, cascade, and the case that is not        #src
+#          estimation (ratio, phase, both on one transformer, and the case    #src
 #          identifiable), current measurements, PMU phasors, the topology     #src
 #          advisory, island-wise estimation, and J versus J_active.           #src
 #          Regenerate the committed outputs with                              #src
@@ -130,7 +130,6 @@ function build_net(; ratio_step = 0.0, phase_step = 0.0)
     net.branchVec[3];
     tap_step = 0.00625, tap_min_step = -16.0, tap_max_step = 16.0, tap_current_step = ratio_step,
     phase_step_deg = 1.25, phase_min_step = -20.0, phase_max_step = 20.0, phase_current_step = phase_step,
-    psi_deg = 90.0,
   )
   ## T3 (branch 5): the radial transformer, at neutral unless stated otherwise
   applyTapNameplate!(net.branchVec[5]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0)
@@ -176,8 +175,8 @@ warmup()
 # ```
 #
 # * **T1** carries both changers on one winding: a ratio tap (0.625 % per
-#   step, band ±16) and a phase tap (1.25° per step, band ±20). That is the
-#   cascade this chapter estimates.
+#   step, band ±16) and a phase tap (1.25° per step, band ±20). The
+#   estimator gives each changer its own state, the step it stands at.
 # * **T2** is a plain transformer. It closes the loop that makes T1's tap
 #   observable.
 # * **T3** feeds a radial station, and later on nothing will measure the
@@ -311,8 +310,10 @@ end
 # amount of bad-data elimination will help: **the data is fine, the model
 # is wrong.**
 #
-# `setTapEstimation!` releases the tap position as an additional state.
-# Mode `:ratio` releases the ratio changer only:
+# `setTapEstimation!` releases the tap changer as an additional state: the
+# step it stands at, counted from its neutral position. Mode `:ratio`
+# releases the ratio changer only. `tapEstimates` holds one row per
+# released changer:
 
 ## uses: build_net (warm-up cell); meas_oltc (Example 3)
 @isdefined(meas_oltc) || error("Run Example 3 first: it sets up meas_oltc.")
@@ -321,15 +322,17 @@ release = setTapEstimation!(model_oltc; trafo = 3, mode = :ratio)
 res_oltc = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
   runse!(model_oltc, deepcopy(meas_oltc))
 end
-est = res_oltc.tapEstimates[1]
-@printf("released: J = %.2f, dof = %d | electrical step = %+.3f -> fixed to %+d (truth %+d), out of range: %s\n",
-        res_oltc.objectiveJ, res_oltc.dof, est.electrical_step_1, est.fixed_step_1, 4, est.out_of_range)
+est = only(res_oltc.tapEstimates)                 ## one row per released changer
+@printf("released: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), out of range: %s\n",
+        res_oltc.objectiveJ, res_oltc.dof, est.s_est, round(Int, est.step_fixed), 4, est.out_of_range)
 
 # The `runse!` info line above the result reports what the fixation cost:
 # the free estimate fits marginally better than the grid position (it has
 # one more degree of freedom to spend), and snapping to the mechanical step
-# gives that degree of freedom back. A large jump there would be the signal
-# that the data does NOT agree with any real tap position.
+# gives that degree of freedom back. The line puts the change of $J$ next to
+# the 95 % quantile of $\chi^2(k)$, with $k$ the step states removed. A
+# change far above it would be the signal that the data does NOT agree with
+# any real tap position.
 #
 # Reading aid: the estimator finds 4.03 steps and FIXES that to the nearest
 # mechanical position, +4. The fixation is the point. A tap changer is a
@@ -344,28 +347,31 @@ est = res_oltc.tapEstimates[1]
 #
 # The same transformer, the same procedure, the other changer. In the true
 # network the phase tap stands three steps out; the model believes neutral.
-# Mode `:pst` needs `alpha_deg`, the nameplate direction of the regulating
-# winding. It is a specification, never estimated: a symmetric phase
-# shifter injects its voltage at 90° to the line voltage, and the machine
-# cannot rotate that angle.
+# Mode `:pst` releases the phase changer. T1's phase changer is declared in
+# degrees (1.25° per step), so its row says `linear`: each step adds the
+# same angle. A phase changer declared as an additional voltage per step
+# also has a direction alpha. That comes from the nameplate or the import
+# and is never estimated; `setTapEstimation!` accepts `alpha_deg` only as a
+# check against it.
 
 ## uses: build_net, truth_measurements (warm-up cell)
 truth_pst, meas_pst = truth_measurements(phase_step = 3.0, seed = 11)
 model_pst = build_net()
-setTapEstimation!(model_pst; trafo = 3, mode = :pst, alpha_deg = 90.0)
+setTapEstimation!(model_pst; trafo = 3, mode = :pst)
 res_pst = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
   runse!(model_pst, deepcopy(meas_pst))
 end
-est_pst = res_pst.tapEstimates[1]
-@printf("PST: J = %.2f | electrical step = %+.3f -> fixed to %+d (truth %+d)\n",
-        res_pst.objectiveJ, est_pst.electrical_step_2, est_pst.fixed_step_2, 3)
+est_pst = only(res_pst.tapEstimates)
+@printf("PST (%s): J = %.2f | step = %+.3f -> fixed to %+d (truth %+d)\n",
+        est_pst.kind, res_pst.objectiveJ, est_pst.s_est, round(Int, est_pst.step_fixed), 3)
 
 # ## Example 5: both changers at once
 #
 # A transformer that regulates voltage AND angle carries two changers on
-# one winding, and their effects multiply rather than add: the combined
-# ratio is a cascade $t(r_1, r_2)$, not a sum of two independent knobs.
-# Mode `:both` releases both positions as states of that cascade.
+# one winding. Mode `:both` releases both, one step state each. The ratio
+# changer scales the magnitude of the branch ratio, the phase changer adds
+# its angle; the estimator evaluates the branch ratio from both steps
+# together, so each row reports its own step.
 #
 # The true network now has the ratio changer two steps DOWN and the phase
 # changer two steps up, an ambiguous-looking combination the estimator has
@@ -374,14 +380,15 @@ est_pst = res_pst.tapEstimates[1]
 ## uses: build_net, truth_measurements (warm-up cell)
 truth_both, meas_both = truth_measurements(ratio_step = -2.0, phase_step = 2.0, seed = 13)
 model_both = build_net()
-setTapEstimation!(model_both; trafo = 3, mode = :both, alpha_deg = 90.0)
+setTapEstimation!(model_both; trafo = 3, mode = :both)
 res_both = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
   runse!(model_both, deepcopy(meas_both))
 end
-est_both = res_both.tapEstimates[1]
-@printf("cascade: J = %.2f | ratio %+.3f -> %+d (truth %+d), phase %+.3f -> %+d (truth %+d)\n",
-        res_both.objectiveJ, est_both.electrical_step_1, est_both.fixed_step_1, -2,
-        est_both.electrical_step_2, est_both.fixed_step_2, 2)
+est_ratio = only(filter(r -> r.role === :ratio, res_both.tapEstimates))
+est_phase = only(filter(r -> r.role === :phase, res_both.tapEstimates))
+@printf("both: J = %.2f | ratio %+.3f -> %+d (truth %+d), phase %+.3f -> %+d (truth %+d)\n",
+        res_both.objectiveJ, est_ratio.s_est, round(Int, est_ratio.step_fixed), -2,
+        est_phase.s_est, round(Int, est_phase.step_fixed), 2)
 
 # Reading aid: both positions come back within 0.1 steps of the truth. They
 # are separable because they act differently: the ratio changer moves the
@@ -418,17 +425,18 @@ setTapEstimation!(model_bridge; trafo = 5, mode = :ratio)
 res_bridge = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
   runse!(model_bridge, meas_bridge)
 end
-est_bridge = res_bridge.tapEstimates[1]
-@printf("radial T3: J = %.2f | electrical step = %+.3f -> fixed to %+d (truth %+d)\n",
-        res_bridge.objectiveJ, est_bridge.electrical_step_1, est_bridge.fixed_step_1, 3)
+est_bridge = only(res_bridge.tapEstimates)
+@printf("radial T3: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), frozen: %s\n",
+        res_bridge.objectiveJ, res_bridge.dof, est_bridge.s_est, round(Int, est_bridge.step_fixed), 3, est_bridge.frozen_reason)
+println("notice: ", est_bridge.notice)
 
 # Reading aid: the estimator does NOT return 3, and it does not return a
 # random number either. It FREEZES the released tap at its declared
-# position and says so in a warning (a bridge transformer without a voltage
-# measurement on its cut-off side, where the tap would absorb the
-# downstream voltage). $J$ stays healthy, because nothing in the data
-# contradicts the model: the missing measurement is exactly the information
-# that would have exposed the error.
+# position and says why: the row carries the freeze reason
+# `radial_no_voltage_pin` and the notice printed above, and `runse!` logs
+# that a regulator was frozen. $J$ stays healthy, because nothing in the
+# data contradicts the model: the missing measurement is exactly the
+# information that would have exposed the error.
 #
 # This is the most important slide of the chapter. **A released tap that
 # comes back at its declared position is not a confirmation.** Check

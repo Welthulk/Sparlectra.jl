@@ -224,6 +224,9 @@ Base.@kwdef mutable struct SCFTapControllerRow
   # fraction grid of nameplate data, so files written before the key stay
   # readable as they were
   grid::Union{Nothing,String} = nothing
+  # false when no nameplate row declared the changer (the constructor
+  # grid); absent means declared, as every file before the key
+  declared::Union{Nothing,Bool} = nothing
 end
 
 Base.@kwdef mutable struct SCFTapChangerRow
@@ -567,6 +570,7 @@ function _scfcase_tap_controller(row)::SCFTapControllerRow
     pos_min = _scf_opt_gridpos(row, "pos_min", "controller.pos_min"),
     pos_max = _scf_opt_gridpos(row, "pos_max", "controller.pos_max"),
     grid = _scfcase_opt_str(row, "grid"),
+    declared = _scfcase_opt_bool(row, "declared"),
   )
 end
 

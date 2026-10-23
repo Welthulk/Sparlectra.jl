@@ -28,26 +28,7 @@ function run_legacy_apslf_tests()
       quiet = OutputConfig(logfile_results=:off, console_summary=false, startup_latency_hint=false)
       cfg_ap = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf), output=quiet)
 
-              @testset "AnalyticLoadFlow version guard" begin (function ()
-                  # An environment whose Manifest predates the compat bump loads an
-                  # older AnalyticLoadFlow without a message, and 0.9.14 computes
-                  # wrong voltages flagged as converged. The guard runs in __init__,
-                  # so this process has passed it; the explicit-version calls
-                  # exercise both branches.
-                  @test pkgversion(AnalyticLoadFlow) >= Sparlectra.APSLF_MIN_VERSION
-                  @test Sparlectra.check_apslf_version() == pkgversion(AnalyticLoadFlow)
-                  @test Sparlectra.check_apslf_version(Sparlectra.APSLF_MIN_VERSION) == Sparlectra.APSLF_MIN_VERSION
-                  err = try
-                      Sparlectra.check_apslf_version(v"0.9.14")
-                      nothing
-                  catch e
-                      e
-                  end
-                  @test err isa ErrorException
-                  msg = err === nothing ? "" : sprint(showerror, err)
-                  @test occursin("AnalyticLoadFlow 0.9.14 is loaded", msg)
-                  @test occursin(string(Sparlectra.APSLF_MIN_VERSION), msg)
-                  @test occursin("Pkg.update(\"AnalyticLoadFlow\")", msg)
+              @testset "AnalyticLoadFlow outer-fallback bounds" begin (function ()
                   # The size bounds of the outer-mode fallback (_apslf_solve runs
                   # it itself) are mirrored from AnalyticLoadFlow 0.10.0, which
                   # provides no binding for them: they are literal keyword
@@ -94,14 +75,6 @@ function run_legacy_apslf_tests()
                   st = Sparlectra.rectangular_pf_status(net)
                   @test hasproperty(st, :apslf_convergence_radius) && isfinite(st.apslf_convergence_radius)
                   @test occursin("dmin", String(st.apslf_convergence_line))
-                  # the header prints the radius next to the condition number
-                  hdr_path = tempname()
-                  open(hdr_path, "w") do io
-                      redirect_stdout(io) do
-                          printACPFlowResults(net, r.elapsed_s, r.iterations, 1e-8, false, ""; converged=r.final_converged, solver=:apslf)
-                      end
-                  end
-                  @test occursin("APSLF radius   :", read(hdr_path, String))
                   # #461: the clamp counts as a PV->PQ switching event of the status
                   @test r.diagnostics.pv_pq_switching_events == 1
                   @test isfinite(st.apslf_series_radius) && occursin("series radius R", String(st.apslf_convergence_line))

@@ -28,10 +28,9 @@ roles, human component names, a solved `start_state`, a scenarios block,
 short-circuit study buses, and its measurements), a noisy measurement CSV
 (seed in the file header), a bad-data variant with one deliberately gross
 reading for the diagnostics demo, and a tracked reference fixture under
-`test/fixtures/demo_cases/`. The fast-profile group `demo_cases` runs all
-five run kinds (power flow, N-1, scenarios, state estimation, short
-circuit) against those fixtures, so the cases are regression fixtures,
-not decoration. A fresh install can run every run kind on them without
+`test/fixtures/demo_cases/`, written by `tools/build_demo_cases.jl`. The
+`extd` group `demo_cases` runs the power flow, the state estimation and the
+declared controllers on every case. A fresh install can run every run kind on them without
 downloading anything; new tests should use them instead of downloaded
 cases.
 

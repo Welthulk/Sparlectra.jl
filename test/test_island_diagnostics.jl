@@ -39,7 +39,7 @@ function _island_diag_failed_status()
     initial_mismatch = 2220.614510584437,
     final_mismatch = 240324.3267233851,
     best_mismatch = 731.175415721738,
-    reason = :nr_mismatch_not_converged_active_set_unstable,
+    reason = :type_identification_divergence,
     stage = :newton_iteration,
     pv_pq_switching_events = 435,
     qlimit_active_set_changes = 13,
@@ -83,14 +83,8 @@ function run_island_diagnostics_tests()
     addProsumer!(net = onebus, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
     # CGMES import marks isolation before solving; mirror that state here.
     markIsolatedBuses!(net = onebus)
-    err = try
-      runpf!(onebus, 30, 1e-8, 0)
-      nothing
-    catch e
-      e
-    end
-    @test err isa ErrorException
-    @test occursin("all 1 bus(es) of this network are isolated", sprint(showerror, err))
+    err = @test_throws ErrorException runpf!(onebus, 30, 1e-8, 0)
+    @test occursin("all 1 bus(es) of this network are isolated", sprint(showerror, err.value))
 
     # A net without any registered voltage reference keeps the plain
     # "no slack" wording, now with a hint on how to register one.
@@ -99,26 +93,8 @@ function run_island_diagnostics_tests()
     addBus!(net = noslack, busName = "C2", vn_kV = 110.0)
     addPIModelACLine!(net = noslack, fromBus = "C1", toBus = "C2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
     addProsumer!(net = noslack, busName = "C2", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
-    err2 = try
-      runpf!(noslack, 30, 1e-8, 0)
-      nothing
-    catch e
-      e
-    end
-    @test err2 isa ErrorException
-    @test occursin("no slack bus registered", sprint(showerror, err2))
-
-    # Partially isolated net with the slack still registered on the dead
-    # side: the message-building helper names the slack and the ratio.
-    # (The solve path itself demotes the isolated slack before the message
-    # helper runs, so this branch is exercised directly.)
-    partial = _island_diag_testnet()
-    addBus!(net = partial, busName = "B2", vn_kV = 110.0)
-    markIsolatedBuses!(net = partial)
-    push!(partial.slackVec, 3)  # slack registration on isolated bus B1
-    msg = Sparlectra._no_slack_message("unit_test", partial)
-    @test occursin("lies on an isolated bus", msg)
-    @test occursin("2 of 4 buses isolated", msg)
+    err2 = @test_throws ErrorException runpf!(noslack, 30, 1e-8, 0)
+    @test occursin("no slack bus registered", sprint(showerror, err2.value))
   end)() end
 
   @testset "auto slack promotes the strongest candidate" begin (function ()

@@ -311,15 +311,6 @@ function _import_sparlectra_context(casefile::AbstractString, path::Union{Nothin
     return (net = net, config = cfg, projected_start_applied = false, auto_profile_result = nothing, auto_profile_overrides = Dict{String,Any}())
   end
 
-  # The net cache stored the CONVERTED SCFCase, the very side product the
-  # direct import no longer creates, so the cache fell away with the
-  # conversion. The key
-  # stays readable and says so out loud instead of silently doing nothing;
-  # the removal follow-up is issue #292.
-  if model_cfg.net_cache_enabled
-    @warn "model.net_cache_enabled is inert since the direct import: the import no longer produces the converted case the cache stored." casefile = filename
-  end
-
   phase_callback("reading_matpower_case")
   phase_callback(extension == ".jl" ? "loading_julia_case" : "parsing_matpower_file")
   mpc = _perf_profile_time!(performance_profile, :matpower_case_parse) do

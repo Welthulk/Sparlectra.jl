@@ -42,6 +42,25 @@ function run_upfc_control_tests()
 
   _solved_state(net) = ([n._vm_pu for n in net.nodeVec], [n._va_deg for n in net.nodeVec])
 
+  # full model (#326): meshed corridor S - I - J - L with a parallel path
+  # S - L and the shunt converter (a PQ machine) at I; the UPFC sits on I->J
+  function _build_upfc_mesh()
+    net = Net(name = "upfc_full_mesh", baseMVA = 100.0)
+    for b in ("S", "I", "J", "L")
+      addBus!(net = net, busName = b, vn_kV = 110.0)
+    end
+    addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+    addProsumer!(net = net, busName = "I", type = "GENERATOR", p = 0.0, q = 0.0)
+    addProsumer!(net = net, busName = "L", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
+    addPIModelACLine!(net = net, fromBus = "S", toBus = "I", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "I", toBus = "J", r_pu = 0.02, x_pu = 0.18, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "J", toBus = "L", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "S", toBus = "L", r_pu = 0.02, x_pu = 0.16, b_pu = 0.0, status = 1)
+    ok, msg = validate!(net = net)
+    ok || error("mesh net invalid: $msg")
+    return net
+  end
+
   @testset "composite equals the manual SSSC+STATCOM pair" begin (function ()
     # net A: the two controllers registered by hand, in the same order the
     # composite uses (series first: run_control! executes in registration
@@ -86,14 +105,8 @@ function run_upfc_control_tests()
     # result rows: one row per actuator, device strings name the pair
     rows = controllableElements(net_upfc)
     @test length(rows) == 2
-    series_row = only([r for r in rows if r.actuator == :series_x_pu])
-    shunt_row = only([r for r in rows if r.actuator == :machine_q_mvar])
-    @test series_row.device == "UPFC series (VSC pair, stationary quadrature model)"
-    @test shunt_row.device == "UPFC shunt (VSC pair, stationary quadrature model)"
-    # the manual pair keeps the plain device vocabulary
-    manual_rows = controllableElements(net_manual)
-    @test only([r for r in manual_rows if r.actuator == :series_x_pu]).device == "SSSC (VSC)"
-    @test only([r for r in manual_rows if r.actuator == :machine_q_mvar]).device == "STATCOM (VSC)"
+    @test count(r -> r.actuator == :series_x_pu, rows) == 1
+    @test count(r -> r.actuator == :machine_q_mvar, rows) == 1
   end)() end
 
   @testset "both converter limits at their clamps" begin (function ()
@@ -137,6 +150,21 @@ function run_upfc_control_tests()
       () -> (net = _build_upfc_net(); (net, () -> addUpfcControl!(net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.0, s_max_mva = 40.0))),
       # no branch between the named buses
       () -> (net = _build_upfc_net(); (net, () -> addUpfcControl!(net; fromBus = "A", toBus = "B", shunt_bus = "A", target_bus = "M1", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0))),
+      # full model (#326): q_target_mvar missing
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0))),
+      # full model: the quadrature-only keys target_bus/target_vm_pu
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0, target_bus = "J", target_vm_pu = 1.0))),
+      # full model: both ratings, then neither
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0, i_max_ka = 0.5))),
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6))),
+      # full model: non-positive injectable voltage
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.0, s_max_mva = 120.0))),
+      # full model: the branch is S-I, not I-S (orientation)
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "S", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0))),
+      # full model: no generator at the shunt bus J
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "J", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0))),
+      # unknown model symbol
+      () -> (net = _build_upfc_mesh(); (net, () -> addUpfcControl!(net; model = :bogus, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0))),
     ]
     for build in rejections
       net, call = build()

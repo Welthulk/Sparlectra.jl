@@ -21,6 +21,8 @@
 #          converted here, once, to Sparlectra's per-unit convention:
 #          branch impedance on the to-side nominal voltage, the complex
 #          ratio at the from side (the MATPOWER model calcAdmittance uses).
+#          Every transformer branch gets the tap changer set of the state
+#          estimation from the IIDM step tables (empty without a changer).
 
 # Conventions settled against the OpenLoadFlow references of the shipped
 # example bundles (the numbers are the worst bus deviations measured):
@@ -296,6 +298,11 @@ function _powsybl_add_pi_line!(ctx::_PowsyblBuildContext, b1::AbstractString, b2
     addPIModelACLine!(net = ctx.net, fromBus = String(b1), toBus = String(b2), r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, from_status = st.from_status, to_status = st.to_status, g_from_pu = pu.g_from_pu, b_from_pu = pu.b_from_pu, g_to_pu = pu.g_to_pu, b_to_pu = pu.b_to_pu)
   else
     _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, ratio = pu.ratio, shift_deg = 0.0, from_status = st.from_status, to_status = st.to_status, g_from_pu = pu.g_from_pu, b_from_pu = pu.b_from_pu, g_to_pu = pu.g_to_pu, b_to_pu = pu.b_to_pu)
+    # a line has no tap changer: the empty set keeps the ratio branch out
+    # of the tap estimation (the constructor gives every transformer branch
+    # a default ratio grid, which the mass release would otherwise take)
+    br = ctx.net.branchVec[end]
+    br.se_tap_changers = SETapChangerSet(ratio_n = br.ratio, shift_n_deg = br.angle, changers = SETapChanger[], origin = :powsybl)
   end
   return nothing
 end
@@ -309,6 +316,7 @@ _powsybl_2wt_ratio(rho::Float64, vn_from::Float64, vn_to::Float64)::Float64 = vn
 function _map_powsybl_two_winding_transformers!(ctx::_PowsyblBuildContext)
   tw = ctx.tables.two_windings_transformers
   _powsybl_count!(ctx.report, "2wt"; read = length(tw.id))
+  taps = _powsybl_tap_index(ctx.tables)
   for i in eachindex(tw.id)
     id = tw.id[i]
     b1 = _powsybl_bus(ctx, "2wt", id, tw.bus_breaker_bus1_id[i])
@@ -334,6 +342,8 @@ function _map_powsybl_two_winding_transformers!(ctx::_PowsyblBuildContext)
     rating = _powsybl_branch_rating(ctx, id, vn1, vn2)
     rated_s = _powsybl_optional(tw.rated_s[i])
     _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = st.status, ratedU = tw.rated_u1[i], ratedS = rating === nothing ? rated_s : rating, ratio = ratio, shift_deg = shift, from_status = st.from_status, to_status = st.to_status, g_from_pu = g_pu, b_from_pu = b_pu, g_to_pu = 0.0, b_to_pu = 0.0)
+    # tap changers of the tap estimation on the ratio at rho 1 of both changers
+    _attach_powsybl_se_tap_changers!(ctx, taps, ctx.net.branchVec[end], id, "", _powsybl_2wt_ratio(tw.rated_u2[i] / tw.rated_u1[i], vn1, vn2), "")
     _powsybl_count!(ctx.report, "2wt"; built = 1)
   end
   return nothing
@@ -344,6 +354,7 @@ end
 function _map_powsybl_three_winding_transformers!(ctx::_PowsyblBuildContext)
   t3 = ctx.tables.three_windings_transformers
   _powsybl_count!(ctx.report, "3wt"; read = length(t3.id))
+  taps = _powsybl_tap_index(ctx.tables)
   for i in eachindex(t3.id)
     id = t3.id[i]
     legs = [(k = k, bus = t3[Symbol("bus_breaker_bus$(k)_id")][i], connected = t3[Symbol("connected$(k)")][i]) for k in 1:3]
@@ -380,9 +391,111 @@ function _map_powsybl_three_winding_transformers!(ctx::_PowsyblBuildContext)
       # a disconnected leg is open at its own terminal, the network side
       st = _powsybl_terminal_status(l.connected, true)
       _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[l.bus], to = ctx.idx[star], r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = st.status, ratedU = t3[Symbol("rated_u$(k)")][i], ratedS = _powsybl_optional(t3[Symbol("rated_s$(k)")][i]), ratio = ratio, shift_deg = shift, from_status = st.from_status, to_status = st.to_status, g_from_pu = g_pu, b_from_pu = b_pu, g_to_pu = 0.0, b_to_pu = 0.0)
+      # the leg's tap changers (changer side ONE, TWO, THREE of leg k)
+      _attach_powsybl_se_tap_changers!(ctx, taps, ctx.net.branchVec[end], id, _IIDM_SIDES[k], _powsybl_2wt_ratio(vn_star / t3[Symbol("rated_u$(k)")][i], vn_k, vn_star), string(k))
     end
     _powsybl_count!(ctx.report, "3wt"; built = 1)
   end
+  return nothing
+end
+
+# --- tap changer sets of the tap estimation ------------------------------------
+#
+# The import stores on every transformer branch the tap changers the state
+# estimation releases (`se_tap_changers`, a Sparlectra.SETapChangerSet with
+# origin :powsybl). Each IIDM ratio or phase tap changer becomes a table
+# changer (kind :tabular) over its step rows. The mapping divides the branch
+# ratio by rho and subtracts alpha (_powsybl_2wt_ratio, shift = -alpha), so
+# every changer sits on side :to. Power flow, controllers and export do not
+# read the set; the branch keeps the ratio, shift and impedance of the
+# current step.
+
+# rows of a tap changer table (changers or steps) by (transformer id, side);
+# the side is "" for a two-winding transformer, ONE, TWO or THREE for a leg
+function _powsybl_tap_rows(t)::Dict{Tuple{String,String},Vector{Int}}
+  d = Dict{Tuple{String,String},Vector{Int}}()
+  for i in eachindex(t.id)
+    push!(get!(d, (t.id[i], t.side[i]), Int[]), i)
+  end
+  return d
+end
+
+# The four row indexes of the tap changer tables, built once per mapper.
+function _powsybl_tap_index(tables::PowsyblTables)
+  return (ratio = _powsybl_tap_rows(tables.ratio_tap_changers), ratio_steps = _powsybl_tap_rows(tables.ratio_tap_changer_steps), phase = _powsybl_tap_rows(tables.phase_tap_changers), phase_steps = _powsybl_tap_rows(tables.phase_tap_changer_steps))
+end
+
+# The table changer of one IIDM tap changer row `i` (role :ratio from
+# ratio_tap_changers, :phase from phase_tap_changers) with its step rows
+# `rows`, or the reason why the estimation cannot use it. Points: position,
+# rho, alpha (0 for a ratio changer) and the step corrections as factors
+# 1 + p/100. IIDM has no neutral step: the neutral is the position whose
+# (rho, alpha in rad) lies nearest to (1, 0), the lowest on a tie.
+function _powsybl_se_tap_changer(ctx::_PowsyblBuildContext, role::Symbol, i::Int, rows::Vector{Int}, name::AbstractString)::Union{SETapChanger,String}
+  tc = role === :ratio ? ctx.tables.ratio_tap_changers : ctx.tables.phase_tap_changers
+  st = role === :ratio ? ctx.tables.ratio_tap_changer_steps : ctx.tables.phase_tap_changer_steps
+  isempty(rows) && return "it has no step rows"
+  pts = SETapPoint[]
+  for j in rows
+    rho = st.rho[j]
+    alpha = role === :ratio ? 0.0 : st.alpha[j]
+    vals = (st.r[j], st.x[j], st.g[j], st.b[j])
+    (isfinite(rho) && rho > 0.0 && isfinite(alpha) && all(isfinite, vals)) || return "step $(st.position[j]) has no finite positive rho or no finite alpha, r, x, g, b"
+    push!(pts, SETapPoint(step = st.position[j], ratio = rho, angle_deg = alpha, r = 1.0 + vals[1] / 100.0, x = 1.0 + vals[2] / 100.0, g = 1.0 + vals[3] / 100.0, b = 1.0 + vals[4] / 100.0))
+  end
+  sort!(pts; by = p -> p.step)
+  all(k -> pts[k].step < pts[k + 1].step, 1:length(pts) - 1) || return "two step rows share a position"
+  tap = tc.tap[i]
+  any(p -> p.step == tap, pts) || return "its tap position $(tap) has no step row"
+  neutral = pts[1].step
+  dist = Inf
+  for p in pts
+    d = hypot(p.ratio - 1.0, deg2rad(p.angle_deg))
+    d < dist && (dist = d; neutral = p.step)
+  end
+  lo, hi = minmax(tc.low_tap[i], tc.high_tap[i])
+  imp = any(p -> (p.r, p.x, p.g, p.b) != (1.0, 1.0, 1.0, 1.0), pts) ? :table : :none
+  return SETapChanger(name = name, mrid = tc.id[i], kind = :tabular, role = role, side = :to, neutral = neutral, low = lo, high = hi, step = tap, table = pts, impedance = imp)
+end
+
+# Store the tap changer set of transformer branch `br` with the IIDM id
+# `id` and changer side `side` ("" for a two-winding transformer, the leg
+# side of a three-winding one): the ratio changer, then the phase changer,
+# on `ratio_n`, the branch ratio with both at rho 1 (rated voltages only).
+# `suffix` is the leg number in the changer names (ratioTapChanger2). A
+# changer the estimation cannot use is left out with a notice; the import
+# applied it, so the part of the branch ratio and shift the stored changers
+# do not explain stays fixed in ratio_n and shift_n_deg, and the set still
+# gives the branch at the import steps. A transformer without changers gets
+# an empty set and is never released.
+function _attach_powsybl_se_tap_changers!(ctx::_PowsyblBuildContext, index, br, id::AbstractString, side::AbstractString, ratio_n::Float64, suffix::AbstractString)
+  key = (String(id), String(side))
+  chs = SETapChanger[]
+  left_out = false
+  for (role, changers, steps, elem) in ((:ratio, index.ratio, index.ratio_steps, "ratioTapChanger"), (:phase, index.phase, index.phase_steps, "phaseTapChanger"))
+    for i in get(changers, key, Int[])
+      name = elem * suffix
+      ch = _powsybl_se_tap_changer(ctx, role, i, get(steps, key, Int[]), name)
+      if ch isa SETapChanger
+        push!(chs, ch)
+      else
+        left_out = true
+        _powsybl_notice!(ctx.report, "tap changer $(id)/$(name) is not estimable, $(ch): it stays fixed at its import step")
+      end
+    end
+  end
+  if isempty(chs)
+    br.se_tap_changers = SETapChangerSet(ratio_n = br.ratio, shift_n_deg = br.angle, changers = SETapChanger[], origin = :powsybl)
+    return nothing
+  end
+  shift_n = 0.0
+  if left_out
+    set = SETapChangerSet(ratio_n = ratio_n, changers = chs, origin = :powsybl)
+    R, Phi = _tap_set_ratio_shift(set, Float64[ch.step - ch.neutral for ch in chs])
+    ratio_n *= br.tap_ratio / R
+    shift_n = br.phase_shift_deg - Phi
+  end
+  br.se_tap_changers = SETapChangerSet(ratio_n = ratio_n, shift_n_deg = shift_n, changers = chs, origin = :powsybl)
   return nothing
 end
 

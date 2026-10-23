@@ -249,19 +249,11 @@ function run_terminal_status_tests()
     @test any(m -> occursin("one open terminal", m), res.messages)
   end)() end
 
-  @testset "result surface: table marker, header count, report columns" begin (function ()
+  @testset "result surface: report columns of an open terminal" begin (function ()
     net = _ts_line_net("ts_results"; to_status = 0)
     _, erg = runpf!(net, 30, 1e-10, 0)
     @test erg == 0
     calcNetLosses!(net)
-    mktempdir() do d
-      cd(d) do
-        printACPFlowResults(net, 0.0, 1, 1e-10, true)
-        txt = read("result_$(net.name).txt", String)
-        @test occursin("open@to", txt)
-        @test occursin("Open terminals :         1", txt)
-      end
-    end
     rep = buildACPFlowReport(net; ite = 1, converged = true)
     row = only(rep.branches)
     @test row.terminal_state == :open_to

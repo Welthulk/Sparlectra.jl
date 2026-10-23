@@ -63,6 +63,64 @@ metadata only; failed runs are indexed once they produced `result.json`.
 | `detailed_result_csv_write_mode` | `buffered`, `streaming`, `auto` (default: streams above the configured thresholds) | how the detailed CSVs are written |
 | `detailed_result_csv_exporter` | `auto` | report-based path for small cases, direct streaming from `detailed_result_csv_direct_threshold_buses` buses; thresholds in [Output configuration](performance_profiling.md#perf-output) |
 
+**Q-limit stability check.** After every AC run with a converged numerical
+solution `run_sparlectra` checks each voltage-regulated generator bus (PV at
+the start, switched or locked; reference buses, buses joined to one by a
+closed bus link and the reference of an island without a slack excluded)
+against the
+stability conditions of Zhao, Chiang, Li, Ju (PSCC 2008): a machine at
+$Q_{max}$ must not sit above its set point (condition (7)), one at
+$Q_{min}$ not below it (condition (6)), a PQ machine inside its band must
+hold the set point, and a PV machine is ok inside its band. Tolerances are
+fixed at 1e-3 MVAr and 1e-6 pu. The check never changes the run status and
+has no switch; a run without Q-limit handling is not checked. A run stopped
+at `power_flow.max_iter` (one of the three reasons below) gets the rows of
+its last iterate with the status `last_iterate` and no warning; that state is
+no solution, the rows show where the bus types stood. After
+`power_flow.dc.fallback` the net holds the DC state instead of that iterate,
+and the run is `not_checked`.
+
+| Key | Content |
+|---|---|
+| `diagnostics.qlimit_stability_violations` | number of buses that fail (`Int`) |
+| `diagnostics.qlimit_stability_report` | one row per regulated bus from `qlimitStabilityReport`: `bus`, `bus_name`, `end_type`, `q_MVar`, `qmin_MVar`, `qmax_MVar`, `u_pu`, `uset_pu`, `reached_limit` (`max`, `min`, `none`), `check_6`, `check_7`, `in_band`, `ok`, `locked_by`, `q_source`, `q_report_MVar` |
+| `diagnostics.qlimit_stability_status` | `ok`, `violations`, `last_iterate` (run stopped at `max_iter`), `not_checked` (no converged solution otherwise, or DC fallback), `qlimits_disabled` |
+| `locked_by` | why the bus could not switch freely: `none`, `guard_lock_pq` (narrow or zero band under the guard), `max_switches` (kept PV by `guard.max_switches`), `lock_pv_to_pq_buses`, `oscillation` (the active-set lock after the second hit) |
+| metadata `qlimit_stability_status`, `qlimit_stability_violations`, `qlimit_stability_buses`, `qlimit_stability_line` | the same verdict in the result metadata |
+
+Q is the bus generator Q of the result report; on a network with a closed
+bus link and at a bus that also carries a Q(U) generator it is computed from
+the solved voltages (`q_source = voltages`).
+The line `Q-limit stability violations: n`, with the failing buses when
+`n > 0`, is printed with the results, written to `run.log` and shown on the
+Web UI result page; a run with a violation also logs one warning that names
+each failing bus. The Q-V characteristic line (`qv_characteristic_line`) is
+the part of this check for the buses with a Q-limit event: on their limit
+on the wrong side of the set point. In auto mode the check uses the Q-limit
+settings of the attempt that produced the result.
+
+**Reason of a run at `max_iter`.** A rectangular Newton run that uses up
+`power_flow.max_iter` keeps the status `not_converged`; its `reason` says
+which of three cases the last three iterations show (Zhao, Chiang, Li, Ju,
+PSCC 2008 tell the numerical divergence from the type identification
+divergence, see [Q-limit switching](q_limit_switching_strategy.md)):
+
+| `reason` | Last three iterations |
+|---|---|
+| `type_identification_divergence` | a bus type changed between PV and PQ, and the smallest mismatch measured before the switch is at most 10 times `power_flow.tol` |
+| `iteration_limit` | no type change, the mismatch fell from each iteration to the next, and the last mismatch is below the first mismatch of the run |
+| `numerical_divergence` | everything else |
+
+The status keeps `mismatch_history` (the mismatch of the equations in force
+after the switching of each iteration), `mismatch_history_pre_switch` (the
+same before the switch) and `type_switch_iterations`. A run with outer
+controllers reports outcome `pf_failed` and keeps the solver's reason;
+before 0.60 the reason was `pf_failed` as well, and the former reason
+`nr_mismatch_not_converged_active_set_unstable` (three or more switching
+iterations over the whole run) is gone. The Q-limit log (`net.qLimitLog`,
+`q_limit_events.csv` with the column `kind`) holds the PQ->PV releases
+(`release`) beside the PV->PQ switches (`hit`, `group_revert`).
+
 **Notes**
 
 - Public failures are dictionaries with `status`, `success`, `reason` and

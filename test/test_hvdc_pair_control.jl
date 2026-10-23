@@ -112,6 +112,33 @@ function run_hvdc_pair_control_tests()
     @test only(rows).to_p_mw == 91.0
     # both islands solved with their own references
     @test result.powerflow_solves >= 1
+    # rating clamp: a target above the rating stops at the rating, the
+    # controller reports at_limit and counts as done for the framework
+    net_r, fr_idx, tr_idx = _build_hvdc_two_area_net("hvdc_rating")
+    addHvdcPairControl!(net_r; from_bus = "B2", to_bus = "B4", p_transfer_mw = 200.0, p_rating_mw = 100.0, loss_mw = 4.0)
+    result_r = _hvdc_run!(net_r)
+    ctrl_r = only(Sparlectra._hvdc_pair_controllers(net_r))
+    @test (net_r.prosumpsVec[fr_idx].pVal, net_r.prosumpsVec[tr_idx].pVal) == (-100.0, 96.0)
+    @test ctrl_r.at_limit && ctrl_r.status == :at_limit && !ctrl_r.converged
+    @test result_r.converged == true
+    # result surface: actuator range, report row, the fixed row of a Stage-0
+    # link, and the slack outcomes written back to the parent net
+    net_s, _, _ = _build_hvdc_two_area_net("hvdc_rows")
+    addHvdcPairControl!(net_s; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, p_rating_mw = 150.0)
+    _hvdc_run!(net_s)
+    act = only(filter(e -> e.actuator == :hvdc_p_transfer_mw, controllableElements(net_s)))
+    @test act.quantity == :hvdc_transfer && act.actuator_min == -150.0 && act.actuator_max == 150.0
+    link_row = only(buildACPFlowReport(net_s; ite = 1, converged = true).hvdc_links)
+    @test link_row.mode == :setpoint && link_row.p_from_MW == 80.0 && link_row.loss_MW == 3.0
+    net_s0, _, _ = _build_hvdc_two_area_net("hvdc_rows_stage0")
+    link = addHvdcLink!(net_s0; from_bus = "B2", to_bus = "B4")
+    @test link.source == :api && link.controller_name === nothing
+    row0 = only(Sparlectra._hvdc_link_flow_rows(net_s0))
+    @test row0.mode == :fixed && row0.p_from_MW == 80.0 && row0.p_to_MW == 76.0 && row0.loss_MW == 4.0
+    for n in net_s.nodeVec
+      Sparlectra.getNodeType(n) == Sparlectra.Slack || continue
+      @test n._pƩGen !== nothing && n._qƩGen !== nothing
+    end
   end)() end
 
   @testset "reversed transfer" begin (function ()
@@ -134,6 +161,13 @@ function run_hvdc_pair_control_tests()
     @test vm !== nothing && abs(vm - 1.01) <= ctrl.deadband_vm_pu
     @test -60.0 <= ctrl.to_q_now <= 60.0
     @test net.prosumpsVec[t_idx].qVal == ctrl.to_q_now
+    # an unreachable target stops at the reactive limit and reports at_limit
+    net_l, _, _ = _build_hvdc_two_area_net("hvdc_vset_limit")
+    addHvdcPairControl!(net_l; from_bus = "B2", to_bus = "B4", p_transfer_mw = 80.0, loss_mw = 3.0, to_vset_pu = 1.2, to_qmin_mvar = -5.0, to_qmax_mvar = 5.0)
+    _hvdc_run!(net_l)
+    ctrl_l = only(Sparlectra._hvdc_pair_controllers(net_l))
+    @test !ctrl_l.converged && ctrl_l.at_limit
+    @test isapprox(ctrl_l.to_q_now, 5.0; atol = 1e-9)
   end)() end
 
   @testset "island_feed mode (grid-forming to side)" begin (function ()
@@ -170,20 +204,7 @@ function run_hvdc_pair_control_tests()
     @test isapprox(ctrl_pl.p_transfer_mw - ctrl.p_transfer_mw, 5.0; atol = 1e-2)
     rows = Sparlectra.control_report_rows(ctrl, net, Sparlectra.NoControlState(), (outer_iteration = ctrl.outer_iters,))
     @test rows[1].mode == :island_feed
-    elems = controllableElements(net)
-    row = only(filter(e -> e.actuator == :hvdc_p_transfer_mw, elems))
-    @test row.device == "back-to-back HVDC pair (grid-forming)"
-    # the bus table marks the converter roles in the Control column: the
-    # steered sending injection as B2B, the grid-forming reference as
-    # "B2B src" (its Type stays SLACK: the model is an ideal reference at
-    # the PCC; SOURCE is reserved for the external-grid feeder element)
-    mktempdir() do d
-      cd(d) do
-        printACPFlowResults(net, 0.0, 1, 1e-8, true)
-        txt = read("result_$(net.name).txt", String)
-        @test occursin("B2B src", txt)
-      end
-    end
+    @test count(e -> e.actuator == :hvdc_p_transfer_mw, controllableElements(net)) == 1
 
     # rating clamp: the island draws more than the link can carry; honest
     # at_limit, sending side pinned at the rating (the island's slack still

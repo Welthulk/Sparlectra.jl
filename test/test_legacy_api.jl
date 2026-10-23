@@ -22,34 +22,6 @@ using Test
 
 function run_legacy_api_tests()
   # cut from testset: API fast smoke and timing contracts
-    @testset "net parameters stamped exactly once per importer" begin (function ()
-      # the stamping happens exactly
-      # once PER IMPORTER, at the place each importer finishes; this test
-      # is the guard against pulling the four call sites back together
-      # (the CGMES leg runs on the checked-in delivery under
-      # data/cgmes_demo).
-      cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-      repo = dirname(@__DIR__)
-      stamps() = Sparlectra._NET_PARAM_STAMP_COUNT[]
-      assert_one = function (path, label; requested_format = :auto)
-        before = stamps()
-        imported = Sparlectra.import_case(path, cfg; requested_format = requested_format)
-        @test stamps() - before == 1
-        @test imported.net.cooldown_iters == cfg.powerflow.qlimits.cooldown_iters
-        println("      import stamp: ", label, " ran (exactly once)")
-        return imported
-      end
-      assert_one(joinpath(repo, "data", "mpower", "warmup_casePST.m"), "matpower")
-      assert_one(joinpath(repo, "data", "scf", "sp_case5.scf.json"), "scf")
-      dtf = joinpath(repo, "data", "DTF", "FOR001.DAT")
-      if isfile(dtf)
-        assert_one(dtf, "dtf"; requested_format = :dtf_for001)
-      else
-        println("      import stamp: dtf SKIPPED (data/DTF/FOR001.DAT not present)")
-      end
-      assert_one(cgmes_fixture_dir("sp_casePST"), "cgmes (sp_casePST fixture)"; requested_format = :cgmes)
-    end)() end
-
     @testset "run index accepts symlinked output roots" begin (function ()
       # Two environments can reach the same physical output root under
       # different names (a Flatpak XDG_STATE_HOME symlinked onto

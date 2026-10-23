@@ -633,6 +633,9 @@ function run_cgmes_importer_tests()
         br = net.branchVec[k]
         @test (br.fromBus, br.toBus) == (bus(b1), bus(b2))
         @test br.tap_ratio == 1.0 && isapprox(br.phase_shift_deg, phi_deg; atol = 1e-9)
+        # a transformer-type branch without tap changer: an empty set, so
+        # the tap estimation never releases it
+        @test isempty(br.se_tap_changers.changers) && Sparlectra._tap_release_mode(br) === nothing
         phi = deg2rad(br.phase_shift_deg)
         y12 = abs(1 / z12)
         @test abs(complex(br.r_pu, br.x_pu) - z12 * cis(phi)) <= 1e-15 * abs(z12)
@@ -879,6 +882,7 @@ function run_cgmes_importer_tests()
       sm = only(objectsOf(store, :SynchronousMachine))
       @test enumval(sm, :operatingMode) == "SynchronousMachineOperatingMode.generator"
       @test boolval(sm, :earthing) == false
+      @test any(u -> u.target == "_missing_container", unresolvedReferences(store))
     end)() end
 
     @testset "rdf:about overlays EQ object (SSH)" begin (function ()
@@ -886,11 +890,6 @@ function run_cgmes_importer_tests()
       @test num(sm, :p) == -120.0                    # from SSH overlay
       @test num(sm, :ratedS) == 150.0                # EQ value kept
       @test countOf(store, :SynchronousMachine) == 1 # no duplicate object
-    end)() end
-
-    @testset "unresolved references reported" begin (function ()
-      unresolved = unresolvedReferences(store)
-      @test any(u -> u.target == "_missing_container", unresolved)
     end)() end
 
     @testset "summarizeCGMES on synthetic set" begin (function ()
@@ -911,20 +910,6 @@ function run_cgmes_importer_tests()
       @test length(Sparlectra._fitColumn("TN_Border_ST23 -> BE-Busbar_2", 25)) == 25
       @test endswith(Sparlectra._fitColumn("TN_Border_ST23 -> BE-Busbar_2", 25), "…")
       @test Sparlectra._fitColumn("exactly_twenty_five_chars", 25) == "exactly_twenty_five_chars"
-    end)() end
-
-    # The CGMES options reach the documentation through the help registry:
-    # every cgmes_import topic links into cgmes_import.md, and the page
-    # carries the labelled option reference those links land on.
-    @testset "Web UI documentation wiring" begin (function ()
-      cgmes_topics = [t for t in keys(SparlectraApp.WEBUI_HELP_TOPICS) if startswith(t, "cgmes_import.")]
-      @test !isempty(cgmes_topics)
-      @test all(startswith(String(SparlectraApp.WEBUI_HELP_TOPICS[t].doc), "cgmes_import/#") for t in cgmes_topics)
-      text = read(joinpath(dirname(@__DIR__), "docs", "src", "cgmes_import.md"), String)
-      @test occursin("(@id cgmes-import-config)", text)
-      for key in ("cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.ignore_connected")
-        @test occursin(key, text)
-      end
     end)() end
 
     @testset "RatioTapChangerTable ratio at the tap position" begin (function ()
@@ -1046,6 +1031,204 @@ function run_cgmes_importer_tests()
       w = s / -4
       @test brc.x_pu ≈ br.x_pu * (1 + 0.10 * w) && brc.r_pu ≈ br.r_pu * (1 + 0.04 * w)
       @test brc.b_pu ≈ br.b_pu * (1 + 0.15 * w) && brc.g_pu ≈ br.g_pu * (1 - 0.20 * w)
+    end)() end
+
+    # The import stores per transformer branch the tap changers of the state
+    # estimation (se_tap_changers, origin :cgmes). The truth is a
+    # re-import of the same delivery with one changer at another step (SSH
+    # step and SvTapStep set in a copy of the store): at the import step and
+    # at two other steps the stored set gives the ratio and shift of the
+    # re-imported branch (1e-12) and, where the changer carries a per-step
+    # impedance, its r, x, g and b relative to the import step. Deliveries:
+    # the own export of a net with typed asymmetrical (step 16 of 1..25,
+    # neutral 13, 1.25 %, psi 90), symmetrical (with an xMin/xMax curve) and
+    # tabular phase models, a RatioTapChanger, a transformer without changer,
+    # a fixed shift (the export's single-step PhaseTapChangerLinear) and a
+    # transformer tapped on both ends; the synthetic 2W delivery tapped on
+    # end 2 with a RatioTapChangerTable carrying r, x, g, b on every point
+    # (the writer has no RTC table); the synthetic 3W delivery with two
+    # tapped legs.
+    @testset "tap changer sets of the tap estimation" begin (function ()
+      S = Sparlectra
+      # a re-import of `store` with the tap changer `mrid` at step `k`
+      function at_step(store, mrid, k)
+        st = deepcopy(store)
+        st.objects[mrid].attrs[:step] = string(k)
+        for o in objectsOf(st, :SvTapStep)
+          get(o.refs, :TapChanger, "") == mrid && (o.attrs[:position] = string(k))
+        end
+        return importCGMES(path = st, name = "at_step", require_boundary = false)
+      end
+      # set of branch `k` of `res` against the branch `k` of a re-import with
+      # changer `c` at `steps` (absolute): ratio, shift, impedance factors
+      function agrees(res, k, c, steps)
+        set = res.net.branchVec[k].se_tap_changers
+        ch = set.changers[c]
+        s0 = Float64[x.step - x.neutral for x in set.changers]
+        F0 = S._tap_impedance_factors(set, s0)
+        b0 = res.net.branchVec[k]
+        ok = true
+        for st in steps
+          bk = at_step(res.store, ch.mrid, st).net.branchVec[k]
+          s = copy(s0)
+          s[c] = st - ch.neutral
+          R, P = S._tap_set_ratio_shift(set, s)
+          F = S._tap_impedance_factors(set, s)
+          ok &= isapprox(R, bk.tap_ratio; rtol = 1e-12) && abs(P - bk.phase_shift_deg) <= 1e-12
+          ok &= isapprox(b0.r_pu * F[1] / F0[1], bk.r_pu; rtol = 1e-12) && isapprox(b0.x_pu * F[2] / F0[2], bk.x_pu; rtol = 1e-12)
+          ok &= isapprox(b0.g_from_pu * F[3] / F0[3], bk.g_from_pu; rtol = 1e-12, atol = 1e-15) && isapprox(b0.b_from_pu * F[4] / F0[4], bk.b_from_pu; rtol = 1e-12, atol = 1e-15)
+        end
+        ok || println("      tap changer set of branch ", k, ", changer ", ch.name, ": no match with the re-import at steps ", steps)
+        return ok
+      end
+      fields(ch) = (ch.kind, ch.role, ch.side, ch.du, ch.alpha_deg, ch.neutral, ch.low, ch.high, ch.step, ch.impedance)
+
+      # --- the own export of typed models
+      net = Net(name = "sets", baseMVA = 100.0)
+      for b in ("A", "B", "C", "D", "E", "F", "G", "H")
+        addBus!(net = net, busName = b, vn_kV = 110.0)
+      end
+      addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net, busName = "H", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+      asym() = PhaseTapChangerModel(kind = :asymmetrical, step = 16, lowStep = 1, highStep = 25, neutralStep = 13, voltage_step_increment = 0.0125, winding_connection_angle_deg = 90.0, convention = :direct_regulating_vector)
+      sym = PhaseTapChangerModel(kind = :symmetrical, step = 3, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.02, x_min = 0.05, x_max = 0.06, convention = :direct_regulating_vector)
+      tab = PhaseTapChangerModel(kind = :tabular, step = 2, neutralStep = 0, convention = :direct_regulating_vector, table = [TapTablePoint(step = k, ratio = 1.0 + 0.001 * k^2, angle_deg = 2.0 * k) for k in -3:3])
+      rtc = PowerTransformerTaps(Vn_kV = 110.0, step = 2, lowStep = -5, highStep = 5, neutralStep = 0, voltageIncrement_kV = 1.1)
+      tr(f, t; shift = 0.0, phase_taps = nothing, taps = nothing) = addPIModelTrafo!(net = net, fromBus = f, toBus = t, r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = shift, phase_taps = phase_taps, taps = taps)
+      tr("A", "B"; phase_taps = asym())
+      tr("B", "C"; phase_taps = sym)
+      tr("C", "D"; phase_taps = tab)
+      tr("D", "E"; taps = rtc)
+      tr("E", "F")
+      tr("F", "G"; shift = -3.0)
+      tr("G", "H"; phase_taps = asym())
+      # an RTC on end 2 next to the phase changer on end 1 (both ends tapped)
+      net.trafos[end].side2.taps = PowerTransformerTaps(Vn_kV = 110.0, step = -1, lowStep = -4, highStep = 4, neutralStep = 0, voltageIncrement_kV = 1.65)
+      dir = mktempdir()
+      writeCGMESFiles(net; path = dir)
+      res = importCGMES(path = dir, name = "sets", require_boundary = false)
+      sets = [br.se_tap_changers for br in res.net.branchVec]
+      @test all(st -> st !== nothing && st.origin === :cgmes, sets) && all(st -> st.ratio_n == 1.0, sets[1:6])
+      # the export writes ratedU1 with the end-2 correction of step -1
+      # (1 - 1.5 %) so that the re-import keeps the branch ratio 1
+      @test isapprox(sets[7].ratio_n, 0.985; rtol = 1e-12)
+      @test fields(only(sets[1].changers)) == (:asymmetrical, :phase, :from, 0.0125, 90.0, 13, 1, 25, 16.0, :none)
+      @test fields(only(sets[2].changers))[1:9] == (:symmetrical, :phase, :from, 0.02, nothing, 0, -8, 8, 3.0) && only(sets[2].changers).impedance === :x_curve
+      t3 = only(sets[3].changers)
+      @test (t3.kind, t3.role, t3.side, t3.neutral, t3.step) == (:tabular, :phase, :from, 0, 2.0) && [(p.step, p.ratio, p.angle_deg) for p in t3.table] == [(k, 1.0 + 0.001 * k^2, 2.0 * k) for k in -3:3]
+      @test fields(only(sets[4].changers)) == (:ratio, :ratio, :from, 0.01, nothing, 0, -5, 5, 2.0, :none)
+      # no changer: an empty set, never released
+      @test isempty(sets[5].changers) && S._tap_release_mode(res.net.branchVec[5]) === nothing
+      # the export's single-step PhaseTapChangerLinear is the fixed shift
+      @test isempty(sets[6].changers) && sets[6].shift_n_deg == -3.0 && res.net.branchVec[6].phase_shift_deg == -3.0
+      @test count(m -> occursin("is the single-step phase changer of a CGMES export: its shift of -3.0 deg stays fixed", m), res.messages) == 1
+      # tapped on both ends: the end-1 changer multiplies, the end-2 one divides
+      @test [fields(c) for c in sets[7].changers] == [(:asymmetrical, :phase, :from, 0.0125, 90.0, 13, 1, 25, 16.0, :none), (:ratio, :ratio, :to, 0.015, nothing, 0, -4, 4, -1.0, :none)]
+      @test S._tap_release_mode(res.net.branchVec[7]) === :both
+      @test agrees(res, 1, 1, (16, 3, 25))
+      @test agrees(res, 2, 1, (3, -8, 5))
+      @test agrees(res, 3, 1, (2, -3, 1))
+      @test agrees(res, 4, 1, (2, -5, 4))
+      @test agrees(res, 7, 1, (16, 10, 20)) && agrees(res, 7, 2, (-1, -3, 2))
+      # the pattern needs all five values and the suffix: renamed, or with
+      # another normalStep, the changer is a linear phase changer again
+      ptc = only(tc for tc in objectsOf(res.store, :PhaseTapChangerLinear))
+      for (key, value) in ((:name, "SHIFTER"), (:normalStep, "0"))
+        st = deepcopy(res.store)
+        st.objects[ptc.mrid].attrs[key] = value
+        net6 = importCGMES(path = st, name = "not_the_pattern", require_boundary = false).net
+        set6 = net6.branchVec[6].se_tap_changers
+        @test set6.shift_n_deg == 0.0 && [(c.kind, c.dphi_deg, c.low, c.high, c.step) for c in set6.changers] == [(:linear, -3.0, 0, 1, 1.0)]
+        # a degree-form changer (alpha 0) is released by its kind: the
+        # mass release takes it as a phase shifter
+        @test S._tap_release_mode(net6.branchVec[6]) === :pst
+        @test setTapEstimation!(deepcopy(net6); trafo = 6, mode = :pst).s0 == [1.0]
+      end
+
+      # --- a changer whose table the estimation cannot use (a point at a
+      # step that is not whole), next to a usable one: the import applies
+      # both, so the set keeps the left-out one as a fixed part and gives
+      # the branch at the import steps without moving the usable changer
+      net2 = Net(name = "sets_fixed", baseMVA = 100.0)
+      addBus!(net = net2, busName = "A", vn_kV = 110.0)
+      addBus!(net = net2, busName = "B", vn_kV = 110.0)
+      addProsumer!(net = net2, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+      addProsumer!(net = net2, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+      addPIModelTrafo!(net = net2, fromBus = "A", toBus = "B", r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0, phase_taps = tab)
+      net2.trafos[end].side2.taps = PowerTransformerTaps(Vn_kV = 110.0, step = -1, lowStep = -4, highStep = 4, neutralStep = 0, voltageIncrement_kV = 1.65)
+      dir2 = mktempdir()
+      writeCGMESFiles(net2; path = dir2)
+      st2 = importCGMES(path = dir2, name = "sets_fixed", require_boundary = false).store
+      pt3 = only(pt for pt in objectsOf(st2, :PhaseTapChangerTablePoint) if num(pt, :step) == -3.0)
+      pt3.attrs[:step] = "-3.4"
+      rf = importCGMES(path = st2, name = "sets_fixed", require_boundary = false)
+      bf = rf.net.branchVec[1]
+      sf = bf.se_tap_changers
+      @test [(c.kind, c.side, c.du, c.step) for c in sf.changers] == [(:ratio, :to, 0.015, -1.0)]
+      # ratio_n: the structural ratio 0.985 of the export (see set 7) times
+      # the table ratio 1.004 at step 2
+      @test isapprox(sf.ratio_n, 0.985 * 1.004; rtol = 1e-12) && sf.shift_n_deg == 4.0
+      R, P = S._tap_set_ratio_shift(sf, [-1.0])
+      @test isapprox(R, bf.tap_ratio; rtol = 1e-12) && abs(P - bf.phase_shift_deg) <= 1e-12
+      @test S._tap_s_from_branch(sf, bf) == [-1.0]
+      @test count(m -> occursin("is not estimable, its PhaseTapChangerTable has steps that are not whole and strictly ascending: its ratio 1.004 and shift 4.0 deg at step 2.0 stay fixed", m), rf.messages) == 1
+
+      # --- RatioTapChangerTable with r, x, g, b on every point, end 2 only
+      # (the branch is turned, the changer sits at its from side)
+      rt = importCGMES(path = _cgmes_synth_tapside_dir(:two_winding; table = (r = 4.0, x = 10.0, g = -20.0, b = 15.0), control_kv = 21.2), name = "tap2w_table")
+      kt = last(rt.element_by_mrid["_pt"])
+      ct = only(rt.net.branchVec[kt].se_tap_changers.changers)
+      @test (ct.kind, ct.role, ct.side, ct.neutral, ct.low, ct.high, ct.step, ct.outside_du, ct.impedance, length(ct.table)) == (:tabular, :ratio, :from, 0, -10, 10, -4.0, 0.015, :table, 21)
+      @test agrees(rt, kt, 1, (-4, 0, 3))
+      # a point at a step that is not whole, away from the import step: the
+      # import still applies the table, the set keeps it as the fixed part
+      st_rt = deepcopy(rt.store)
+      pt7 = only(pt for pt in objectsOf(st_rt, :RatioTapChangerTablePoint) if num(pt, :step) == 7.0)
+      pt7.attrs[:step] = "7.5"
+      rt2 = importCGMES(path = st_rt, name = "tap2w_table_fixed")
+      b2 = rt2.net.branchVec[kt]
+      @test isempty(b2.se_tap_changers.changers) && S._tap_release_mode(b2) === nothing
+      @test (b2.tap_ratio, b2.phase_shift_deg) == (rt.net.branchVec[kt].tap_ratio, rt.net.branchVec[kt].phase_shift_deg)
+      @test isapprox(b2.se_tap_changers.ratio_n, b2.tap_ratio; rtol = 1e-12) && b2.se_tap_changers.shift_n_deg == 0.0
+
+      # --- 3W: two tapped legs (from the side bus to the star), one leg
+      # without changer
+      r3 = importCGMES(path = _cgmes_synth3w_dir(end1_tap_step = 13), name = "synth3w_sets")
+      legs = [last(r3.element_by_mrid[e]) for e in ("_t3w_e1", "_t3w_e2", "_t3w_e3")]
+      leg_sets = [r3.net.branchVec[k].se_tap_changers for k in legs]
+      @test [(c.kind, c.side, c.du, c.neutral, c.step) for c in leg_sets[1].changers] == [(:ratio, :from, 0.01, 11, 13.0)]
+      @test [(c.kind, c.side, c.du, c.neutral, c.step) for c in leg_sets[2].changers] == [(:ratio, :from, 0.0125, 11, 11.0)]
+      @test isempty(leg_sets[3].changers)
+      @test agrees(r3, legs[1], 1, (13, 9, 15)) && agrees(r3, legs[2], 1, (11, 8, 14))
+    end)() end
+
+    # sp_casePST in CGMES and SCF: the SCF file carries the nameplate
+    # Delta-u phase shifter of branch 17 (alpha 90, 1 % per step, -10..10,
+    # angle base -5.729578 deg). The CGMES export has no
+    # class for it and writes the fixed angle with the single-step
+    # PhaseTapChangerLinear 2WT_230_PTC, which the import recognises: in
+    # CGMES the transformer has no regulator, in SCF it has one. The
+    # RatioTapChanger of the machine transformer is a changer in both and
+    # stays out of the mass release (machine transformer). The lossy export
+    # is a follow-up outside the tap estimation.
+    @testset "sp_casePST: the CGMES and the SCF tap changer sets differ" begin (function ()
+      S = Sparlectra
+      scf = importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))
+      cg = importCGMES(path = cgmes_fixture_dir("sp_casePST"), name = "sp_casePST")
+      pst(net) = only(k for (k, br) in enumerate(net.branchVec) if br.ratio != 0.0 && br.phase_shift_deg != 0.0)
+      ks, kc = pst(scf), pst(cg.net)
+      ss = S._effective_tap_changers(scf.branchVec[ks])
+      @test [(c.kind, c.side, c.du, c.alpha_deg, c.low, c.high) for c in ss.changers] == [(:asymmetrical, :to, 0.01, 90.0, -10, 10)]
+      @test S._tap_release_mode(scf.branchVec[ks]) === :pst
+      cs = cg.net.branchVec[kc].se_tap_changers
+      @test cs.origin === :cgmes && isempty(cs.changers) && cs.shift_n_deg == -5.729578
+      @test S._tap_release_mode(cg.net.branchVec[kc]) === nothing
+      @test scf.branchVec[ks].phase_shift_deg == cg.net.branchVec[kc].phase_shift_deg == -5.729578
+      for net in (scf, cg.net)
+        km = only(k for (k, br) in enumerate(net.branchVec) if br.ratio != 0.0 && k != pst(net))
+        ch = only(S._effective_tap_changers(net.branchVec[km]).changers)
+        @test (ch.kind, ch.du, ch.low, ch.high) == (:ratio, 0.025, -2, 2) && S._is_machine_transformer(net, km)
+      end
     end)() end
 
     # A converged solution on the low-voltage branch stays converged and
@@ -1172,7 +1355,74 @@ function run_cgmes_importer_tests()
           @test isapprox(src.nodeVec[i]._vm_pu, res.net.nodeVec[j]._vm_pu; atol = 1e-6)
           @test isapprox(src.nodeVec[i]._va_deg, res.net.nodeVec[j]._va_deg; atol = 1e-6)
         end
+        # the service layer takes case FILES, so the zip packed from the
+        # same four profiles must rebuild the same network
+        rz = importCGMES(path = _pack_cgmes_fixture_zip(case), name = string(case, "_zip"))
+        @test Set(keys(rz.net.busDict)) == Set(keys(res.net.busDict))
+        @test length(rz.net.branchVec) == length(res.net.branchVec)
+        @test rz.slack_bus == res.slack_bus
       end
+      # an SvVoltage with v = 0 counts as no SV, as in compareWithSV: the
+      # bus does not start at zero voltage but at the start of the neighbour
+      # over the branch or closed link of the smallest |z|, and is listed in
+      # no_sv_buses
+      plain = importCGMES(path = cgmes_fixture_dir("sp_case14"), name = "v0_plain")
+      v0_bus, v0_tn = first(sort([(bus, tn) for (tn, bus) in plain.topo.bus_name if plain.net.nodeVec[plain.net.busDict[bus]]._nodeType == Sparlectra.PQ]))
+      v0_store = loadCGMES(cgmes_fixture_dir("sp_case14"))
+      only(sv for sv in objectsOf(v0_store, :SvVoltage) if sv.refs[:TopologicalNode] == v0_tn).attrs[:v] = "0"
+      v0 = importCGMES(path = v0_store, name = "v0")
+      v0_i = v0.net.busDict[v0_bus]
+      v0_node = v0.net.nodeVec[v0_i]
+      v0_nbrs = vcat([(abs(complex(br.r_pu, br.x_pu)), br.fromBus == v0_i ? br.toBus : br.fromBus) for br in v0.net.branchVec if br.status == 1 && v0_i in (br.fromBus, br.toBus)], [(0.0, l.fromBus == v0_i ? l.toBus : l.fromBus) for l in v0.net.linkVec if l.status == 1 && v0_i in (l.fromBus, l.toBus)])
+      v0_src = v0.net.nodeVec[last(minimum(v0_nbrs))]
+      @test (v0_node._vm_pu, v0_node._va_deg) == (v0_src._vm_pu, v0_src._va_deg)
+      @test v0.no_sv_buses == [v0_bus]
+      @test count(m -> startswith(m, "notice: 1 bus(es) without a usable SvVoltage start at the voltage of a neighbour"), v0.messages) == 1
+      @test !any(r -> r.bus == v0_bus, compareWithSV(v0).rows)
+      # a leaf bus with SvVoltage v = 0 behind an EquivalentBranch of 0.02 pu
+      # with a P = Q = 0 EquivalentInjection, on a copy whose SV angles are
+      # all shifted by -40 deg: started at 1.0 pu / 0 deg, Newton ends with
+      # the leaf at 0 V, a short circuit that pulls its neighbour down to
+      # 0.3 pu; from the neighbour's start it solves at the neighbour voltage
+      leaf_store = loadCGMES(cgmes_fixture_dir("sp_case14"))
+      for sv in objectsOf(leaf_store, :SvVoltage)
+        sv.attrs[:angle] = string(num(sv, :angle, 0.0) - 40.0)
+      end
+      leaf_host = first(sort(collect(objectsOf(leaf_store, :SvVoltage)); by = sv -> num(sv, :angle, 0.0))).refs[:TopologicalNode]
+      leaf_add!(mrid, class, attrs, refs = Dict{Symbol,String}()) = (leaf_store.objects[mrid] = Sparlectra.CGMESImporter.CIMObject(mrid, class, Dict{Symbol,String}(attrs), Dict{Symbol,String}(refs), "leaf_test"); push!(get!(Vector{String}, leaf_store.byclass, class), mrid))
+      leaf_term!(eq, tn, seq) = leaf_add!(string(eq, "_t", seq), :Terminal, Dict(:sequenceNumber => string(seq), :connected => "true"), Dict(:ConductingEquipment => eq, :TopologicalNode => tn))
+      leaf_add!("_leaf_tn", :TopologicalNode, Dict(:name => "LEAF"), Dict(:BaseVoltage => leaf_store.objects[leaf_host].refs[:BaseVoltage]))
+      leaf_add!("_leaf_sv", :SvVoltage, Dict(:v => "0", :angle => "0"), Dict(:TopologicalNode => "_leaf_tn"))
+      leaf_add!("_leaf_eb", :EquivalentBranch, Dict(:name => "LEAF_EB", :r => "0.3", :x => "2.4"))
+      leaf_term!("_leaf_eb", leaf_host, 1)
+      leaf_term!("_leaf_eb", "_leaf_tn", 2)
+      leaf_add!("_leaf_ei", :EquivalentInjection, Dict(:name => "LEAF_EI", :p => "0", :q => "0"))
+      leaf_term!("_leaf_ei", "_leaf_tn", 1)
+      leaf = importCGMES(path = leaf_store, name = "leaf")
+      leaf_bus = leaf.topo.bus_name["_leaf_tn"]
+      @test leaf.no_sv_buses == [leaf_bus]
+      leaf_node = leaf.net.nodeVec[leaf.net.busDict[leaf_bus]]
+      host_node = leaf.net.nodeVec[leaf.net.busDict[leaf.topo.bus_name[leaf_host]]]
+      @test host_node._va_deg < -40.0
+      @test (leaf_node._vm_pu, leaf_node._va_deg) == (host_node._vm_pu, host_node._va_deg)
+      solve_fixture!(leaf.net)
+      @test leaf_node._vm_pu > 0.9
+      @test isapprox(leaf_node._vm_pu, host_node._vm_pu; atol = 1e-6)
+      @test isapprox(leaf_node._va_deg, host_node._va_deg; atol = 1e-4)
+      # a listed star point is left alone, and a listed bus reachable only
+      # through it keeps its start (it used to look up bus index 0)
+      star_net = Net(name = "star_no_sv", baseMVA = 100.0)
+      for b in ("H", "S", "M")
+        addBus!(net = star_net, busName = b, vn_kV = 110.0)
+      end
+      addPIModelACLine!(net = star_net, fromBus = "H", toBus = "S", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = star_net, fromBus = "S", toBus = "M", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+      Sparlectra.setVmVa!(node = star_net.nodeVec[star_net.busDict["H"]], vm_pu = 1.01, va_deg = -20.0)
+      star_ctx = Sparlectra.CGMESImporter._MapCtx()
+      push!(star_ctx.star_buses, star_net.busDict["S"])
+      star_start = [(nd._vm_pu, nd._va_deg) for nd in star_net.nodeVec]
+      @test Sparlectra.CGMESImporter._startNoSvBusesFromNeighbours!(star_net, star_ctx, ["M", "S"]) == 0
+      @test [(nd._vm_pu, nd._va_deg) for nd in star_net.nodeVec] == star_start
     end)() end
 
     # sp_case118 carries 54 synchronous machines, among them condensers

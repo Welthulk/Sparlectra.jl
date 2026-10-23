@@ -2651,6 +2651,7 @@ const _WEBUI_RESULT_FIELDS = String[
   "Classical Q-limit outer-loop passes",
   "Final Q-limit check",
   "Q-V characteristic",
+  "Q-limit stability",
   "Runtime casefile",
   "System frequency",
   "config_file",
@@ -2692,6 +2693,13 @@ function _webui_result_value(result::AbstractDict, field::AbstractString)
     # setpoint means the point is non-physical, however the modes switched
     metadata = get(result, "metadata", Dict{String,Any}())
     line = get(metadata, "qv_characteristic_line", nothing)
+    return line isa AbstractString && !isempty(line) ? line : "n/a"
+  elseif field == "Q-limit stability"
+    # the line of run.log and the result print: the stability conditions
+    # (6)/(7) of Zhao et al. at every voltage-regulated bus, with the failing
+    # buses when there are any
+    metadata = get(result, "metadata", Dict{String,Any}())
+    line = get(metadata, "qlimit_stability_line", nothing)
     return line isa AbstractString && !isempty(line) ? line : "n/a"
   elseif field == "System frequency"
     # the run.log line: the frequency with its source, or "not used" when
@@ -4838,7 +4846,12 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
     jb = get(metadata, "se_tap_j_before", nothing)
     ja = get(metadata, "se_tap_j_after", nothing)
     fixedtxt = get(metadata, "se_tap_fixed", false) == true ? "" : " (NOT fixed)"
-    push!(parts, "tap estimation: $(tapc) transformer(s), J $(jb === nothing ? "?" : round(Float64(jb); sigdigits = 3)) before fixation -> $(ja === nothing ? "?" : round(Float64(ja); sigdigits = 3)) after$(fixedtxt)")
+    # the regulator count only where it says more than the transformer
+    # count (a transformer with a ratio and a phase changer); runs before
+    # 0.60.0 have no regulator count
+    regc = get(metadata, "se_tap_regulators", nothing)
+    regtxt = (regc isa Integer && regc != tapc) ? ", $(regc) regulator(s)" : ""
+    push!(parts, "tap estimation: $(tapc) transformer(s)$(regtxt), J $(jb === nothing ? "?" : round(Float64(jb); sigdigits = 3)) before fixation -> $(ja === nothing ? "?" : round(Float64(ja); sigdigits = 3)) after$(fixedtxt)")
     # off-grid interpretation: a band failure that only
     # appears through the fixation must not be read as bad data
     if get(metadata, "se_tap_offgrid_residual", false) == true
@@ -4902,9 +4915,13 @@ function _webui_se_topology_section(result::AbstractDict)::String
   return join(parts, "")
 end
 
-## released-tap estimate table on the SE result page: steps on the
-## mechanical grid (never raw r values), the fixation J drop, mRIDs for
-## CGMES cases (MATPOWER/DTF rows are addressed by branch and name)
+## released-tap estimate table on the SE result page: one row per tap
+## regulator (0.60.0) with the estimate, the model and fixed steps on the
+## changer's own steps (never raw ratios as positions), the J change of the fixation,
+## mRIDs for CGMES cases (MATPOWER/DTF rows are addressed by branch and
+## name). Runs in the history from before 0.60.0 carry the old row keys
+## (model_step, electrical_step, fixed_step, change) and keep the old
+## column set (_webui_se_tap_rows_pre060).
 function _webui_se_tap_section(result::AbstractDict)::String
   metadata = get(result, "metadata", Dict{String,Any}())
   metadata isa AbstractDict || return ""
@@ -4918,6 +4935,81 @@ function _webui_se_tap_section(result::AbstractDict)::String
       "<p class=\"warning\">", esc(_se_tap_fallback_note(metadata)), "</p></section>")
   end
   (rows isa AbstractVector && !isempty(rows)) || return ""
+  head, body = any(t -> haskey(t, "s_est"), rows) ? _webui_se_tap_rows(rows) : _webui_se_tap_rows_pre060(rows)
+  jb = get(metadata, "se_tap_j_before", nothing)
+  ja = get(metadata, "se_tap_j_after", nothing)
+  db = get(metadata, "se_tap_dof_before", "?")
+  da = get(metadata, "se_tap_dof_after", "?")
+  jline = jb === nothing || ja === nothing ? "" : "<p>J before fixation: <strong>$(round(Float64(jb); sigdigits = 4))</strong> (dof $(db)) &rarr; J after fixation: <strong>$(round(Float64(ja); sigdigits = 4))</strong> (dof $(da)). After the fixation the tap is no state variable any more; a large J after with a small J before means the estimated position sits between mechanical steps.</p>"
+  return string(
+    "<section class=\"panel\"><h2>Transformer tap estimates</h2>", jline,
+    "<div style=\"overflow-x:auto\"><table class=\"details\"><thead>", head, "</thead><tbody>", join(body, ""), "</tbody></table></div>",
+    "<p class=\"field-help\">Full table: se_tap_estimates.csv in the run artifacts.</p></section>",
+  )
+end
+
+# the note of a regulator row as a status suffix
+const _WEBUI_TAP_NOTE_SUFFIX = Dict{String,String}(
+  "relative_only" => "relative only",
+  "conditional" => "conditional on the frozen shift",
+  "sign_from_start" => "sign from the start",
+)
+
+## header and body rows of the tap table for regulator rows (0.60.0
+## metadata keys, the columns of se_tap_estimates.csv): which changer, the
+## model step, the continuous estimate s with Delta U, ratio and angle at the
+## estimate, the fixed step, the deviation and the status with the notice
+## as tooltip
+function _webui_se_tap_rows(rows::AbstractVector)
+  esc = _webui_escape
+  anymrid = any(!isempty(String(something(get(t, "mrid", ""), ""))) for t in rows)
+  num(v, f) = v isa Real ? string(f(Float64(v))) : "-"
+  step(v) = v isa Integer ? string(v) : num(v, x -> round(x; digits = 2))
+  head = string("<tr><th>Branch</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Regulator</th><th>Model step</th><th>s</th><th>Delta U</th><th>Ratio</th><th>Angle (deg)</th><th>Fixed step</th><th>Deviation</th><th>Status</th></tr>")
+  body = String[]
+  for t in rows
+    calculated = String(something(get(t, "source", "estimated"), "estimated")) == "calculated"
+    fr = String(something(get(t, "frozen_reason", "none"), "none"))
+    dev = get(t, "deviation_steps", nothing)
+    # machine transformers are never estimated: their tap is no state
+    # variable, the position is back-calculated after the run and marked so
+    status = if calculated
+      "calculated (machine transformer, not estimated)"
+    elseif fr == "no_changer"
+      "not released (no tap changer of the released kind)"
+    elseif !(fr in ("none", ""))
+      "frozen ($(replace(fr, "_" => " ")))"
+    elseif get(t, "out_of_range", false) == true
+      "out of range (clamped)"
+    elseif get(t, "fixed", false) == true
+      # a nonzero deviation means the model carried a wrong step and the
+      # run corrected it; "confirmed" says the model step was right
+      (dev isa Real && abs(dev) >= 0.01) ? "fixed (corrected)" : "fixed (model step confirmed)"
+    else
+      "not fixed"
+    end
+    suffix = get(_WEBUI_TAP_NOTE_SUFFIX, String(something(get(t, "note", "none"), "none")), "")
+    isempty(suffix) || (status = string(status, ", ", suffix))
+    notice = String(something(get(t, "notice", ""), ""))
+    kind = String(something(get(t, "kind", ""), ""))
+    alpha = get(t, "alpha_deg", nothing)
+    changer = String(something(get(t, "changer", ""), ""))
+    reg = calculated ? "ratio" : string(isempty(changer) ? "-" : changer, isempty(kind) || kind == "none" ? "" : " ($(kind)$(alpha isa Real ? ", alpha $(round(Float64(alpha); digits = 2)) deg" : ""))")
+    devtxt = dev isa Real ? (dev > 0 ? string("+", step(dev)) : step(dev)) : "-"
+    push!(body, string(
+      "<tr><td>", get(t, "branch", "?"), "</td><td>", esc(String(something(get(t, "name", ""), ""))), "</td>",
+      anymrid ? string("<td>", esc(String(something(get(t, "mrid", ""), ""))), "</td>") : "",
+      "<td>", esc(reg), "</td><td>", step(get(t, "step_model", nothing)), "</td><td>", num(get(t, "s_est", nothing), x -> round(x; digits = 3)), "</td><td>", num(get(t, "du_est", nothing), x -> round(x; sigdigits = 4)), "</td><td>", num(get(t, "ratio_est", nothing), x -> round(x; digits = 5)), "</td><td>", num(get(t, "angle_est_deg", nothing), x -> round(x; digits = 3)), "</td><td>", step(get(t, "step_fixed", nothing)), "</td><td>", devtxt, "</td>",
+      "<td", isempty(notice) ? "" : string(" title=\"", esc(notice), "\""), ">", esc(status), "</td></tr>",
+    ))
+  end
+  return head, body
+end
+
+## header and body rows of the tap table for a run from before 0.60.0 (one
+## row per transformer, old metadata keys), as that release rendered them
+function _webui_se_tap_rows_pre060(rows::AbstractVector)
+  esc = _webui_escape
   anymrid = any(!isempty(String(get(t, "mrid", ""))) for t in rows)
   anypst = any(String(get(t, "mode", "ratio")) != "ratio" for t in rows)
   # model step and change next to the estimate: whether a tap was wrong and
@@ -4927,8 +5019,6 @@ function _webui_se_tap_section(result::AbstractDict)::String
   for t in rows
     mode = String(get(t, "mode", "ratio"))
     fr = String(get(t, "frozen_reason", "none"))
-    # machine transformers are never estimated: their tap is no state
-    # variable, the position is back-calculated after the run and marked so
     status = if String(get(t, "source", "estimated")) == "calculated"
       "calculated (machine transformer, not estimated)"
     elseif !(fr in ("none", ""))
@@ -4936,8 +5026,6 @@ function _webui_se_tap_section(result::AbstractDict)::String
     elseif get(t, "out_of_range", false) == true
       "out of range (clamped)"
     elseif get(t, "fixed", false) == true
-      # a nonzero change means the model carried a wrong position and the
-      # run corrected it; "confirmed" says the model step was right
       ch = String(string(get(t, "change", "")))
       (ch == "" || all(c -> c in ('0', ' ', '/'), ch)) ? "fixed (model step confirmed)" : "fixed (corrected)"
     else
@@ -4951,16 +5039,7 @@ function _webui_se_tap_section(result::AbstractDict)::String
       "<td>", esc(status), "</td></tr>",
     ))
   end
-  jb = get(metadata, "se_tap_j_before", nothing)
-  ja = get(metadata, "se_tap_j_after", nothing)
-  db = get(metadata, "se_tap_dof_before", "?")
-  da = get(metadata, "se_tap_dof_after", "?")
-  jline = jb === nothing || ja === nothing ? "" : "<p>J before fixation: <strong>$(round(Float64(jb); sigdigits = 4))</strong> (dof $(db)) &rarr; J after fixation: <strong>$(round(Float64(ja); sigdigits = 4))</strong> (dof $(da)). After the fixation the tap is no state variable any more; a large J after with a small J before means the estimated position sits between mechanical steps.</p>"
-  return string(
-    "<section class=\"panel\"><h2>Transformer tap estimates</h2>", jline,
-    "<div style=\"overflow-x:auto\"><table class=\"details\"><thead>", head, "</thead><tbody>", join(body, ""), "</tbody></table></div>",
-    "<p class=\"field-help\">Full table: se_tap_estimates.csv in the run artifacts.</p></section>",
-  )
+  return head, body
 end
 
 ## result-summary card for an SE-started power flow (run_mode == "powerflow_se_start")
@@ -5255,7 +5334,8 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "var f=mode&&mode.closest('form');f&&f.addEventListener('submit',function(){groups.forEach(function(g){g.querySelectorAll('input, select').forEach(function(c){c.disabled=false;});});});" *
     "})();</script>",
     "<label title=\"Write estimated shunt susceptances back into the model\">$(_webui_field_label("se_update_shunts", "update_shunts"))<input type=\"checkbox\" name=\"se_update_shunts\" value=\"true\"$(gchk("se_update_shunts"))></label> ",
-    "<label title=\"Release every in-service ratio tap changer as an extra state, fix it to the nearest mechanical step and rerun. Machine and unobservable taps are skipped.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
+    "<label title=\"Release every in-service tap changer (ratio and phase) as an extra state, fix it to the nearest mechanical step and rerun. Checked by default when the case has tap changers. Machine and unobservable taps are skipped.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
+    "<label title=\"Impedance of a released regulator. auto: r and x follow the step where the model has per-step data. off: the impedance of the start position.\">$(_webui_field_label("se_tap_impedance_correction", "tap impedance per step"))<select name=\"se_tap_impedance_correction\">$(join(("<option value=\"$(v)\"$(gv("se_tap_impedance_correction", "auto") == v ? " selected" : "")>$(v)</option>" for v in ("auto", "off")), ""))</select></label> ",
     "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label>",
     "</fieldset>",
     _webui_sigma_level_fieldset(sigma_levels),

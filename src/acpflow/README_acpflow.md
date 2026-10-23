@@ -15,7 +15,6 @@ order inside is dependency-aware:
 
 ```julia
 include("start_modes.jl")
-include("net_cache.jl")
 include("import_context.jl")
 include("execution.jl")
 include("auto_powerflow.jl")
@@ -38,7 +37,6 @@ on later layers: `island_diagnostics.jl` (needs the result types),
 | `entrypoint.jl` | Public framework entry points | `run_sparlectra`, `run_sparlectra_cases`, `run_acpflow` |
 | `import_context.jl` | Casefile resolution, shared MATPOWER/SCF import context, config copy helpers | `_resolve_sparlectra_casefile`, `_import_sparlectra_context`, `_copy_sparlectra_with_powerflow` |
 | `start_modes.jl` | Apply configured MATPOWER start modes to the imported net | `_apply_matpower_start_modes!` |
-| `net_cache.jl` | Opt-in binary cache of parsed case and built Net, keyed by file hash and import options | `_net_cache_key`, `_net_cache_load`, `_net_cache_store` |
 | `execution.jl` | Central solver dispatch for one configured run | `_execute_sparlectra_powerflow!` |
 | `auto_powerflow.jl` | Automatic power-flow mode: feature collection, strategy selection, escalation ladder | `collect_auto_pf_features`, `select_auto_pf_strategy`, `auto_pf_hints` |
 | `apslf_execution.jl` | Solver wiring for `power_flow.solver = :apslf` | `_run_apslf_powerflow!` |

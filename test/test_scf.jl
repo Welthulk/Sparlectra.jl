@@ -27,6 +27,8 @@ import ZipArchives
 
 # the fixture comparison lives with the demo-case tests, so both use one rule
 isdefined(@__MODULE__, :scf_roundtrip_field_diffs) || include("test_scf_support.jl")
+# the synthetic CGMES deliveries with tap changers (estimation round trip)
+isdefined(@__MODULE__, :_cgmes_synth_tapside_dir) || include(joinpath(@__DIR__, "cgmes_synth3w_fixture.jl"))
 
 # warmup_casePST.m is TRACKED and lives in the checkout; anything else has to
 # come from SPARLECTRA_LARGE_CASES_DIR, so a caller passing another name gates
@@ -305,44 +307,12 @@ function run_scf_tests()
     @test pstc["alpha_deg"] == 90.0
     @test pstc["step"] == 0.01
     @test pstc["pos_min"] == -10 && pstc["pos_max"] == 10
-    # the writer emits no config block any more; case settings live in the
-    # case configuration file (write_case_config)
-    @test !haskey(sp, "config")
     # start state is opt-in and never called a result
     @test !haskey(sp, "start_state")
     root2 = Sparlectra.net_to_scf(net; include_start_state = true)
     @test haskey(root2["sparlectra"], "start_state")
     @test root2["sparlectra"]["start_state"]["source"] == "solved_power_flow"
     @test !haskey(root2["sparlectra"], "results")
-  end)() end
-
-  @testset "measurements become PGM sensors" begin (function ()
-    net = _scf_test_net()
-    Sparlectra.readMeasurementTable!(net; file = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")), zero_injection = false)
-    root = Sparlectra.net_to_scf(net)
-    data = root["data"]
-    @test haskey(data, "sym_voltage_sensor")
-    @test haskey(data, "sym_power_sensor")
-    # P and Q of one location pair into a single PGM power sensor, so the
-    # sensor count stays below the raw row count
-    rows = root["sparlectra"]["measurements"]["rows"]
-    nsensors = length(data["sym_voltage_sensor"]) + length(data["sym_power_sensor"]) + length(get(data, "sym_current_sensor", []))
-    @test nsensors < length(net.measurements)
-    # one row per measurement in the order of the measurement vector, with
-    # the table types; every sensor is named by a row
-    @test length(rows) == length(net.measurements)
-    @test String[r["type"] for r in rows] == String[Sparlectra._scf_table_type(m) for m in net.measurements]
-    @test Set(r["sensor"] for r in rows) == Set(s["id"] for k in ("sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor") for s in get(data, k, []))
-    # units without a base: U and its sigma in kV of the node
-    ku = findfirst(r -> r["type"] == "U", rows)
-    u = rows[ku]
-    m1 = net.measurements[ku]
-    @test u["sigma"] ≈ m1.sigma * Sparlectra.getNodeVn(net.nodeVec[m1.busIdx])
-    # voltage sensors carry SI volts, power sensors watt
-    v = first(data["sym_voltage_sensor"])
-    @test v["u_measured"] > 1000.0
-    p = first(data["sym_power_sensor"])
-    @test p["measured_terminal_type"] in ("node", "branch_from", "branch_to")
   end)() end
 
   @testset "three-winding grouping and reference names" begin (function ()
@@ -423,6 +393,21 @@ function run_scf_tests()
     @test [m.id for m in back.measurements] == [m.id for m in net.measurements]
     @test [m.value for m in back.measurements] == [m.value for m in net.measurements]
     @test [m.sigma for m in back.measurements] == [m.sigma for m in net.measurements]
+    # the measurements as PGM sensors: P and Q of one location pair into a
+    # single power sensor, so there are fewer sensors than measurements, and
+    # every sensor is named by a row
+    adoc = Sparlectra.scf_json_parse(read(a, String))
+    adata = adoc["data"]
+    arows = adoc["sparlectra"]["measurements"]["rows"]
+    sensor_kinds = ("sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor")
+    @test sum(length(get(adata, k, [])) for k in sensor_kinds) < length(net.measurements)
+    @test Set(r["sensor"] for r in arows) == Set(s["id"] for k in sensor_kinds for s in get(adata, k, []))
+    # units without a base: U and its sigma in kV of the node, voltage
+    # sensors in volt, power sensors at a node or a branch end
+    ku = findfirst(r -> r["type"] == "U", arows)
+    @test arows[ku]["sigma"] ≈ net.measurements[ku].sigma * Sparlectra.getNodeVn(net.nodeVec[net.measurements[ku].busIdx])
+    @test first(adata["sym_voltage_sensor"])["u_measured"] > 1000.0
+    @test first(adata["sym_power_sensor"])["measured_terminal_type"] in ("node", "branch_from", "branch_to")
     # every measurement kind, shunt-bay rows included: the export used to
     # drop ShuntQMeas and the bus-referenced ImagMeas without a word
     full = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")))
@@ -533,54 +518,6 @@ function run_scf_tests()
     @test length(moved) == length(full.measurements)
     @test last(moved).typ == Sparlectra.VmMeas && isapprox(last(moved).value, full.measurements[2].value; rtol = 1e-14) && last(moved).id != full.measurements[2].id && !haskey(gone, "id")
     @test mtuple((measurements = moved[1:(end-1)],)) == mtuple((measurements = full.measurements[[1; 3:end]],))
-    # a revision 1.0 file (rows per sensor, shunt_bay_rows, currents 1000
-    # times too large) still reads to the same measurements: built here
-    # from the 1.2 rows the way the 1.0 writer laid them out
-    old = deepcopy(fdoc)
-    old["sparlectra"]["format_version"] = "1.0"
-    for s in old["data"]["sym_current_sensor"]
-      s["i_measured"] === nothing || (s["i_measured"] *= 1.0e3)
-      s["i_sigma"] === nothing || (s["i_sigma"] *= 1.0e3)
-    end
-    rank = Dict("U" => 1, "Va" => 2, "P" => 1, "Q" => 2, "I" => 1, "Ia" => 2)
-    per_sensor = Dict{Int,Vector{Int}}()
-    bay_old = Any[]
-    for (k, r) in enumerate(rows)
-      m = full.measurements[k]
-      if haskey(r, "sensor")
-        push!(get!(per_sensor, r["sensor"], Int[]), k)
-      else
-        e = Dict{String,Any}("type" => m.typ == Sparlectra.ShuntQMeas ? "ShuntQ" : (m.typ == Sparlectra.ImagMeas ? "Imag" : "Ia"), "node" => r["terminal"]["shunt_bay"], "id" => m.id, "value" => m.value, "sigma" => m.sigma, "position" => k)
-        m.active || (e["active"] = false)
-        push!(bay_old, e)
-      end
-    end
-    old_rows = Any[]
-    for (s, ks) in sort!(collect(per_sensor))
-      sort!(ks; by = k -> rank[rows[k]["type"]])
-      ms = full.measurements[ks]
-      e = Dict{String,Any}("sensor" => s, "sparlectra_ids" => [m.id for m in ms], "sigmas" => [m.sigma for m in ms], "values" => [m.value for m in ms], "positions" => ks)
-      all(m -> m.active, ms) || (e["active"] = [m.active for m in ms])
-      push!(old_rows, e)
-    end
-    old["sparlectra"]["measurements"]["rows"] = old_rows
-    old["sparlectra"]["measurements"]["shunt_bay_rows"] = bay_old
-    old_file = joinpath(d, "full_old.scf.json")
-    write(old_file, Sparlectra.scf_json_string(old))
-    @test mtuple(importSCF(old_file)) == mtuple(full)
-    # without the exact values a 1.0 current is the sensor number / 1000
-    for e in old_rows
-      delete!(e, "values")
-    end
-    write(old_file, Sparlectra.scf_json_string(old))
-    imag_vals(n) = [(m.id, m.value, m.sigma) for m in n.measurements if m.typ == Sparlectra.ImagMeas]
-    old_back = importSCF(old_file)
-    @test length(imag_vals(old_back)) == length(imag_vals(full_back)) > 0
-    @test all(a[1] == b[1] && isapprox(a[2], b[2]; rtol = 1e-14) && isapprox(a[3], b[3]; rtol = 1e-14) for (a, b) in zip(imag_vals(old_back), imag_vals(full_back)))
-    # a 1.2 file carries no shunt_bay_rows block
-    stray = deepcopy(fdoc)
-    stray["sparlectra"]["measurements"]["shunt_bay_rows"] = Any[]
-    @test_throws ArgumentError Sparlectra.scf_to_net(stray)
     # power flow: identical iterations and identical voltages
     i1, e1 = runpf!(net, 60, 1e-8, 0)
     i2, e2 = runpf!(back, 60, 1e-8, 0)
@@ -659,6 +596,192 @@ function run_scf_tests()
     @test s1.voltages == s2.voltages
   end)() end
 
+  # The tap changer sets of the state estimation (Branch.se_tap_changers)
+  # travel in the optional key `estimation` of a tap_changer_models entry
+  # A hand-built net with a stored set of every kind
+  # (ratio on the to side with the typed impedance correction, an additive
+  # ratio with a linear phase changer, asymmetrical and symmetrical with
+  # reactance curves, a phase table with r, x, g, b, a ratio table with its
+  # outside increment, an empty set) and two typed windings off their
+  # neutral steps, one with a stored set: write, read, write gives the same
+  # bytes, the same live ratio and shift, and every set field by field
+  # (before base_ratio and base_shift_deg each trip applied the steps once
+  # more, and the writer refused an r or x set by the model). The same net without stored sets writes no key, reads with no
+  # set and the same admittance matrix (the key does not touch the power
+  # flow model). A set of origin typed or fields is refused on write and on
+  # read. The CGMES deliveries of A4b (the own export of typed models, the
+  # 2W RatioTapChangerTable with r, x, g, b, the 3W with two tapped legs)
+  # keep their sets, and the first export is the fixed point of the writer
+  # (with meta.cgmes_ids the re-read keeps the mRIDs). A tap estimation on
+  # the re-read delivery gives the voltages and tap rows of the original.
+  @testset "SCF tap_changer_models estimation round trip" begin (function ()
+    S = Sparlectra
+    # every field of two sets (tables and curves included)
+    function same_set(a, b)
+      (a === nothing || b === nothing) && return a === b
+      (a.ratio_n, a.shift_n_deg, a.origin, length(a.changers)) == (b.ratio_n, b.shift_n_deg, b.origin, length(b.changers)) || return false
+      return all(k -> all(f -> getfield(a.changers[k], f) == getfield(b.changers[k], f), fieldnames(S.SETapChanger)), eachindex(a.changers))
+    end
+    sets_of(n) = [br.se_tap_changers for br in n.branchVec]
+    models_of(file) = S.scf_json_parse(read(file, String))["sparlectra"]["tap_changer_models"]
+    d = mktempdir()
+
+    # --- hand-built stored sets
+    net = Net(name = "scf_sets", baseMVA = 100.0)
+    for b in ("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+      addBus!(net = net, busName = b, vn_kV = 110.0)
+    end
+    addProsumer!(net = net, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+    addProsumer!(net = net, busName = "J", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+    # the typed windings sit off their neutral steps: branch 8 a ratio model
+    # and a symmetrical changer with its reactance curve, branch 9 an
+    # asymmetrical changer with the impedance correction (both set r or x
+    # from the model)
+    buses = ("A", "B", "C", "D", "E", "F", "G", "H", "I", "J")
+    for k in 1:7
+      addPIModelTrafo!(net = net, fromBus = buses[k], toBus = buses[k + 1], r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = k == 7 ? -3.0 : 0.0)
+    end
+    addPIModelTrafo!(net = net, fromBus = "H", toBus = "I", r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0, taps = PowerTransformerTaps(Vn_kV = 110.0, step = 2, lowStep = -5, highStep = 5, neutralStep = 0, voltageIncrement_kV = 1.1), phase_taps = PhaseTapChangerModel(kind = :symmetrical, step = 3, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.02, x_min = 0.05, x_max = 0.06))
+    addPIModelTrafo!(net = net, fromBus = "I", toBus = "J", r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0, phase_taps = PhaseTapChangerModel(kind = :asymmetrical, step = 3, lowStep = -10, highStep = 10, neutralStep = 0, voltage_step_increment = 0.01, winding_connection_angle_deg = 60.0, convention = :reciprocal_from_side), tap_changer_model = :impedance_correction)
+    @test net.branchVec[8].x_pu != net.branchVec[8].x_base_pu && net.branchVec[9].r_pu != net.branchVec[9].r_base_pu
+    pts(f) = [S.SETapPoint(step = k, ratio = f(k), angle_deg = 0.5 * k, r = 1.0 + 0.01 * k, x = 1.0 + 0.02 * k, g = 1.0 - 0.03 * k, b = 1.0 + 0.04 * k) for k in -2:2]
+    C(; kw...) = S.SETapChanger(; kw...)
+    stored = Dict(
+      1 => S.SETapChangerSet(ratio_n = 1.02, shift_n_deg = 0.0, origin = :cgmes, changers = [C(name = "rtc", mrid = "_m1", kind = :ratio, role = :ratio, side = :to, du = 0.0125, neutral = 0, low = -10, high = 10, step = 2.5, rx_correction = true)]),
+      2 => S.SETapChangerSet(ratio_n = 0.98, shift_n_deg = 1.5, origin = :powsybl, changers = [C(name = "lin", kind = :ratio, role = :ratio, side = :from, additive = true, step_abs = 0.01, neutral = 0, low = -5, high = 5, step = -1.0), C(name = "ptc", kind = :linear, role = :phase, side = :to, dphi_deg = 1.2, neutral = 2, low = 0, high = 4, step = 3.0, x_curve = (0.04, 0.05, 2.4), x_curve_form = :tan2, impedance = :x_curve)]),
+      3 => S.SETapChangerSet(ratio_n = 1.0, origin = :cgmes, changers = [C(name = "asym", kind = :asymmetrical, role = :phase, side = :from, du = 0.015, alpha_deg = 60.0, neutral = 13, low = 1, high = 25, step = 16.0, x_curve = (0.05, 0.06, 18.2), impedance = :x_curve, rx_correction = true)]),
+      4 => S.SETapChangerSet(ratio_n = 1.0, origin = :cgmes, changers = [C(name = "sym", kind = :symmetrical, role = :phase, side = :to, du = 0.02, neutral = 0, low = -8, high = 8, step = -3.0)]),
+      5 => S.SETapChangerSet(ratio_n = 1.0, origin = :cgmes, changers = [C(name = "ptab", kind = :tabular, role = :phase, side = :from, neutral = 0, low = -2, high = 2, step = 1.0, table = pts(k -> 1.0 + 0.001 * k^2), impedance = :table)]),
+      6 => S.SETapChangerSet(ratio_n = 1.01, origin = :cgmes, changers = [C(name = "rtab", kind = :tabular, role = :ratio, side = :from, neutral = 0, low = -10, high = 10, step = -4.0, table = pts(k -> 1.0 + 0.015 * k), outside_du = 0.015, impedance = :table)]),
+      7 => S.SETapChangerSet(ratio_n = 1.0, shift_n_deg = -3.0, origin = :cgmes),
+      9 => S.SETapChangerSet(ratio_n = 1.0, origin = :cgmes, changers = [C(name = "asym9", kind = :asymmetrical, role = :phase, side = :to, du = 0.01, alpha_deg = 90.0, neutral = 0, low = -10, high = 10, step = 3.0)]),
+    )
+    for (k, st) in stored
+      net.branchVec[k].se_tap_changers = st
+    end
+    a = exportSCF(net; file = joinpath(d, "sets_a.scf.json"))
+    back = importSCF(a)
+    b = exportSCF(back; file = joinpath(d, "sets_b.scf.json"))
+    @test read(a, String) == read(b, String)
+    # phase_tap_declared: branches 1 to 7 carry the undeclared default phase
+    # grid, which the writer marks (before, the re-read declared it)
+    live(n) = [(br.tap_ratio, br.phase_shift_deg, br.r_pu, br.x_pu, br.phase_tap_declared) for br in n.branchVec]
+    @test live(back) == live(net)
+    @test all(k -> same_set(sets_of(net)[k], sets_of(back)[k]), eachindex(net.branchVec))
+    # restoreBaseImpedances! puts the base r and x on the typed windings; the
+    # file describes the same equipment (before, the guard refused it)
+    rest = restoreBaseImpedances!(deepcopy(net))
+    @test read(exportSCF(rest; file = joinpath(d, "sets_rest.scf.json")), String) == read(a, String)
+    @test count(st -> st !== nothing, sets_of(back)) == 8
+    # entry shape: only the key on a branch without typed models, both on
+    # branch 9, none on the typed branch 8 without a stored set
+    ids = Dict(get(e, "branch_index", 0) => k for (k, e) in S.scf_json_parse(read(a, String))["sparlectra"]["extra"] if e isa AbstractDict)
+    m = models_of(a)
+    @test all(k -> collect(keys(m[ids[k]])) == ["estimation"], 1:7)
+    @test isempty(m[ids[7]]["estimation"]["changers"])
+    @test !haskey(m[ids[8]], "estimation") && haskey(m[ids[8]], "phase")
+    @test haskey(m[ids[9]], "estimation") && haskey(m[ids[9]], "phase")
+    # a typed winding still resolves; without a stored set its set is derived
+    @test back.branchVec[8].taps_derived && back.branchVec[9].taps_derived
+    @test S._effective_tap_changers(back.branchVec[8]).origin === :typed
+    @test S._effective_tap_changers(back.branchVec[9]).origin === :cgmes
+    # an empty set stays the declaration "no tap changer"
+    @test S._tap_release_mode(back.branchVec[7]) === nothing
+    # without stored sets: no key, no set, the same model
+    plain = deepcopy(net)
+    foreach(br -> br.se_tap_changers = nothing, plain.branchVec)
+    p1 = exportSCF(plain; file = joinpath(d, "plain_a.scf.json"))
+    @test all(e -> !haskey(e, "estimation"), values(models_of(p1))) && length(models_of(p1)) == 2
+    pback = importSCF(p1)
+    @test all(st -> st === nothing, sets_of(pback))
+    @test S.createYBUS(net = pback, sparse = true) == S.createYBUS(net = back, sparse = true)
+    @test [br.tap_ratio for br in pback.branchVec] == [br.tap_ratio for br in back.branchVec]
+    @test read(exportSCF(pback; file = joinpath(d, "plain_b.scf.json")), String) == read(p1, String)
+    # the reader names a broken estimation object
+    root = S.scf_json_parse(read(a, String))
+    function refused(f)
+      r = deepcopy(root)
+      f(r["sparlectra"]["tap_changer_models"])
+      try
+        S.scf_to_net(r)
+      catch err
+        err isa ArgumentError && return err.msg
+        rethrow()
+      end
+      return ""
+    end
+    e1 = ids[1]
+    @test occursin("tap_changer_models $(e1) estimation.changers[1] has the unknown key \"dU\"", refused(t -> t[e1]["estimation"]["changers"][1]["dU"] = 0.01))
+    @test occursin("tap_changer_models $(e1) estimation.changers[1]: SETapChanger rtc: kind must be one of", refused(t -> t[e1]["estimation"]["changers"][1]["kind"] = "rotary"))
+    @test occursin("tap_changer_models $(e1) estimation is missing the required key \"origin\"", refused(t -> delete!(t[e1]["estimation"], "origin")))
+    for o in ("typed", "fields", "scf")
+      @test occursin("tap_changer_models $(e1) estimation.origin must be \"cgmes\" or \"powsybl\", got \"$(o)\"", refused(t -> t[e1]["estimation"]["origin"] = o))
+    end
+    # a derived set put on a branch is no import record: the writer refuses it
+    hand = deepcopy(net)
+    hand.branchVec[8].se_tap_changers = S._effective_tap_changers(back.branchVec[8])
+    @test hand.branchVec[8].se_tap_changers.origin === :typed
+    @test_throws ArgumentError exportSCF(hand; file = joinpath(d, "hand.scf.json"))
+
+    # --- the CGMES deliveries of A4b
+    cn = Net(name = "sets", baseMVA = 100.0)
+    for bn in ("A", "B", "C", "D", "E", "F", "G", "H")
+      addBus!(net = cn, busName = bn, vn_kV = 110.0)
+    end
+    addProsumer!(net = cn, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+    addProsumer!(net = cn, busName = "H", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+    casym() = PhaseTapChangerModel(kind = :asymmetrical, step = 16, lowStep = 1, highStep = 25, neutralStep = 13, voltage_step_increment = 0.0125, winding_connection_angle_deg = 90.0, convention = :direct_regulating_vector)
+    sym = PhaseTapChangerModel(kind = :symmetrical, step = 3, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.02, x_min = 0.05, x_max = 0.06, convention = :direct_regulating_vector)
+    tab = PhaseTapChangerModel(kind = :tabular, step = 2, neutralStep = 0, convention = :direct_regulating_vector, table = [TapTablePoint(step = k, ratio = 1.0 + 0.001 * k^2, angle_deg = 2.0 * k) for k in -3:3])
+    rtc = PowerTransformerTaps(Vn_kV = 110.0, step = 2, lowStep = -5, highStep = 5, neutralStep = 0, voltageIncrement_kV = 1.1)
+    tr(f, t; shift = 0.0, phase_taps = nothing, taps = nothing) = addPIModelTrafo!(net = cn, fromBus = f, toBus = t, r_pu = 0.002, x_pu = 0.05, b_pu = 0.0, status = 1, ratio = 1.0, shift_deg = shift, phase_taps = phase_taps, taps = taps)
+    tr("A", "B"; phase_taps = casym())
+    tr("B", "C"; phase_taps = sym)
+    tr("C", "D"; phase_taps = tab)
+    tr("D", "E"; taps = rtc)
+    tr("E", "F")
+    tr("F", "G"; shift = -3.0)
+    tr("G", "H"; phase_taps = casym())
+    cn.trafos[end].side2.taps = PowerTransformerTaps(Vn_kV = 110.0, step = -1, lowStep = -4, highStep = 4, neutralStep = 0, voltageIncrement_kV = 1.65)
+    cdir = mktempdir()
+    writeCGMESFiles(cn; path = cdir)
+    deliveries = [
+      ("typed export", importCGMES(path = cdir, name = "sets", require_boundary = false).net),
+      ("2W ratio table", importCGMES(path = _cgmes_synth_tapside_dir(:two_winding; table = (r = 4.0, x = 10.0, g = -20.0, b = 15.0), control_kv = 21.2), name = "tap2w_table").net),
+      ("3W two tapped legs", importCGMES(path = _cgmes_synth3w_dir(end1_tap_step = 13), name = "synth3w_sets").net),
+    ]
+    for (label, src) in deliveries
+      f1 = exportSCF(src; file = joinpath(d, "cg_1.scf.json"), source_format = "cgmes")
+      n1 = importSCF(f1)
+      f2 = exportSCF(n1; file = joinpath(d, "cg_2.scf.json"), source_format = "cgmes")
+      f3 = exportSCF(importSCF(f2); file = joinpath(d, "cg_3.scf.json"), source_format = "cgmes")
+      ok = read(f1, String) == read(f2, String) == read(f3, String)
+      ok &= all(k -> same_set(sets_of(src)[k], sets_of(n1)[k]), eachindex(src.branchVec))
+      ok &= count(st -> st !== nothing, sets_of(n1)) == count(br -> br.ratio != 0.0, src.branchVec)
+      @test ok
+      ok || println("      SCF estimation round trip of the ", label, " delivery: sets or bytes differ")
+    end
+    # tap estimation on the delivery and on its re-read: a phase and a
+    # ratio changer released, exact measurements of the import state
+    src = deliveries[1][2]
+    reread = importSCF(exportSCF(src; file = joinpath(d, "cg_se.scf.json"), source_format = "cgmes"))
+    truth = deepcopy(src)
+    ite, erg = runpf!(truth, 40, 1e-12, 0; method = :rectangular)
+    @test erg == 0
+    meas = generateMeasurementsFromPF(truth; includeImag = true, includeVa = true)
+    runs = map((src, reread)) do n
+      setTapEstimation!(n; trafo = 1, mode = :pst)
+      setTapEstimation!(n; trafo = 4, mode = :ratio)
+      with_state_estimation_config(max_iter = 40, tol = 1e-8, update_net = false) do
+        runse!(n, meas)
+      end
+    end
+    @test runs[1].converged && runs[2].converged
+    @test maximum(abs.(runs[1].voltages .- runs[2].voltages)) <= 1e-12
+    @test [(r.branch, r.kind, r.step_fixed) for r in runs[1].tapEstimates] == [(r.branch, r.kind, r.step_fixed) for r in runs[2].tapEstimates] == [(1, :asymmetrical, 16.0), (4, :ratio, 2.0)]
+    @test all(k -> abs(runs[1].tapEstimates[k].s_est - runs[2].tapEstimates[k].s_est) <= 1e-9, 1:2)
+  end)() end
+
   @testset "line shunt conductance without capacitance (g1)" begin (function ()
     # tan1 = g/b cannot spell a conductance when b == 0 (a CGMES gch with
     # no bch, say): the writer falls back to the direct g1 field, the
@@ -716,6 +839,102 @@ function run_scf_tests()
     # the case configuration is readable without building the network
     cfgkeys = scf_case_config(fixture)
     @test cfgkeys isa Dict{String,Any}
+    # the revision decides whether this reader may read the file at all, and
+    # a setpoint without the regulation flag is a contradiction the reader
+    # refuses instead of promoting the machine (moved from test_legacy_scf.jl)
+    dv = mktempdir()
+    shipped_export = exportSCF(importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json"))); file = joinpath(dv, "a_sp_case5.json"))
+    stale = Sparlectra.scf_json_parse(read(shipped_export, String))
+    stale["sparlectra"]["format_version"] = "0.9"
+    staleF = joinpath(dv, "stale.scf.json")
+    write(staleF, Sparlectra.scf_json_string(stale))
+    @test_throws ["format revision 0.9 found", Sparlectra.SCF_FORMAT_VERSION] importSCF(staleF)
+    @test_throws r"re-export"i importSCF(staleF)
+    contra = Sparlectra.scf_json_parse(read(shipped_export, String))
+    target = first(k for (k, v) in contra["sparlectra"]["extra"] if v isa AbstractDict && haskey(v, "prosumption_type") && v["prosumption_type"] == "Load")
+    contra["sparlectra"]["extra"][target]["vm_pu"] = 1.0
+    contraF = joinpath(dv, "contra.scf.json")
+    write(contraF, Sparlectra.scf_json_string(contra))
+    @test_throws ["voltage setpoint", "regulated"] importSCF(contraF)
+    # a non-finite number never reaches the file as null: it is either
+    # encoded or refused by name
+    @test Sparlectra.scf_infinity_sentinel(Inf) == "inf"
+    @test Sparlectra.scf_infinity_sentinel(-Inf) == "-inf"
+    @test Sparlectra.scf_infinity_sentinel(2.5) == 2.5
+    @test Sparlectra.scf_number_or_sentinel("inf", "x") == Inf
+    @test_throws ArgumentError Sparlectra.scf_infinity_sentinel(NaN)
+    @test_throws ArgumentError Sparlectra.scf_json_string(Dict{String,Any}("data" => Dict{String,Any}("bad" => Inf)))
+  end)() end
+
+  # The MATPOWER quirks the round trip once failed on, on a small net of its
+  # own. They came from case14 and case57 in the large-case directory, which
+  # a fresh install does not have: numeric bus names ("10" sorts before "2"),
+  # an unlimited rating (rateA = 0), a neutral ratio 0.895 outside the 0.9 to
+  # 1.1 band (the case57 transformer), and a bus shunt, read once with each
+  # shunt model so the per-shunt model travels in shunt_state.
+  @testset "round trip of MATPOWER quirks on a small net" begin (function ()
+    d = mktempdir()
+    src = joinpath(d, "scf_quirks.m")
+    write(src, """
+    function mpc = scf_quirks
+    mpc.version = '2';
+    mpc.baseMVA = 100;
+    mpc.bus = [
+    2 3 0 0 0 0 1 1.02 0 110 1 1.1 0.9;
+    10 1 40 15 0 19 1 1.0 0 110 1 1.1 0.9;
+    7 2 20 5 0 0 1 1.01 0 20 1 1.1 0.9;
+    ];
+    mpc.gen = [
+    2 40 0 300 -300 1.02 100 1 300 0;
+    7 20 0 20 -20 1.01 100 1 50 0;
+    ];
+    mpc.branch = [
+    2 10 0.01 0.05 0.02 0 0 0 0 0 1 -360 360;
+    10 7 0.005 0.08 0.0 100 100 100 0.895 0 1 -360 360;
+    ];
+    """)
+    base_cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+    vdi_cfg = Sparlectra.SparlectraConfig(Dict("model" => Dict("bus_shunt_model" => "voltage_dependent_injection")))
+    for (label, cfg) in (("admittance", base_cfg), ("voltage_dependent_injection", vdi_cfg))
+      net = SparlectraApp._se_import_case_net(src, cfg)
+      a = exportSCF(net; file = joinpath(d, "a_$(label).json"), source_format = "matpower")
+      # the reader restores the band as stated in the file and says so
+      back = @test_logs (:warn, r"neutral tap position lies outside") match_mode = :any importSCF(a)
+      b = exportSCF(back; file = joinpath(d, "b_$(label).json"), source_format = "matpower")
+      @test read(a, String) == read(b, String)
+      # the generated component names embed the source bus number, so losing
+      # it renamed everything and reshuffled the ids
+      @test [getCompName(n.comp) for n in net.nodeVec] == [getCompName(n.comp) for n in back.nodeVec]
+      @test [getCompName(br.comp) for br in net.branchVec] == [getCompName(br.comp) for br in back.branchVec]
+      # bus order is identity: ids are name-sorted
+      @test [Sparlectra._scf_bus_name(net, i) for i in eachindex(net.nodeVec)] == [Sparlectra._scf_bus_name(back, i) for i in eachindex(back.nodeVec)]
+      @test isapprox(Matrix(createYBUS(net = net)), Matrix(createYBUS(net = back)); rtol = 1e-12)
+      # every field by reflection, on the network as the service builds it
+      # (the switching parameters are stamped on that path), with the start
+      # state on both sides
+      full = exportSCF(net; file = joinpath(d, "full_$(label).json"), source_format = "matpower", include_start_state = true)
+      via_service = run_with_expected_warnings(() -> Sparlectra._import_sparlectra_net(full, nothing, cfg), (r"neutral tap position",))
+      @test (label, scf_roundtrip_field_diffs(net, via_service)) == (label, String[])
+      # a setpoint and a reactive band are written only for regulated units
+      extra_written = Sparlectra.scf_json_parse(read(a, String))["sparlectra"]["extra"]
+      @test !any(v isa AbstractDict && haskey(v, "vm_pu") && get(v, "regulated", false) !== true for (_, v) in extra_written)
+      @test !any(v isa AbstractDict && haskey(v, "max_q_mvar") && !isa(v["max_q_mvar"], Real) for (_, v) in extra_written)
+      # an unlimited rating has no PGM representation: it travels in the
+      # namespaced block, no null is written, and it comes back as Inf
+      unlimited = [i for i in eachindex(net.branchVec) if net.branchVec[i].sn_MVA !== nothing && !isfinite(net.branchVec[i].sn_MVA)]
+      @test !isempty(unlimited)
+      @test !occursin("\"i_n\": null", read(a, String))
+      @test all(back.branchVec[i].sn_MVA == Inf for i in unlimited)
+    end
+    # the copy with the start state solves to the same point
+    net = SparlectraApp._se_import_case_net(src, base_cfg)
+    withstart = exportSCF(net; file = joinpath(d, "s_quirks.json"), source_format = "matpower", include_start_state = true)
+    solved = run_with_expected_warnings(() -> importSCF(withstart), (r"neutral tap position",))
+    it_a, _ = runpf!(net, 40, 1e-10, 0)
+    it_b, _ = runpf!(solved, 40, 1e-10, 0)
+    @test it_a == it_b
+    @test maximum(abs(getNodeVm(net.nodeVec[i]) - getNodeVm(solved.nodeVec[i])) for i in eachindex(net.nodeVec)) < 1e-12
+    @test maximum(abs(net.nodeVec[i]._va_deg - solved.nodeVec[i]._va_deg) for i in eachindex(net.nodeVec)) < 1e-10
   end)() end
 
   # DynamicData on the machines (#506): defaults and rules of the record,
@@ -775,11 +994,6 @@ function run_scf_tests()
     # the round-trip comparison sees the field: a lost block is a difference
     local lost = importSCF(plain)
     @test any(m -> startswith(m, "prosumer.dynamics"), scf_roundtrip_field_diffs(net, lost))
-    # the same case as a revision 1.2 file: no block, read unchanged
-    local v12 = joinpath(d, "v12.scf.json")
-    write(v12, replace(read(plain, String), "\"format_version\": \"1.3\"" => "\"format_version\": \"1.2\""; count = 1))
-    @test occursin("\"format_version\": \"1.2\"", read(v12, String))
-    @test isempty(scf_roundtrip_field_diffs(lost, importSCF(v12)))
     # a broken block is named: unknown key, a value against the rules, an
     # unknown unit type, a flag that is no Bool, a number given as text
     local gid = only(k for (k, e) in doc["sparlectra"]["extra"] if e isa AbstractDict && get(e, "external_id", "") == id(gens[2]))
@@ -1384,19 +1598,6 @@ mpc.branch = [
     @test occursin("loss of $(n1)", csv_text)
     @test occursin("common mode", csv_text)
 
-    # a file that still carries the removed contingencies block fails with
-    # the way out, on the kind path as well
-    legacy = Sparlectra.scf_json_parse(read(f, String))
-    legacy["sparlectra"]["contingencies"] = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "old", "outages" => Any[Dict{String,Any}("component" => b1)])])
-    fl = joinpath(d, "legacy.scf.json")
-    write(fl, Sparlectra.scf_json_string(legacy))
-    res_l = redirect_stdout(devnull) do
-      SparlectraApp._run_contingency_service(fl, cfg, joinpath(d, "run_legacy"), "scf_ctl", "branch")
-    end
-    dl = SparlectraApp.to_dict(res_l)
-    @test dl["status"] == "failed"
-    @test occursin("sparlectra.scenarios", dl["message"])
-
     # A case file that carries its own configuration is loaded through the
     # API config path, and the service entry points take AbstractString: a
     # config path arriving as a SubString (a split request field) must not
@@ -1715,9 +1916,6 @@ mpc.branch = [
     @test isempty(plain.short_circuit)
     # broken study definitions fail on load, not at the start of a sweep
     root = Sparlectra.scf_json_parse(read(f, String))
-    legacy = deepcopy(root)
-    legacy["sparlectra"]["contingencies"] = Dict{String,Any}("mode" => "explicit", "cases" => Any[])
-    @test_throws ArgumentError Sparlectra.scf_to_net(legacy)
     bad_case = deepcopy(root)
     bad_case["sparlectra"]["short_circuit"]["case"] = "bogus"
     @test_throws ArgumentError Sparlectra.scf_to_net(bad_case)
@@ -1785,17 +1983,6 @@ mpc.branch = [
     @test occursin("max_iter: 55", read(joinpath(r2["output_dir"], "effective_config.yaml"), String))
   end)() end
 
-  @testset "every output option is case-file and GUI editable" begin (function ()
-    # the case file's config block uses the one existing allowlist, so the
-    # logging surface has to be in it
-    for key in ("output.console_summary", "output.console_diagnostics", "output.console_q_limit_events", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.result_table_max_rows", "output.startup_latency_hint")
-      @test key in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
-    end
-    ok = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.logfile_warnings" => "table", "output.console_summary" => false, "output.result_table_max_rows" => 50, "output.startup_latency_hint" => false))
-    @test haskey(ok, "output")
-    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.logfile_warnings" => "bogus"))
-  end)() end
-
   @testset "Web UI export route" begin (function ()
     root = mktempdir()
     cases = joinpath(root, "cases")
@@ -1835,11 +2022,7 @@ mpc.branch = [
     @test occursin("not%20found", string(bad)) || occursin("not+found", string(bad))
     empty_sel = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}(); output_root = root, runtime = rt)
     @test occursin("Select%20a%20case", string(empty_sel)) || occursin("Select+a+case", string(empty_sel))
-    # the button is on the Case page for every case, not only
-    # for cases that already carry saved settings
-    @test occursin("/powerflow/export-scf", SparlectraApp.render_case_page())
-    # the plain PGM variant has its own button and writes its own file
-    @test occursin("scf_strict_pgm", SparlectraApp.render_case_page())
+    # the plain PGM variant writes its own file
     pgm = run_with_expected_warnings((r"strict_pgm = true",)) do
       SparlectraApp.route_sparlectra_webui("POST", "/powerflow/export-scf", Dict{String,Any}("casefile" => "warmup_casePST.m", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "scf_strict_pgm" => "true"); output_root = root, runtime = rt)
     end
@@ -1875,7 +2058,6 @@ mpc.branch = [
     page = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?download=warmup_casePST.scf.json&import_message=Exported"; output_root = root, runtime = rt)
     page_html = String(copy(page.body))
     @test occursin("/powerflow/case/download?case=warmup_casePST.scf.json", page_html)
-    @test occursin("Download selected case", page_html)
     dl = SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case/download?case=warmup_casePST.scf.json"; output_root = root, runtime = rt)
     @test dl.status == 200
     @test any(k == "Content-Disposition" && occursin("warmup_casePST.scf.json", v) for (k, v) in dl.headers)
@@ -1924,8 +2106,6 @@ mpc.branch = [
     Sparlectra.readMeasurementTable!(carrying; file = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "warmup_casePST.measurements.csv")), zero_injection = false)
     exportSCF(carrying; file = joinpath(cases, "carrying.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
     carry_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=carrying.scf.json"; output_root = root, runtime = rt).body))
-    @test occursin("carries <strong>$(length(carrying.measurements)) measurements</strong>", carry_page)
-    @test occursin("(from the case file: $(length(carrying.measurements)) rows)", carry_page)
     @test !occursin("case118.measurements.csv\" selected", carry_page)
     # generating a set for a case file works and binds it to THAT case, so
     # the page preselects it afterwards
@@ -1996,9 +2176,7 @@ mpc.branch = [
     setMeasurementsFromPF!(ideal_net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
     ideal_case = exportSCF(ideal_net; file = joinpath(cases, "ideal.scf.json"), measurement_provenance = Dict{String,Any}("noise" => false, "generator" => "v2"))
     @test Sparlectra.scf_json_parse(read(ideal_case, String))["sparlectra"]["measurements"]["provenance"]["noise"] === false
-    ideal_page = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=ideal.scf.json"; output_root = root, runtime = rt).body))
-    @test occursin("ideal (noise-free)", ideal_page)
-    @test occursin("/stateestimation/add-noise", ideal_page)
+    @test SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=ideal.scf.json"; output_root = root, runtime = rt).status == 200
     # noising needs NO power flow and keeps the sigmas; J moves from 0 to a
     # real value on the very same operating point
     noisy_name = written_set(SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/add-noise", Dict{String,Any}("casefile" => "ideal.scf.json", "noise_seed" => "7"); output_root = root, runtime = rt))

@@ -1162,11 +1162,43 @@ end
 const _WEBUI_SIGMA_LEVEL_KEY = "state_estimation.sigma_by_voltage_level"
 const _WEBUI_SIGMA_LEVEL_SIGMA_COLUMNS = ["p_mw", "q_mvar", "i_a", "u_kv", "rel_pct"]
 
-# Nominal voltages per case, cached by path and mtime: the levels need the
-# imported net, and the section renders on every Runs page load. The import
-# runs outside the lock so a slow case does not block other pages.
-const _WEBUI_CASE_VN_CACHE = Dict{String,Tuple{Float64,Vector{Float64},String}}()
+# Nominal voltages per case and whether it has tap changers, cached by path
+# and mtime: both need the imported net, and the section renders on every
+# Runs page load. The import runs outside the lock so a slow case does not
+# block other pages.
+const _WEBUI_CASE_VN_CACHE = Dict{String,Tuple{Float64,Vector{Float64},String,Bool}}()
 const _WEBUI_CASE_VN_CACHE_LOCK = ReentrantLock()
+
+"""
+    _webui_case_import_facts(case_path, config_file) -> (levels, error, has_taps)
+
+What the SE section needs from the imported case, from one cached import:
+the distinct bus nominal voltages in kV, highest first, an error text
+(empty on success), and `has_taps`, whether the case has a transformer with
+a declared tap changer (`_case_has_tap_changers`, the default of "estimate
+taps"). A case that does not import gives no levels, the import error and
+`has_taps = false`.
+"""
+function _webui_case_import_facts(case_path::AbstractString, config_file::AbstractString)
+  path = String(case_path)
+  (isfile(path) || isdir(path)) || return (Float64[], "case file not found", false)
+  stamp = mtime(path)
+  hit = lock(() -> get(_WEBUI_CASE_VN_CACHE, path, nothing), _WEBUI_CASE_VN_CACHE_LOCK)
+  (hit !== nothing && hit[1] == stamp) && return (hit[2], hit[3], hit[4])
+  levels, err, has_taps = try
+    # the effective configuration the SE run imports the case with
+    cfg = resolve_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file), path).config
+    net = import_case(path, cfg; run_kind = :state_estimation).net
+    (sort!(unique(Float64[nd.comp.cVN for nd in net.nodeVec]); rev = true), "", _case_has_tap_changers(net))
+  catch err
+    # the expected failure: the case does not import (format, content);
+    # the section shows the reason instead of the levels
+    err isa InterruptException && rethrow()
+    (Float64[], first(split(sprint(showerror, err), '\n')), false)
+  end
+  lock(() -> (_WEBUI_CASE_VN_CACHE[path] = (stamp, levels, err, has_taps)), _WEBUI_CASE_VN_CACHE_LOCK)
+  return (levels, err, has_taps)
+end
 
 """
     _webui_case_voltage_levels(case_path, config_file) -> (levels, error)
@@ -1176,23 +1208,7 @@ error text (empty on success). A case that does not import gives no levels
 and the import error, which the SE section shows next to the table.
 """
 function _webui_case_voltage_levels(case_path::AbstractString, config_file::AbstractString)
-  path = String(case_path)
-  (isfile(path) || isdir(path)) || return (Float64[], "case file not found")
-  stamp = mtime(path)
-  hit = lock(() -> get(_WEBUI_CASE_VN_CACHE, path, nothing), _WEBUI_CASE_VN_CACHE_LOCK)
-  (hit !== nothing && hit[1] == stamp) && return (hit[2], hit[3])
-  levels, err = try
-    # the effective configuration the SE run imports the case with
-    cfg = resolve_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file), path).config
-    net = import_case(path, cfg; run_kind = :state_estimation).net
-    (sort!(unique(Float64[nd.comp.cVN for nd in net.nodeVec]); rev = true), "")
-  catch err
-    # the expected failure: the case does not import (format, content);
-    # the section shows the reason instead of the levels
-    err isa InterruptException && rethrow()
-    (Float64[], first(split(sprint(showerror, err), '\n')))
-  end
-  lock(() -> (_WEBUI_CASE_VN_CACHE[path] = (stamp, levels, err)), _WEBUI_CASE_VN_CACHE_LOCK)
+  levels, err, _ = _webui_case_import_facts(case_path, config_file)
   return (levels, err)
 end
 

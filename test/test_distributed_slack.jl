@@ -160,31 +160,16 @@ function run_distributed_slack_tests()
       # imbalance up to the (small) loss shift of the changed dispatch.
       @test isapprox(sum(resid), resid0[1]; atol = 2e-3)
 
-      # Reporting surface: the participant table is persisted in the status,
-      # summarized as one header line, and rendered as per-bus columns of
-      # the classical bus table (dSl alpha, Pg eff MW).
+      # Reporting surface: the participant table is persisted in the status
+      # and gives the per-bus shares of the bus table.
       part = st.distributed_slack_participation
       @test length(part) == 2
       @test isapprox(sort([r.alpha for r in part]), [0.4, 0.6]; atol = 1e-12)
       @test isapprox(sum(r.dp_mw for r in part), st.distributed_slack_lambda_p_mw; atol = 1e-9)
-      buf = IOBuffer()
-      Sparlectra._print_distributed_slack_summary_line(buf, net2)
-      out = String(take!(buf))
-      # 15-character label, colon at column 16: the classical result header
-      # aligns every colon
-      @test occursin("Dist. slack    : mode pg_weighted", out)
       active, shares = Sparlectra._distributed_slack_bus_shares(net2)
       @test active
       @test length(shares) == 2
       @test isapprox(sort([a for (a, _) in values(shares)]), [0.4, 0.6]; atol = 1e-12)
-      # full render: the bus table carries the participation columns
-      calcNetLosses!(net2)
-      tmp = mktempdir()
-      printACPFlowResults(net2, 0.1, 5, 1e-8, true, tmp)
-      rendered = read(joinpath(tmp, "result_$(net2.name).txt"), String)
-      @test occursin("dSl alpha", rendered)
-      @test occursin("Pg eff MW", rendered)
-      @test occursin("0.6000", rendered)
 
       # Hand case: Pg is the schedule and Pg eff the delivered generation at
       # every participating bus, the reference included (the share was added
@@ -209,42 +194,37 @@ function run_distributed_slack_tests()
       end
     end)() end
 
-    @testset "equivalence: all weight on the REF bus reproduces classical" begin (function ()
-      net3 = _dslack_testnet()
-      _, erg3 = runpf_rectangular!(
-        net3, 30, 1e-10, 0;
-        distributed_slack_enabled = true,
-        distributed_slack_p_mode = :explicit,
-        distributed_slack_weights = Dict("B1" => 1.0),
+    @testset "explicit weights reproduce the state of the matching mode" begin (function ()
+      # pg_weighted reference: Pg 30/20 MW gives the shares 0.6/0.4
+      net_pg = _dslack_testnet()
+      _, erg_pg = runpf_rectangular!(net_pg, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
+      @test erg_pg == 0
+      vm_pg, va_pg = _dslack_vmva(net_pg)
+      lambda_pg = Sparlectra.rectangular_pf_status(net_pg).distributed_slack_lambda_p_pu
+      # weights -> state and lambda_P they must reproduce: all weight on the
+      # REF bus gives the classical state, and lambda_P is the classically
+      # REF-absorbed power; weights 30/20 give the pg_weighted state
+      for (weights, tol, vm_ref, va_ref, lambda_ref, atol) in (
+        (Dict("B1" => 1.0), 1e-10, vm0, va0, resid0[1], 1e-8),
+        (Dict("B2" => 30.0, "B3" => 20.0), 1e-8, vm_pg, va_pg, lambda_pg, 1e-10),
       )
-      @test erg3 == 0
-      vm3, va3 = _dslack_vmva(net3)
-      @test isapprox(vm3, vm0; atol = 1e-8)
-      @test isapprox(va3, va0; atol = 1e-8)
-      st = Sparlectra.rectangular_pf_status(net3)
-      # lambda_P is exactly the classical REF-absorbed power.
-      @test isapprox(st.distributed_slack_lambda_p_pu, resid0[1]; atol = 1e-7)
-    end)() end
-
-    @testset "modes: pg_weighted == matching explicit weights" begin (function ()
-      net4a = _dslack_testnet()
-      _, erg4a = runpf_rectangular!(net4a, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
-      net4b = _dslack_testnet()
-      _, erg4b = runpf_rectangular!(
-        net4b, 30, 1e-8, 0;
-        distributed_slack_enabled = true,
-        distributed_slack_p_mode = :explicit,
-        distributed_slack_weights = Dict("B2" => 30.0, "B3" => 20.0),
-      )
-      @test erg4a == 0 && erg4b == 0
-      @test isapprox(first(_dslack_vmva(net4a)), first(_dslack_vmva(net4b)); atol = 1e-10)
-      @test isapprox(last(_dslack_vmva(net4a)), last(_dslack_vmva(net4b)); atol = 1e-10)
+        net = _dslack_testnet()
+        _, erg = runpf_rectangular!(
+          net, 30, tol, 0;
+          distributed_slack_enabled = true,
+          distributed_slack_p_mode = :explicit,
+          distributed_slack_weights = weights,
+        )
+        @test erg == 0
+        vm, va = _dslack_vmva(net)
+        @test isapprox(vm, vm_ref; atol = atol)
+        @test isapprox(va, va_ref; atol = atol)
+        @test isapprox(Sparlectra.rectangular_pf_status(net).distributed_slack_lambda_p_pu, lambda_ref; atol = 1e-7)
+      end
     end)() end
 
     @testset "modes: imported via MATPOWER APF column" begin (function ()
       dir = mktempdir()
-      # APF present, solver disabled: identical to a zero-APF twin (carrying
-      # the factor must never change results on its own).
       path_apf = _dslack_write_matpower_case(dir, "case4_apf", apf2 = 0.75, apf3 = 0.25)
       path_zero = _dslack_write_matpower_case(dir, "case4_apf_zero", apf2 = 0.0, apf3 = 0.0)
       net_apf = Sparlectra.createNetFromMatPowerFile(filename = path_apf)
@@ -254,12 +234,7 @@ function run_distributed_slack_tests()
       @test any(==(0.75), skipmissing(replace(pf_by_gen, nothing => missing)))
       @test any(==(0.25), skipmissing(replace(pf_by_gen, nothing => missing)))
       @test all(pf === nothing for pf in (ps.participationFactor for ps in net_zero.prosumpsVec if Sparlectra.isGenerator(ps)))
-      _, erga = runpf_rectangular!(net_apf, 30, 1e-8, 0)
-      _, ergz = runpf_rectangular!(net_zero, 30, 1e-8, 0)
-      @test erga == 0 && ergz == 0
-      @test first(_dslack_vmva(net_apf)) == first(_dslack_vmva(net_zero))
-      @test last(_dslack_vmva(net_apf)) == last(_dslack_vmva(net_zero))
-      # enabled with :imported — shares proportional to APF (0.75 : 0.25)
+      # enabled with :imported: shares proportional to APF (0.75 : 0.25)
       net_imp = Sparlectra.createNetFromMatPowerFile(filename = path_apf)
       _, ergi = runpf_rectangular!(net_imp, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :imported)
       @test ergi == 0
@@ -299,6 +274,61 @@ function run_distributed_slack_tests()
       active, shares = Sparlectra._distributed_slack_bus_shares(net6)
       @test !active
       @test isempty(shares)
+    end)() end
+
+    @testset "Q-limit interaction: PV->PQ switch keeps participation" begin (function ()
+      # Tight Q limit forces B2 PV->PQ during the solve; its alpha must stay.
+      net7 = _dslack_testnet(qmax_b2 = 2.0)
+      _, erg7 = runpf_rectangular!(net7, 40, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
+      @test erg7 == 0
+      st = Sparlectra.rectangular_pf_status(net7)
+      @test st.distributed_slack_active == true
+      @test st.distributed_slack_participants == 2
+      @test isapprox(st.distributed_slack_alpha_sum, 1.0; atol = 1e-12)
+      resid = _dslack_p_residual(net7)
+      lambda_pu = st.distributed_slack_lambda_p_pu
+      # B2 kept its 0.6 share although it no longer holds its voltage.
+      @test isapprox(resid[2], 0.6 * lambda_pu; atol = 1e-7)
+      @test isapprox(resid[3], 0.4 * lambda_pu; atol = 1e-7)
+      # And the switch really happened: B2 logged a Q-limit hit.
+      @test Sparlectra.qlimit_switch_count(net7, 2) >= 1
+    end)() end
+
+    @testset "two islands get independent lambda_P" begin (function ()
+      net8 = _dslack_two_island_net()
+      profile = Dict{Symbol,Any}()
+      _, erg8 = runpf!(
+        net8, 40, 1e-8, 0;
+        islands_enabled = true,
+        distributed_slack_enabled = true,
+        distributed_slack_p_mode = :pg_weighted,
+        performance_profile = profile,
+      )
+      @test erg8 == 0
+      statuses = profile[:ac_island_solver_statuses]
+      @test length(statuses) == 2
+      lambdas = sort([st.distributed_slack_lambda_p_mw for st in values(statuses)])
+      @test all(l -> l > 0.0, lambdas)
+      # Island A misses ~20 MW + losses, island C ~10 MW + losses: distinct.
+      @test lambdas[2] - lambdas[1] > 5.0
+      for st in values(statuses)
+        @test st.distributed_slack_active == true
+        @test st.distributed_slack_participants == 1
+      end
+      # The top-level status aggregates over the islands (it once carried
+      # an arbitrary single island's lambda_P instead).
+      agg = Sparlectra.rectangular_pf_status(net8)
+      @test agg.distributed_slack_active == true
+      @test agg.distributed_slack_participants == 2
+      @test isapprox(agg.distributed_slack_lambda_p_mw, sum(st.distributed_slack_lambda_p_mw for st in values(statuses)); atol = 1e-9)
+      # The aggregate participation holds both islands in the numbering of
+      # the net. A2 and C2 deliver schedule plus share in the report rows.
+      part = agg.distributed_slack_participation
+      @test sort([(r.bus_idx, r.gen_index) for r in part]) == [(2, 2), (5, 5)]
+      rows = buildACPFlowReport(net8).nodes
+      for r in part
+        @test isapprox(rows[r.bus_idx].p_gen_MW, r.pg_mw + r.dp_mw; atol = 1e-9)
+      end
     end)() end
 
   end)() end

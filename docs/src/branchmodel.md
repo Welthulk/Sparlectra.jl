@@ -407,8 +407,8 @@ the artifact `tap_models.log`. Without a model the explicit
 `ratio`/`shift_deg` and the legacy degree grid stay as they were.
 Controllers move the step of a modelled transformer, never `ratio`/`shift`
 directly (probe and update pick the step closest to the proposal); the
-state estimator's tap fixation rounds a derived phase regulator to the
-model's nearest step.
+tap estimation of the state estimator takes the model steps as its states
+and fixes them on the model's own steps.
 
 ### Behaviour (`equicircuit.jl`)
 

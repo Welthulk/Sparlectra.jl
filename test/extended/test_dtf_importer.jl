@@ -148,6 +148,15 @@ function run_dtf_importer_tests()
     @test get(net_corrected.matpower_branch_metadata, 1, nothing).tap_changer_model == :impedance_correction
     @test isapprox(get(net_corrected.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor, expected_factor; atol = 1e-12)
     @test get(net_ideal.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor == 1.0
+    # with an added angle the step becomes a skew-angle tap:
+    # f = range% / 100 * step / max_step, then calcSkewAngleTap with that angle
+    skew_case = _synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 12.0, actual_tap_step = 3, max_tap_step = 8, added_voltage_angle_deg = 15.0)
+    skew = Sparlectra.DTFImporter._dtf_effective_transformer_tap(skew_case, only(skew_case.branches), only(skew_case.transformer_controls), skew_case.buses[1], skew_case.buses[2])
+    skew_fraction = (12.0 / 100.0) * 3 / 8
+    skew_ref = Sparlectra.calcSkewAngleTap(tap_fraction = skew_fraction, skew_angle_deg = 15.0)
+    @test skew.model == :skew_angle
+    @test skew.tap_fraction == skew_fraction
+    @test (skew.shift_deg, skew.effective_complex, skew.ratio) == (skew_ref.effective_shift_deg, skew_ref.regulating_vector, skew_ref.effective_ratio)
   end)() end
 
   # The shipped demo deck: the text path of the importer on a file every

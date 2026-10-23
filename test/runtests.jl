@@ -136,7 +136,6 @@ const TEST_GROUPS = TestGroup[
     TestGroup("terminal_status", ["test_terminal_status.jl"], [:run_terminal_status_tests]),
     TestGroup("powerflow_rectangular", ["test_solver_interface.jl"], [:run_solver_interface_tests]),
     TestGroup("factorized_linear_solver", ["test_factorized_linear_solver.jl"], [:run_factorized_linear_solver_tests]),
-    TestGroup("pv_voltage_residuals", ["test_pv_voltage_residuals.jl"], [:run_pv_voltage_residual_tests]),
     TestGroup("3wt_phase_taps", ["test_3wt_phase_taps.jl"], [:run_3wt_phase_taps_tests]),
     TestGroup("dc_powerflow", ["test_dc_powerflow.jl"], [:run_dc_powerflow_tests]),
     TestGroup("distributed_slack", ["test_distributed_slack.jl"], [:run_distributed_slack_tests]),
@@ -145,10 +144,10 @@ const TEST_GROUPS = TestGroup[
     TestGroup("matpower_metadata", ["testgrid.jl", "test_matpower_metadata.jl"], [:run_matpower_metadata_tests]),
     TestGroup("programmatic_api", ["test_api.jl"], [:run_api_fast_tests]),
     # --- pf: the rest of the power-flow surface, controllers, contingencies, scenarios
-    TestGroup("auto_powerflow", ["test_auto_powerflow.jl"], [:run_auto_powerflow_tests]),
+    TestGroup("auto_powerflow", ["test_auto_powerflow.jl"], [:run_auto_powerflow_tests, :run_auto_powerflow_ladder_tests]),
     TestGroup("short_circuit", ["test_short_circuit.jl"], [:run_short_circuit_tests]),
     TestGroup("parallel_foundation", ["test_parallel_foundation.jl"], [:run_parallel_foundation_tests]),
-    TestGroup("contingency", ["test_contingency.jl"], [:run_contingency_tests]),
+    TestGroup("contingency", ["test_contingency.jl"], [:run_contingency_tests, :run_contingency_case_tests]),
     TestGroup("scenarios", ["test_scenarios.jl"], [:run_scenario_patch_tests]),
     TestGroup("controls", ["test_voltage_dependent_control.jl", "test_transformer_phase_shift.jl", "test_tap_controller.jl", "test_series_reactance_control.jl", "test_upfc_control.jl", "test_hvdc_pair_control.jl", "test_tap_changer_model.jl", "test_phase_tap_changer_model.jl", "test_phase_tap_table.jl"],
         [:run_voltage_dependent_control_tests, :run_transformer_phase_shift_tests, :run_tap_controller_tests, :run_series_reactance_control_tests, :run_upfc_control_tests, :run_hvdc_pair_control_tests, :run_tap_changer_model_tests, :run_phase_tap_changer_model_tests, :run_phase_tap_table_tests]),
@@ -158,7 +157,8 @@ const TEST_GROUPS = TestGroup[
     TestGroup("apslf", ["test_apslf.jl"], [:run_apslf_tests]),
     # --- se: state estimation, observability, topology
     TestGroup("state_estimation", ["test_state_estimation.jl"], [:run_state_estimation_tests]),
-    TestGroup("observability", ["test_observability.jl"], [:run_observability_tests]),
+    TestGroup("observability", ["test_observability.jl"], [:run_observability_tests, :run_observability_rank_tests]),
+    TestGroup("topology_validation", ["test_legacy_topology_validation.jl"], [:run_legacy_topology_validation_tests]),
     TestGroup("measurement_table", ["test_measurement_table.jl"], [:run_measurement_table_tests]),
     # --- config: configuration surface, its documentation, repository hygiene
     TestGroup("configuration", ["test_configuration_coverage.jl"], [:run_configuration_coverage_tests]),
@@ -167,6 +167,7 @@ const TEST_GROUPS = TestGroup[
     # --- webui: the local browser UI
     TestGroup("webui", ["test_webui.jl"], [:run_webui_fast_tests]),
     TestGroup("webui_extended", ["test_webui_extended.jl"], [:run_webui_extended_tests]),
+    TestGroup("webui_state_estimation", ["test_webui.jl", "test_webui_state_estimation.jl"], [:run_webui_state_estimation_tests]),
     # --- extd: shipped cases, formats, service layer, examples, fixtures
     TestGroup("demo_cases", ["test_demo_cases.jl"], [:run_demo_case_tests]),
     TestGroup("scf", ["test_scf.jl"], [:run_scf_tests]),
@@ -187,32 +188,23 @@ const TEST_GROUPS = TestGroup[
         [:run_dtf_importer_tests, :run_dtf_for002_validation_example_tests, :run_dtf_for002_outage_validation_example_tests, :run_dtf_matpower_export_validation_example_tests, :run_dtf_api_webui_integration_tests]),
     # --- legacy: one group per test file that lost testsets to the legacy profile;
     # it includes that file for its helpers, then the test_legacy_ file next to it
-    TestGroup("legacy_3wt_phase_taps", ["test_3wt_phase_taps.jl", "test_legacy_3wt_phase_taps.jl"], [:run_legacy_3wt_phase_taps_tests]),
     TestGroup("legacy_api", ["test_api.jl", "test_legacy_api.jl"], [:run_legacy_api_tests]),
     TestGroup("legacy_apslf", ["test_apslf.jl", "test_legacy_apslf.jl"], [:run_legacy_apslf_tests]),
-    TestGroup("legacy_auto_powerflow", ["test_auto_powerflow.jl", "test_legacy_auto_powerflow.jl"], [:run_legacy_auto_powerflow_tests]),
     TestGroup("legacy_cgmes_export", ["test_cgmes_export.jl", "test_legacy_cgmes_export.jl"], [:run_legacy_cgmes_export_tests]),
     TestGroup("legacy_cgmes_importer", ["test_cgmes_importer.jl", "test_legacy_cgmes_importer.jl"], [:run_legacy_cgmes_importer_tests]),
-    TestGroup("legacy_contingency", ["test_contingency.jl", "test_legacy_contingency.jl"], [:run_legacy_contingency_tests]),
     TestGroup("legacy_dc_powerflow", ["test_dc_powerflow.jl", "test_legacy_dc_powerflow.jl"], [:run_legacy_dc_powerflow_tests]),
     TestGroup("legacy_demo_cases", ["test_demo_cases.jl", "test_legacy_demo_cases.jl"], [:run_legacy_demo_cases_tests]),
-    TestGroup("legacy_distributed_slack", ["test_distributed_slack.jl", "test_legacy_distributed_slack.jl"], [:run_legacy_distributed_slack_tests]),
     TestGroup("legacy_external_grid", ["test_external_grid.jl", "test_legacy_external_grid.jl"], [:run_legacy_external_grid_tests]),
     TestGroup("legacy_factorized_linear_solver", ["test_factorized_linear_solver.jl", "test_legacy_factorized_linear_solver.jl"], [:run_legacy_factorized_linear_solver_tests]),
     TestGroup("legacy_hvdc_pair_control", ["test_hvdc_pair_control.jl", "test_legacy_hvdc_pair_control.jl"], [:run_legacy_hvdc_pair_control_tests]),
     TestGroup("legacy_island_diagnostics", ["test_island_diagnostics.jl", "test_legacy_island_diagnostics.jl"], [:run_legacy_island_diagnostics_tests]),
-    TestGroup("legacy_matpower_example", ["test_matpower_example.jl", "test_legacy_matpower_example.jl"], [:run_legacy_matpower_example_tests]),
     TestGroup("legacy_matpower_metadata", ["test_matpower_metadata.jl", "test_legacy_matpower_metadata.jl"], [:run_legacy_matpower_metadata_tests]),
-    TestGroup("legacy_observability", ["test_observability.jl", "test_legacy_observability.jl"], [:run_legacy_observability_tests]),
-    TestGroup("legacy_phase_tap_table", ["test_phase_tap_table.jl", "test_legacy_phase_tap_table.jl"], [:run_legacy_phase_tap_table_tests]),
-    TestGroup("legacy_piline_g", ["test_piline_g.jl", "test_legacy_piline_g.jl"], [:run_legacy_piline_g_tests]),
     TestGroup("legacy_powsybl_importer", ["test_powsybl_importer.jl", "test_legacy_powsybl_importer.jl"], [:run_legacy_powsybl_importer_tests]),
-    TestGroup("legacy_pv_voltage_residuals", ["test_pv_voltage_residuals.jl", "test_legacy_pv_voltage_residuals.jl"], [:run_legacy_pv_voltage_residuals_tests]),
+    TestGroup("legacy_pv_voltage_residuals", ["testgrid.jl", "test_legacy_pv_voltage_residuals.jl"], [:run_legacy_pv_voltage_residuals_tests]),
     TestGroup("legacy_scenarios", ["test_scenarios.jl", "test_legacy_scenarios.jl"], [:run_legacy_scenarios_tests]),
     TestGroup("legacy_scf", ["test_scf.jl", "test_legacy_scf.jl"], [:run_legacy_scf_tests]),
     TestGroup("legacy_series_reactance_control", ["test_series_reactance_control.jl", "test_legacy_series_reactance_control.jl"], [:run_legacy_series_reactance_control_tests]),
     TestGroup("legacy_solver_interface", ["test_solver_interface.jl", "test_legacy_solver_interface.jl"], [:run_legacy_solver_interface_tests]),
-    TestGroup("legacy_tap_changer_model", ["test_tap_changer_model.jl", "test_legacy_tap_changer_model.jl"], [:run_legacy_tap_changer_model_tests]),
     TestGroup("legacy_tap_controller", ["test_tap_controller.jl", "test_legacy_tap_controller.jl"], [:run_legacy_tap_controller_tests]),
     TestGroup("legacy_upfc_control", ["test_upfc_control.jl", "test_legacy_upfc_control.jl"], [:run_legacy_upfc_control_tests]),
     TestGroup("legacy_voltage_dependent_control", ["test_voltage_dependent_control.jl", "test_legacy_voltage_dependent_control.jl"], [:run_legacy_voltage_dependent_control_tests]),
@@ -220,15 +212,10 @@ const TEST_GROUPS = TestGroup[
     TestGroup("legacy_webui_extended", ["test_webui_extended.jl", "test_legacy_webui_extended.jl"], [:run_legacy_webui_extended_tests]),
     TestGroup("legacy_dtf_importer", ["extended/test_dtf_importer.jl", "extended/test_legacy_dtf_importer.jl"], [:run_legacy_dtf_importer_tests]),
     TestGroup("legacy_dtf_matpower_export_validation_example", ["extended/test_dtf_matpower_export_validation_example.jl", "extended/test_legacy_dtf_matpower_export_validation_example.jl"], [:run_legacy_dtf_matpower_export_validation_example_tests]),
-    TestGroup("legacy_configuration_coverage", ["test_configuration_coverage.jl", "test_legacy_configuration_coverage.jl"], [:run_legacy_configuration_coverage_tests]),
-    TestGroup("legacy_net_cache", ["test_legacy_net_cache.jl"], [:run_legacy_net_cache_tests]),
-    TestGroup("legacy_topology_validation", ["test_legacy_topology_validation.jl"], [:run_legacy_topology_validation_tests]),
     TestGroup("legacy_state_estimation", ["test_state_estimation.jl", "test_legacy_state_estimation.jl"], [:run_legacy_state_estimation_tests]),
-    TestGroup("legacy_testgrid", ["testgrid.jl", "test_legacy_testgrid.jl"], [:run_legacy_testgrid_tests]),
     TestGroup("legacy_measurement_table", ["test_measurement_table.jl", "test_legacy_measurement_table.jl"], [:run_legacy_measurement_table_tests]),
     # --- legacy testsets (appended)
 ]
-# Experimental large-case comparison tooling is excluded from every profile.
 
 # The profiles. `fast` is the pull-request gate: results against an
 # independent truth, nothing else, and it stays short on purpose;
@@ -239,10 +226,10 @@ const TEST_GROUPS = TestGroup[
 # (tools/run_gates.sh docs), not a test profile.
 const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :fast => ["docstrings", "api_smoke", "hand_calculations", "matpower_header", "entsoe_sv", "openloadflow"],
-    :pf => ["core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "pv_voltage_residuals", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "auto_powerflow", "short_circuit", "parallel_foundation", "contingency", "scenarios", "controls", "core_model_extended", "contingency_extended", "scenario_engine", "apslf"],
-    :se => ["state_estimation", "observability", "measurement_table"],
+    :pf => ["core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "auto_powerflow", "short_circuit", "parallel_foundation", "contingency", "scenarios", "controls", "core_model_extended", "contingency_extended", "scenario_engine", "apslf"],
+    :se => ["state_estimation", "observability", "topology_validation", "measurement_table"],
     :config => ["configuration", "configuration_docs", "repository_hygiene"],
-    :webui => ["webui", "webui_extended"],
+    :webui => ["webui", "webui_extended", "webui_state_estimation"],
     # --- extd: the service layer and the shipped demo cases
     :extd => ["programmatic_api", "programmatic_api_extended", "demo_cases"],
     # --- cgmes and formats: the former adapters profile, by importer family

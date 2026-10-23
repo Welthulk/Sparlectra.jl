@@ -14,8 +14,8 @@
 
 # file: test/test_phase_tap_changer_model.jl
 # purpose: unit tests for PhaseTapChangerModel: constructor validation,
-#          calcPhaseTapAngleRatio for the symmetrical and asymmetrical kinds,
-#          calcPhaseTapReactance, and DTF tap-formula equivalence
+#          calcPhaseTapAngleRatio for the symmetrical and asymmetrical kinds
+#          and calcPhaseTapReactance
 
 function run_phase_tap_changer_model_tests()
   @testset "PhaseTapChangerModel constructor validation" begin (function ()
@@ -90,54 +90,5 @@ function run_phase_tap_changer_model_tests()
     alpha_mid_asym = calcPhaseTapAngleRatio(m_asym_x; step = 5).effective_shift_deg
     expected_mid_asym = 0.15 + (0.3 - 0.15) * (tand(alpha_mid_asym) / tand(alphamax_asym))^2
     @test isapprox(calcPhaseTapReactance(m_asym_x, alpha_mid_asym), expected_mid_asym; atol = 1e-12)
-  end)() end
-
-  @testset "DTF _dtf_effective_transformer_tap: longitudinal range and added angle" begin (function ()
-    nominal_voltages_kv = [110.0]
-    from_bus = Sparlectra.DTFImporter.DTFBus("", 1, 1, 1, "PV", 110.0, 0.0, 0.0, 0.0, 10.0, 2.0, -5.0, 5.0)
-    to_bus = Sparlectra.DTFImporter.DTFBus("", 2, 2, 1, "SLACK", 110.0, 0.0, 0.0, 0.0, 20.0, 3.0, -10.0, 10.0)
-    longitudinal_range_percent = 12.0
-    added_voltage_angle_deg = 15.0
-    max_tap_step = 8
-    actual_tap_step = 3
-    control = Sparlectra.DTFImporter.DTFTransformerControl(
-      "", 1, "PV", "SLACK", "A", "", "PV", "SLACK",
-      110.0, 110.0, longitudinal_range_percent, added_voltage_angle_deg, max_tap_step, actual_tap_step,
-      nothing, nothing, nothing,
-    )
-    case = Sparlectra.DTFImporter.DTFCase(
-      "synthetic_phase_tap",
-      100.0,
-      Sparlectra.DTFImporter.DTFParams("", Float64[]),
-      ["synthetic_phase_tap"],
-      nominal_voltages_kv,
-      Sparlectra.DTFImporter.DTFSize("", 2, 1, 0, 1, "SLACK"),
-      [Sparlectra.DTFImporter.DTFBranch("", 1, 'T', 1, "A", "PV", "SLACK", 1.21, 6.05, 0.0, 0.0, nothing)],
-      Sparlectra.DTFImporter.DTFCompensation[],
-      [control],
-      [from_bus, to_bus],
-      Sparlectra.DTFImporter.DTFOutage[],
-      Sparlectra.DTFImporter.DTFTrailingRecord[],
-    )
-    branch = only(case.branches)
-
-    result = Sparlectra.DTFImporter._dtf_effective_transformer_tap(case, branch, control, from_bus, to_bus)
-
-    tap_fraction_old = (longitudinal_range_percent / 100.0) * actual_tap_step / max_tap_step
-    tap_result_old = calcSkewAngleTap(tap_fraction = tap_fraction_old, skew_angle_deg = added_voltage_angle_deg)
-
-    @test result.model == :skew_angle
-    @test result.tap_fraction == tap_fraction_old
-    @test result.shift_deg == tap_result_old.effective_shift_deg
-    @test result.effective_complex == tap_result_old.regulating_vector
-    @test result.ratio == tap_result_old.effective_ratio # base_ratio == 1.0 for the default :neutral_one transformer_ratio_mode
-  end)() end
-
-  @testset "PowerTransformerWinding without phase_taps defaults to nothing" begin (function ()
-    w_kw = PowerTransformerWinding(Vn_kV = 110.0)
-    @test isnothing(w_kw.phase_taps)
-
-    w_pos = PowerTransformerWinding(110.0, 0.0, 0.12)
-    @test isnothing(w_pos.phase_taps)
   end)() end
 end

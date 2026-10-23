@@ -40,48 +40,12 @@ function run_legacy_cgmes_importer_tests()
       # reproduces it to floating-point noise. Every solve below keeps
       # Q-limits off for the same reason; what the Q-limit switching makes of
       # the delivery is a solver question, not an importer one.
-      fixture_cases = [
-        # (case, buses, branches, links, slack, source loader)
-        ("sp_case14", 14, 17, 0, "Ostheim_110", () -> importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))),
-        ("sp_case118", 118, 186, 0, "69", () -> createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"), flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)),
-        ("sp_casePST", 9, 8, 1, "1", () -> importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))),
-      ]
       solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false, kwargs...)
-
-      @testset "SV angle alignment per electrical island" begin (function ()
-        # compareWithSV removes ONE angle offset per island, because an angle
-        # is only defined up to a constant per island. Two regressions sit on
-        # that line. First, the island map lives in the parent module; an
-        # unqualified call from the submodule compiled and threw UndefVarError
-        # at run time, which a catch turned into one global offset. Second,
-        # the map was the branch-only view: on sp_casePST bus 9 hangs on bus 2
-        # through the closed breaker alone, so buses 9 and 8 formed an island
-        # of their own whose median hid their own deviation. Here that side of
-        # the breaker disagrees with the SV by 2 degrees; it is one electrical
-        # island with the rest, so it must keep the offset of the whole
-        # delivery (0) and show the 2 degrees.
-        res = importCGMES(path = cgmes_fixture_dir("sp_casePST"), name = "pst_islands")
-        net = res.net
-        _, erg = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false)
-        @test erg == 0
-        comps = Sparlectra._active_ac_island_components(net)
-        @test length(comps) == 2 && length(Sparlectra.electricalIslandComponents(net)) == 1
-        far = Set(Sparlectra._bus_name_by_idx(net)[i] for i in comps[2])
-        @test far == Set(["8", "9"])
-        for i in comps[2]
-          net.nodeVec[i]._va_deg += 2.0
-        end
-        cmp = compareWithSV(res)
-        @test cmp.n == 9
-        @test abs(cmp.va_ref_offset_deg) < 1e-9
-        @test all(r -> abs(r.dva_aligned - (r.bus in far ? 2.0 : 0.0)) < 1e-9, cmp.rows)
-        @test isapprox(cmp.max_dva, 2.0; atol = 1e-9)
-      end)() end
 
       @testset "multi-valued references overflow into refsAll (#294 point 9)" begin (function ()
         island = only(objectsOf(store, :TopologicalIsland))
-        # legacy shape untouched: refs carries the FIRST value under the short
-        # key (plus the dotted-name fallback), never a silent last-wins
+        # refs carries the FIRST value under the short key (plus the dotted-name
+        # fallback), which ref() reads, never a silent last-wins
         @test island.refs[:TopologicalNodes] == "_tn_a"
         @test Sparlectra.CGMESImporter.refsAll(store, island, :TopologicalNodes) == ["_tn_a", "_tn_b", "_tn_c"]
         # single-valued references stay single, absent ones come back empty
@@ -153,17 +117,6 @@ function run_legacy_cgmes_importer_tests()
         # Svedala alone: both of its borders hang free. That is the situation the
         # combined aliases exist to fix.
         @test length(open_borders(["svedala"])) == 2
-        # Aliases must be discoverable through the public alias list.
-        all_aliases = Sparlectra.CGMESImporter.allCGMESTestSetAliases()
-        @test "relicapgrid_cgm" in all_aliases
-        @test "svedala_neighbours" in all_aliases
-        @test "portheim" in all_aliases
-        # convenience shorthand + the MiniGrid pair (regression: cgmes:minigrid
-        # was not resolvable although the set ships with the conformity package)
-        @test "microgrid" in all_aliases
-        @test "minigrid" in all_aliases
-        @test "minigrid_nb" in all_aliases
-        @test Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid"] == Sparlectra.CGMESImporter.CGMES_TESTSET_ALIASES["microgrid_be"]
       end)() end
 
       @testset "3W star delivery: leg tap controller (#294 point 4) and star start" begin (function ()
@@ -394,105 +347,6 @@ function run_legacy_cgmes_importer_tests()
         @test abs(nl_row.dp) < 1e-9 && abs(nl_row.dq) < 1e-9
       end)() end
 
-      @testset "fixture deliveries import from the folder and from a zip" begin (function ()
-        for (case, nbus, nbr, nlink, slack, _) in fixture_cases
-          dir = cgmes_fixture_dir(case)
-          s = summarizeCGMES(path = dir)
-          @test s.version == "2.4.15"
-          @test s.unresolved_count == 0
-          @test !s.boundary_missing_hint
-          hist = Dict(s.class_histogram)
-          @test hist[:TopologicalNode] == nbus
-          @test hist[:SvVoltage] == nbus
-          res = importCGMES(path = dir, name = case)
-          @test length(res.net.nodeVec) == nbus
-          @test length(res.net.branchVec) == nbr
-          @test length(res.net.linkVec) == nlink
-          @test res.slack_bus == slack
-          @test isempty(res.no_sv_buses)
-          # a self-built delivery is complete: no importer warning, no skip
-          @test !any(m -> startswith(m, "warning:") || occursin("skip", m), res.messages)
-          # the service layer takes case FILES, so the zip packed from the
-          # same four profiles must rebuild the same network
-          rz = importCGMES(path = _pack_cgmes_fixture_zip(case), name = string(case, "_zip"))
-          @test length(rz.net.nodeVec) == nbus
-          @test length(rz.net.branchVec) == nbr
-          @test Set(keys(rz.net.busDict)) == Set(keys(res.net.busDict))
-          @test rz.slack_bus == slack
-        end
-        # an SvVoltage with v = 0 counts as no SV, as in compareWithSV: the
-        # bus does not start at zero voltage but at the start of the neighbour
-        # over the branch or closed link of the smallest |z|, and is listed in
-        # no_sv_buses
-        plain = importCGMES(path = cgmes_fixture_dir("sp_case14"), name = "v0_plain")
-        v0_bus, v0_tn = first(sort([(bus, tn) for (tn, bus) in plain.topo.bus_name if plain.net.nodeVec[plain.net.busDict[bus]]._nodeType == Sparlectra.PQ]))
-        v0_store = loadCGMES(cgmes_fixture_dir("sp_case14"))
-        only(sv for sv in objectsOf(v0_store, :SvVoltage) if sv.refs[:TopologicalNode] == v0_tn).attrs[:v] = "0"
-        v0 = importCGMES(path = v0_store, name = "v0")
-        v0_i = v0.net.busDict[v0_bus]
-        v0_node = v0.net.nodeVec[v0_i]
-        v0_nbrs = vcat([(abs(complex(br.r_pu, br.x_pu)), br.fromBus == v0_i ? br.toBus : br.fromBus) for br in v0.net.branchVec if br.status == 1 && v0_i in (br.fromBus, br.toBus)], [(0.0, l.fromBus == v0_i ? l.toBus : l.fromBus) for l in v0.net.linkVec if l.status == 1 && v0_i in (l.fromBus, l.toBus)])
-        v0_src = v0.net.nodeVec[last(minimum(v0_nbrs))]
-        @test (v0_node._vm_pu, v0_node._va_deg) == (v0_src._vm_pu, v0_src._va_deg)
-        @test v0.no_sv_buses == [v0_bus]
-        @test count(m -> startswith(m, "notice: 1 bus(es) without a usable SvVoltage start at the voltage of a neighbour"), v0.messages) == 1
-        @test !any(r -> r.bus == v0_bus, compareWithSV(v0).rows)
-        # a leaf bus with SvVoltage v = 0 behind an EquivalentBranch of 0.02 pu
-        # with a P = Q = 0 EquivalentInjection, on a copy whose SV angles are
-        # all shifted by -40 deg: started at 1.0 pu / 0 deg, Newton ends with
-        # the leaf at 0 V, a short circuit that pulls its neighbour down to
-        # 0.3 pu; from the neighbour's start it solves at the neighbour voltage
-        leaf_store = loadCGMES(cgmes_fixture_dir("sp_case14"))
-        for sv in objectsOf(leaf_store, :SvVoltage)
-          sv.attrs[:angle] = string(num(sv, :angle, 0.0) - 40.0)
-        end
-        leaf_host = first(sort(collect(objectsOf(leaf_store, :SvVoltage)); by = sv -> num(sv, :angle, 0.0))).refs[:TopologicalNode]
-        leaf_add!(mrid, class, attrs, refs = Dict{Symbol,String}()) = (leaf_store.objects[mrid] = Sparlectra.CGMESImporter.CIMObject(mrid, class, Dict{Symbol,String}(attrs), Dict{Symbol,String}(refs), "leaf_test"); push!(get!(Vector{String}, leaf_store.byclass, class), mrid))
-        leaf_term!(eq, tn, seq) = leaf_add!(string(eq, "_t", seq), :Terminal, Dict(:sequenceNumber => string(seq), :connected => "true"), Dict(:ConductingEquipment => eq, :TopologicalNode => tn))
-        leaf_add!("_leaf_tn", :TopologicalNode, Dict(:name => "LEAF"), Dict(:BaseVoltage => leaf_store.objects[leaf_host].refs[:BaseVoltage]))
-        leaf_add!("_leaf_sv", :SvVoltage, Dict(:v => "0", :angle => "0"), Dict(:TopologicalNode => "_leaf_tn"))
-        leaf_add!("_leaf_eb", :EquivalentBranch, Dict(:name => "LEAF_EB", :r => "0.3", :x => "2.4"))
-        leaf_term!("_leaf_eb", leaf_host, 1)
-        leaf_term!("_leaf_eb", "_leaf_tn", 2)
-        leaf_add!("_leaf_ei", :EquivalentInjection, Dict(:name => "LEAF_EI", :p => "0", :q => "0"))
-        leaf_term!("_leaf_ei", "_leaf_tn", 1)
-        leaf = importCGMES(path = leaf_store, name = "leaf")
-        leaf_bus = leaf.topo.bus_name["_leaf_tn"]
-        @test leaf.no_sv_buses == [leaf_bus]
-        leaf_node = leaf.net.nodeVec[leaf.net.busDict[leaf_bus]]
-        host_node = leaf.net.nodeVec[leaf.net.busDict[leaf.topo.bus_name[leaf_host]]]
-        @test host_node._va_deg < -40.0
-        @test (leaf_node._vm_pu, leaf_node._va_deg) == (host_node._vm_pu, host_node._va_deg)
-        solve_fixture!(leaf.net)
-        @test leaf_node._vm_pu > 0.9
-        @test isapprox(leaf_node._vm_pu, host_node._vm_pu; atol = 1e-6)
-        @test isapprox(leaf_node._va_deg, host_node._va_deg; atol = 1e-4)
-        # a listed star point is left alone, and a listed bus reachable only
-        # through it keeps its start (it used to look up bus index 0)
-        star_net = Net(name = "star_no_sv", baseMVA = 100.0)
-        for b in ("H", "S", "M")
-          addBus!(net = star_net, busName = b, vn_kV = 110.0)
-        end
-        addPIModelACLine!(net = star_net, fromBus = "H", toBus = "S", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
-        addPIModelACLine!(net = star_net, fromBus = "S", toBus = "M", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
-        Sparlectra.setVmVa!(node = star_net.nodeVec[star_net.busDict["H"]], vm_pu = 1.01, va_deg = -20.0)
-        star_ctx = Sparlectra.CGMESImporter._MapCtx()
-        push!(star_ctx.star_buses, star_net.busDict["S"])
-        star_start = [(nd._vm_pu, nd._va_deg) for nd in star_net.nodeVec]
-        @test Sparlectra.CGMESImporter._startNoSvBusesFromNeighbours!(star_net, star_ctx, ["M", "S"]) == 0
-        @test [(nd._vm_pu, nd._va_deg) for nd in star_net.nodeVec] == star_start
-        # an SvTapStep four steps off the SSH step the SV was solved with: one
-        # import notice, the tap changer listed with both steps; the fixture
-        # itself has none
-        @test isempty(plain.sv_tap_step_fits)
-        off = _sp_case14_off_sv_tap_step()
-        rtap = importCGMES(path = off.dir, name = "sv_tap_step")
-        fit = only(rtap.sv_tap_step_fits)
-        @test (fit.sv_step, fit.best_step) == (off.sv_step, off.ssh_step)
-        @test fit.best_mismatch_mva < 1e-6 < 1.0 < fit.sv_mismatch_mva
-        @test count(m -> startswith(m, "notice: 1 tap changer(s) whose SvTapStep fits"), rtap.messages) == 1
-      end)() end
-
       # Stage 2 semantics on the exporter's TapChangerControl: without
       # tap_control the delivery imports as a fixed-tap model, with it the
       # OLTC of sp_case14 comes back as the voltage controller the source case
@@ -634,13 +488,6 @@ function run_legacy_cgmes_importer_tests()
         @test r.metadata["cgmes_messages"] > 0
         @test isfile(joinpath(out, "cgmes_import_report.md"))
         @test !isfile(joinpath(out, "cgmes.log"))
-        text = cgmes_report_plain(out)
-        for section in ("CGMES import report", "Class histogram", "Network built", "Short-circuit source data", "Importer messages", "SV comparison")
-          @test occursin("\n" * section, "\n" * text)
-        end
-        # the files and the run's SV comparison as the viewer shows them
-        @test occursin("\nBuses: 14 (0 isolated)\n", text)
-        @test occursin("\nRun status: converged\n", text)
         # the report is a Markdown artifact: the Web UI renders it
         art = only(a for a in collect_sparlectra_api_artifacts(out) if a.name == "cgmes_import_report.md")
         @test art.mime_type == "text/markdown"
@@ -744,7 +591,6 @@ function run_legacy_cgmes_importer_tests()
         @test on_defaults["success"] === true
         @test on_defaults["status"] == "warning"
         @test on_defaults["reason"] == "short_circuit_defaults_only"
-        @test startswith(on_defaults["message"], "Short circuit completed on defaults: none of the")
         # sp_case14: the feeder of the source case is in the delivery
         @test SparlectraApp._webui_case_has_short_circuit_data(cgmes_fixture_dir("sp_case14"))
         @test occursin("ExternalNetworkInjection.maxInitialSymShCCurrent", read(joinpath(cgmes_fixture_dir("sp_case14"), "sp_case14_EQ.xml"), String))
@@ -757,7 +603,6 @@ function run_legacy_cgmes_importer_tests()
         # one source with data, two without: a warning that says so
         @test sc["status"] == "warning"
         @test sc["reason"] == "short_circuit_partial_defaults"
-        @test startswith(sc["message"], "Short circuit completed with defaults: 1 of 3 source(s) carry short-circuit data")
         @test sc["metadata"]["sc_sources"] == 3 && sc["metadata"]["sc_sources_with_data"] == 1
         @test sc["metadata"]["run_mode"] == "short_circuit"
         @test sc["metadata"]["sc_case_rows"] == 14

@@ -213,6 +213,9 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("state_estimation.max_eliminations", "se_max_eliminations", Int, :number, 3, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_update_shunts", Bool, :checkbox, true, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_tap_estimation", Bool, :checkbox, true, (), :basic, :case, true),
+  # the impedance rule of the released regulators; a config key (case
+  # scope), so it rides in config_overrides like the other config fields
+  WebUIOptionSpec("state_estimation.tap_estimation.impedance_correction", "se_tap_impedance_correction", String, :select, "auto", ("auto", "off"), :expert, :case, true),
   WebUIOptionSpec("state_estimation.report_residual_correlation", "se_report_correlation", Bool, :checkbox, true, (), :basic, :case, true),
   # default ON: a noise-free set puts J near 0 instead of near dof, which
   # reads like a broken statistic (the low-band note explains it, but the

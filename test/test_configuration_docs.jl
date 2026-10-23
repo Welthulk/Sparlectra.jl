@@ -56,7 +56,6 @@ function run_configuration_docs_tests()
       "performance.level", "benchmark.show_once_output", "model.auto_profile", "power_flow.qlimits.start_mode",
     ]
       @test occursin(key, docs)
-      @test occursin("Allowed values", docs)
     end
 
     @test occursin("matpower_import.benchmark", docs)

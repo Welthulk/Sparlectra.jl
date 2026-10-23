@@ -130,7 +130,6 @@ export
   DynamicDataError,                      # Thrown when a DynamicData value breaks the rule of its field.
   AbstractVoltageDependentController,
   VoltageCharacteristic,                 # Q(U)/P(U) characteristic: points plus linear, spline or polynomial interpolation.
-  PiecewiseLinearCharacteristic,         # Former name of VoltageCharacteristic, alias for one minor release.
   QUController,
   PUController,
   VoltageAdjustConfig,
@@ -186,6 +185,7 @@ export
   PowerFlowConfig,
   ControlConfig,
   ObservabilityConfig,
+  TapEstimationConfig,                    # state_estimation.tap_estimation settings (impedance_correction).
   StateEstimationConfig,
   MatpowerImportConfig,
   MatpowerExportConfig,                   # MATPOWER export settings (write_solution).
@@ -598,6 +598,9 @@ export
   classify_final_q_limits,                # The final Q-limit check every enforcement mode ends with (two thresholds).
   final_q_check_line,                     # That check in one line (text report, run.log, metadata, result page).
   printQVCharacteristicCheck,             # Print that check; part of the result print and the run report.
+  qlimitStabilityReport,                  # Stability conditions (6)/(7) of Zhao et al. at every voltage-regulated bus.
+  qlimit_stability_line,                  # That check in one line (result print, run.log, metadata, result page).
+  printQLimitStabilityLine,               # Print that line; part of the result print.
   validate_q_limit_signs!,                # Validate Q-limit sign conventions.
   logQLimitHit!,
   lastQLimitIter,
@@ -670,7 +673,7 @@ export
   addImagMeasurement!,                    # Add current-magnitude measurement (ampere, auxiliary): branch or shunt-bay variant (SE phases 1/2).
   addIaMeasurement!,                      # Add PMU current-phasor angle measurement (degrees, alpha-referenced like VaMeas).
   addCurrentPhasorMeasurement!,           # Add a full PMU current phasor as the ImagMeas + IaMeas pair.
-  setTapEstimation!,                      # Release transformer tap positions as SE states (cascade model).
+  setTapEstimation!,                      # Release transformer tap changers as SE states (state = electrical step).
   calcMachineTrafoTapFromSE,              # Back-calculate a machine (GSU) transformer tap after an SE (mutually exclusive with a release).
   validate_topology,                      # Stage-1 topology pre-checks (advisory: findings only, never a mutation).
   test_topology_hypotheses,               # Stage-3 status-toggle hypothesis test on working copies (recommendations only).
@@ -867,6 +870,7 @@ include("stateestimation/measurements.jl")
 include("stateestimation/measurement_table.jl")
 include("stateestimation/measurement_convert.jl")
 include("numerics/takahashi.jl")
+include("stateestimation/tap_changer_data.jl")
 include("stateestimation/tap_estimation.jl")
 include("stateestimation/state_estimation.jl")
 include("stateestimation/topology_validation.jl")

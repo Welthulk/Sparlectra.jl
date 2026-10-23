@@ -578,7 +578,8 @@ _set_auto_pf_record!(net::Net, rec) = lock(() -> (_AUTO_PF_RECORDS[net] = rec), 
     auto_pf_record(net) -> Union{Nothing,NamedTuple}
 
 The auto-mode decision/escalation record of the most recent auto run on
-this net (`nothing` when the run was manual).
+this net (`nothing` when the run was manual). `final_qlimits` is the
+Q-limit configuration of the attempt that produced the result.
 """
 auto_pf_record(net::Net) = lock(() -> get(_AUTO_PF_RECORDS, net, nothing), _AUTO_PF_RECORDS_LOCK)
 
@@ -750,6 +751,9 @@ function _execute_auto_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; pe
     final_strategy = final_rescue,
     hints = hints,
     converged = execution.erg == 0,
+    # the Q-limit configuration of the attempt that produced the result
+    # (stage locks, handling switched off); the stability check reads it
+    final_qlimits = pf.qlimits,
   ))
   return execution
 end

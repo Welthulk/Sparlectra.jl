@@ -49,7 +49,8 @@ const WEBUI_HELP_TOPICS = Dict(
   "webui.power_flow_mode" => (label = "Auto mode", hint = "Pick start-value, step-control and Q-limit strategy from the network, retrying with stronger strategies on non-convergence. Explicit options below always win.", doc = "powerflow_configuration/#pf-solver-core"),
   "webui.se_generator_gross_count" => (label = "Generator: bad data rows", hint = "How many measurement rows get the gross error; the seed decides which rows. Used only when bad data k is above 0.", doc = "state_estimation_measurements/#se-generator-gross-error"),
   "webui.se_generator_tap_count" => (label = "Generator: tap deviation transformers", hint = "At most this many transformers get the tap deviation; the seed picks them among transformers the tap estimation can absorb. Unused when the deviation is 0.", doc = "state_estimation_measurements/#se-generator-tap-error"),
-  "webui.se_tap_estimation" => (label = "Estimate transformer taps", hint = "Release every in-service ratio tap changer as an extra estimation state, fix it to the nearest mechanical step and rerun. Machine transformers stay untouched.", doc = "state_estimation_extensions/#se-tap-estimation"),
+  "state_estimation.tap_estimation.impedance_correction" => (label = "Tap impedance per step", hint = "auto: a released regulator moves r and x with its step where the model has per-step data (tap table, xMin/xMax curve, TapStepImpedance). off: start impedance.", doc = "state_estimation_extensions/#se-tap-estimation"),
+  "webui.se_tap_estimation" => (label = "Estimate transformer taps", hint = "Release every in-service tap changer (ratio and phase) as an estimation state and fix it to the nearest step. On by default when the case has tap changers.", doc = "state_estimation_extensions/#se-tap-estimation"),
   "webui.se_generator_sigmas" => (label = "Generator: measurement sigmas (U, I, P, Q)", hint = "Measurement accuracy per quantity in percent of the measured value, like a transducer class; written into the sigma column of every row and used for the noise.", doc = "state_estimation_measurements/#se-generator-sigmas"),
   "webui.casefile" => (label = "MATPOWER case file", hint = "Choose a case from the list, or type a bare case name or a local path and press Enter to download or copy it into the case directory.", doc = "webui_reference/#webui-form-options"),
   "webui.config_file" => (label = "Configuration template file", hint = "Configuration YAML the run starts from. Form values become per-run overrides on top of it; the file itself stays unchanged.", doc = "webui_reference/#webui-form-options"),
@@ -74,7 +75,7 @@ const WEBUI_HELP_TOPICS = Dict(
   "power_flow.qlimits.start_iter" => (label = "First switching iteration", hint = "Newton iteration from which PV to PQ switching may run. Later values let the solve settle first; the classic modes switch between solves and ignore it.", doc = "powerflow_configuration/#pf-qlimits"),
   "power_flow.qlimits.start_mode" => (label = "Switching start rule", hint = "iteration starts at the first switching iteration, auto once the Q change falls below the auto threshold, iteration_or_auto at whichever comes first.", doc = "powerflow_configuration/#pf-qlimits"),
   "power_flow.qlimits.auto_q_delta_pu" => (label = "Auto start threshold (pu)", hint = "Reactive-power change per iteration below which the auto start rule lets switching begin. Used by the start rules auto and iteration_or_auto.", doc = "powerflow_configuration/#pf-qlimits"),
-  "power_flow.qlimits.hysteresis_pu" => (label = "Q hysteresis (pu)", hint = "Margin beyond a Q limit before a machine switches, and the overshoot the final check still counts as within limits. Larger values damp chattering.", doc = "powerflow_configuration/#pf-qlimits"),
+  "power_flow.qlimits.hysteresis_pu" => (label = "Q hysteresis (pu)", hint = "Q overshoot before a switch (classic modes, active_set with delayed_switch). active_set with lock_pq (default) switches at 1e-4 pu. Also the final-check margin.", doc = "powerflow_configuration/#pf-qlimits"),
   "power_flow.qlimits.cooldown_iters" => (label = "Cooldown iterations", hint = "Iterations a bus waits after a switch before it may switch again. Reduces back-and-forth on machines close to a limit.", doc = "powerflow_configuration/#pf-qlimits"),
   "power_flow.qlimits.reenable_v_hyst_pu" => (label = "Release voltage margin (pu)", hint = "Voltage margin for releasing a clamped machine back to PV: at Qmax when Vm exceeds Vset by it, at Qmin when Vm falls below Vset by it.", doc = "powerflow_configuration/#pf-qlimits"),
   "power_flow.qlimits.trace_buses" => (label = "Traced buses", hint = "Comma-separated bus numbers of the case file whose switching events are written in detail to the Q-limit trace. Empty traces nothing.", doc = "powerflow_configuration/#pf-qlimits"),
@@ -213,6 +214,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "se_generator_gross_count" => "webui.se_generator_gross_count",
   "se_generator_tap_count" => "webui.se_generator_tap_count",
   "se_tap_estimation" => "webui.se_tap_estimation",
+  "se_tap_impedance_correction" => "state_estimation.tap_estimation.impedance_correction",
   # the sigma table of the SE section (se_sigma_lvl_* cells; the legend
   # carries the help link)
   "se_sigma_lvl_n" => "state_estimation.sigma_by_voltage_level",

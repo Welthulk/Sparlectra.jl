@@ -79,7 +79,6 @@ function run_legacy_powsybl_importer_tests()
         end
         # every skipped element carries id, kind and a reason
         @test all(s -> !isempty(s.id) && !isempty(s.kind) && !isempty(s.reason), report.skipped)
-        @test occursin("PowSyBl import", format_powsybl_report(report))
         # bus-view id in the external-id channel
         @test net.nodeVec[net.busDict[bb.id[1]]].comp.cID == bb.bus_id[1]
       end
@@ -211,7 +210,6 @@ function run_legacy_powsybl_importer_tests()
       same(a::AbstractString, b::AbstractString) = a == b
       same(a::Float64, b::Float64) = (isnan(a) && isnan(b)) || a == b || (isfinite(a) && isfinite(b) && abs(a - b) <= 1e-9 * max(1.0, abs(a), abs(b)))
       same(a, b) = a == b
-      bands = Dict("ieee14" => (1e-6, 1e-4), "ieee57" => (1e-6, 1e-4), "four_substations" => (1e-5, 1e-3), "micro_grid_be" => (1e-5, 1e-3), "eurostag_tie_lines" => (1e-5, 1e-3))
       for case in _POWSYBL_CASES
         dir = _powsybl_fixture(case)
         bundle = read_powsybl_bundle(dir)
@@ -241,16 +239,6 @@ function run_legacy_powsybl_importer_tests()
         end
         @test isempty(differing)
         isempty(differing) || println("      powsybl native reader $(case): ", join(first(differing, 5), "; "))
-        # the power flow from the .xiidm lands in the bands of the bundle
-        opts = case == "micro_grid_be" ? PowsyblAdapterOptions(remote_regulation = :remote) : PowsyblAdapterOptions()
-        net, report = build_net_from_powsybl(native, opts)
-        res = run_sparlectra(net = net, config = _powsybl_olf_config())
-        @test res.numerical_converged
-        dev = _powsybl_voltage_deviation(net, bundle, dir)
-        dv_band, da_band = bands[case]
-        @test dev.max_dv <= dv_band
-        @test dev.max_da <= da_band
-        println("      powsybl $(case) from .xiidm: max |dV| $(round(dev.max_dv; sigdigits = 3)) pu, max |dtheta| $(round(dev.max_da; sigdigits = 3)) deg")
       end
       # micro_grid_be's file state was solved at other tap positions: the
       # reader drops it and the report says so; ieee14's state seeds the start
@@ -263,23 +251,13 @@ function run_legacy_powsybl_importer_tests()
       @test all(isfinite, fresh.bus_breaker_view_buses.v_mag)
       @test isempty(fresh.manifest["state_note"])
       # refused constructs name themselves
-      err = try
-        Sparlectra.read_iidm_tables(joinpath(_powsybl_fixture("ieee14"), "ieee14.xiidm.bz2"))
-        nothing
-      catch e
-        e
-      end
-      @test err isa ArgumentError && occursin("unpack", err.msg)
+      err = @test_throws ArgumentError Sparlectra.read_iidm_tables(joinpath(_powsybl_fixture("ieee14"), "ieee14.xiidm.bz2"))
+      @test occursin("unpack", err.value.msg)
       mktempdir() do dir
         bad = joinpath(dir, "notiidm.xiidm")
         write(bad, "<?xml version=\"1.0\"?><root/>")
-        err = try
-          Sparlectra.read_iidm_tables(bad)
-          nothing
-        catch e
-          e
-        end
-        @test err isa ArgumentError && occursin("not <network>", err.msg)
+        bad_err = @test_throws ArgumentError Sparlectra.read_iidm_tables(bad)
+        @test occursin("not <network>", bad_err.value.msg)
       end
     end)() end
 

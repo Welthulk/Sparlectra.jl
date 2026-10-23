@@ -13,61 +13,63 @@
 # limitations under the License.
 
 # file: test/test_tap_changer_model.jl
-# purpose: unit tests for the ratio tap-changer model: convention defaults,
-#          calcRatioTapCorrection, calcRatioTapRange against the previous
-#          inline branch.jl math, and a calcTransformerRatio regression
+# purpose: hand calculations for the ratio tap-changer model: neutral voltage,
+#          calcRatioTapCorrection, calcRatioTapRange, the Branch tap limits
+#          and calcTransformerRatio on a tapped 2WT
 
 function run_tap_changer_model_tests()
-  @testset "AbstractTapChangerModel supertype" begin (function ()
-    @test PowerTransformerTaps <: AbstractTapChangerModel
-  end)() end
-
-  @testset "convention field default and validation" begin (function ()
-    taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
-    @test taps.convention == :neutral_relative
+  @testset "PowerTransformerTaps: convention check and neutral voltage" begin (function ()
     @test_throws ArgumentError PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1, convention = :bogus)
+
+    # neutralU from the ratio: 20 kV * 1.05 = 21 kV
+    taps_ratio = PowerTransformerTaps(Vn_kV = 20.0, step = 0, lowStep = -2, highStep = 2, neutralStep = 0, voltageIncrement_kV = 0.4, neutralU_ratio = 1.05)
+    @test isapprox(taps_ratio.neutralU, 21.0; atol = 1e-12)
+    @test isapprox(taps_ratio.neutralU_ratio, 1.05; atol = 1e-12)
+    # ratio from neutralU: 19.5 kV / 20 kV = 0.975
+    taps_neutral = PowerTransformerTaps(Vn_kV = 20.0, step = 0, lowStep = -2, highStep = 2, neutralStep = 0, voltageIncrement_kV = 0.4, neutralU = 19.5)
+    @test isapprox(taps_neutral.neutralU_ratio, 0.975; atol = 1e-12)
   end)() end
 
-  @testset "calcRatioTapCorrection" begin (function ()
+  @testset "ratio tap hand calculations" begin (function ()
+    # 1.1 kV per step on 110 kV is 1 % per step, neutral step 1
     taps = PowerTransformerTaps(Vn_kV = 110.0, step = 2, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
-    @test isapprox(taps.tapStepPercent, 1.0; atol = 1e-12) # (1.1/110.0)*100
+    @test isapprox(taps.tapStepPercent, 1.0; atol = 1e-12)
 
+    # correction 1 + (n - n0) * 1 %
     @test isapprox(calcRatioTapCorrection(taps; step = taps.neutralStep), 1.0; atol = 1e-12)
+    @test isapprox(calcRatioTapCorrection(taps; step = 4), 1.03; atol = 1e-12)
+    @test isapprox(calcRatioTapCorrection(taps; step = -2), 0.97; atol = 1e-12)
+    @test isapprox(calcRatioTapCorrection(taps), 1.01; atol = 1e-12)   # default step = taps.step = 2
 
-    pos_corr = calcRatioTapCorrection(taps; step = 4)
-    @test isapprox(pos_corr, 1.0 + (4 - 1) * 1.0 / 100.0; atol = 1e-12)
+    # band from step -4 (1 - 5 %) to step 6 (1 + 5 %), 1 % per step
+    for (lo, hi) in ((-4, 6), (6, -4))   # the second is an inverted range (tapSign -1)
+      t = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = lo, highStep = hi, neutralStep = 1, voltageIncrement_kV = 1.1)
+      @test t.tapSign == (hi > lo ? 1 : -1)
+      r = calcRatioTapRange(t)
+      @test isapprox(r.tap_min, 0.95; atol = 1e-12)
+      @test isapprox(r.tap_max, 1.05; atol = 1e-12)
+      @test isapprox(r.tap_step, 0.01; atol = 1e-12)
+    end
 
-    neg_corr = calcRatioTapCorrection(taps; step = -2)
-    @test isapprox(neg_corr, 1.0 + (-2 - 1) * 1.0 / 100.0; atol = 1e-12)
+    # 110/20 kV 2WT with the taps on winding 1
+    tapped_2wt = function (step::Int)
+      t = PowerTransformerTaps(Vn_kV = 110.0, step = step, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
+      w1 = PowerTransformerWinding(110.0, 0.0, 0.12, 0.0, 0.0, 1.0, 0.0, 110.0, 100.0, t, true, nothing)
+      w2 = PowerTransformerWinding(20.0, 0.0, 0.0, 0.0, 0.0, nothing, 0.0, 20.0, 100.0, nothing, true, nothing)
+      return PowerTransformer(Sparlectra.getBranchComp(110.0, 1, 2, 1, "2WT"), true, w1, w2, nothing, Sparlectra.Ratio)
+    end
 
-    # default `step` keyword falls back to taps.step
-    @test isapprox(calcRatioTapCorrection(taps), 1.0 + (taps.step - taps.neutralStep) * taps.tapStepPercent / 100.0; atol = 1e-12)
+    # a Branch built on the tapped 2WT takes the same band
+    trafo = tapped_2wt(0)
+    br = Branch(branchIdx = 1, from = 1, to = 2, baseMVA = 100.0, branch = trafo, id = 1, ratio = 1.0, side = 1, vn_kV = 110.0, values_are_pu = true)
+    @test isapprox(br.tap_min, 0.95; atol = 1e-12)
+    @test isapprox(br.tap_max, 1.05; atol = 1e-12)
+    @test isapprox(br.tap_step, 0.01; atol = 1e-12)
+
+    # calcTransformerRatio at step 4: nominal ratio (110/20)/(110/20) = 1,
+    # divided by the correction 1.03
+    trafo4 = tapped_2wt(4)
+    @test trafo4.tapSideNumber == 1
+    @test isapprox(calcTransformerRatio(trafo4), 1.0 / 1.03; atol = 1e-12)
   end)() end
-
-  @testset "calcRatioTapRange: ratio band and step, including an inverted range" begin (function ()
-    taps = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = -4, highStep = 6, neutralStep = 1, voltageIncrement_kV = 1.1)
-    pu_per_step = taps.tapStepPercent / 100.0
-    expected_min = min(1.0 + (taps.lowStep - taps.neutralStep) * pu_per_step, 1.0 + (taps.highStep - taps.neutralStep) * pu_per_step)
-    expected_max = max(1.0 + (taps.lowStep - taps.neutralStep) * pu_per_step, 1.0 + (taps.highStep - taps.neutralStep) * pu_per_step)
-    expected_step = abs(pu_per_step)
-
-    result = calcRatioTapRange(taps)
-    @test isapprox(result.tap_min, expected_min; atol = 1e-12)
-    @test isapprox(result.tap_max, expected_max; atol = 1e-12)
-    @test isapprox(result.tap_step, expected_step; atol = 1e-12)
-
-    # inverted range: highStep < lowStep (tapSign == -1)
-    taps_inv = PowerTransformerTaps(Vn_kV = 110.0, step = 0, lowStep = 6, highStep = -4, neutralStep = 1, voltageIncrement_kV = 1.1)
-    @test taps_inv.tapSign == -1
-    pu_per_step_inv = taps_inv.tapStepPercent / 100.0
-    expected_min_inv = min(1.0 + (taps_inv.lowStep - taps_inv.neutralStep) * pu_per_step_inv, 1.0 + (taps_inv.highStep - taps_inv.neutralStep) * pu_per_step_inv)
-    expected_max_inv = max(1.0 + (taps_inv.lowStep - taps_inv.neutralStep) * pu_per_step_inv, 1.0 + (taps_inv.highStep - taps_inv.neutralStep) * pu_per_step_inv)
-    expected_step_inv = abs(pu_per_step_inv)
-
-    result_inv = calcRatioTapRange(taps_inv)
-    @test isapprox(result_inv.tap_min, expected_min_inv; atol = 1e-12)
-    @test isapprox(result_inv.tap_max, expected_max_inv; atol = 1e-12)
-    @test isapprox(result_inv.tap_step, expected_step_inv; atol = 1e-12)
-  end)() end
-
 end

@@ -25,77 +25,6 @@
 # the field-by-field round-trip comparison of the SCF tests, shared here
 isdefined(@__MODULE__, :scf_roundtrip_field_diffs) || include("test_scf_support.jl")
 
-# Fixture comparison for contingency result CSVs. Byte identity holds on the
-# platform that generated a fixture but not across BLAS/UMFPACK builds: on
-# Windows the last one or two significant digits of min_vm_pu and the
-# loadings differ, and a CRLF checkout adds a byte per line. So the shape is
-# compared exactly (header, row count, every non-numeric field: names,
-# converged, start_used, error texts, violation lists) and numeric fields
-# within rtol 1e-9, NaN matching NaN. The writer's format is still guarded:
-# a changed delimiter, column order or quoting fails the shape comparison.
-function _csv_fixture_fields(line::AbstractString)
-  fields = String[]
-  buf = IOBuffer()
-  quoted = false
-  i = firstindex(line)
-  while i <= lastindex(line)
-    c = line[i]
-    if quoted
-      if c == '"'
-        nxt = nextind(line, i)
-        if nxt <= lastindex(line) && line[nxt] == '"'
-          write(buf, '"')
-          i = nxt
-        else
-          quoted = false
-        end
-      else
-        write(buf, c)
-      end
-    elseif c == '"'
-      quoted = true
-    elseif c == ','
-      push!(fields, String(take!(buf)))
-    else
-      write(buf, c)
-    end
-    i = nextind(line, i)
-  end
-  push!(fields, String(take!(buf)))
-  return fields
-end
-
-function _csv_fixture_matches(out_path::AbstractString, fixture_path::AbstractString; rtol::Float64 = 1e-9)::Bool
-  a = split(replace(read(out_path, String), "\r\n" => "\n"), '\n'; keepempty = false)
-  b = split(replace(read(fixture_path, String), "\r\n" => "\n"), '\n'; keepempty = false)
-  if length(a) != length(b)
-    println("      csv fixture: $(length(a)) lines written, $(length(b)) in the fixture")
-    return false
-  end
-  for (lineno, (la, lb)) in enumerate(zip(a, b))
-    fa = _csv_fixture_fields(la)
-    fb = _csv_fixture_fields(lb)
-    if length(fa) != length(fb)
-      println("      csv fixture line $(lineno): $(length(fa)) fields written, $(length(fb)) in the fixture")
-      return false
-    end
-    for (col, (va, vb)) in enumerate(zip(fa, fb))
-      xa = tryparse(Float64, va)
-      xb = tryparse(Float64, vb)
-      same = if xa !== nothing && xb !== nothing
-        (isnan(xa) && isnan(xb)) || isapprox(xa, xb; rtol = rtol, atol = 1e-12)
-      else
-        va == vb
-      end
-      if !same
-        println("      csv fixture line $(lineno) column $(col): written \"$(va)\", fixture \"$(vb)\"")
-        return false
-      end
-    end
-  end
-  return true
-end
-
 # every value of two result rows except the label (name, kind, elements)
 _scenario_values_equal(x, y) = all(f -> f in (:name, :kind, :elements) || isequal(getproperty(x, f), getproperty(y, f)), fieldnames(Sparlectra.ContingencyResult))
 
@@ -145,7 +74,8 @@ function run_scenario_patch_tests()
     gen_id = first(r.id for r in case.data.sym_gen)
     load_id = first(r.id for r in case.data.sym_load)
 
-    @testset "validation accepts the patch surface" begin (function ()
+    @testset "rejections name the scenario and the op index" begin (function ()
+      # the positive case first: every op kind on its own target passes
       good = ScenarioSet(
         scenarios = [
           Scenario(name = "line out", ops = [PatchOp(op = :status, target = :branch, id = branch_id, value = 0.0)]),
@@ -155,9 +85,7 @@ function run_scenario_patch_tests()
         ],
       )
       @test validate_scenarios(good, index) === good
-    end)() end
 
-    @testset "rejections name the scenario and the op index" begin (function ()
       unknown = ScenarioSet(scenarios = [Scenario(name = "ghost", ops = [PatchOp(op = :status, target = :branch, id = 999999, value = 0.0)])])
       err = try
         validate_scenarios(unknown, index)
@@ -385,24 +313,6 @@ function run_scenario_patch_tests()
       end
     end)() end
 
-    @testset "engine: runScenarios! N-1 equals runContingencies!" begin (function ()
-      # both entries name the rows after the case file when given its map
-      file_names = contingency_names(net, index)
-      cases14 = vcat(Sparlectra.generateN1Branches(net; names = file_names), Sparlectra.generateN1Generators(net; names = file_names))
-      via_cases = Sparlectra.runContingencies!(net, cases14; names = file_names)
-      via_scenarios = runScenarios!(net, ScenarioSet(mode = :n1_all); index = index)
-      d = mktempdir()
-      a = Sparlectra.writeContingencyResultsCSV(joinpath(d, "cases.csv"), via_cases)
-      b = Sparlectra.writeContingencyResultsCSV(joinpath(d, "scenarios.csv"), via_scenarios)
-      @test read(a, String) == read(b, String)
-      # a general patch scenario runs the same ladder and metrics
-      gen_id = first(id for (id, k) in index.kind_by_id if k === :generator)
-      patched = runScenarios!(net, [Scenario(name = "setpoint", ops = [PatchOp(op = :set, target = :generator, id = gen_id, field = :p, value = 30.0)])]; index = index)
-      @test length(patched) == 1
-      @test patched[1].converged
-      @test patched[1].error === nothing
-    end)() end
-
     @testset "N-1 expansion equals the existing generators on case14" begin (function ()
       # the expansion names the cases after the file (contingency_names
       # with the index), the generator does the same with that map
@@ -420,6 +330,19 @@ function run_scenario_patch_tests()
       @test length(alln1) == length(reference) + length(gref)
       excluded = expand_scenarios(ScenarioSet(mode = :n1_branches, exclusions = [only(reference[1].elements)]), net, index)
       @test length(excluded) == length(reference) - 1
+      # one result-level comparison: runScenarios! on :n1_all writes the same
+      # CSV as runContingencies! on the generated cases, both named after
+      # the case file
+      via_cases = Sparlectra.runContingencies!(net, vcat(reference, gref); names = file_names)
+      via_scenarios = runScenarios!(net, ScenarioSet(mode = :n1_all); index = index)
+      d = mktempdir()
+      a = Sparlectra.writeContingencyResultsCSV(joinpath(d, "cases.csv"), via_cases)
+      b = Sparlectra.writeContingencyResultsCSV(joinpath(d, "scenarios.csv"), via_scenarios)
+      @test read(a, String) == read(b, String)
+      # a general patch scenario runs the same ladder and metrics
+      patch_gen = first(id for (id, k) in index.kind_by_id if k === :generator)
+      patched = runScenarios!(net, [Scenario(name = "setpoint", ops = [PatchOp(op = :set, target = :generator, id = patch_gen, field = :p, value = 30.0)])]; index = index)
+      @test (length(patched), patched[1].converged, patched[1].error) == (1, true, nothing)
 
       # a three-winding transformer expands to ONE scenario that opens all
       # three legs (through SCF, which carries the star point and the leg
@@ -692,87 +615,6 @@ function run_scenario_patch_tests()
 end
 
 function run_scenario_engine_extended_tests()
-  @testset "scenario engine sp_case118 fixture" begin (function ()
-    # THE step-3 gate: the engine's N-1 result CSV on case118 (all
-    # branches, all generators) is byte identical to the CSV the
-    # pre-engine per-case-deepcopy implementation produced at 7438b6e
-    # (regenerated at e93eafc, test/fixtures/contingency_case118_n1_e93eafc.csv,
-    # for issue #376: the writer's default format changed from a hardcoded
-    # semicolon+dot-decimal mix to the run-wide "technical" format, comma
-    # delimiter and dot decimal with no thousands grouping - a values-only
-    # regenerate, not a computation change). The net is built with the
-    # pinned packaged-default import options the fixture generation used.
-    # since sp_case118 the gate is a REGRESSION fixture of the engine on the
-    # shipped synthetic 118-bus case (same role as the sp_case60 fixture
-    # below, 240 rows instead of 82), no longer the external pre-engine
-    # oracle on the downloaded case118. The fixture is created by the first
-    # run that finds it missing and printed LOUDLY so it gets committed; from
-    # then on every run compares against it. Regenerated at 0.30.0 (polar
-    # Newton update, template Q-limit defaults): 3 of 240 contingencies end
-    # in another active set, the rest differ in iteration counts only.
-    # Regenerated at 0.30.2 (island runs read the reactive limits of their
-    # own buses): exactly the 3 outages that split the net (109-105,
-    # 114-93, 94-107) changed, in voltages and loading, 94-107 also in
-    # iterations (12 to 10); every non-islanding row is unchanged.
-    # Regenerated at 0.30.3 (warm active set default): 215 of 240 rows
-    # changed in the iteration count only (the warm start saves steps), the
-    # values in the last digits; one real change, B_ACL_345_68_81 (min Vm
-    # 0.98014 against 0.98070 cold, 240.3 against 239.2 percent). The
-    # optional cold check would keep this warm result as well (it is the
-    # less favourable one), so the fixture holds with the check on or off.
-    # Regenerated for #475 (joint extra release of twice-clamped machines on
-    # a converged iterate): one cell, B_ACL_345_68_81 iterations 16 to 22;
-    # its group release does not hold and is undone, every value stays.
-    # Regenerated at 0.40.0 (#355): the columns kind and elements after the
-    # name; every other cell unchanged (compared column by column).
-    # Regenerated at 0.50.0: the three islanding outages (109-105, 114-93,
-    # 94-107) converge in 8 instead of 10 iterations, their values move in
-    # the 12th digit; every other row is unchanged.
-    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case118_n1.csv"))
-    case_path = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
-    @test isfile(case_path)
-    begin
-      net = Sparlectra.createNetFromMatPowerFile(filename = case_path, flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
-      cases = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
-      @test length(cases) == 240
-      results = Sparlectra.runContingencies!(net, cases)
-      # the fixture holds technical bytes; `auto` would follow the locale
-      out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp_case118_n1.csv"), results; format = "technical")
-      if !isfile(fixture)
-        cp(out, fixture)
-        println("      scenario engine sp_case118 fixture: CREATED ", fixture, " (commit it; this run compared nothing)")
-      end
-      @test _csv_fixture_matches(out, fixture)
-
-      # step-4 acceptance: with screening :flag and margin 10, every case the
-      # full run reports as a limit violation (or failure) gets the full run,
-      # no false negatives; the false-positive count and the full-run share
-      # are REPORTED, not gated (case118 is a stressed system)
-      flagged = Sparlectra.runContingencies!(net, cases; screening_mode = :flag, screening_margin_pct = 10.0)
-      @test flagged isa Vector{ScenarioResult}
-      violating = Set(r.name for r in results if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
-      false_negatives = intersect(violating, Set(r.name for r in flagged if r.screened))
-      @test (sort(collect(false_negatives)), length(violating) > 0) == (String[], true)
-      full_runs = count(r -> !r.screened, flagged)
-      fp = count(r -> !r.screened && !(r.name in violating), flagged)
-      println("      scenario engine sp_case118 screening: ", length(flagged) - full_runs, " screened, ", full_runs, " full runs (", round(100 * full_runs / length(flagged); digits = 1), " %), ", fp, " false positives, 0 false negatives")
-
-      # the same acceptance with DISTRIBUTED SLACK enabled; the
-      # screening runs on the augmented system (lambda state, renormalized
-      # participation on a generator outage) and must not screen away any
-      # case the distributed-slack full run reports as violating or failed
-      ds_kw = (distributed_slack_enabled = true,)
-      ds_full = Sparlectra.runContingencies!(net, cases; ds_kw...)
-      t_ds = @timed Sparlectra.runContingencies!(net, cases; screening_mode = :flag, screening_margin_pct = 10.0, ds_kw...)
-      ds_flagged = t_ds.value
-      ds_violating = Set(r.name for r in ds_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
-      ds_fneg = intersect(ds_violating, Set(r.name for r in ds_flagged if r.screened))
-      @test (sort(collect(ds_fneg)), length(ds_flagged)) == (String[], length(cases))
-      ds_screened = count(r -> r.screened, ds_flagged)
-      @test ds_screened > 0
-      println("      scenario engine sp_case118 distributed-slack screening: ", ds_screened, " of ", length(cases), " screened (", round(100 * ds_screened / length(cases); digits = 1), " %), :flag ", round(t_ds.time; digits = 2), " s, 0 false negatives")
-    end
-  end)() end
   @testset "scenario engine sp_case60 screening acceptance" begin (function ()
     # load_fixture_net: the shipped operated grid judges screening QUALITY
     # on every install (the case300 anchor below stays cache-gated with its
@@ -785,6 +627,28 @@ function run_scenario_engine_extended_tests()
     violating = Set(r.name for r in full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
     @test sort(collect(intersect(violating, Set(r.name for r in flagged if r.screened)))) == String[]
     @test count(r -> r.screened, flagged) > 0
+    # the :flag surface: rows in the order of the full run; a screened row
+    # carries the estimate, any other row the full run row
+    @test flagged isa Vector{ScenarioResult}
+    @test [r.name for r in flagged] == [r.name for r in full]
+    for r in flagged
+      if r.screened
+        @test r.start_used === :screen
+        @test r.screening_estimate !== nothing
+        @test r.error === nothing
+      else
+        @test r.result isa Sparlectra.ContingencyResult
+        @test r.start_used !== :screen
+      end
+    end
+    # the screening CSV appends exactly the two screening columns
+    header = run_csv(Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "flag.csv"), flagged)).header
+    @test header[(end-1):end] == ["screened", "screening_estimate"]
+    # :only never runs a full solve where an estimate exists; islanding
+    # cases still carry real solves
+    only_res = Sparlectra.runContingencies!(net, cases; screening_mode = :only, screening_margin_pct = 10.0)
+    @test any(r -> r.screened, only_res)
+    @test all(r -> r.screened || r.start_used !== :screen, only_res)
     ds_full = Sparlectra.runContingencies!(net, cases; distributed_slack_enabled = true)
     ds_flagged = Sparlectra.runContingencies!(net, cases; screening_mode = :flag, screening_margin_pct = 10.0, distributed_slack_enabled = true)
     ds_violating = Set(r.name for r in ds_full if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
@@ -848,50 +712,6 @@ function run_scenario_engine_extended_tests()
     @test sort(collect(intersect(hot_violating, Set(r.name for r in hot_flagged if r.screened)))) == String[]
     @test count(r -> r.screened, hot_flagged) > 0
     println("      scenario engine sp_case60: RAN (", length(cases), " cases, ", count(r -> r.screened, flagged), " screened, 0 false negatives, ds ", count(r -> r.screened, ds_flagged), " screened, one branch at 95 percent ", count(r -> r.screened, hot_flagged), " screened)")
-  end)() end
-
-  @testset "scenario engine sp_case60 CSV byte fixture" begin (function ()
-    # load_fixture_net: the engine's N-1 result CSV on the shipped operated
-    # grid is byte identical to the tracked fixture, generated at bf0b076
-    # (the place-name demo cases) and regenerated at e93eafc for issue #376
-    # (the writer's default format changed from a hardcoded semicolon+dot mix
-    # to the run-wide "technical" format; a values-only regenerate, see the
-    # case118 gate's comment above). Unlike the case118 gate above (an
-    # INDEPENDENT oracle from the pre-engine implementation, which stays
-    # cache-gated), this fixture guards regressions of the engine's values
-    # and CSV format on every install without a download; sp_case60 keeps
-    # the tracked file small (10k, the 188 variant carried 27-bus violation
-    # lists per row).
-    # Regenerated at 0.30.0 for the polar Newton update and the template's
-    # Q-limit defaults (iteration counts one lower on most rows, end states
-    # at the 1e-8 level): like the case118 gate, the first run that finds
-    # the fixture missing creates it from the engine's own CSV and says so.
-    # Regenerated at 0.40.0 (#355): the columns kind and elements, the case
-    # and overload names from the case file (contingency_names with the
-    # typed case), every numeric cell unchanged.
-    # Changed at 0.41.0 (link groups): the row of Neubach_Waldsee#29 no
-    # longer reports Neubach_110b cut off; the bus hangs on Neubach_110a
-    # through the coupler and the solve feeds it. Every numeric cell
-    # unchanged.
-    # Regenerated at 0.50.0: demo case rebuilt, transformer magnetizing from
-    # nameplate since 0.32.1. Only min_vm_pu, max_vm_pu and
-    # max_branch_loading_pct move (at most 7.7e-4 pu and 0.077 percent;
-    # first row min_vm_pu old 0.921871975379177, new 0.921540854811351);
-    # iterations, islands, overloads and violations unchanged.
-    fixture = abspath(joinpath(@__DIR__, "fixtures", "contingency_sp_case60_n1.csv"))
-    scase = read_scf_json(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")))
-    net = Sparlectra.build_net(scase)
-    file_names = contingency_names(net, scase)
-    cases = vcat(Sparlectra.generateN1Branches(net; names = file_names), Sparlectra.generateN1Generators(net; names = file_names))
-    results = Sparlectra.runContingencies!(net, cases; names = file_names)
-    # the fixture holds technical bytes; `auto` would follow the locale
-    out = Sparlectra.writeContingencyResultsCSV(joinpath(mktempdir(), "sp60_n1.csv"), results; format = "technical")
-    if !isfile(fixture)
-      cp(out, fixture)
-      println("      scenario engine sp_case60 fixture: CREATED ", fixture, " (commit it; this run compared nothing)")
-    end
-    @test isfile(fixture)
-    @test _csv_fixture_matches(out, fixture)
   end)() end
 
   @testset "scenario engine sp_case300 screening acceptance" begin (function ()

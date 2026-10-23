@@ -345,10 +345,6 @@ power_flow:
     #   then switch all Q-limit violations after successful convergence
     # - classic_one_at_a_time: classical outer loop; solve the base PF first,
     #   then switch the largest Q-limit violation per outer-loop pass
-    #
-    # Legacy aliases still accepted for old YAML files:
-    # - matpower_simultaneous  -> classic_simultaneous
-    # - matpower_one_at_a_time -> classic_one_at_a_time
     enforcement_mode: active_set
 
     # First iteration where Q-limit switching is allowed.
@@ -536,6 +532,15 @@ state_estimation:
   topology_cluster_min: 3
   observability:
     enabled: true
+  # Transformer tap estimation. impedance_correction decides whether a
+  # released regulator moves the transformer impedance with its step: auto
+  # uses the per-step data of the model (tap table rows, the reactance curve
+  # of a phase tap changer with xMin/xMax, TapStepImpedance factors, the
+  # correction of typed models under model.tap_changer_model =
+  # impedance_correction); off keeps the impedance of the start position.
+  # Allowed values: auto, off
+  tap_estimation:
+    impedance_correction: auto
 
 # PowSyBl IIDM import (see docs/src/powsybl_import.md)
 powsybl_import:
@@ -740,14 +745,6 @@ model:
   # state that fits no reading says nothing about the file's convention.
   # Non-negative.
   auto_profile_max_fit_pu: 0.1
-  # Opt-in binary cache of the parsed case file, stored next to the case
-  # file in .sparlectra_net_cache/ and keyed by the case file hash and the
-  # Sparlectra/Julia versions. The network is always built fresh from the
-  # cached case, so import options keep taking effect. Only active when
-  # auto_profile is off; any stale or unreadable cache entry silently
-  # falls back to a fresh parse. Safe to delete the cache directory.
-  # Allowed values: true, false
-  net_cache_enabled: false
   # Allowed values: off, on, auto
   preallocate_network: auto
   preallocate_min_buses: 500

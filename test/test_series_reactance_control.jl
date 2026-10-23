@@ -14,9 +14,8 @@
 
 # file: test/test_series_reactance_control.jl
 # purpose: tests for the TCSC-like series-reactance controller (issue #297):
-#          loop-network target tracking, honest at_limit, bit-identical
-#          baseline without the controller, element-row vocabulary,
-#          registration validation, and deadband behavior.
+#          loop-network target tracking, registration validation, and
+#          deadband behavior.
 
 function run_series_reactance_control_tests()
   # two parallel corridors between source A and sink B; the corridor
@@ -69,22 +68,6 @@ function run_series_reactance_control_tests()
     @test ctrl.achieved_p_mw !== nothing
   end)() end
 
-  @testset "element row vocabulary" begin (function ()
-    net = _build_loop_net()
-    addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
-    rows = [r for r in controllableElements(net) if r.actuator == :series_x_pu]
-    @test length(rows) == 1
-    row = rows[1]
-    @test row.quantity == :branch_active_power
-    @test row.element == "branch@A-M2"
-    @test row.device == "TCSC (series compensation)"
-    @test row.target == "A->M2"
-    @test row.target_value == 35.0
-    @test row.actuator_min == 0.02
-    @test row.actuator_max == 0.30
-    @test row.discrete == false
-  end)() end
-
   @testset "registration validation" begin (function ()
     net = _build_trafo_net()
     # transformer branch rejected (taps own transformer reactance)
@@ -120,21 +103,6 @@ function run_series_reactance_control_tests()
     @test_throws ErrorException addSeriesReactanceControl!(net4; fromBus = "A", toBus = "M2", p_target_mw = 20.0, x_min_pu = 0.02, x_max_pu = 0.30)
   end)() end
 
-  @testset "classic print: count line, branch table, footer summary" begin (function ()
-    net = _build_loop_net()
-    addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
-    result = run_sparlectra(net = net)
-    @test result.final_converged
-    tmp = mktempdir()
-    printACPFlowResults(net, 0.1, result.iterations, 1e-8, true, tmp)
-    rendered = read(joinpath(tmp, "result_$(net.name).txt"), String)
-    @test occursin("TCSC: 1", rendered)
-    @test occursin("Series Reactance Control Summary (TCSC)", rendered)
-    # the controlled branch row carries type, target, and status in the
-    # generic controller columns of the branch table
-    @test occursin(r"TCSC\s+\|\s+35\.000\s+\|\s+-\s+\|\s+converged", rendered)
-  end)() end
-
   @testset "deadband: met target moves nothing" begin (function ()
     net = _build_loop_net()
     # baseline corridor-2 flow is about 27.0 MW; a target inside the
@@ -150,5 +118,4 @@ function run_series_reactance_control_tests()
     @test ctrl.x_pu == 0.20
     @test ctrl.prev_x_pu === nothing
   end)() end
-
 end

@@ -33,8 +33,10 @@ the voltage level, the substation id is kept as bus metadata.
 
 Tap changers are a fixed operating point: two-winding transformers use
 the `_at_current_tap` impedances with `rho` and `alpha`, three-winding
-legs the same columns per leg. No controllers and no tap tables reach the
-`Net`; the step tables stay in the tables for a later task.
+legs the same columns per leg. No controllers reach the `Net`. The step
+tables become the tap changer sets of the state estimation
+(`se_tap_changers`, origin `:powsybl`, one table changer per ratio or
+phase tap changer, side `:to`); power flow does not read them.
 
 The slack of a synchronous component follows `reference_candidate_rank`:
 a connected unit that regulates its own bus before one that regulates a

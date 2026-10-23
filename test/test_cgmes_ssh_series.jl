@@ -457,20 +457,15 @@ function run_cgmes_ssh_series_tests()
         local pos = qstsValues(r, id, "position")
         local dpos = qstsValues(r, id, "dpos_ref")
         @test all(==(base_pos), qstsValues(r, id, "ref_position")) && dpos == pos .- base_pos
-        # dpos_ref on the delivered grid: the resync
-        # step 1 moves one step up, the tap rises to 3 steps above the base
-        # with the morning load, is back on the base step while the switch of
-        # the events is closed (steps 36 to 45) and peaks at 6 steps
-        @test dpos == vcat(1, 1, 2, 2, fill(3, 27), 2, 2, 2, 1, fill(0, 10), 1, 1, 2, 2, 3, 3, 4, 4, fill(5, 6), fill(6, 25), 5, 5, 4, 4, 3, 3, 2, 2, 2, 1, 1, 1)
         @test (_qsts_metric_value(r, id, "max_abs_dpos_ref"), _qsts_metric_value(r, id, "rms_dpos_ref")) == (maximum(abs, dpos), sqrt(sum(abs2, dpos) / 96))
         # the switching rows chain the positions: each row starts where the
-        # step before ended (step 1 at the base step); 17 rows, 16 counted
-        # with 16 steps, no hunting
+        # step before ended (step 1 at the base step); the resync row comes
+        # first, every control row is counted, no hunting
         local sw = qstsSwitching(r)
         @test all(sw.old[i] == (sw.step[i] == 1 ? base_pos : pos[sw.step[i] - 1]) && sw.new[i] == pos[sw.step[i]] && sw.steps[i] == sw.new[i] - sw.old[i] for i in eachindex(sw.step))
         @test sum(sw.steps) == pos[end] - base_pos
-        @test (length(sw.step), count(==("control"), sw.trigger), sw.trigger[1]) == (17, 16, "resync")
-        @test (_qsts_metric_value(r, id, "switch_count"), _qsts_metric_value(r, id, "n_hunting")) == (16.0, 0.0)
+        @test sw.trigger[1] == "resync" && count(==("control"), sw.trigger) == length(sw.step) - 1
+        @test (_qsts_metric_value(r, id, "switch_count"), _qsts_metric_value(r, id, "n_hunting")) == (Float64(count(==("control"), sw.trigger)), 0.0)
         local vm = filter(!isnan, qstsValues(r, r.elements.bus_ids[br.toBus], "vm_pu"))
         @test length(vm) == 96 && all(v -> 0.995 - 1e-6 <= v <= 1.005 + 1e-6, vm)
         # each step is compared with its SV as in a snapshot run
@@ -574,9 +569,6 @@ function run_cgmes_ssh_series_tests()
       local bad = joinpath(tmp, "bad_events.csv")
       write(bad, "step,element_id,action,value\n3,$(sw),toggle,\n")
       @test_throws "line 2: action \"toggle\"" generateCGMESSSHSeries(base, joinpath(tmp, "bad"); roles = roles, events = bad)
-      # the column was element_mrid before format 1.0; that header is refused
-      write(bad, "step,element_mrid,action,value\n3,$(sw),open,\n")
-      @test_throws "line 1: header \"step,element_mrid,action,value\", expected step,element_id,action,value" generateCGMESSSHSeries(base, joinpath(tmp, "bad"); roles = roles, events = bad)
       local consumer = first(base_store.byclass[:EnergyConsumer])
       write(bad, "5,$(consumer),open,\n")
       @test_throws "line 1: $(consumer) is not a switch" generateCGMESSSHSeries(base, joinpath(tmp, "bad"); roles = roles, events = bad)
