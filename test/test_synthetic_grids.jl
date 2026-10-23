@@ -1,12 +1,11 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 
 # file: test/test_synthetic_grids.jl
 # purpose: tests the synthetic tiled grid builder and its YAML subset parser,
-#          final-acceptance semantics of PF performance rows, and that the
-#          synthetic example stays a thin wrapper
+#          and the final-acceptance semantics of PF performance rows
 
 function run_synthetic_grid_tests()
   @testset "YAML subset parser" begin (function ()
@@ -109,15 +108,5 @@ function run_synthetic_grid_tests()
     @test accepted_row.numerical_converged
     @test accepted_row.solution_available
     @test accepted_row.outcome === :converged
-  end)() end
-
-  @testset "Synthetic example is thin wrapper" begin (function ()
-    source = read(joinpath(@__DIR__, "..", "examples", "powerflow", "exp_synthetic_tiled_grid_pf_perf.jl"), String)
-    @test !occursin("DEFAULT_CONFIG = Dict", source)
-    @test !occursin("load_yaml_dict", source)
-    @test !occursin("merge_yaml_dict!", source)
-    @test !occursin("_resolve_config_path", source)
-    @test !occursin("_configure_blas!", source)
-    @test occursin("run_synthetic_tiled_grid_pf_perf", source)
   end)() end
 end

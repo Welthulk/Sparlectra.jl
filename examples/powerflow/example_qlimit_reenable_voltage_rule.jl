@@ -91,7 +91,8 @@ function solve_variant(label::String, mode::Symbol, reenable_v_hyst_pu::Float64)
   vset = Dict(b => generator_setpoint(net, b) for b in REPORT_BUSES)
   band = Dict(b => (qmin_pu[b] * net.baseMVA, qmax_pu[b] * net.baseMVA) for b in REPORT_BUSES)
   qg = machine_q_mvar(net)
-  hits = [(iter = e.iter, bus = e.bus, side = e.side) for e in net.qLimitLog]
+  # PV->PQ hits only; PQ->PV releases are logged with kind :release
+  hits = [(iter = e.iter, bus = e.bus, side = e.side) for e in net.qLimitLog if e.kind !== :release]
   # the final Q-limit check every mode ends with: the class per PV bus
   # beyond a limit (ok, within_hysteresis, bounded, violation), the status
   qcheck = Dict(r.bus => String(r.class) for r in st.final_q_check_rows)

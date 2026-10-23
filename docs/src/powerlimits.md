@@ -21,19 +21,22 @@ The Q-limit state lives on the network:
 Newton loop, all rows with `verbose > 1`: a check that catches pu/MVAr
 mixups early.
 
-## Logging Q-Limit Hits
+## Logging Q-Limit Hits and Releases
 
 ```julia
 Base.@kwdef struct QLimitEvent
   iter::Int
   bus::Int
   side::Symbol         # :min | :max
-  kind::Symbol = :hit  # :group_revert when a jointly released group returns to its limits
+  kind::Symbol = :hit  # :group_revert when a jointly released group returns to its limits,
+                       # :release for a PQ->PV release (side = the limit the bus was clamped at)
 end
 ```
 
 * `logQLimitHit!(net, iter, bus, side)`: appends a `QLimitEvent` to
   `net.qLimitLog` and sets `net.qLimitEvents[bus] = side`.
+* PQ->PV releases of the active set are logged with `kind = :release`; a
+  reader that wants the hits only filters on `kind`.
 * `lastQLimitIter(net, bus)`: last iteration in which `bus` hit a limit.
 * `resetQLimitLog!(net)`: clears both.
 * `pv_hit_q_limit(net, ["B3", "B10"])`: `true` if any listed bus appears
@@ -56,6 +59,12 @@ In every Newton-Raphson iteration of the rectangular solver:
    ```math
    Q_b < Qmin_b - q_\mathrm{hyst} \quad \text{or} \quad Q_b > Qmax_b + q_\mathrm{hyst}
    ```
+
+   Under `power_flow.qlimits.guard.violation_mode: lock_pq` (the default)
+   the bus also switches once the overshoot exceeds
+   `guard.violation_threshold_pu` (default `1e-4` pu). With the defaults
+   that threshold decides, and `hysteresis_pu` delays the switch only under
+   `delayed_switch`.
 
 4. **Clip Q and switch the bus type**: set the generator's Q to the
    violated limit (`Q_b := Qmin_b` or `Q_b := Qmax_b`), then

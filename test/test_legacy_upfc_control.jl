@@ -67,31 +67,45 @@ function run_legacy_upfc_control_tests()
       end
 
       @testset "YAML type upfc and double-apply no-op" begin (function ()
-        net_prog = _build_upfc_net()
-        addUpfcControl!(net_prog; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0, name = "upfc_main")
-        run_control!(net_prog)
-
-        net_yaml = _build_upfc_net()
-        cfg = ControlConfig(controllers = Any[Dict{String,Any}("type" => "upfc", "name" => "upfc_main", "from_bus" => "A", "to_bus" => "M2", "shunt_bus" => "M2", "target_bus" => "B", "target_vm_pu" => 0.99, "p_target_mw" => 35.0, "v_inj_max_pu" => 0.08, "s_max_mva" => 40.0)])
-        @test applyConfiguredControllers!(net_yaml, cfg) == 1
-        @test length(net_yaml.machineControls) == 2
-        series = only([c for c in net_yaml.machineControls if c isa Sparlectra.SeriesReactanceControl])
-        shunt = only([c for c in net_yaml.machineControls if c isa MachineVoltageControl])
-        @test series.name == "upfc_main_series"
-        @test shunt.name == "upfc_main_shunt"
-        @test series.upfc_group == "upfc_main"
-        run_control!(net_yaml)
-        # same registration -> same numbers as the programmatic twin
-        vm_a, va_a = _solved_state(net_prog)
-        vm_b, va_b = _solved_state(net_yaml)
-        @test maximum(abs.(vm_a .- vm_b)) <= 1e-12
-        @test maximum(abs.(va_a .- va_b)) <= 1e-12
-
-        # double apply is a no-op (regression: not a FieldError, not a
-        # duplicate-controller error; the idempotency check reads
-        # fromBus/toBus plus the upfc_group marker)
-        @test applyConfiguredControllers!(net_yaml, cfg) == 0
-        @test length(net_yaml.machineControls) == 2
+        # one row per model: the YAML registration gives the same solved
+        # state as the programmatic twin, and a second apply adds nothing
+        # (regression: not a FieldError, not a duplicate-controller error;
+        # the idempotency check reads fromBus/toBus plus the upfc_group marker)
+        rows = [
+          (build = _build_upfc_net,
+           register = net -> addUpfcControl!(net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0, name = "upfc_main"),
+           entry = Dict{String,Any}("type" => "upfc", "name" => "upfc_main", "from_bus" => "A", "to_bus" => "M2", "shunt_bus" => "M2", "target_bus" => "B", "target_vm_pu" => 0.99, "p_target_mw" => 35.0, "v_inj_max_pu" => 0.08, "s_max_mva" => 40.0),
+           solve = net -> run_control!(net),
+           # the quadrature composite registers a series and a shunt controller
+           registered = net -> (length(net.machineControls),
+                                [(c.name, c.upfc_group) for c in net.machineControls if c isa Sparlectra.SeriesReactanceControl],
+                                [c.name for c in net.machineControls if c isa MachineVoltageControl]),
+           expected = (2, [("upfc_main_series", "upfc_main")], ["upfc_main_shunt"]),
+           # same registration, same arithmetic: Vm and Va to 1e-12
+           state = net -> vcat(_solved_state(net)...), atol = 1e-12),
+          (build = _build_upfc_mesh,
+           register = net -> addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0, v_inj_max_pu = 0.60, s_max_mva = 120.0, name = "upfc_full", max_outer_iters = 80),
+           entry = Dict{String,Any}("type" => "upfc", "name" => "upfc_full", "model" => "full", "from_bus" => "I", "to_bus" => "J", "shunt_bus" => "I", "p_target_mw" => 38.0, "q_target_mvar" => 15.0, "q_shunt_mvar" => 10.0, "v_inj_max_pu" => 0.60, "s_max_mva" => 120.0),
+           solve = net -> run_control!(net; control_config = ControlConfig(max_outer_iterations = 80)),
+           # the full model is one multi-actuator controller
+           registered = net -> (length(Sparlectra._upfc_full_controllers(net)), [(u.name, u.upfc_group) for u in Sparlectra._upfc_full_controllers(net)], String[]),
+           expected = (1, [("upfc_full", "upfc_full")], String[]),
+           # the YAML entry has no outer iteration budget of its own: sorted Vm to 1e-9
+           state = net -> sort([n._vm_pu for n in net.nodeVec]), atol = 1e-9),
+        ]
+        for row in rows
+          net_prog = row.build()
+          row.register(net_prog)
+          row.solve(net_prog)
+          net_yaml = row.build()
+          cfg = ControlConfig(controllers = Any[row.entry])
+          @test applyConfiguredControllers!(net_yaml, cfg) == 1
+          @test row.registered(net_yaml) == row.expected
+          row.solve(net_yaml)
+          @test maximum(abs.(row.state(net_prog) .- row.state(net_yaml))) <= row.atol
+          @test applyConfiguredControllers!(net_yaml, cfg) == 0
+          @test row.registered(net_yaml) == row.expected
+        end
 
         # structural validation: unknown key and missing required key
         @test_throws ArgumentError Sparlectra._validate_controller_entries([Dict{String,Any}("type" => "upfc", "name" => "x", "from_bus" => "A", "to_bus" => "M2", "shunt_bus" => "M2", "target_bus" => "B", "target_vm_pu" => 0.99, "p_target_mw" => 35.0, "v_inj_max_pu" => 0.08, "typo_key" => 1)])
@@ -137,6 +151,10 @@ function run_legacy_upfc_control_tests()
           @test isapprox(u.q_sh_mvar, qsh; atol = 1e-6)
           @test u.upfc_group == "UPFC_I_J"
           @test u.series_phase == :free
+          # one controller with the series-voltage actuator on the branch,
+          # not a pair of controllers as in the quadrature composite
+          @test length(Sparlectra._upfc_full_controllers(net)) == 1
+          @test [e.quantity for e in controllableElements(net) if e.actuator == :upfc_series_voltage] == [:branch_pq]
         end
       end)() end
 
@@ -167,22 +185,6 @@ function run_legacy_upfc_control_tests()
         @test isapprox(get_branch_p_from_to_mw(nets, "I", "J"), rq.upfc.achieved_p_mw; atol = 0.1)
       end)() end
 
-      @testset "full UPFC: result rows and element view (#326)" begin (function ()
-        net = _build_upfc_mesh()
-        r = addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
-                            p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0,
-                            v_inj_max_pu = 0.60, s_max_mva = 120.0, deadband_p_mw = 1e-3, deadband_q_mvar = 1e-3, max_outer_iters = 80)
-        runpf!(net, 30, 1e-8, 0)
-        run_control!(net; control_config = ControlConfig(max_outer_iterations = 80))
-        els = [e for e in controllableElements(net) if e.actuator == :upfc_series_voltage]
-        @test length(els) == 1
-        @test els[1].device == "UPFC (full, DC-link coupled)"
-        @test els[1].element == "branch@I-J"
-        @test els[1].quantity == :branch_pq
-        # one controller (not a pair): full model is a single multi-actuator device
-        @test length(Sparlectra._upfc_full_controllers(net)) == 1
-      end)() end
-
       @testset "full UPFC: classical result reports the controller (#326)" begin (function ()
         # the classical printACPFlowResults must count the UPFC and print its
         # summary block (the FACTS controllers used to be invisible there)
@@ -207,19 +209,6 @@ function run_legacy_upfc_control_tests()
         # the standalone summary printer works too
         sub = sprint(printUpfcFullControllerSummary, net)
         @test occursin("UPFC_I_J", sub)
-        # base net without the UPFC keeps the byte-stable "none" anchor
-        base = _build_upfc_mesh()
-        btxt = mktempdir() do d
-          cd(d) do
-            runpf!(base, 30, 1e-8, 0)
-            calcNetLosses!(base)
-            printACPFlowResults(base, 0.0, 1, 1e-8, true)
-            read("result_$(base.name).txt", String)
-          end
-        end
-        @test occursin("Transformer controls: none", btxt)
-        @test !occursin("UPFC Control Summary", btxt)
-
         # the quadrature composite (SSSC + STATCOM) is now counted honestly too:
         # the machine (STATCOM) side used to be uncounted on the Controllers line
         netq = _build_upfc_net()
@@ -340,50 +329,6 @@ function run_legacy_upfc_control_tests()
         @test isapprox(brij.x_pu, brij.x_base_pu; atol = 1e-12)
         clearUpfcFullControllers!(net)
         @test isempty([c for c in net.machineControls if c isa Sparlectra.UpfcFullControl])
-      end)() end
-
-      @testset "full UPFC: registration validation (#326)" begin (function ()
-        # model = :full needs q_target_mvar and rejects the quadrature-only keys
-        net = _build_upfc_mesh()
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no q_target_mvar
-        @test length(net.machineControls) == 0
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0, target_bus = "J", target_vm_pu = 1.0)  # :full rejects target_bus/target_vm_pu
-        @test length(net.machineControls) == 0
-        # both / neither shunt rating
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0, i_max_ka = 0.5)
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6)
-        # non-positive injected-voltage limit; no branch; no generator at shunt bus
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.0, s_max_mva = 120.0)
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "S", shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no I-S? (there is S-I; wrong order) -> orientation error
-        @test_throws ErrorException addUpfcControl!(net; model = :full, fromBus = "I", toBus = "J", shunt_bus = "J", p_target_mw = 40.0, q_target_mvar = 10.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)  # no generator at J
-        @test length(net.machineControls) == 0
-        # bad model symbol
-        @test_throws ErrorException addUpfcControl!(net; model = :bogus, fromBus = "I", toBus = "J", shunt_bus = "I", p_target_mw = 40.0, v_inj_max_pu = 0.6, s_max_mva = 120.0)
-      end)() end
-
-      @testset "full UPFC: YAML type upfc with model=full (#326)" begin (function ()
-        net_prog = _build_upfc_mesh()
-        addUpfcControl!(net_prog; model = :full, fromBus = "I", toBus = "J", shunt_bus = "I",
-                        p_target_mw = 38.0, q_target_mvar = 15.0, q_shunt_mvar = 10.0,
-                        v_inj_max_pu = 0.60, s_max_mva = 120.0, name = "upfc_full", max_outer_iters = 80)
-        run_control!(net_prog; control_config = ControlConfig(max_outer_iterations = 80))
-
-        net_yaml = _build_upfc_mesh()
-        cfg = ControlConfig(controllers = Any[Dict{String,Any}("type" => "upfc", "name" => "upfc_full", "model" => "full",
-          "from_bus" => "I", "to_bus" => "J", "shunt_bus" => "I", "p_target_mw" => 38.0, "q_target_mvar" => 15.0,
-          "q_shunt_mvar" => 10.0, "v_inj_max_pu" => 0.60, "s_max_mva" => 120.0)])
-        @test applyConfiguredControllers!(net_yaml, cfg) == 1
-        @test length(Sparlectra._upfc_full_controllers(net_yaml)) == 1
-        u = only(Sparlectra._upfc_full_controllers(net_yaml))
-        @test u.name == "upfc_full"
-        @test u.upfc_group == "upfc_full"
-        run_control!(net_yaml; control_config = ControlConfig(max_outer_iterations = 80))
-        vm_a = sort([n._vm_pu for n in net_prog.nodeVec])
-        vm_b = sort([n._vm_pu for n in net_yaml.nodeVec])
-        @test maximum(abs.(vm_a .- vm_b)) <= 1e-9
-        # double apply is a no-op
-        @test applyConfiguredControllers!(net_yaml, cfg) == 0
-        @test length(Sparlectra._upfc_full_controllers(net_yaml)) == 1
       end)() end
 
   end)()

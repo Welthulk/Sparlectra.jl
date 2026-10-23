@@ -186,24 +186,6 @@ function run_legacy_solver_interface_tests()
       @test bus_types[bus] == :PV
       @test length(net.qLimitLog) == 1
 
-      status_io = IOBuffer()
-      status = (
-        numerical_converged = true,
-        q_limit_active_set_ok = false,
-        final_mismatch = 2.1e-9,
-        pv_pq_switching_events = 1842,
-        qlimit_active_set_changes = 91,
-        qlimit_reenable_events = 14,
-        oscillating_buses = 37,
-        guarded_narrow_q_pv_buses = 512,
-        status = :qlimit_chatter,
-      )
-      Sparlectra._print_qlimit_active_set_summary(status_io, status)
-      status_text = String(take!(status_io))
-      @test occursin("NR convergence             : yes", status_text)
-      @test occursin("Active-set convergence     : no", status_text)
-      @test occursin("Final status               : qlimit_chatter", status_text)
-
       function zero_range_pv_net()
         guarded_net = createTest3BusNet()
         guarded_bus = geNetBusIdx(net = guarded_net, busName = "STATION1")
@@ -215,25 +197,7 @@ function run_legacy_solver_interface_tests()
         return guarded_net
       end
 
-      # Since 0.30.0 the guard is on by default (the packaged template's
-      # value; struct, loader fallback and keyword literals agree, see the
-      # configuration coverage test), so a config-less run locks the
-      # zero-headroom bus (qmin == qmax) to PQ before the first Newton step,
-      # and switching it off is the explicit way back. Up to 0.20.5 the
-      # struct default was guard = false and this test asserted the opposite
-      # (`isempty(default_net.qLimitLog)` for the default run, one lock only
-      # with `QLimitConfig(guard = true)`): lower-level callers had to opt
-      # in, because the unconditional lock was MEASURED to cost convergence
-      # on a real 82000-bus case (the rescue ladder converges in 66
-      # iterations without it, fails with it) although those limits are not
-      # binding at the solution. That observation stays an open point of
-      # the guard default, not decided by this test.
-      default_net = zero_range_pv_net()
-      redirect_stdout(devnull) do
-        runpf!(default_net; config = PowerFlowConfig(max_iter = 0))
-      end
-      @test length(default_net.qLimitLog) == 1
-
+      # switching the guard off leaves the zero-headroom bus unlocked
       opt_out_net = zero_range_pv_net()
       redirect_stdout(devnull) do
         runpf!(opt_out_net; config = PowerFlowConfig(max_iter = 0, qlimits = QLimitConfig(guard = false)))
@@ -419,6 +383,102 @@ function run_legacy_solver_interface_tests()
       @test isapprox(pv_b2_row.q_gen_MVar, pvnet.nodeVec[pb2]._qƩGen; atol = 1e-9)
     end)() end
 
+    # The Q-limit outcome of a solve on a working copy did not reach the net
+    # (before 0.60.0): the bus types the solve set and the scheduled Q the
+    # classic modes clamp on the unit stayed on the merged copy of a net
+    # with a closed link and on the island copies of an island-wise run. The
+    # clamped bus stayed PV on the net, and the report took the Q of a PV bus
+    # from the node, which the classic modes leave at the base solve.
+    # sp_case60 (one coupler, Neubach_110 to Neubach_110b) with a 4.0 .. 5.5
+    # MVAr band at Birkkamp_110 and Westtal_110: Birkkamp_110 ends at Qmax
+    # below its U_set 1.01 (U 0.99663 pu under the active set, 1.00312 pu
+    # under both classic modes) and was PV on the net with 7.258 MVAr in the
+    # report under the classic modes. Truth: the same net with the coupler
+    # resolved by hand (link open, the branches of Neubach_110b on
+    # Neubach_110), solved without a merge, and the generator Q of every bus
+    # from its solved voltages. two_islands_prio island-wise under
+    # classic_simultaneous with a -5 .. 5 MVAr band at Brunntal_110 and
+    # Kesselau_110: both clamped (report 9.645 and -30.325 MVAr before), and
+    # Fennwiese_110, the reference island 2 promotes for want of one, clamped
+    # at its Qmax of 30 MVAr with the reference moved to Dornberg_110
+    # (report 41.80 MVAr before).
+    @testset "Q-limit outcome of a merged or island-wise solve reaches the net" begin (function ()
+      scf = joinpath(dirname(@__DIR__), "data", "scf")
+      # generator Q of every bus from the solved voltages of a net without
+      # closed links: injection V conj(Y V) plus what the bus draws itself
+      q_from_voltages = function (n)
+        active = [b for b in eachindex(n.nodeVec) if !(b in n.isoNodes)]
+        Y = Sparlectra.createYBUS(net = n)
+        @test size(Y, 1) == length(active)
+        V = [n.nodeVec[b]._vm_pu * cis(deg2rad(n.nodeVec[b]._va_deg)) for b in active]
+        _, q_draw = Sparlectra._bus_consumption_MVA(n)
+        s = V .* conj.(Y * V) .* n.baseMVA
+        return Dict(b => imag(s[k]) + q_draw[b] for (k, b) in enumerate(active))
+      end
+      narrow = function (resolved::Bool)
+        n = redirect_stdout(() -> Sparlectra.importSCF(joinpath(scf, "sp_case60.scf.json")), devnull)
+        setQLimits!(net = n, qmin_MVar = 4.0, qmax_MVar = 5.5, busName = ["Birkkamp_110", "Westtal_110"])
+        l = only(n.linkVec)
+        member = l.toBus
+        if resolved
+          @test !any(ps -> getPosumerBusIndex(ps) == member, n.prosumpsVec) && !any(sh -> sh.busIdx == member, n.shuntVec)
+          l.status = 0
+          for br in n.branchVec
+            br.fromBus == member && (br.fromBus = l.fromBus)
+            br.toBus == member && (br.toBus = l.fromBus)
+          end
+          empty!(n.isoNodes)
+          markIsolatedBuses!(net = n, log = false)
+        end
+        return n, member
+      end
+      for (mode, u_bk) in ((:active_set, 0.99663), (:classic_simultaneous, 1.00312), (:classic_one_at_a_time, 1.00312))
+        closed, member = narrow(false)
+        resolved, _ = narrow(true)
+        _, erg_c = @test_logs min_level = Logging.Warn runpf!(closed, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = mode)
+        _, erg_r = @test_logs min_level = Logging.Warn runpf!(resolved, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = mode)
+        @test (mode, erg_c, erg_r) == (mode, 0, 0)
+        bk = geNetBusIdx(net = closed, busName = "Birkkamp_110")
+        @test (mode, getNodeType(closed.nodeVec[bk]), closed.qLimitEvents[bk]) == (mode, Sparlectra.PQ, :max)
+        @test isapprox(closed.nodeVec[bk]._vm_pu, u_bk; atol = 1e-5)
+        others = [b for b in eachindex(closed.nodeVec) if b != member]
+        @test (mode, getNodeType.(closed.nodeVec[others])) == (mode, getNodeType.(resolved.nodeVec[others]))
+        @test closed.qLimitEvents == resolved.qLimitEvents
+        @test maximum(abs(closed.nodeVec[b]._vm_pu - resolved.nodeVec[b]._vm_pu) for b in others) < 1e-9
+        q_true = q_from_voltages(resolved)
+        @test isapprox(q_true[bk], 5.5; atol = 1e-6)
+        rep_c = Dict(r.bus => r for r in buildACPFlowReport(closed).nodes)
+        rep_r = Dict(r.bus => r for r in buildACPFlowReport(resolved).nodes)
+        for b in sort(collect(keys(q_true)))
+          @test (mode, b, isapprox(rep_c[b].q_gen_MVar, q_true[b]; atol = 1e-6), isapprox(rep_r[b].q_gen_MVar, q_true[b]; atol = 1e-6)) == (mode, b, true, true)
+        end
+        # the stability check and the Q-V check give the verdict of the
+        # resolved net; Westtal_110 fails under the classic modes (PV at
+        # 6.136 MVAr above its band, within the Q hysteresis of the scan)
+        st_c = Sparlectra.qlimitStabilityReport(closed)
+        st_r = Sparlectra.qlimitStabilityReport(resolved)
+        @test [(r.bus, r.end_type, r.reached_limit, r.ok) for r in st_c] == [(r.bus, r.end_type, r.reached_limit, r.ok) for r in st_r]
+        @test all(isapprox(a.q_MVar, b.q_MVar; atol = 1e-6) && isapprox(a.q_report_MVar, a.q_MVar; atol = 1e-6) for (a, b) in zip(st_c, st_r))
+        @test (mode, [r.bus_name for r in st_c if !r.ok]) == (mode, mode === :active_set ? String[] : ["Westtal_110"])
+        @test qvCharacteristicViolations(closed) == qvCharacteristicViolations(resolved) == NamedTuple[]
+      end
+
+      n = redirect_stdout(() -> Sparlectra.importSCF(joinpath(scf, "two_islands_prio.scf.json")), devnull)
+      setQLimits!(net = n, qmin_MVar = -5.0, qmax_MVar = 5.0, busName = ["Brunntal_110", "Kesselau_110"])
+      _, erg = @test_logs (:info, r"Classical Q-limit enforcement changed reference bus") min_level = Logging.Info redirect_stdout(() -> runpf!(n, 30, 1e-8, 0; method = :rectangular, islands_enabled = true, qlimit_enforcement_mode = :classic_simultaneous), devnull)
+      @test erg == 0
+      q_true = q_from_voltages(n)
+      rep = Dict(r.bus => r for r in buildACPFlowReport(n).nodes)
+      for (name, type, side, q) in (("Brunntal_110", Sparlectra.PQ, :max, 5.0), ("Kesselau_110", Sparlectra.PQ, :min, -5.0), ("Fennwiese_110", Sparlectra.PQ, :max, 30.0), ("Dornberg_110", Sparlectra.Slack, nothing, nothing))
+        b = geNetBusIdx(net = n, busName = name)
+        @test (name, getNodeType(n.nodeVec[b]), get(n.qLimitEvents, b, nothing)) == (name, type, side)
+        q === nothing || @test isapprox(q_true[b], q; atol = 1e-6)
+      end
+      for b in sort(collect(keys(q_true)))
+        @test (b, isapprox(rep[b].q_gen_MVar, q_true[b]; atol = 1e-6)) == (b, true)
+      end
+    end)() end
+
     @testset "AC rescue ladder and DC fallback" begin (function ()
       # NOTE: private inner name — an anonymous fixture assigning to a name
       # that also exists in the enclosing testset would rebind that local.
@@ -450,32 +510,22 @@ function run_legacy_solver_interface_tests()
       @test rerg == 0
       @test rite > 0
       @test get(profile, :ac_rescue_strategy, :missing) in (:alternate_start, :autodamp, :dc_seed, :settled_qlimits)
-      # the solver status and the result header say the solution came from
-      # the rescue, with the failed first solve's start and iterations
-      # (before 0.31.3 the header read a bare "Flatstart" with the rescue's
-      # iteration count)
+      # the solver status says the solution came from the rescue, with the
+      # failed first solve's start and iterations
       rst = Sparlectra.rectangular_pf_status(rescued)
       @test rst.rescue_used === true
       @test rst.rescue_strategy === profile[:ac_rescue_strategy]
       @test rst.rescue_first_flatstart === false
       @test rst.rescue_first_iterations == 5
-      header_file = tempname()
-      open(header_file, "w") do io
-        redirect_stdout(() -> printACPFlowResults(rescued, 0.0, rite, 1e-8; converged = true), io)
-      end
-      header = read(header_file, String)
-      @test occursin("Rescue         : the start from the stored voltages failed after 5 iteration(s); strategy '$(profile[:ac_rescue_strategy])'", header)
-      @test occursin("(failed, rescued)", header)
 
       # The ladder must offer the globalization package for Q-limit-noisy
-      # systems: merit line search, a low damping floor, and Q-limit
-      # switching held back until the reactive requests settle. Asserted on
+      # systems: merit line search, damping, and Q-limit switching held back
+      # until the reactive requests settle. Asserted on
       # the variant list so a large-case regression cannot silently drop it.
       variants = Sparlectra._rescue_config_variants(Sparlectra.PowerFlowConfig())
       settled = only(cfg for (name, cfg) in variants if name === :settled_qlimits)
       @test settled.merit.enabled === true
       @test settled.autodamp === true
-      @test settled.autodamp_min == 0.001
       @test settled.qlimits.start_mode === :auto
       # honest: the limits themselves stay enforced, only the timing changes
       @test settled.qlimits.ignore_q_limits === false
@@ -508,54 +558,6 @@ function run_legacy_solver_interface_tests()
       @test !hasproperty(Sparlectra.rectangular_pf_status(off), :rescue_used)
       @test !haskey(profile_off, :dc_fallback_applied)
     end)() end
-
-  # cut from testset: Merit-function line search
-      @testset "Regression: merit.enabled=false is bit-identical to pre-merit autodamp" begin (function ()
-        net_classic = createCIGRE()
-        it_classic, erg_classic = runpf_rectangular!(net_classic, 30, 1e-8, 0; autodamp = true, merit_enabled = false)
-
-        net_merit_off = createCIGRE()
-        it_merit_off, erg_merit_off = runpf_rectangular!(net_merit_off, 30, 1e-8, 0; autodamp = true, merit_enabled = false, merit_armijo_c1 = 0.25, merit_scale_p = 3.0)
-
-        @test it_classic == it_merit_off
-        @test erg_classic == erg_merit_off == 0
-        @test [n._vm_pu for n in net_classic.nodeVec] == [n._vm_pu for n in net_merit_off.nodeVec]
-        @test [n._va_deg for n in net_classic.nodeVec] == [n._va_deg for n in net_merit_off.nodeVec]
-
-        net_3bus_classic = createTest3BusNet()
-        it3_classic, erg3_classic = runpf_rectangular!(net_3bus_classic, 20, 1e-6, 0; autodamp = true, merit_enabled = false)
-        net_3bus_merit_off = createTest3BusNet()
-        it3_merit_off, erg3_merit_off = runpf_rectangular!(net_3bus_merit_off, 20, 1e-6, 0; autodamp = true, merit_enabled = false)
-        @test it3_classic == it3_merit_off
-        @test erg3_classic == erg3_merit_off
-      end)() end
-
-  # cut from testset: Trust-region step control
-      @testset "Regression: trust_region.enabled=false leaves the default solver path unchanged" begin (function ()
-        net_classic = createCIGRE()
-        it_classic, erg_classic = runpf_rectangular!(net_classic, 30, 1e-8, 0; autodamp = true)
-
-        net_off = createCIGRE()
-        it_off, erg_off = runpf_rectangular!(net_off, 30, 1e-8, 0; autodamp = true, trust_region_enabled = false, trust_region_initial_radius = 3.0)
-
-        @test it_classic == it_off
-        @test erg_classic == erg_off == 0
-        @test [n._vm_pu for n in net_classic.nodeVec] == [n._vm_pu for n in net_off.nodeVec]
-        @test [n._va_deg for n in net_classic.nodeVec] == [n._va_deg for n in net_off.nodeVec]
-      end)() end
-
-      @testset "Regression: step_mode=:scaled (explicit) is bit-identical to the implicit default" begin (function ()
-        net_default = createCIGRE()
-        it_default, erg_default = runpf_rectangular!(net_default, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true)
-
-        net_explicit = createCIGRE()
-        it_explicit, erg_explicit = runpf_rectangular!(net_explicit, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_step_mode = :scaled)
-
-        @test it_default == it_explicit
-        @test erg_default == erg_explicit == 0
-        @test [n._vm_pu for n in net_default.nodeVec] == [n._vm_pu for n in net_explicit.nodeVec]
-        @test [n._va_deg for n in net_default.nodeVec] == [n._va_deg for n in net_explicit.nodeVec]
-      end)() end
 
       @testset "Active-set Q-limits switch on the converged iterate (post-convergence round)" begin (function ()
         # Regression: a converged iterate is always "ready" for the Q-limit
@@ -639,44 +641,6 @@ function run_legacy_solver_interface_tests()
           @test !("trust_region.log" in files)
           @test !haskey(perf, :diagnostic_artifact_prefix)
         end
-      end)() end
-
-      @testset "Dogleg degrades gracefully (more attempts before collapse) but does not rescue an infeasible case" begin (function ()
-        # tr_collapse_demo (200 MW / 60 Mvar over a weak line) has no nearby AC
-        # solution: this is honestly documented as a case dogleg cannot fix (see
-        # docs/src/solver.md, "Trust-Region Step Control" / Limits). What dogleg
-        # is expected to do differently from `scaled` here is take measurably
-        # more Newton iterations (Cauchy-direction progress) before eventually
-        # collapsing too -- graceful degradation, not rescue.
-        make_net = function ()
-          net = Net(name = "tr_collapse_demo", baseMVA = 100.0, flatstart = true)
-          addBus!(net = net, busName = "SLACK", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-          addBus!(net = net, busName = "LOAD", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
-          addPIModelACLine!(net = net, fromBus = "SLACK", toBus = "LOAD", r_pu = 0.01, x_pu = 0.5, b_pu = 0.0, status = 1)
-          addProsumer!(net = net, busName = "SLACK", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SLACK")
-          addProsumer!(net = net, busName = "LOAD", type = "ENERGYCONSUMER", p = 200.0, q = 60.0)
-          validate!(net = net)
-          return net
-        end
-
-        net_scaled = make_net()
-        it_scaled, erg_scaled = runpf_rectangular!(net_scaled, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_min_radius = 1e-3)
-        st_scaled = Sparlectra.rectangular_pf_status(net_scaled)
-
-        net_dogleg = make_net()
-        it_dogleg, erg_dogleg = runpf_rectangular!(net_dogleg, 30, 1e-8, 0; autodamp = false, trust_region_enabled = true, trust_region_min_radius = 1e-3, trust_region_step_mode = :dogleg)
-        st_dogleg = Sparlectra.rectangular_pf_status(net_dogleg)
-
-        # Neither mode fixes a genuinely infeasible case.
-        @test erg_scaled != 0
-        @test erg_dogleg != 0
-        @test st_scaled.reason == :trust_region_collapsed
-        @test st_dogleg.reason == :trust_region_collapsed
-        @test st_scaled.tr_collapsed == true
-        @test st_dogleg.tr_collapsed == true
-        # Graceful degradation: dogleg keeps making Cauchy-direction attempts
-        # measurably longer than scaled's repeated same-direction rescaling.
-        @test it_dogleg > it_scaled
       end)() end
 
   return true

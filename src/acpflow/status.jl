@@ -178,15 +178,26 @@ end
 
 _is_accepted_control_status(status::Symbol)::Bool = status in (:none, :converged, :disabled, :no_active_controllers, :no_controllers)
 
+# A solve of a controlled run that did not converge: the outcome is
+# :pf_failed, the reason stays the solver's own (a run at max_iter carries
+# :iteration_limit, :type_identification_divergence or
+# :numerical_divergence). Up to 0.50 the reason was replaced by :pf_failed
+# as well, and a controlled run could not tell why its solve failed. A
+# status without a solver reason gets :pf_failed.
+function _pf_failed_framework_status(base_status)
+  base_status.reason in (:none, :solver_error) && return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
+  return merge(base_status, (outcome = :pf_failed, final_converged = false, reason_text = string(base_status.reason_text, " (controlled framework run)")))
+end
+
 function _compose_framework_status(base_status, control_status::Symbol)
   _is_accepted_control_status(control_status) && return base_status
   if control_status === :pf_failed
     meaningful_rejection = base_status.outcome !== :converged || base_status.reason !== :none || !base_status.final_converged
     meaningful_rejection && base_status.numerical_converged && return merge(base_status, (final_converged = false,))
-    return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
+    return _pf_failed_framework_status(base_status)
   end
   if !base_status.numerical_converged
-    return merge(base_status, (outcome = :pf_failed, final_converged = false, reason = :pf_failed, reason_text = "power flow failed during controlled framework run"))
+    return _pf_failed_framework_status(base_status)
   end
   outcome = control_status === :blocked ? :control_blocked : control_status === :max_outer_iterations ? :control_max_outer_iterations : :control_not_converged
   return merge(base_status, (outcome = outcome, final_converged = false, reason = outcome, reason_text = "control loop ended with status $(control_status)"))
@@ -277,6 +288,21 @@ function _build_sparlectra_result(net::Net, cfg::SparlectraConfig, execution, pe
   plausibility = _plausibility_diagnostics(net, cfg.powerflow.plausibility, status.numerical_converged)
   diagnostics = merge(diagnostics, plausibility)
   isempty(plausibility.plausibility_warning) || @warn plausibility.plausibility_warning
+  # once per run as well: the stability conditions (6)/(7) of Zhao et al.
+  # at every voltage-regulated bus of the final state. A diagnosis, the
+  # status stays; the line goes into the solver status so the result print
+  # shows the same verdict without a second check
+  # in auto mode the Q-limit configuration of the last attempt (auto record):
+  # its locks and its on/off decide locked_by and whether the check applies
+  qlim = cfg.powerflow.qlimits
+  if cfg.powerflow.mode === :auto
+    auto_rec = auto_pf_record(net)
+    auto_rec !== nothing && hasproperty(auto_rec, :final_qlimits) && (qlim = auto_rec.final_qlimits)
+  end
+  stability = _qlimit_stability_diagnostics(net, qlim, status.numerical_converged, rect_status)
+  diagnostics = merge(diagnostics, (qlimit_stability_status = stability.qlimit_stability_status, qlimit_stability_violations = stability.qlimit_stability_violations, qlimit_stability_report = stability.qlimit_stability_report))
+  rect_status isa NamedTuple && _set_rectangular_pf_status!(net, (; rect_status..., qlimit_stability_line = stability.qlimit_stability_line))
+  isempty(stability.qlimit_stability_warning) || @warn stability.qlimit_stability_warning
   return SparlectraRunResult(net, status.outcome, status.numerical_converged, status.solution_available, status.limit_validation_status, status.final_converged, status.reason, status.reason_text, execution.iterations, execution.elapsed_s, execution.solver_elapsed_s, status.final_mismatch, cfg.powerflow.method, execution.control_status, performance_profile, diagnostics)
 end
 

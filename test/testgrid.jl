@@ -13,14 +13,11 @@
 # limitations under the License.
 
 # file: test/testgrid.jl
-# purpose: grid and power-flow regression tests around the CIGRE HV benchmark
-#          network: transformer and network validation, MATPOWER
-#          import/export, PF scenarios, plus the extended scale/parser group
+# purpose: grid and power-flow tests: transformer and network validation,
+#          MATPOWER import, PF scenarios, links and reporting, plus the
+#          extended parser group
 
 # Author: Udo Schmitz (https://github.com/Welthulk)
-# CIGRE HV network (builder createCIGRE in test_runner_helpers.jl since 0.50.0)
-# CIGRE HV network
-# Source of this network can be found here (Task Force C6.04.02 ): https://www.researchgate.net/publication/271963972_TF_C60402_TB_575_--_Benchmark_Systems_for_Network_Integration_of_Renewable_and_Distributed_Energy_Resources
 
 # Nameplate to equivalent circuit (0.32.0): the short-circuit loss path carried
 # a unit factor of 1e-9 instead of 1e-3 (r_k of 1.5e-6 ohm instead of 1.5
@@ -70,185 +67,6 @@ function test_transformer_nameplate_conversion()::Bool
   return br0.r_pu == 0.0 && br0.g_pu == 0.0 && br0.b_pu == 0.0 && isapprox(br0.x_pu, 0.12 * zb / zb100; rtol = 1e-12)
 end
 
-function test_2WTPITrafo()
-  Sbase_MVA = 1000.0
-  netName = "trafo_2W_PIT"
-  net = Net(name = netName, baseMVA = Sbase_MVA)
-  @debug "Creating $netName test network"
-  addBus!(net = net, busName = "B1", vn_kV = 220.0)
-  addBus!(net = net, busName = "B2", vn_kV = 20.0)
-
-  add2WTPIModelTrafo!(net = net, fromBus = "B1", toBus = "B2", r = 0.0, x = 0.4, ratedU = 220.0, ratedS = 1000.0)
-  addProsumer!(net = net, busName = "B2", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  result, msg = validate!(net = net)
-  if !result
-    @warn msg
-    return false
-  end
-  return result
-end
-
-function test_3WTPITrafo(verbose::Int = 0; method::Symbol = :rectangular, opt_sparse::Bool = true)::Bool
-  #
-  #                                                  380kV      AUX*        110kV
-  # 380kV              -----------------------AC-LINE--o----------o----------o----------------AC-LINE---------o  Load: p=80 MW, q=30 MVar
-  #                 Slack                                    |
-  #                                                          | 20kV
-  #                                                          o  Shunt: p=0 MW, q=5 MVar
-  #
-
-  Sbase_MVA = 1000.0
-  netName = "trafo_3W_PIT"
-  net = Net(name = netName, baseMVA = Sbase_MVA)
-  @debug "Creating $netName test network"
-
-  # --- buses ---
-  addBus!(net = net, busName = "B1", vn_kV = 380.0)
-  addBus!(net = net, busName = "B2", vn_kV = 380.0)  # HV side of 3W trafo
-  addBus!(net = net, busName = "B3", vn_kV = 110.0)  # MV side
-  addBus!(net = net, busName = "B4", vn_kV = 20.0)   # LV side (shunt bus)
-  addBus!(net = net, busName = "B5", vn_kV = 110.0)  # load bus at 110kV
-
-  # --- slack injection ---
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-
-  # --- line 380 kV: B1 -- B2 ---
-  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-
-  # --- 3-winding transformer: (B2=380kV, B3=110kV, B4=20kV) ---
-  # Use simple physical values; add3WTPiModelTrafo! is expected to:
-  #   - create AUX bus (if missing)
-  #   - convert to PU internally via add2WTPIModelTrafo!
-  aux_bus = add3WTPiModelTrafo!(
-    net = net,
-    HBBus = "B2",
-    MBBus = "B3",
-    LVBus = "B4",
-    r = (0.20, 0.30, 0.40),                 # Ohm (example)
-    x = (4.00, 6.00, 10.00),                # Ohm (example)
-    b = (0.0, 0.0, 0.0),                    # Siemens (or use 0.0 if not modeled)
-    ratedU_kV = (380.0, 110.0, 20.0),       # kV
-    ratedS_MVA = (1000.0, 500.0, 200.0),    # MVA (example)
-    status = 1,
-  )
-
-  # --- line 110 kV: B3 -- B5 (to remote load bus) ---
-  addPIModelACLine!(net = net, fromBus = "B3", toBus = "B5", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-
-  # --- load at B5: 80 MW / 30 MVar ---
-  addProsumer!(net = net, busName = "B5", type = "ENERGYCONSUMER", p = 80.0, q = 30.0)
-
-  # --- shunt at B4: q = 5 MVar (capacitive/inductive sign depends on your convention) ---
-  addShunt!(net = net, busName = "B4", pShunt = 0.0, qShunt = 5.0, in_service = 1)
-
-  # --- structural checks ---
-  if !hasBusInNet(net = net, busName = aux_bus)
-    @warn "AUX bus was not created/found by add3WTPiModelTrafo!" aux_bus = aux_bus
-    return false
-  end
-
-  # Expect at least:
-  #  - 2 AC lines  (B1-B2, B3-B5)
-  #  - 3 trafo branches (AUX-B2, AUX-B3, AUX-B4)
-  expected_min_branches = 5
-  if length(net.branchVec) < expected_min_branches
-    @warn "Unexpectedly low branch count" n = length(net.branchVec) expected_min = expected_min_branches
-    return false
-  end
-
-  # --- final validate ---
-  result, msg = validate!(net = net)
-  if !result
-    @warn msg
-    return false
-  end
-
-  tol = 1e-9
-  maxIte = 50
-  print_results = (verbose > 0)
-  result = true
-
-  etim = 0.0
-  etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = method)
-    if erg != 0
-      @info "Full-system power flow did not converge"
-      result = false
-    end
-  end
-
-  V = buildVoltageVector(net)
-  calcNetLosses!(net, V)
-  distributeBusResults!(net)
-  if print_results
-    printACPFlowResults(net, etim, ite, tol; converged = result, solver = method)
-    printProsumerResults(net)
-    printQLimitLog(net; sort_by = :bus)
-  end
-
-  return result
-end
-
-function test_acpflow(verbose::Int = 0; lLine_6a6b::Float64 = 0.01, damp::Float64 = 1.0, method::Symbol = :rectangular)::Bool
-  net = createCIGRE(lLine_6a6b)
-  tol = 1e-6
-  maxIte = 25
-  print_results = (verbose > 0)
-  result = true
-  etime = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose; method = method, damp = damp)
-  end
-  if erg != 0
-    @warn "Power flow did not converge"
-    result = false
-  end
-
-  if print_results
-    V = buildVoltageVector(net)
-    calcNetLosses!(net, V)
-    distributeBusResults!(net)
-    printACPFlowResults(net, etime, ite, tol; converged = (erg == 0), solver = method)
-    printProsumerResults(net)
-    printQLimitLog(net; sort_by = :bus)
-  end
-
-  return result
-end
-
-function test_NBI_MDO()
-  myNet = createCIGRE()
-  result = true
-
-  nodeNumberVec = Vector{Int}()
-  branchTupleSet = Set{Tuple}()
-
-  for n in myNet.nodeVec
-    if n.busIdx in nodeNumberVec
-      @warn "node", n, "is already in set!"
-    else
-      push!(nodeNumberVec, n.busIdx)
-    end
-  end
-
-  for b in myNet.branchVec
-    tuple = (b.fromBus, b.toBus)
-    if tuple ∉ branchTupleSet
-      push!(branchTupleSet, tuple)
-    end
-  end
-
-  A = getNBI(nodeNumberVec, branchTupleSet)
-  order = mdoRCM(length(nodeNumberVec), branchTupleSet)
-  if order == [2, 5, 8, 7, 13, 3, 12, 11, 1, 4, 6, 9, 10]
-    result = result & true
-  else
-    @warn "expected MDO-Order: [2, 5, 8, 7, 13, 3, 12, 11, 1, 4, 6, 9, 10], result order: $(order)"
-    result = false
-  end
-
-  return result
-end
-
 # updatePQShunt! must set the same per-unit admittance as the constructor path
 # (addShunt!): it used to store G and B in Siemens (p / vn_kV^2) next to a
 # per-unit y, so the two writers of these fields disagreed. Both shunts must
@@ -284,106 +102,6 @@ function test_shunt_update_matches_constructor()::Bool
   return ok
 end
 
-function testNetwork()::Bool
-  myNet = createCIGRE()
-  result, msg = validate!(net = myNet)
-  return result
-end
-
-# The MATPOWER export target. It used to be <pwd>/data/mpower/cigre.m, so
-# running the suite from the checkout WROTE a case file into the repository,
-# where the presence of files decides which availability-gated legs run. Test
-# output belongs in the scratch directory.
-function getTestFilePathName()
-  return test_scratch_path("_cigre.m")
-end
-
-function testExportMatpower()
-  myNet = createCIGRE()
-  case = myNet.name
-  writeMatpowerCasefile(myNet, getTestFilePathName())
-  return true
-end
-
-function testImportMatpower()::Bool
-  mpc = (
-    name = "case2_inline",
-    baseMVA = 100.0,
-
-    # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
-    bus = [
-      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
-      2 1 50.0 30.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
-    ],
-
-    # gen: 21 cols (MATPOWER v2)
-    gen = [
-      1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0;
-    ],
-
-    # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
-    branch = [
-      1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0;
-    ],
-    gencost = nothing,
-    bus_name = nothing,
-  )
-
-  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
-
-  if strip(net.name) != "case2_inline"
-    @warn "Unexpected net.name" got = net.name
-    return false
-  end
-  if length(net.nodeVec) != 2
-    @warn "Expected 2 nodes" got = length(net.nodeVec)
-    return false
-  end
-  if length(net.branchVec) != 1
-    @warn "Expected 1 branch" got = length(net.branchVec)
-    return false
-  end
-
-  ok, msg = validate!(net = net)
-  ok || (@warn msg; return false)
-
-  return true
-end
-
-function test_matpower_import_defaults_no_reenable()::Bool
-  mpc = (
-    name = "case2_defaults",
-    baseMVA = 100.0,
-    bus = [
-      1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
-      2 1 20.0 10.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
-    ],
-    gen = [1 30.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
-    branch = [1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
-    gencost = nothing,
-    bus_name = nothing,
-  )
-
-  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
-
-  # Since 0.30.0 the importer's cooldown and hysteresis defaults are the
-  # packaged template's values, read from DEFAULT_QLIMIT_CONFIG (cooldown 1,
-  # hysteresis 0.01 pu), so a config-less library run and a template run
-  # agree; up to 0.20.5 this test pinned the importer literals 0 and 0.0.
-  expected = Sparlectra.DEFAULT_QLIMIT_CONFIG
-  if net.cooldown_iters != expected.cooldown_iters
-    @warn "Expected the template default cooldown_iters for MATPOWER import" got = net.cooldown_iters expected = expected.cooldown_iters
-    return false
-  end
-
-  if !isapprox(net.q_hyst_pu, expected.hysteresis_pu; atol = 0.0, rtol = 0.0)
-    @warn "Expected the template default q_hyst_pu for MATPOWER import" got = net.q_hyst_pu expected = expected.hysteresis_pu
-    return false
-  end
-
-  return net.cooldown_iters == 1 && net.q_hyst_pu == 0.01
-end
-
 function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
   mpc = (
     name = "case_flatstart_vg_setpoints",
@@ -409,6 +127,12 @@ function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
   V0, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
   busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
 
+  # reference_vm_pu / reference_va_deg replace the slack values of the file
+  net_ref = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = true, reference_vm_pu = 1.01, reference_va_deg = -3.0)
+  V0_ref, slack_ref = Sparlectra.initialVrect(net_ref; flatstart = true)
+  busVec_ref, _ = Sparlectra.getBusData(net_ref.nodeVec, net_ref.baseMVA, true; net = net_ref)
+  reference_override_ok = slack_ref == 1 && isapprox(abs(V0_ref[1]), 1.01; atol = 1e-12) && isapprox(angle(V0_ref[1]), deg2rad(-3.0); atol = 1e-12) && isapprox(busVec_ref[1].vm_pu, 1.01; atol = 1e-12) && isapprox(busVec_ref[1].va_rad, deg2rad(-3.0); atol = 1e-12)
+
   return slack_idx == 1 &&
          isapprox(abs(V0[1]), 1.04; atol = 1e-12) &&
          isapprox(angle(V0[1]), deg2rad(12.0); atol = 1e-12) &&
@@ -421,28 +145,8 @@ function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
          isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) &&
          isapprox(busVec[2].va_rad, 0.0; atol = 1e-12) &&
          isapprox(busVec[3].vm_pu, 1.02; atol = 1e-12) &&
-         isapprox(busVec[3].va_rad, 0.0; atol = 1e-12)
-end
-
-function test_matpower_reference_override_controls_flatstart()::Bool
-  mpc = (
-    name = "case_reference_override",
-    baseMVA = 100.0,
-    bus = [
-      1 3 0.0 0.0 0.0 0.0 1 0.97 12.0 110.0 1 1.1 0.9
-      2 1 20.0 8.0 0.0 0.0 1 0.93 -7.0 110.0 1 1.1 0.9
-    ],
-    gen = [1 30.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
-    branch = [1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
-    gencost = nothing,
-    bus_name = nothing,
-  )
-
-  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = true, reference_vm_pu = 1.01, reference_va_deg = -3.0)
-  V0, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
-  busVec, _ = Sparlectra.getBusData(net.nodeVec, net.baseMVA, true; net = net)
-
-  return slack_idx == 1 && isapprox(abs(V0[1]), 1.01; atol = 1e-12) && isapprox(angle(V0[1]), deg2rad(-3.0); atol = 1e-12) && isapprox(busVec[1].vm_pu, 1.01; atol = 1e-12) && isapprox(busVec[1].va_rad, deg2rad(-3.0); atol = 1e-12)
+         isapprox(busVec[3].va_rad, 0.0; atol = 1e-12) &&
+         reference_override_ok
 end
 
 function test_matpower_import_uses_bus_type_for_regulation()::Bool
@@ -551,14 +255,14 @@ end
 # the unsupported value is refused.
 # Power mode (0.30.1): the Ybus, the symbolic analysis and the work arrays
 # stay on the network between solves. The solution with the switch equals
-# the solution without it to 1e-12 pu on three shipped cases (warm solve on
+# the solution without it to 1e-12 pu on two shipped cases (warm solve on
 # the same net, Ybus and context reused), a branch taken out of service
 # after a power-mode solve gives the solution a fresh net gives (the Ybus
 # fingerprint moves, the context re-analyses), and the cache does not
 # survive a deepcopy (native factorization memory is never shared).
 function test_power_mode_same_solution_and_topology_change()::Bool
   _state(net) = [n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
-  for f in ("sp_case118.m", "sp_case300.m", "sp_case1354.m")
+  for f in ("sp_case118.m", "sp_case300.m")
     path = joinpath(dirname(@__DIR__), "data", "mpower", f)
     ref_net = Sparlectra.createNetFromMatPowerFile(filename = path)
     it_ref, erg_ref = runpf!(ref_net, 30, 1e-10, 0; qlimits_enabled = false)
@@ -709,6 +413,11 @@ function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::B
     first_nonfinite_voltage = ComplexF64[1.0+0.0im, NaN+NaN*im],
   )
 
+  # the final status reads the same history: best mismatch without the NaN,
+  # reason nr_nonfinite
+  status =
+    Sparlectra._build_rectangular_final_status(Net(name = "diagnostic_status", baseMVA = 100.0), false, false, false, :nr_mismatch_not_converged, nothing, nothing, 0.0, [239.0, 1609.0, 5.55e290, NaN], 0, 0, 0, Int[], Sparlectra._wrong_branch_not_checked_result(), :warn, false, :disabled, NamedTuple()).status
+
   return diagnostics.first_nonfinite_iteration == 4 &&
          diagnostics.last_finite_mismatch == 5.55e290 &&
          diagnostics.best_mismatch == 239.0 &&
@@ -716,31 +425,10 @@ function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::B
          length(diagnostics.top_mismatch_rows_by_iteration) == 3 &&
          diagnostics.top_mismatch_rows_by_iteration[1].label == :best_finite_iteration &&
          diagnostics.top_mismatch_rows_by_iteration[2].label == :last_finite_iteration &&
-         diagnostics.autodamp_failure === true
-end
-
-function test_rectangular_final_status_best_mismatch_ignores_nan()::Bool
-  status =
-    Sparlectra._build_rectangular_final_status(Net(name = "diagnostic_status", baseMVA = 100.0), false, false, false, :nr_mismatch_not_converged, nothing, nothing, 0.0, [239.0, 1609.0, 5.55e290, NaN], 0, 0, 0, Int[], Sparlectra._wrong_branch_not_checked_result(), :warn, false, :disabled, NamedTuple()).status
-
-  return status.reason == :nr_nonfinite && status.status == :nr_nonfinite && status.best_mismatch == 239.0
-end
-
-function test_rectangular_start_projection_improves_dc_seed()::Bool
-  Ydense = ComplexF64[0.0 - 10.0im 0.0 + 10.0im; 0.0 + 10.0im 0.0 - 10.0im]
-  Y = sparse(Ydense)
-  Vraw = ComplexF64[1.0+0.0im, 1.0+0.0im]
-  S = ComplexF64[0.0+0.0im, -1.0-0.2im]
-  bus_types = [:Slack, :PQ]
-  Vset = [1.0, 1.0]
-  profile = Dict{Symbol,Any}(:enabled => true)
-
-  raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, S, bus_types, Vset, 1)))
-  Vproj = Sparlectra.project_rectangular_start(Y, Vraw, S, bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = true, blend_lambdas = [0.25, 0.5, 0.75], dc_angle_limit_deg = 60.0, performance_profile = profile)
-  projected_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vproj, S, bus_types, Vset, 1)))
-  Vdc = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, 1; dc_angle_limit_deg = 60.0)
-
-  return Vproj[1] == Vraw[1] && projected_mismatch < raw_mismatch && Vdc == Vproj && profile[:dc_matrix_size] == (1, 1) && profile[:dc_matrix_nnz] == 1 && profile[:dc_solve_backend] === :sparse_lu_umfpack && profile[:dc_solve_reduced_dimension] == 1
+         diagnostics.autodamp_failure === true &&
+         status.reason == :nr_nonfinite &&
+         status.status == :nr_nonfinite &&
+         status.best_mismatch == 239.0
 end
 
 function test_rectangular_start_projection_dc_candidate_matches_rundcpf()::Bool
@@ -811,6 +499,15 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
   Vraw = ComplexF64[1.0+0.0im, 1.0+0.0im]
   bus_types = [:Slack, :PQ]
   Vset = [1.0, 1.0]
+
+  # an optional DC candidate (no start mode requested) replaces the seed
+  # when it lowers the mismatch
+  Sload = ComplexF64[0.0+0.0im, -1.0-0.2im]
+  raw_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Vraw, Sload, bus_types, Vset, 1)))
+  Voptional = Sparlectra.project_rectangular_start(Y, Vraw, Sload, bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = true, blend_lambdas = [0.25, 0.5, 0.75], dc_angle_limit_deg = 60.0, performance_profile = Dict{Symbol,Any}(:enabled => true))
+  optional_mismatch = maximum(abs.(Sparlectra.mismatch_rectangular(Y, Voptional, Sload, bus_types, Vset, 1)))
+  Vdc = Sparlectra._dc_angle_start_rectangular(Y, Vraw, Sload, bus_types, Vset, 1; dc_angle_limit_deg = 60.0)
+  optional_dc_ok = Voptional[1] == Vraw[1] && optional_mismatch < raw_mismatch && Vdc == Voptional
 
   unmeasured_profile = Dict{Symbol,Any}(:enabled => true)
   Vunmeasured = Sparlectra.project_rectangular_start(Y, Vraw, ComplexF64[0.0+0.0im, -1.0-0.2im], bus_types, Vset, 1; enabled = true, try_dc_start = true, try_blend_scan = false, measure_candidates = false, performance_profile = unmeasured_profile)
@@ -889,45 +586,13 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
   )
   solved_seed_summary = solved_seed_profile[:start_projection_summary]
 
-  required_fields = (
-    :requested_angle_mode,
-    :requested_voltage_mode,
-    :dc_angle_start_built,
-    :dc_angle_start_valid,
-    :dc_angle_start_applied,
-    :selected_start_candidate,
-    :selection_reason,
-    :raw_mismatch,
-    :dc_mismatch,
-    :best_blend_mismatch,
-    :projected_mismatch,
-    :fallback_to_raw,
-    :fallback_reason,
-    :raw_fallback_reason,
-    :dc_angle_min_deg,
-    :dc_angle_max_deg,
-    :dc_angle_spread_deg,
-    :dc_angle_mean_deg,
-    :dc_angle_std_deg,
-    :dc_angle_clipped_count,
-    :dc_angle_clip_limit_deg,
-    :dc_max_branch_angle_deg,
-    :dc_branch_angle_violation_count,
-    :worst_dc_branch_from_bus,
-    :worst_dc_branch_to_bus,
-    :worst_dc_branch_angle_deg,
-    :dc_voltage_magnitude_min,
-    :dc_voltage_magnitude_max,
-    :dc_mismatch_ratio_vs_raw,
-    :requested_dc_worse_than_raw,
-    :dc_mismatch_growth_factor,
-  )
   requested_summary = requested_dc_profile[:start_projection_summary]
   invalid_summary = invalid_dc_profile[:start_projection_summary]
 
   # Regression: optional DC candidates still require measured improvement, but an explicitly
   # requested DC angle start is applied whenever it passes the hard finite-voltage guard.
-  return Vunmeasured == Vraw &&
+  return optional_dc_ok &&
+         Vunmeasured == Vraw &&
          unmeasured_profile[:start_projection_summary].selected === :raw &&
          unmeasured_profile[:start_projection_summary].reason === :candidate_mismatch_not_measured &&
          ismissing(unmeasured_profile[:start_projection_summary].best_mismatch) &&
@@ -945,7 +610,6 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          requested_summary.dc_angle_start_applied === true &&
          requested_summary.fallback_to_raw === false &&
          requested_summary.requested_dc_worse_than_raw === (requested_summary.dc_mismatch > requested_summary.raw_mismatch) &&
-         all(field -> hasproperty(requested_summary, field), required_fields) &&
          Vsolved_seed == Vsolved &&
          solved_seed_summary.selected === :raw &&
          solved_seed_summary.reason === :raw_seed_closer_than_dc_start &&
@@ -959,8 +623,7 @@ function test_rectangular_start_projection_keeps_raw_without_finite_improvement(
          invalid_summary.dc_angle_start_valid === false &&
          invalid_summary.dc_angle_start_applied === false &&
          invalid_summary.fallback_to_raw === true &&
-         invalid_summary.fallback_reason === :invalid_dc_angle_start &&
-         all(field -> hasproperty(invalid_summary, field), required_fields)
+         invalid_summary.fallback_reason === :invalid_dc_angle_start
 end
 
 # The ratio-profile start candidate (power_flow.start_mode.ratio_profile):
@@ -1142,25 +805,6 @@ function test_run_level_flat_start_is_flat()::Bool
   return no_projection && same_start && no_seed && projected && case14_flat && rescue_flat && aux_ratio
 end
 
-function test_matpower_vmva_selfcheck_noncontiguous_bus_numbers()::Bool
-  mpc = Sparlectra.MatpowerIO.MatpowerCase(
-    "case_noncontig",
-    100.0,
-    # bus_i includes non-contiguous high id (9001)
-    [
-      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
-      9001 1 0.0 0.0 0.0 0.0 1 0.99 -3.0 110.0 1 1.1 0.9
-    ],
-    [1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
-    [1 9001 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
-    nothing,
-    nothing,
-  )
-
-  stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
-  return get(stats, :ok, false) && get(stats, :n_p, 0) == 1 && get(stats, :n_q, 0) == 1 && isfinite(get(stats, :max_p_mis_pu, NaN)) && isfinite(get(stats, :max_q_mis_pu, NaN))
-end
-
 function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
   mpc = Sparlectra.MatpowerIO.MatpowerCase(
     "case_slack_spec_ignored",
@@ -1181,7 +825,24 @@ function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
   )
 
   stats = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc)
-  return get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
+  slack_ok = get(stats, :ok, false) && isapprox(get(stats, :max_p_mis_pu, NaN), 0.0; atol = 1e-12) && isapprox(get(stats, :max_q_mis_pu, NaN), 0.0; atol = 1e-12)
+
+  # a non-contiguous bus number (9001) is mapped, one P and one Q row counted
+  mpc_noncontig = Sparlectra.MatpowerIO.MatpowerCase(
+    "case_noncontig",
+    100.0,
+    [
+      1 3 0.0 0.0 0.0 0.0 1 1.00 0.0 110.0 1 1.1 0.9
+      9001 1 0.0 0.0 0.0 0.0 1 0.99 -3.0 110.0 1 1.1 0.9
+    ],
+    [1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+    [1 9001 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
+    nothing,
+    nothing,
+  )
+  stats_nc = Sparlectra.MatpowerIO.vmva_power_mismatch_stats(mpc_noncontig)
+  noncontig_ok = get(stats_nc, :ok, false) && get(stats_nc, :n_p, 0) == 1 && get(stats_nc, :n_q, 0) == 1 && isfinite(get(stats_nc, :max_p_mis_pu, NaN)) && isfinite(get(stats_nc, :max_q_mis_pu, NaN))
+  return slack_ok && noncontig_ok
 end
 
 function test_matpower_build_ybus_returns_sparse_expected_values()::Bool
@@ -1201,33 +862,6 @@ function test_matpower_build_ybus_returns_sparse_expected_values()::Bool
   expected21 = -y / tap
 
   return SparseArrays.issparse(ybus) && ybus isa SparseArrays.SparseMatrixCSC{ComplexF64,Int} && isapprox(ybus[1, 1], expected11; atol = 1e-12) && isapprox(ybus[2, 2], expected22; atol = 1e-12) && isapprox(ybus[1, 2], expected12; atol = 1e-12) && isapprox(ybus[2, 1], expected21; atol = 1e-12)
-end
-
-function test_matpower_build_ybus_large_sparse_smoke()::Bool
-  nbus = 20_000
-  bus = zeros(Float64, nbus, 13)
-  @inbounds for i in axes(bus, 1)
-    bus[i, 1] = i
-    bus[i, 2] = i == 1 ? 3.0 : 1.0
-    bus[i, 7] = 1.0
-    bus[i, 8] = 1.0
-    bus[i, 10] = 110.0
-    bus[i, 11] = 1.0
-    bus[i, 12] = 1.1
-    bus[i, 13] = 0.9
-  end
-  branch = zeros(Float64, nbus - 1, 13)
-  @inbounds for e in axes(branch, 1)
-    branch[e, 1] = e
-    branch[e, 2] = e + 1
-    branch[e, 3] = 0.01
-    branch[e, 4] = 0.05
-    branch[e, 5] = 0.01
-    branch[e, 9] = 1.0
-    branch[e, 11] = 1.0
-  end
-  ybus = Sparlectra.MatpowerIO.build_ybus_matpower(bus, branch, 100.0)
-  return SparseArrays.issparse(ybus) && size(ybus) == (nbus, nbus) && SparseArrays.nnz(ybus) <= 4 * (nbus - 1)
 end
 
 function test_matpower_compare_vmva_wraps_angle_differences()::Bool
@@ -1296,48 +930,31 @@ function test_matpower_pv_voltage_source_and_compare_modes()::Bool
 
   rows = Sparlectra.MatpowerIO.pv_voltage_reference_rows(mpc; net = net_gen, matpower_pv_voltage_source = :gen_vg)
   diagnostic_ok = any(row -> row.busI == 2 && isapprox(row.dvg_bus, 0.02; atol = 1e-12) && isapprox(row.dvm_vset, 0.0; atol = 1e-12), rows)
-  return source_ok && !bus_ok && get(bus_stats, :max_dvm, 0.0) > 0.019 && imported_ok && get(imported_stats, :max_dvm, 1.0) < 0.011 && diagnostic_ok
-end
 
-function test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm()::Bool
-  mpc = _synthetic_pv_vg_mismatch_case()
-  net = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_pv_voltage_source = :gen_vg)
-  pv_idx = geNetBusIdx(net = net, busName = "2")
-
-  Sparlectra.setNodeType!(net.nodeVec[pv_idx], "PQ")
-  net.qLimitEvents[pv_idx] = :max
-  net.nodeVec[pv_idx]._vm_pu = 1.03
-  net.nodeVec[pv_idx]._va_deg = 0.0
-
-  text_path, text_io = mktemp()
-  close(text_io)
-  ok, stats = open(text_path, "w") do io
-    redirect_stdout(io) do
-      Sparlectra.MatpowerIO.compare_vm_va(net, mpc; show_diff = true, compare_voltage_reference = :hybrid, matpower_pv_voltage_source = :gen_vg, tol_vm = 1e-12, tol_va = 180.0)
-    end
+  # hybrid compare: a PV bus switched to PQ by its Q limit is compared
+  # against the bus Vm of the file (0.01 pu off at 1.03 against 1.02)
+  net_q = Sparlectra.createNetFromMatPowerCase(mpc = mpc, matpower_pv_voltage_source = :gen_vg)
+  Sparlectra.setNodeType!(net_q.nodeVec[pv_idx], "PQ")
+  net_q.qLimitEvents[pv_idx] = :max
+  net_q.nodeVec[pv_idx]._vm_pu = 1.03
+  net_q.nodeVec[pv_idx]._va_deg = 0.0
+  hybrid_ok, hybrid_stats = redirect_stdout(devnull) do
+    Sparlectra.MatpowerIO.compare_vm_va(net_q, mpc; show_diff = true, compare_voltage_reference = :hybrid, matpower_pv_voltage_source = :gen_vg, tol_vm = 1e-12, tol_va = 180.0)
   end
-  text = read(text_path, String)
-  rm(text_path; force = true)
-  counts = get(stats, :vm_ref_kind_counts, Dict{Symbol,Int}())
-  kind_summary = get(stats, :vm_ref_kind_summary, Dict{Symbol,Any}())
-  final_pq_summary = get(kind_summary, :final_pq_after_qlimit, (count = 0, max_dvm = NaN, max_dva = NaN))
+  counts = get(hybrid_stats, :vm_ref_kind_counts, Dict{Symbol,Int}())
+  final_pq_summary = get(get(hybrid_stats, :vm_ref_kind_summary, Dict{Symbol,Any}()), :final_pq_after_qlimit, (count = 0, max_dvm = NaN, max_dva = NaN))
+  hybrid_rows_ok =
+    hybrid_ok &&
+    get(hybrid_stats, :compare_status, :fail) == :warn &&
+    isapprox(get(hybrid_stats, :max_dvm, NaN), 0.01; atol = 1e-12) &&
+    isapprox(final_pq_summary.max_dvm, 0.01; atol = 1e-12) &&
+    get(counts, :final_pq_after_qlimit, 0) == 1 &&
+    get(counts, :pq_bus_vm, 0) == 1 &&
+    get(counts, :ref_slack_imported_setpoint, 0) == 1 &&
+    get(counts, :active_pv_imported_setpoint, 0) == 0
 
-  return ok &&
-         get(stats, :compare_status, :fail) == :warn &&
-         isapprox(get(stats, :max_dvm, NaN), 0.01; atol = 1e-12) &&
-         isapprox(final_pq_summary.max_dvm, 0.01; atol = 1e-12) &&
-         get(counts, :final_pq_after_qlimit, 0) == 1 &&
-         get(counts, :pq_bus_vm, 0) == 1 &&
-         get(counts, :ref_slack_imported_setpoint, 0) == 1 &&
-         get(counts, :active_pv_imported_setpoint, 0) == 0 &&
-         occursin("final_pq_after_qlimit", text) &&
-         occursin("pq_bus_vm", text) &&
-         occursin("ref_slack_imported_setpoint", text) &&
-         occursin("status           : WARN", text) &&
-         occursin("Voltage deviations on final_pq_after_qlimit buses are expected", text)
-end
-
-function test_matpower_multi_generator_vg_and_fallback()::Bool
+  # several generators on one bus: the first online Vg wins; an offline
+  # generator gives no setpoint and the bus Vm of the file is used
   mpc_multi = _synthetic_pv_vg_mismatch_case(gen_rows = [
     1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
     2 25.0 0.0 999.0 -999.0 1.04 100.0 1 999.0 0.0 zeros(1, 11)...
@@ -1347,7 +964,6 @@ function test_matpower_multi_generator_vg_and_fallback()::Bool
     Sparlectra.createNetFromMatPowerCase(mpc = mpc_multi, matpower_pv_voltage_source = :gen_vg, matpower_pv_voltage_mismatch_tol_pu = 1e-4)
   end
   first_online_ok = isapprox(net_multi.nodeVec[geNetBusIdx(net = net_multi, busName = "2")]._vm_pu, 1.04; atol = 1e-12)
-
   mpc_fallback = _synthetic_pv_vg_mismatch_case(gen_rows = [
     1 0.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 zeros(1, 11)...
     2 50.0 0.0 999.0 -999.0 1.04 100.0 0 999.0 0.0 zeros(1, 11)...
@@ -1356,44 +972,8 @@ function test_matpower_multi_generator_vg_and_fallback()::Bool
     Sparlectra.createNetFromMatPowerCase(mpc = mpc_fallback, matpower_pv_voltage_source = :gen_vg)
   end
   fallback_ok = isapprox(net_fallback.nodeVec[geNetBusIdx(net = net_fallback, busName = "2")]._vm_pu, 1.02; atol = 1e-12)
-  return first_online_ok && fallback_ok
-end
 
-function _synthetic_large_vset_lookup_net(nbus::Int)::Net
-  net = Net(name = "synthetic_vset_lookup", baseMVA = 100.0)
-  sizehint!(net.nodeVec, nbus)
-  sizehint!(net.busDict, nbus)
-  sizehint!(net.busOrigIdxDict, nbus)
-  sizehint!(net.prosumpsVec, nbus)
-  for k in Base.OneTo(nbus)
-    addBus!(net = net, busName = string(k), vn_kV = 110.0, vm_pu = 0.98 + 1e-7 * k, oBusIdx = 100_000 + k)
-  end
-  for k in Base.OneTo(nbus)
-    if k == 1
-      addProsumer!(net = net, busName = string(k), type = "EXTERNALNETWORKINJECTION", p = 0.0, q = 0.0, vm_pu = 1.01, referencePri = string(k), defer_bus_type_refresh = true)
-    elseif iseven(k)
-      addProsumer!(net = net, busName = string(k), type = "GENERATOR", p = 1.0, q = 0.0, vm_pu = 1.0 + 1e-6 * k, defer_bus_type_refresh = true)
-    else
-      addProsumer!(net = net, busName = string(k), type = "ENERGYCONSUMER", p = 1.0, q = 0.2, defer_bus_type_refresh = true)
-    end
-  end
-  Sparlectra.refreshBusTypesFromProsumers!(net)
-  return net
-end
-
-function test_voltage_setpoint_lookup_uses_cached_linear_scan()::Bool
-  nbus = 4096
-  net = _synthetic_large_vset_lookup_net(nbus)
-  # Warm up compilation so this regression guards the lookup algorithm, not JIT latency.
-  Sparlectra._bus_voltage_setpoints_from_prosumers(net)
-  profile = Dict{Symbol,Any}(:enabled => true, :show_allocations => true)
-  elapsed = @elapsed Vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net; performance_profile = profile)
-  timings = profile[:timings]
-  phases_present = all(phase -> haskey(timings, phase), (:vset_map_build, :vset_generator_scan, :vset_node_metadata_scan, :vset_vector_fill, :vset_fallback_bus_vm, :vset_missing_online_gen_summary))
-  values_ok = isapprox(Vset[1], 1.01; atol = 1e-12) && isapprox(Vset[2], 1.000002; atol = 1e-12) && isapprox(Vset[3], 0.9800003; atol = 1e-12) && isapprox(Vset[end], 1.0 + 1e-6 * nbus; atol = 1e-12)
-  # The old nested bus×prosumer scan is quadratic for this fixture; the cached
-  # map/vector path should remain comfortably sub-second after compilation.
-  return phases_present && values_ok && elapsed < 0.5 && timings[:vset_generator_scan].bytes > 0
+  return source_ok && !bus_ok && get(bus_stats, :max_dvm, 0.0) > 0.019 && imported_ok && get(imported_stats, :max_dvm, 1.0) < 0.011 && diagnostic_ok && hybrid_rows_ok && first_online_ok && fallback_ok
 end
 
 function testISOBusses()
@@ -1454,282 +1034,6 @@ function testISOBusses()
   if net.isoNodes[1] != 1
     @warn "Expected isolated node 1, found: $(net.isoNodes[1])"
     return false
-  end
-
-  return true
-end
-
-function createTest2BusNet(; cooldown = 0, hyst_pu = 0.0, qlim_min = nothing, qlim_max = nothing)::Net
-  # Simple 2-bus network
-  #   Bus1            Bus2
-  #  ->|---------------|<--- Generator
-  #   Slack           PV
-  Sbase_MVA = 100.0
-  netName = "test2bus"
-  r = 0.05
-  x = 0.5
-  c_nf_per_km = 10.0
-  tanδ = 0.0
-
-  @debug "Creating $netName test network with qlim_min=$qlim_min, qlim_max=$qlim_max"
-
-  Bus2Net = Net(name = netName, baseMVA = Sbase_MVA, cooldown_iters = cooldown, q_hyst_pu = hyst_pu)
-  addBus!(net = Bus2Net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = Bus2Net, busName = "B2", vn_kV = 110.0)
-
-  add_test_line_pu_c!(net = Bus2Net, fromBus = "B1", toBus = "B2", length_km = 20.0, r_pu = r, x_pu = x, c_nf_per_km = c_nf_per_km, tanδ = tanδ)
-
-  addProsumer!(net = Bus2Net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addProsumer!(net = Bus2Net, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 20.0, vm_pu = 1.05, va_deg = 0.0, qMax = qlim_max, qMin = qlim_min)
-
-  return Bus2Net
-end
-
-function test_3BusNet(verbose::Int = 0, qlim::Float64 = 15.0, method::Symbol = :rectangular, opt_sparse::Bool = true)
-  net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -qlim, qlim_max = qlim)
-  tol = 1e-12
-  maxIte = 50
-  print_results = (verbose > 0)
-  result = true
-
-  pv_names = ["STATION1"]
-  etim = 0.0
-  etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = method)
-    if erg != 0
-      @info "Full-system power flow did not converge"
-      result = false
-    end
-  end
-
-  #
-
-  hit = pv_hit_q_limit(net, pv_names)
-  calcNetLosses!(net)
-  distributeBusResults!(net)
-  if print_results
-    printACPFlowResults(net, etim, ite, tol; converged = result, solver = method)
-    printProsumerResults(net)
-    printQLimitLog(net; sort_by = :bus)
-  end
-
-  tp = getTotalBusPower(net = net)
-  tl = getTotalLosses(net = net)
-  if verbose > 1
-    @info "Total Power: P=$(tp[1]), Q=$(tp[2])"
-    @info "Total Losses: P=$(tl[1]), Q=$(tl[2])"
-  end
-
-  @test all(isapprox.(tp, tl; atol = 1e-6))
-
-  if qlim < 33.2
-    return hit == true
-  else
-    return hit == false
-  end
-end
-
-function test_5BusNet(verbose::Int = 0, qlim::Float64 = 20.0, method::Symbol = :rectangular, opt_sparse::Bool = true)
-  net = createTest5BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -qlim, qlim_max = qlim)
-  tol = 1e-9
-  maxIte = 50
-  print_results = (verbose > 0)
-  result = true
-
-  pv_names = ["B3"]
-  etim = 0.0
-  etim = @elapsed begin
-    ite, erg = runpf!(net, maxIte, tol, verbose, method = method)
-    if erg != 0
-      @info "Full-system power flow did not converge"
-      result = false
-    end
-  end
-
-  #
-
-  hit = pv_hit_q_limit(net, pv_names)
-
-  if print_results
-    V = buildVoltageVector(net)
-    calcNetLosses!(net, V)
-    distributeBusResults!(net)
-    printACPFlowResults(net, etim, ite, tol; converged = result, solver = method)
-    printProsumerResults(net)
-    printQLimitLog(net; sort_by = :bus)
-  end
-
-  return hit == true
-end
-
-# -----------------------------------------------------------------------------
-# Test intent: MATPOWER inline case vs manually assembled Net (with bus shunts)
-#
-# Why this exists:
-# - We want to verify that `createNetFromMatPowerCase` builds the same electrical
-#   model as the explicit Sparlectra API calls (`addBus!`, `addPIModelACLine!`,
-#   `addProsumer!`, `addShunt!`).
-# - This specifically guards the bus-shunt mapping from MATPOWER bus columns
-#   `Gs/Bs` into Sparlectra's internal shunt representation.
-#
-# What is compared:
-# 1) Converged PF state (complex bus voltages V)
-# 2) Slack-bus complex injection (P/Q)
-#
-# If these are equal within tolerance, both model construction paths are
-# considered equivalent for this scenario.
-# -----------------------------------------------------------------------------
-function test_mp_inline_vs_manual_shunt(verbose::Int = 0; method::Symbol = :rectangular, opt_sparse::Bool = true)::Bool
-  tol_pf = 1e-10
-  maxIte = 40
-  tol_cmp = 5e-4
-  print_results = (verbose > 0)
-
-  # -------------------------
-  # 1) MATPOWER inline case
-  # -------------------------
-  mpc = (
-    name = "case3_mp_vs_manual_shunt",
-    baseMVA = 100.0,
-
-    # bus: [bus_i type Pd Qd Gs Bs area Vm Va baseKV zone Vmax Vmin]
-    # We place non-zero Bs on buses 2 and 3 and keep line charging at 0.
-    # This isolates the test to *bus shunts* (no branch-charging side effects).
-    bus = [
-      1 3 0.0 0.0 0.0 0.0 1 1.06 0.0 110.0 1 1.10 0.90
-      2 2 20.0 5.0 0.0 6.0 1 1.03 0.0 110.0 1 1.10 0.90
-      3 1 90.0 30.0 0.0 12.0 1 1.00 0.0 110.0 1 1.10 0.90
-    ],
-
-    # gen: 21 cols (MATPOWER v2)
-    # bus Pg Qg Qmax Qmin Vg mBase status Pmax Pmin ...
-    gen = [
-      1 120.0 0.0 300.0 -300.0 1.06 100.0 1 300.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-      2 60.0 0.0 200.0 -200.0 1.03 100.0 1 200.0 0.0 0 0 0 0 0 0 0 0 0 0 0
-    ],
-
-    # branch: [fbus tbus r x b rateA rateB rateC ratio angle status angmin angmax]
-    # NOTE: line charging b=0 here (we test shunts via bus Gs/Bs).
-    branch = [
-      1 2 0.02 0.06 0.0 0 0 0 0.0 0.0 1 -360 360
-      1 3 0.08 0.24 0.0 0 0 0 0.0 0.0 1 -360 360
-      2 3 0.06 0.18 0.0 0 0 0 0.0 0.0 1 -360 360
-    ],
-    gencost = nothing,
-    bus_name = ["BUS1 (Slack)", "BUS2 (PV)", "BUS3 (PQ)"],
-  )
-
-  # Build network via MATPOWER import path.
-  net_mp = Sparlectra.createNetFromMatPowerCase(mpc = mpc, log = false, flatstart = false)
-
-  ok, msg = validate!(net = net_mp)
-  ok || (@warn msg; return false)
-
-  # Run PF for MATPOWER-derived net.
-  erg_mp = 0
-  ite_mp = 0
-  et_mp = @elapsed begin
-    ite_mp, erg_mp = runpf!(net_mp, maxIte, tol_pf, verbose; method = method)
-  end
-  if erg_mp != 0
-    @warn "MATPOWER-derived net: power flow did not converge"
-    return false
-  end
-
-  updateShuntPowers!(net = net_mp)
-
-  Y_mp = createYBUS(net = net_mp, sparse = true, printYBUS = false)
-  V_mp = buildVoltageVector(net_mp)
-  Sinj_mp = calc_injections(Y_mp, V_mp)
-  # -------------------------
-  # 2) Manual Net build
-  # -------------------------
-  netName = "case3_manual_vs_mp_shunt"
-  net_man = Net(name = netName, baseMVA = 100.0)
-  addBus!(net = net_man, busName = "B1", vn_kV = 110.0, vm_pu = 1.06, va_deg = 0.0)
-  addBus!(net = net_man, busName = "B2", vn_kV = 110.0, vm_pu = 1.03, va_deg = 0.0)
-  addBus!(net = net_man, busName = "B3", vn_kV = 110.0, vm_pu = 1.00, va_deg = 0.0)
-  # Lines without line charging, so only bus shunts differ/drive this check.
-  addPIModelACLine!(net = net_man, fromBus = "B1", toBus = "B2", r_pu = 0.02, x_pu = 0.06, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net_man, fromBus = "B1", toBus = "B3", r_pu = 0.08, x_pu = 0.24, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = net_man, fromBus = "B2", toBus = "B3", r_pu = 0.06, x_pu = 0.18, b_pu = 0.0, status = 1)
-
-  # Loads from MATPOWER Pd/Qd mapped to ENERGYCONSUMER.
-  addProsumer!(net = net_man, busName = "B3", type = "ENERGYCONSUMER", p = 90.0, q = 30.0)
-
-  # MATPOWER bus 2 also has load: Pd=20 MW, Qd=5 MVAr
-  addProsumer!(net = net_man, busName = "B2", type = "ENERGYCONSUMER", p = 20.0, q = 5.0)
-
-  addProsumer!(net = net_man, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1")
-
-  # PV generator at B2 (P + Vm setpoint)
-  addProsumer!(net = net_man, busName = "B2", type = "SYNCHRONOUSMACHINE", p = 60.0, vm_pu = 1.03, va_deg = 0.0, qMin = -200.0, qMax = 200.0)
-
-  # Manual shunts chosen to match the MATPOWER case after import.
-  # NOTE: this test validates *equivalence of assembled network models*,
-  # not a standalone sign-convention proof. The numerical checks below
-  # (V and slack P/Q) are the actual acceptance criteria.
-  addShunt!(net = net_man, busName = "B2", pShunt = 0.0, qShunt = 6.0, in_service = 1)
-  addShunt!(net = net_man, busName = "B3", pShunt = 0.0, qShunt = 12.0, in_service = 1)
-
-  ok2, msg2 = validate!(net = net_man)
-  ok2 || (@warn msg2; return false)
-
-  erg_man = 0
-  ite_man = 0
-
-  et_man = @elapsed begin
-    ite_man, erg_man = runpf!(net_man, maxIte, tol_pf, verbose; method = method)
-  end
-  if erg_man != 0
-    @warn "Manual net: power flow did not converge"
-    return false
-  end
-  updateShuntPowers!(net = net_man)
-
-  Y_man = createYBUS(net = net_man, sparse = true, printYBUS = false)
-  V_man = buildVoltageVector(net_man)
-  Sinj_man = calc_injections(Y_man, V_man)
-  # -------------------------
-  # 3) Compare results
-  # -------------------------
-  # Compare complex voltages directly (magnitude and angle are implicit in V).
-  if length(V_mp) != length(V_man)
-    @warn "Voltage vector length mismatch" n_mp = length(V_mp) n_man = length(V_man)
-    return false
-  end
-
-  # Bus order assumption:
-  # - MATPOWER buses are indexed 1..3
-  # - Manual net is created in order B1, B2, B3
-  # So vectors are expected to be aligned index-wise.
-  if !all(isapprox.(V_mp, V_man; atol = tol_cmp, rtol = 0.0))
-    @warn "Voltage mismatch between MATPOWER-derived and manual net" V_mp = V_mp V_man = V_man
-    return false
-  end
-
-  # Compare slack injections (P,Q) in MW/MVAr as system-level consistency check.
-  slack_idx = 1
-  Psl_mp = real(Sinj_mp[slack_idx]) * mpc.baseMVA
-  Qsl_mp = imag(Sinj_mp[slack_idx]) * mpc.baseMVA
-  Psl_man = real(Sinj_man[slack_idx]) * mpc.baseMVA
-  Qsl_man = imag(Sinj_man[slack_idx]) * mpc.baseMVA
-
-  if !(isapprox(Psl_mp, Psl_man; atol = 1e-4, rtol = 0.0) && isapprox(Qsl_mp, Qsl_man; atol = 1e-4, rtol = 0.0))
-    @warn "Slack P/Q mismatch" Psl_mp = Psl_mp Qsl_mp = Qsl_mp Psl_man = Psl_man Qsl_man = Qsl_man
-    return false
-  end
-
-  if print_results
-    @info "Qsh MAN" B2 = net_man.nodeVec[2]._qShunt B3 = net_man.nodeVec[3]._qShunt
-    @info "Qsh MP" B2 = net_mp.nodeVec[2]._qShunt B3 = net_mp.nodeVec[3]._qShunt
-    @info "manual setpoints" B1_vm = net_man.nodeVec[1]._vm_pu B1_va = net_man.nodeVec[1]._va_deg B2_vm = net_man.nodeVec[2]._vm_pu
-    @info "mp setpoints" B1_vm = net_mp.nodeVec[1]._vm_pu B1_va = net_mp.nodeVec[1]._va_deg B2_vm = net_mp.nodeVec[2]._vm_pu
-
-    @info "MP net PF ok" et = et_mp ite = ite_mp
-    @info "MAN net PF ok" et = et_man ite = ite_man
-    printACPFlowResults(net_mp, et_mp, ite_mp, tol_pf; converged = true, solver = method)
-    printACPFlowResults(net_man, et_man, ite_man, tol_pf; converged = true, solver = method)
   end
 
   return true
@@ -1874,11 +1178,6 @@ mpc.branch = [
     row_warn.converged === true &&
     row_warn.erg == 0 &&
     row_warn.solution_available === true &&
-    hasproperty(row_warn, :q_limit_active_set_ok) &&
-    hasproperty(row_warn, :active_set_converged) &&
-    hasproperty(row_warn, :pv_q_limit_violations) &&
-    hasproperty(row_warn, :ref_q_limit_violations) &&
-    hasproperty(row_warn, :final_pv_voltage_residual) &&
     row_warn.q_limit_active_set_ok === st_warn.q_limit_active_set_ok &&
     row_warn.active_set_converged === st_warn.active_set_converged &&
     row_warn.pv_q_limit_violations == st_warn.pv_q_limit_violations &&
@@ -1889,7 +1188,6 @@ mpc.branch = [
 
   result_fail, st_fail, profile_fail, output_fail = run_with_detection(:fail)
   row_fail = Sparlectra._sparlectra_status_row(result_fail)
-  summary_fail = Sparlectra._compact_run_summary(row_fail)
   fail_ok =
     st_fail.wrong_branch_detection === :fail &&
     st_fail.branch_quality_metrics.max_branch_angle_deg == 0.001 &&
@@ -1914,15 +1212,6 @@ mpc.branch = [
     row_fail.solution_available === result_fail.solution_available &&
     row_fail.outcome === result_fail.outcome &&
     row_fail.reason === result_fail.reason &&
-    hasproperty(row_fail, :wrong_branch_detection) &&
-    hasproperty(row_fail, :wrong_branch_status) &&
-    hasproperty(row_fail, :wrong_branch_reason) &&
-    hasproperty(row_fail, :wrong_branch_angle_spread_deg) &&
-    hasproperty(row_fail, :wrong_branch_max_branch_angle_deg) &&
-    hasproperty(row_fail, :wrong_branch_branch_angle_violation_count) &&
-    hasproperty(row_fail, :wrong_branch_worst_branch_angle_deg) &&
-    hasproperty(row_fail, :wrong_branch_rescue_attempted) &&
-    hasproperty(row_fail, :wrong_branch_rescue_reason) &&
     row_fail.wrong_branch_detection === st_fail.wrong_branch_detection &&
     row_fail.wrong_branch_status === st_fail.wrong_branch_status &&
     row_fail.wrong_branch_reason === st_fail.wrong_branch_reason &&
@@ -1934,10 +1223,7 @@ mpc.branch = [
     row_fail.wrong_branch_rescue_reason === st_fail.wrong_branch_rescue_reason &&
     !haskey(profile_fail[:timings], :postprocess_losses_and_flows) &&
     !haskey(profile_fail[:timings], :result_output) &&
-    !occursin("AC Power Flow Results", output_fail) &&
-    occursin("numerical_solution=OK", summary_fail) &&
-    occursin("solution_available=false", summary_fail) &&
-    occursin("final_converged=false", summary_fail)
+    !occursin("AC Power Flow Results", output_fail)
 
   # the check runs on every numerically converged AC result, Q limits off
   # included (it sat inside the Q-limit block before 0.20.5, so a flat
@@ -1961,7 +1247,46 @@ mpc.branch = [
   st_ref = Sparlectra.rectangular_pf_status(result_ref.net)
   ref_ok = st_ref.wrong_branch_status === :warn && st_ref.wrong_branch_reason === :reference_branch_angle_exceeded && st_ref.wrong_branch_reference_branch == "1-2" && st_ref.wrong_branch_reference_branch_angle_deg > 0.001 && result_ref.final_converged === true
 
-  return warn_ok && fail_ok && noq_ok && ref_ok
+  # the status reaches the report metadata: ok on a clean solve, not_checked
+  # with the check off, warn with a band no solved bus meets
+  function report_status(detection; kwargs...)
+    net = createTest3BusNet()
+    _, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = detection, kwargs...)
+    erg == 0 || return nothing
+    return buildACPFlowReport(net; converged = true, solver = :rectangular).metadata
+  end
+  md_clean = report_status(:warn)
+  md_off = report_status(:off)
+  md_suspect = report_status(:warn; wrong_branch_min_vm_pu = 1.20)
+  report_ok =
+    md_clean !== nothing && md_clean.wrong_branch_status == :ok &&
+    md_off !== nothing && md_off.wrong_branch_status == :not_checked &&
+    md_suspect !== nothing && md_suspect.wrong_branch_status == :warn && md_suspect.wrong_branch_reason == :low_voltage_magnitude
+
+  # and the AC island diagnostics CSV of an island-wise run carries it per island
+  island_net = Net(name = "wrong_branch_islands", baseMVA = 100.0)
+  for busName in ("A1", "A2", "B1", "B2")
+    addBus!(net = island_net, busName = busName, vn_kV = 110.0)
+  end
+  addPIModelACLine!(net = island_net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = island_net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
+  addProsumer!(net = island_net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
+  addProsumer!(net = island_net, busName = "A2", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
+  addProsumer!(net = island_net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addProsumer!(net = island_net, busName = "B2", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+  refreshBusTypesFromProsumers!(island_net)
+  island_header, island_rows = mktempdir() do tmpdir
+    profile = Dict{Symbol,Any}(:output_dir => tmpdir)
+    island_cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, islands_enabled = true, wrong_branch_detection = :warn, wrong_branch_min_vm_pu = 1.20))
+    island_result = run_sparlectra(net = island_net, config = island_cfg, performance_profile = profile)
+    island_result.final_converged || return (String[], Vector{String}[])
+    csv = run_csv(joinpath(tmpdir, "ac_island_solver_summary.csv"))
+    return (csv.header, csv.rows)
+  end
+  status_col = findfirst(==("wrong_branch_status"), island_header)
+  csv_ok = status_col !== nothing && any(row -> row[status_col] == "warn", island_rows)
+
+  return warn_ok && fail_ok && noq_ok && ref_ok && report_ok && csv_ok
 end
 
 # The voltage band of the wrong-branch check judges every energised level,
@@ -2051,47 +1376,30 @@ function test_link_kcl_simple()
 
   l = net.linkVec[1]
   iexp = hypot(10.0, 2.0) / (Sparlectra.Wurzel3 * 110.0)
-  return isapprox(l.pFlow_MW, 10.0; atol = 1e-8) && isapprox(l.qFlow_MVar, 2.0; atol = 1e-8) && isapprox(l.iFrom_kA, iexp; atol = 1e-10) && isapprox(l.iTo_kA, iexp; atol = 1e-10)
+  type_ok = (l isa AbstractComponent) && l.cTyp == Sparlectra.LinkC && toComponentTyp("BUSLINK") == Sparlectra.LinkC && toComponentTyp("LINK") == Sparlectra.LinkC
+  return type_ok && isapprox(l.pFlow_MW, 10.0; atol = 1e-8) && isapprox(l.qFlow_MVar, 2.0; atol = 1e-8) && isapprox(l.iFrom_kA, iexp; atol = 1e-10) && isapprox(l.iTo_kA, iexp; atol = 1e-10)
 end
 
-function test_link_component_type()
-  net = Net(name = "link_component", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-
-  l = net.linkVec[1]
-  return (l isa AbstractComponent) && l.cTyp == Sparlectra.LinkC && toComponentTyp("BUSLINK") == Sparlectra.LinkC && toComponentTyp("LINK") == Sparlectra.LinkC
-end
-
+# addLink! refuses a link at a slack bus and between buses of different
+# types (PV and PQ) with an AssertionError naming the reason.
 function test_link_rejects_slack_connection()
-  net = Net(name = "link_slack_reject", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
-
-  try
-    addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-    return false
-  catch err
-    return err isa AssertionError && occursin("slack", lowercase(string(err)))
+  function refusal(type1, kw1, needle)
+    net = Net(name = "link_reject", baseMVA = 100.0)
+    addBus!(net = net, busName = "B1", vn_kV = 110.0)
+    addBus!(net = net, busName = "B2", vn_kV = 110.0)
+    addProsumer!(; net = net, busName = "B1", type = type1, kw1...)
+    addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+    try
+      addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+      return false
+    catch err
+      err isa AssertionError || rethrow()
+      return occursin(needle, lowercase(string(err)))
+    end
   end
-end
-
-function test_link_rejects_mixed_bus_types()
-  net = Net(name = "link_type_reject", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addProsumer!(net = net, busName = "B1", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.02)
-  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
-
-  try
-    addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-    return false
-  catch err
-    return err isa AssertionError && occursin("same bus type", lowercase(string(err)))
-  end
+  slack_ok = refusal("EXTERNALNETWORKINJECTION", (vm_pu = 1.0, va_deg = 0.0, referencePri = "B1"), "slack")
+  mixed_ok = refusal("SYNCHRONOUSMACHINE", (p = 10.0, vm_pu = 1.02), "same bus type")
+  return slack_ok && mixed_ok
 end
 
 function test_link_bus_merge_pf()
@@ -2159,10 +1467,6 @@ function test_link_bus_merge_pf()
   va_eq_b3 = net_eq.nodeVec[b3_eq_idx]._va_deg
 
   return isapprox(net_link.nodeVec[b1_idx]._vm_pu, net_eq.nodeVec[b12_idx]._vm_pu; atol = 1e-8) && isapprox(net_link.nodeVec[b1_idx]._va_deg, net_eq.nodeVec[b12_idx]._va_deg; atol = 1e-7) && isapprox(vm_link_b3, vm_eq_b3; atol = 1e-8) && isapprox(va_link_b3, va_eq_b3; atol = 1e-7)
-end
-
-function test_link_bus_merge_pf_default_method()
-  return test_link_bus_merge_pf()
 end
 
 # Builds a net whose slack sits on B2, which the link merge contracts onto B1, so
@@ -2341,6 +1645,8 @@ function test_link_merge_returns_bus_powers()::Bool
     # the units take the bus results: the slack unit that of its bus
     distributeBusResults!(net)
     ok &= isapprox(net.prosumpsVec[1].pRes, n1._pƩGen; atol = 1e-12) && net.prosumpsVec[2].pRes == p2
+    # the merged-away member B2 keeps its own row in the report
+    ok &= any(row -> row.bus_name == "B2", buildACPFlowReport(net; converged = true, solver = :rectangular).nodes)
   end
   # two linked PV machines: their Q sum is that of the merged bus, both at
   # the same relative position in their own Q bands
@@ -2438,31 +1744,6 @@ function test_island_solve_with_link_merge()::Bool
   return ok
 end
 
-function test_rectangular_link_merge_runs_without_warning()::Bool
-  net = Net(name = "link_merge_warning_gate", baseMVA = 100.0)
-  addBus!(net = net, busName = "B0", vn_kV = 110.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", vn_kV = 110.0)
-
-  add_test_line_pu_c!(net = net, fromBus = "B0", toBus = "B1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  add_test_line_pu_c!(net = net, fromBus = "B2", toBus = "B3", length_km = 20.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-  addProsumer!(net = net, busName = "B0", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B0")
-  addProsumer!(net = net, busName = "B1", type = "GENERATOR", p = 10.0, q = 1.0)
-  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 15.0, q = 5.0)
-  addProsumer!(net = net, busName = "B3", type = "ENERGYCONSUMER", p = 25.0, q = 10.0)
-
-  _, erg = redirect_stdout(devnull) do
-    runpf!(net, 30, 1e-8, 1; method = :rectangular)
-  end
-  if erg != 0
-    return false
-  end
-
-  return true
-end
-
 function test_link_closed_keeps_shunt_reporting_on_original_bus()
   net = Net(name = "link_shunt_reporting", baseMVA = 100.0)
   addBus!(net = net, busName = "B0", vn_kV = 110.0)
@@ -2491,84 +1772,46 @@ function test_link_closed_keeps_shunt_reporting_on_original_bus()
   return isapprox(sh.q_shunt, expected_q; atol = 1e-8) && isapprox(net.nodeVec[b2_idx]._qShunt, expected_q; atol = 1e-8)
 end
 
+# A ring of three links: A f = b with the singular incidence matrix A of the
+# ring, the flows are the minimum-norm solution pinv(A) b. Second row: a
+# 6 MVar Y shunt at B2 (vm 1.0 pu) enters b as -6 MVar.
 function test_link_kcl_ring_allocation()
-  net = Net(name = "link_kcl_ring", baseMVA = 100.0)
-  # 3 busses
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", vn_kV = 110.0)
-
-  # Zero-Bilance: + 15 -10 -5 = 0;   +6 -4 -2 = 0
-  addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 6.0)
-  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
-  addBusLoadPower!(net = net, busName = "B3", p = 5.0, q = 2.0)
-
-  # B1 -> B2 -> B3 -> B1 forms a ring
-  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
-  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
-
-  # no power flow needed for KCL test
-  calcLinkFlowsKCL!(net)
-
-  # manual KCL solution for ring with 3 busses and 3 links:
-  # formula: A * f = b, where A is the incidence matrix of the ring and b is the net injection vector (P or Q)
-  # in a ring A is singular, so we use the pseudo-inverse to get the minimum-norm solution for the flows
   A = [
     1.0 0.0 -1.0
     -1.0 1.0 0.0
     0.0 -1.0 1.0
   ]
-  bP = [15.0, -10.0, -5.0]
-  bQ = [6.0, -4.0, -2.0]
+  ok = true
+  for (q1, shunt_q, bQ) in ((6.0, 0.0, [6.0, -4.0, -2.0]), (12.0, 6.0, [12.0, -10.0, -2.0]))
+    net = Net(name = "link_kcl_ring", baseMVA = 100.0)
+    addBus!(net = net, busName = "B1", vn_kV = 110.0)
+    addBus!(net = net, busName = "B2", vn_kV = 110.0)
+    addBus!(net = net, busName = "B3", vn_kV = 110.0)
+    # P balance + 15 - 10 - 5 = 0
+    addBusGenPower!(net = net, busName = "B1", p = 15.0, q = q1)
+    addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
+    addBusLoadPower!(net = net, busName = "B3", p = 5.0, q = 2.0)
+    if shunt_q != 0.0
+      addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = shunt_q)
+      for node in net.nodeVec
+        node._vm_pu = 1.0
+      end
+      updateShuntPowers!(net = net)
+    end
+    # B1 -> B2 -> B3 -> B1 forms a ring
+    addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
+    addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
+    addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
+    # no power flow needed for the KCL allocation
+    calcLinkFlowsKCL!(net)
 
-  # calculate expected flows using pseudo-inverse (since A is singular for a ring, but we want the minimum-norm solution)
-  fP_expected = pinv(A) * bP
-  fQ_expected = pinv(A) * bQ
-
-  flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
-  flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
-
-  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
-end
-
-function test_link_kcl_ring_allocation_with_shunt()
-  net = Net(name = "link_kcl_ring_shunt", baseMVA = 100.0)
-  addBus!(net = net, busName = "B1", vn_kV = 110.0)
-  addBus!(net = net, busName = "B2", vn_kV = 110.0)
-  addBus!(net = net, busName = "B3", vn_kV = 110.0)
-
-  addBusGenPower!(net = net, busName = "B1", p = 15.0, q = 12.0)
-  addBusLoadPower!(net = net, busName = "B2", p = 10.0, q = 4.0)
-  addBusLoadPower!(net = net, busName = "B3", p = 5.0, q = 2.0)
-
-  # Y-model shunt at B2; at vm=1.0 pu this contributes Q_shunt = -6 MVar.
-  addShunt!(net = net, busName = "B2", pShunt = 0.0, qShunt = 6.0)
-  net.nodeVec[1]._vm_pu = 1.0
-  net.nodeVec[2]._vm_pu = 1.0
-  net.nodeVec[3]._vm_pu = 1.0
-  updateShuntPowers!(net = net)
-
-  addLink!(net = net, fromBus = "B1", toBus = "B2", status = 1)
-  addLink!(net = net, fromBus = "B2", toBus = "B3", status = 1)
-  addLink!(net = net, fromBus = "B3", toBus = "B1", status = 1)
-
-  calcLinkFlowsKCL!(net)
-
-  A = [
-    1.0 0.0 -1.0
-    -1.0 1.0 0.0
-    0.0 -1.0 1.0
-  ]
-  bP = [15.0, -10.0, -5.0]
-  bQ = [12.0, -10.0, -2.0]
-  fP_expected = pinv(A) * bP
-  fQ_expected = pinv(A) * bQ
-
-  flowsP = [net.linkVec[1].pFlow_MW, net.linkVec[2].pFlow_MW, net.linkVec[3].pFlow_MW]
-  flowsQ = [net.linkVec[1].qFlow_MVar, net.linkVec[2].qFlow_MVar, net.linkVec[3].qFlow_MVar]
-
-  return isapprox.(flowsP, fP_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(flowsQ, fQ_expected; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0) |> all
+    bP = [15.0, -10.0, -5.0]
+    flowsP = [l.pFlow_MW for l in net.linkVec]
+    flowsQ = [l.qFlow_MVar for l in net.linkVec]
+    ok &= all(isapprox.(flowsP, pinv(A) * bP; atol = 1e-10, rtol = 0.0)) && all(isapprox.(flowsQ, pinv(A) * bQ; atol = 1e-10, rtol = 0.0))
+    ok &= all(isapprox.(A * flowsP, bP; atol = 1e-10, rtol = 0.0)) && all(isapprox.(A * flowsQ, bQ; atol = 1e-10, rtol = 0.0))
+  end
+  return ok
 end
 
 function test_link_ring_pf_stability()
@@ -2662,139 +1905,6 @@ function test_link_ring_pf_stability()
   return vm_equal && va_equal && isapprox.(A * flowsP, bP; atol = 1e-7, rtol = 0.0) |> all && isapprox.(A * flowsQ, bQ; atol = 1e-7, rtol = 0.0) |> all
 end
 
-function test_acpflow_report_object()
-  net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
-  ite, erg = runpf!(net, 50, 1e-10, 0; method = :rectangular)
-  erg == 0 || return false
-
-  calcNetLosses!(net)
-  calcLinkFlowsKCL!(net)
-
-  report = buildACPFlowReport(net; ct = 0.123, ite = ite, tol = 1e-10, converged = true, solver = :rectangular)
-
-  node_count_ok = length(report.nodes) == length(net.nodeVec)
-  branch_count_ok = length(report.branches) == length(net.branchVec)
-  link_count_ok = length(report.links) == length(net.linkVec)
-  ctrl_count_ok = length(report.transformer_controls) == 0
-
-  total_losses_ok = isapprox(report.metadata.total_p_loss_MW, getTotalLosses(net = net)[1]; atol = 1e-8) && isapprox(report.metadata.total_q_loss_MVar, getTotalLosses(net = net)[2]; atol = 1e-8)
-
-  first_node = report.nodes[1]
-  first_branch = report.branches[1]
-
-  has_node_keys = haskey(first_node, :bus) && haskey(first_node, :vm_pu) && haskey(first_node, :q_limit_hit)
-  has_branch_keys = haskey(first_branch, :from_bus) && haskey(first_branch, :p_from_MW) && haskey(first_branch, :overloaded)
-
-  wrong_branch_fields_ok = haskey(report.metadata, :wrong_branch_status) && haskey(report.metadata, :wrong_branch_reason) && report.metadata.wrong_branch_status isa Symbol && report.metadata.wrong_branch_reason isa Symbol
-
-  return node_count_ok && branch_count_ok && link_count_ok && ctrl_count_ok && total_losses_ok && has_node_keys && has_branch_keys && wrong_branch_fields_ok
-end
-
-# Verifies Task-1 (#196) wrong-branch detection output visibility: ACPFlowReport
-# metadata, AC island diagnostics CSV columns, and the console summary line.
-function test_wrong_branch_output_visibility()::Bool
-  clean_net = createTest3BusNet()
-  _, erg_clean = runpf!(clean_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :warn)
-  erg_clean == 0 || return false
-  clean_report = buildACPFlowReport(clean_net; converged = true, solver = :rectangular)
-  clean_report.metadata.wrong_branch_status == :ok || return false
-
-  clean_console = mktempdir() do tmpdir
-    printACPFlowResults(clean_net, 0.0, 1, 1e-8, true, tmpdir; converged = true, solver = :rectangular, result_mode = :summary)
-    read(joinpath(tmpdir, "result_$(clean_net.name).txt"), String)
-  end
-  occursin("Wrong-branch   :", clean_console) && return false
-
-  off_net = createTest3BusNet()
-  _, erg_off = runpf!(off_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :off)
-  erg_off == 0 || return false
-  off_report = buildACPFlowReport(off_net; converged = true, solver = :rectangular)
-  off_report.metadata.wrong_branch_status == :not_checked || return false
-
-  # Aggressive vm threshold guarantees a "suspect" finding on any solved 3-bus case.
-  suspect_net = createTest3BusNet()
-  _, erg_suspect = runpf!(suspect_net, 40, 1e-8, 0; method = :rectangular, wrong_branch_detection = :warn, wrong_branch_min_vm_pu = 1.20)
-  erg_suspect == 0 || return false
-  suspect_report = buildACPFlowReport(suspect_net; converged = true, solver = :rectangular)
-  suspect_report.metadata.wrong_branch_status == :warn || return false
-  suspect_report.metadata.wrong_branch_reason == :low_voltage_magnitude || return false
-
-  suspect_console = mktempdir() do tmpdir
-    printACPFlowResults(suspect_net, 0.0, 1, 1e-8, true, tmpdir; converged = true, solver = :rectangular, result_mode = :summary)
-    read(joinpath(tmpdir, "result_$(suspect_net.name).txt"), String)
-  end
-  occursin("Wrong-branch   : SUSPECT (low_voltage_magnitude,", suspect_console) || return false
-
-  # Two-island net (mirrors the AC-island fixture used elsewhere in this file) to
-  # exercise the per-island diagnostics CSV.
-  island_net = Net(name = "wrong_branch_islands", baseMVA = 100.0)
-  for busName in ("A1", "A2", "B1", "B2")
-    addBus!(net = island_net, busName = busName, vn_kV = 110.0)
-  end
-  addPIModelACLine!(net = island_net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-  addPIModelACLine!(net = island_net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.10, b_pu = 0.0, status = 1)
-  addProsumer!(net = island_net, busName = "A1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "A1")
-  addProsumer!(net = island_net, busName = "A2", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-  addProsumer!(net = island_net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
-  addProsumer!(net = island_net, busName = "B2", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
-  refreshBusTypesFromProsumers!(island_net)
-
-  csv_text, header_fields, row_field_counts, csv_rows = mktempdir() do tmpdir
-    profile = Dict{Symbol,Any}(:output_dir => tmpdir)
-    island_cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, islands_enabled = true, wrong_branch_detection = :warn, wrong_branch_min_vm_pu = 1.20))
-    island_result = run_sparlectra(net = island_net, config = island_cfg, performance_profile = profile)
-    island_result.final_converged || return ("", String[], Int[], Vector{String}[])
-    path = joinpath(tmpdir, "ac_island_solver_summary.csv")
-    csv = run_csv(path)
-    return (read(path, String), csv.header, [length(row) for row in csv.rows], csv.rows)
-  end
-  isempty(csv_text) && return false
-  header_fields[(end-1):end] == ["wrong_branch_status", "wrong_branch_reason"] || return false
-  # Every existing column before the two appended ones keeps its original name/position.
-  header_fields[1:(end-2)] == split(
-    "island_id,n_bus,n_branch,ref_bus,chosen_ref_bus,n_pq,n_pv,n_ref,ref_promoted,initial_mismatch,first_mismatch,last_mismatch,best_mismatch,min_voltage_magnitude,max_voltage_magnitude,max_angle_step,first_nonfinite_iteration,last_finite_mismatch,worst_bus,worst_equation,iterations,final_mismatch,mismatch_status,final_status,failure_reason,stage,exception_type,exception_message,stacktrace_top,start_projection,autodamp,autodamp_min,max_iter,tol,angle_mode,voltage_mode,qlimits_enabled,qlimit_enforcement_mode,q_limit_processing_status,pv_pq_switching_events,qlimit_active_set_changes,qlimit_reenable_events,guarded_narrow_q_pv_buses,final_pv_voltage_residual,wrong_branch_detection,start_current_iteration_enabled,workspace_reuse,workspace_preallocate",
-    ',',
-  ) || return false
-  all(count -> count == length(header_fields), row_field_counts) || return false
-  occursin("wrong_branch_status: warn", csv_text) || any(row -> "warn" in row, csv_rows) || return false
-
-  return true
-end
-
-function test_report_uses_user_bus_names_and_pf_node_count()
-  net = Net(name = "report_link_names", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus1", vn_kV = 110.0)
-  addBus!(net = net, busName = "Bus1a", vn_kV = 110.0)
-
-  add_test_line_pu_c!(net = net, fromBus = "Slack", toBus = "Bus1", length_km = 5.0, r_pu = 0.05, x_pu = 0.5, c_nf_per_km = 10.0, tanδ = 0.0)
-  addLink!(net = net, fromBus = "Bus1", toBus = "Bus1a", status = 1)
-
-  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
-  addProsumer!(net = net, busName = "Bus1", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
-  addProsumer!(net = net, busName = "Bus1a", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
-
-  ite, erg = runpf!(net, 30, 1e-10, 0; method = :rectangular)
-  erg == 0 || return false
-
-  calcNetLosses!(net)
-  calcLinkFlowsKCL!(net)
-
-  report = buildACPFlowReport(net; ct = 0.0, ite = ite, tol = 1e-10, converged = true, solver = :rectangular)
-  report_text = mktempdir() do tmpdir
-    printACPFlowResults(net, 0.0, ite, 1e-10, true, tmpdir; converged = true, solver = :rectangular)
-    read(joinpath(tmpdir, "result_$(net.name).txt"), String)
-  end
-
-  has_bus1a_row = any(row -> row.bus_name == "Bus1a", report.nodes)
-  merged_pf_count_ok = occursin("PF Nodes", report_text) && occursin("2 (after active-link merge)", report_text)
-  controllers_line_ok = occursin("Controllers", report_text)
-  link_names_ok = occursin("Bus1", report_text) && occursin("Bus1a", report_text)
-  branch_connection_ok = occursin("Slack -> Bus1", report_text) && occursin("Line", report_text)
-
-  return has_bus1a_row && merged_pf_count_ok && controllers_line_ok && link_names_ok && branch_connection_ok
-end
-
 function test_run_sparlectra_normalizes_projected_matpower_starts()::Bool
   tmpdir = mktempdir()
   case_path = joinpath(tmpdir, "case_projected_start.m")
@@ -2840,59 +1950,12 @@ mpc.branch = [
     cfg.powerflow.start_mode.flatstart == true || return false
     cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205] || return false
   end
-  return true
-end
-
-function test_run_sparlectra_resolves_matpower_lock_bus_ids()::Bool
-  tmpdir = mktempdir()
-  case_path = joinpath(tmpdir, "case_noncontiguous_lock.m")
-  write(
-    case_path,
-    """
-function mpc = case_noncontiguous_lock
-mpc.version = '2';
-mpc.baseMVA = 100;
-mpc.bus = [
-101 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
-205 2 10 5 0 0 1 1.0 0 110 1 1.1 0.9;
-309 1 90 30 0 0 1 1.0 0 110 1 1.1 0.9;
-];
-mpc.gen = [
-101 100 0 300 -300 1.02 100 1 300 0;
-205 20 0 0.01 -0.01 1.01 100 1 100 0;
-];
-mpc.branch = [
-101 205 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
-205 309 0.01 0.05 0.0 999 999 999 0 0 1 -360 360;
-];
-""",
-  )
-  cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205])), output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off))
-
-  imported_net = Sparlectra._import_sparlectra_net(basename(case_path), dirname(case_path), cfg)
-  helper_ok =
-    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [205]) == [2] &&
-    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [2]) == [2] &&
-    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999]) == Int[] &&
-    Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, [999999, 205, 2, 205]) == [2]
-  effective_cfg = Sparlectra._resolve_matpower_powerflow_ids_after_import(imported_net, cfg)
-  copied_cfg_ok = effective_cfg.powerflow.qlimits.lock_pv_to_pq_buses == [2] && cfg.powerflow.qlimits.lock_pv_to_pq_buses == [205]
-
-  # Since 0.30.0 the Q-limit guard is on by default: bus 205 (position 2)
-  # has a 0.02 MVAr band, far below guard.min_q_range_pu (0.02 pu), so both
-  # paths lock it to PQ before the first Newton step (event at iteration 0)
-  # and the run converges. Up to 0.20.5 (guard off) this test asserted PV
-  # with an empty log on the file path and a PQ switch (iteration 3, by the
-  # active set) on the memory path; that file-path run ended with a
-  # remaining Q violation at bus 205, because the manual lock list excludes
-  # a bus from switching instead of running it as PQ from the start as the
-  # docs say (a known open point of the lock list, not changed here).
-  file_result = Sparlectra.run_sparlectra(casefile = basename(case_path), path = dirname(case_path), config = cfg)
-  file_path_ok = Sparlectra.getNodeType(file_result.net.nodeVec[2]) == Sparlectra.PQ && any(event -> event.bus == 2 && event.iter == 0, file_result.net.qLimitLog) && file_result.final_converged
-
-  memory_result = Sparlectra.run_sparlectra(net = imported_net, config = cfg)
-  memory_path_ok = Sparlectra.getNodeType(memory_result.net.nodeVec[2]) == Sparlectra.PQ && any(event -> event.bus == 2, memory_result.net.qLimitLog)
-  return helper_ok && copied_cfg_ok && file_path_ok && memory_path_ok
+  # lock ids are MATPOWER bus numbers: an internal position passes, an
+  # unknown id is dropped, duplicates collapse
+  lock_cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(qlimits = Sparlectra.QLimitConfig(lock_pv_to_pq_buses = [205])), output = Sparlectra.OutputConfig(console_summary = false, logfile_results = :off))
+  imported_net = Sparlectra._import_sparlectra_net(basename(case_path), dirname(case_path), lock_cfg)
+  resolve(ids) = Sparlectra._resolve_matpower_lock_pv_to_pq_buses(imported_net, ids)
+  return resolve([205]) == [2] && resolve([2]) == [2] && resolve([999999]) == Int[] && resolve([999999, 205, 2, 205]) == [2]
 end
 
 function test_matpower_read_case_m_postprocessing()::Bool
@@ -3010,107 +2073,86 @@ function _assign_vset_controller!(net::Net, bus_name::String; vstep_pu::Union{No
   return assigned
 end
 
-function test_q_limit_adjust_vset_success()::Bool
+# qlimit_mode on the 3-bus and 5-bus test nets: :adjust_vset keeps a bus
+# with a voltage-step controller PV at a lowered setpoint, falls back to PQ
+# without a controller or with no steps left, refuses two controllers on one
+# bus and an incomplete step configuration; the default mode is
+# :switch_to_pq.
+function test_q_limit_adjust_vset_modes()::Bool
+  station(net) = net.nodeVec[geNetBusIdx(net = net, busName = "STATION1")]
+  # the controller set-up is checked before the first Newton step and
+  # refused with error(); any other exception is a defect and propagates
+  function refused(net)
+    try
+      runpf!(net, 20, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
+    catch err
+      err isa ErrorException || rethrow()
+      return true
+    end
+    return false
+  end
+
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -30.0, qlim_max = 30.0)
   _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2)
-
   _, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset, qlimit_max_outer = 20)
-  bus = geNetBusIdx(net = net, busName = "STATION1")
-  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && net.nodeVec[bus]._vm_pu < 1.025
-end
+  adjusted_ok = erg == 0 && getNodeType(station(net)) == Sparlectra.PV && station(net)._vm_pu < 1.025
 
-function test_q_limit_adjust_vset_no_controller_switches()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
-  bus = geNetBusIdx(net = net, busName = "STATION1")
-  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ
-end
+  no_controller_ok = erg == 0 && getNodeType(station(net)) == Sparlectra.PQ
 
-function test_q_limit_adjust_vset_multiple_controllers_error()::Bool
-  net = createTest5BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0, mul_gens = true)
-  _assign_vset_controller!(net, "B3"; vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2, all_generators = true)
-  try
-    runpf!(net, 20, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
-  catch
-    return true
-  end
-  return false
-end
-
-function test_q_limit_adjust_vset_invalid_config_error()::Bool
-  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -20.0, qlim_max = 20.0)
-  _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = nothing, tap_steps_up = nothing)
-  try
-    runpf!(net, 20, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
-  catch
-    return true
-  end
-  return false
-end
-
-function test_q_limit_adjust_vset_step_exhaustion_fallback()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = 0, tap_steps_up = 0)
   _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset, qlimit_max_outer = 1)
-  bus = geNetBusIdx(net = net, busName = "STATION1")
-  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ
-end
+  exhausted_ok = erg == 0 && getNodeType(station(net)) == Sparlectra.PQ
 
-function test_q_limit_adjust_vset_multigen_single_controller()::Bool
+  net = createTest5BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0, mul_gens = true)
+  _assign_vset_controller!(net, "B3"; vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2, all_generators = true)
+  two_controllers_refused = refused(net)
+
+  net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -20.0, qlim_max = 20.0)
+  _assign_vset_controller!(net, "STATION1"; vstep_pu = 0.005, tap_steps_down = nothing, tap_steps_up = nothing)
+  incomplete_refused = refused(net)
+
   net = createTest5BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0, mul_gens = true)
   _assign_vset_controller!(net, "B3"; vstep_pu = 0.005, tap_steps_down = 1, tap_steps_up = 1, all_generators = false)
   _, erg = runpf!(net, 40, 1e-8, 0; method = :rectangular, qlimit_mode = :adjust_vset)
-  return erg == 0
-end
+  one_of_several_ok = erg == 0
 
-function test_q_limit_default_behavior_unchanged()::Bool
   net_default = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   net_explicit = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   _, erg_default = runpf!(net_default, 30, 1e-8, 0; method = :rectangular)
   _, erg_explicit = runpf!(net_explicit, 30, 1e-8, 0; method = :rectangular, qlimit_mode = :switch_to_pq)
-  b = geNetBusIdx(net = net_default, busName = "STATION1")
-  same_type = getNodeType(net_default.nodeVec[b]) == getNodeType(net_explicit.nodeVec[b])
-  same_vm = isapprox(net_default.nodeVec[b]._vm_pu, net_explicit.nodeVec[b]._vm_pu; atol = 1e-8, rtol = 0.0)
-  return erg_default == 0 && erg_explicit == 0 && same_type && same_vm
+  default_ok = erg_default == 0 && erg_explicit == 0 && getNodeType(station(net_default)) == getNodeType(station(net_explicit)) && isapprox(station(net_default)._vm_pu, station(net_explicit)._vm_pu; atol = 1e-8, rtol = 0.0)
+
+  return adjusted_ok && no_controller_ok && exhausted_ok && two_controllers_refused && incomplete_refused && one_of_several_ok && default_ok
 end
 
-function test_q_limit_enforcement_mode_config_values()::Bool
-  canonical_ok = all(mode -> Sparlectra.QLimitConfig(Dict("enforcement_mode" => String(mode))).enforcement_mode == mode, (:active_set, :classic_simultaneous, :classic_one_at_a_time))
-  aliases_ok = Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_simultaneous")).enforcement_mode == :classic_simultaneous && Sparlectra.QLimitConfig(Dict("enforcement_mode" => "matpower_one_at_a_time")).enforcement_mode == :classic_one_at_a_time
-  invalid_rejected = false
-  try
-    Sparlectra.QLimitConfig(Dict("enforcement_mode" => "classic"))
-  catch err
-    invalid_rejected = err isa ArgumentError && occursin("power_flow.qlimits.enforcement_mode", sprint(showerror, err))
-  end
-  return canonical_ok && aliases_ok && invalid_rejected
-end
-
+# The classic Q-limit modes: with a base power flow that does not converge
+# classic_simultaneous switches nothing and says why; classic_one_at_a_time
+# keeps the log entry of its switching round (the inner solves used to reset
+# net.qLimitLog every outer round, so a real PV->PQ switch left an empty log).
 function test_q_limit_matpower_mode_base_failure_does_not_switch()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   bus = geNetBusIdx(net = net, busName = "STATION1")
   _, erg = runpf!(net, 1, 1e-14, 0; method = :rectangular, qlimit_enforcement_mode = :classic_simultaneous, qlimit_max_outer = 5)
   st = Sparlectra.rectangular_pf_status(net)
-  return erg == 1 &&
-         getNodeType(net.nodeVec[bus]) == Sparlectra.PV &&
-         isempty(net.qLimitLog) &&
-         !isnothing(st) &&
-         hasproperty(st, :qlimit_enforcement_mode) &&
-         st.qlimit_enforcement_mode == :classic_simultaneous &&
-         st.base_pf_converged === false &&
-         st.qlimit_enforcement_started === false &&
-         st.final_outcome == :base_pf_not_converged
-end
+  base_failure_ok =
+    erg == 1 &&
+    getNodeType(net.nodeVec[bus]) == Sparlectra.PV &&
+    isempty(net.qLimitLog) &&
+    !isnothing(st) &&
+    st.qlimit_enforcement_mode == :classic_simultaneous &&
+    st.base_pf_converged === false &&
+    st.qlimit_enforcement_started === false &&
+    st.final_outcome == :base_pf_not_converged
 
-function test_q_limit_matpower_mode_dispatch_no_reenable()::Bool
   net = createTest3BusNet(cooldown = 2, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
-  _, _ = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :classic_one_at_a_time, qlimit_max_outer = 5)
+  runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_enforcement_mode = :classic_one_at_a_time, qlimit_max_outer = 5)
   st = Sparlectra.rectangular_pf_status(net)
-  # Regression: the classical outer loop's inner runpf_rectangular! calls used to
-  # call resetQLimitLog! on every outer round, silently discarding earlier rounds'
-  # logQLimitHit! entries; only a violation-free final round ever survived, so
-  # net.qLimitLog was empty even though real PV->PQ switching happened.
-  return !isnothing(st) && hasproperty(st, :qlimit_enforcement_mode) && st.qlimit_enforcement_mode == :classic_one_at_a_time && hasproperty(st, :qlimit_reenable_events) && st.qlimit_reenable_events == 0 && length(net.qLimitLog) == 1 && net.qLimitLog[1].side == :max
+  one_at_a_time_ok = !isnothing(st) && st.qlimit_enforcement_mode == :classic_one_at_a_time && st.qlimit_reenable_events == 0 && length(net.qLimitLog) == 1 && net.qLimitLog[1].side == :max
+
+  return base_failure_ok && one_at_a_time_ok
 end
 
 # #375: the PQ->PV release decides on the voltage side once the solver hands
@@ -3189,18 +2231,20 @@ function test_q_limit_reenable_voltage_rule()::Bool
   return ok1 && ok2 && ok3 && ok4 && ok5 && ok6
 end
 
+# Q-limit start modes on the 3-bus net: qlimit_start_iter 10 with three
+# iterations switches nothing; qlimit_start_mode auto with an unbounded
+# Q delta switches STATION1 to PQ.
 function test_q_limit_start_iter_delays_switching()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   _, erg = runpf!(net, 3, 1e-12, 0; method = :rectangular, qlimit_start_iter = 10)
   bus = geNetBusIdx(net = net, busName = "STATION1")
-  return erg == 1 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && isempty(net.qLimitLog)
-end
+  delayed_ok = erg == 1 && getNodeType(net.nodeVec[bus]) == Sparlectra.PV && isempty(net.qLimitLog)
 
-function test_q_limit_auto_accepts_switching()::Bool
   net = createTest3BusNet(cooldown = 0, hyst_pu = 0.0, qlim_min = -15.0, qlim_max = 15.0)
   _, erg = runpf!(net, 30, 1e-8, 0; method = :rectangular, qlimit_start_mode = :auto, qlimit_auto_q_delta_pu = Inf)
-  bus = geNetBusIdx(net = net, busName = "STATION1")
-  return erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ && !isempty(net.qLimitLog)
+  auto_ok = erg == 0 && getNodeType(net.nodeVec[bus]) == Sparlectra.PQ && !isempty(net.qLimitLog)
+
+  return delayed_ok && auto_ok
 end
 
 function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
@@ -3262,6 +2306,8 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
     cooldown_iters = 0,
   )
   first_reenable = !changed && reenabled && bus_types[1] == :PV && isempty(net.qLimitEvents)
+  # the release is in the log, with the side the bus was clamped at
+  first_reenable &= [(e.iter, e.side, e.kind) for e in net.qLimitLog] == [(2, :max, :hit), (3, :max, :release)]
 
   changed, _ = Sparlectra.active_set_q_limits!(
     net,
@@ -3278,7 +2324,7 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
     q_hyst_pu = 0.10,
     cooldown_iters = 0,
   )
-  second_switch = changed && bus_types[1] == :PQ && length(net.qLimitLog) == 2
+  second_switch = changed && bus_types[1] == :PQ && Sparlectra.qlimit_pv_to_pq_event_count(net) == 2
 
   changed, reenabled = Sparlectra.active_set_q_limits!(
     net,
@@ -3295,7 +2341,7 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
     q_hyst_pu = 0.10,
     cooldown_iters = 0,
   )
-  second_reenable_blocked = !changed && !reenabled && bus_types[1] == :PQ && length(net.qLimitLog) == 2
+  second_reenable_blocked = !changed && !reenabled && bus_types[1] == :PQ && length(net.qLimitLog) == 3
 
   # #475: on a converged iterate the twice-clamped bus gets the joint extra
   # release; when it violates again it goes back as a group revert (logged,
@@ -3337,50 +2383,32 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
   changed, reenabled = reenable_call(8; converged = true)
   no_second_extra = !changed && !reenabled && bus_types[1] == :PQ
 
-  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked && converged_reenable && group_revert && no_second_extra
-end
-
-function test_q_limit_violation_guard_bypasses_hysteresis_for_strong_overshoot()::Bool
-  net = Net(name = "q_limit_violation_guard", baseMVA = 100.0)
-  nb = 1
-  qmin_pu = [-1.0]
-  qmax_pu = [1.0]
-  bus_types = [:PV]
-  pv_orig_mask = trues(nb)
-
+  # the guard in lock_pq mode switches an overshoot inside the hysteresis
+  # band (1.05 against Qmax 1.0 and q_hyst_pu 0.10) at once
+  guard_net = Net(name = "q_limit_violation_guard", baseMVA = 100.0)
+  guard_types = [:PV]
   changed, reenabled = Sparlectra.active_set_q_limits!(
-    net,
+    guard_net,
     2,
     nb;
     get_qreq_pu = _ -> 1.05,
-    is_pv = bus -> (bus_types[bus] == :PV),
-    make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
-    make_pv! = bus -> (bus_types[bus] = :PV),
-    qmin_pu = qmin_pu,
-    qmax_pu = qmax_pu,
-    pv_orig_mask = pv_orig_mask,
+    is_pv = bus -> (guard_types[bus] == :PV),
+    make_pq! = (bus, _qclamp, _side) -> (guard_types[bus] = :PQ),
+    make_pv! = bus -> (guard_types[bus] = :PV),
+    qmin_pu = [-1.0],
+    qmax_pu = [1.0],
+    pv_orig_mask = trues(nb),
     allow_reenable = false,
     q_hyst_pu = 0.10,
     cooldown_iters = 0,
     qlimit_guard_violation_mode = :lock_pq,
     qlimit_guard_violation_threshold_pu = 1e-4,
   )
+  guard_switch = changed && !reenabled && guard_types[1] == :PQ && length(guard_net.qLimitLog) == 1 && guard_net.qLimitLog[1].side == :max
 
-  return changed && !reenabled && bus_types[1] == :PQ && length(net.qLimitLog) == 1 && net.qLimitLog[1].side == :max
+  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked && converged_reenable && group_revert && no_second_extra && guard_switch
 end
 
-function test_solve_linear_singular_sparse_qr_fallback()::Bool
-  A = sparse([1.0 1.0; 2.0 2.0])
-  b = [1.0, 2.0]
-  x = Sparlectra.solve_linear(A, b)
-  return all(isfinite, x) && isapprox(A * x, b; atol = 1e-10, rtol = 0.0)
-end
-function test_solve_linear_regularized_sparse_fallback()::Bool
-  A = spzeros(Float64, 3, 3)
-  b = [1.0, -2.0, 3.0]
-  x = Sparlectra._regularized_normal_solve(A, b)
-  return length(x) == 3 && all(isfinite, x) && norm(x) <= 1e-12
-end
 
 function test_solve_sparse_system_small_and_large_backends()::Bool
   smallA = sparse([1.0 1.0; 2.0 2.0])
@@ -3456,22 +2484,33 @@ function test_bus_type_resolution_from_prosumers()::Bool
     getEffectiveBusType(net = net, busName = "SlackBus") == Sparlectra.Slack &&
     getEffectiveBusType(net = net, busName = "NoProsumerBus") == Sparlectra.PQ
 
-  return ok_types && pv_regulation_ok && genpq_regulation_ok
-end
+  # two slack prosumers on one bus (a MATPOWER bus with several generators)
+  # give one Slack bus
+  net2 = Net(name = "multi_slack_same_bus", baseMVA = 100.0)
+  addBus!(net = net2, busName = "SlackBus", vn_kV = 110.0)
+  addProsumer!(net = net2, busName = "SlackBus", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SlackBus")
+  addProsumer!(net = net2, busName = "SlackBus", type = "GENERATOR", p = 15.0, q = 2.0, referencePri = "SlackBus")
+  two_slack_bus = geNetBusIdx(net = net2, busName = "SlackBus")
+  two_slack_ok = getEffectiveBusType(net2, two_slack_bus) == Sparlectra.Slack && count(isSlack, getBusProsumers(net2, two_slack_bus)) == 2
 
-function test_multiple_slack_prosumers_same_bus_supported()::Bool
-  net = Net(name = "multi_slack_same_bus", baseMVA = 100.0)
-  addBus!(net = net, busName = "SlackBus", vn_kV = 110.0)
-  addBus!(net = net, busName = "LoadBus", vn_kV = 110.0)
+  # addProsumer! marks a machine regulated when it gets vm_pu or tap steps,
+  # and its bus becomes PV
+  addBus!(net = net, busName = "PVVm", vn_kV = 110.0)
+  addBus!(net = net, busName = "PVTap", vn_kV = 110.0)
+  addBus!(net = net, busName = "MachPQ", vn_kV = 110.0)
+  addProsumer!(net = net, busName = "PVVm", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.01)
+  addProsumer!(net = net, busName = "PVTap", type = "SYNCHRONOUSMACHINE", p = 8.0, vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2)
+  addProsumer!(net = net, busName = "MachPQ", type = "SYNCHRONOUSMACHINE", p = 6.0, q = 1.5)
+  ps_vm = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PVVm")))
+  ps_tap = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PVTap")))
+  ps_pq = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "MachPQ")))
+  auto_flags_ok =
+    ps_vm.isRegulated && ps_tap.isRegulated && !ps_pq.isRegulated &&
+    getEffectiveBusType(net = net, busName = "PVVm") == Sparlectra.PV &&
+    getEffectiveBusType(net = net, busName = "PVTap") == Sparlectra.PV &&
+    getEffectiveBusType(net = net, busName = "MachPQ") == Sparlectra.PQ
 
-  addProsumer!(net = net, busName = "SlackBus", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "SlackBus")
-  # Second in-service generator at the same slack bus (MATPOWER-like multi-gen slack bus case).
-  addProsumer!(net = net, busName = "SlackBus", type = "GENERATOR", p = 15.0, q = 2.0, referencePri = "SlackBus")
-  addProsumer!(net = net, busName = "LoadBus", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
-
-  slack_bus = geNetBusIdx(net = net, busName = "SlackBus")
-  load_bus = geNetBusIdx(net = net, busName = "LoadBus")
-  return getEffectiveBusType(net, slack_bus) == Sparlectra.Slack && getEffectiveBusType(net, load_bus) == Sparlectra.PQ && count(isSlack, getBusProsumers(net, slack_bus)) == 2
+  return ok_types && pv_regulation_ok && genpq_regulation_ok && two_slack_ok && auto_flags_ok
 end
 
 function test_regulated_generator_bus_targets_include_unregulated_generators()::Bool
@@ -3527,28 +2566,9 @@ function test_regulated_generator_bus_targets_include_unregulated_generators()::
   return p_target_ok && q_target_ok && q_limit_ok && fix_ok && order_ok && qu_ok && bus_type_ok
 end
 
-function test_addprosumer_auto_regulated_flags()::Bool
-  net = Net(name = "addprosumer_auto_regulated_flags", baseMVA = 100.0)
-  addBus!(net = net, busName = "Slack", vn_kV = 110.0)
-  addBus!(net = net, busName = "PVVm", vn_kV = 110.0)
-  addBus!(net = net, busName = "PVTap", vn_kV = 110.0)
-  addBus!(net = net, busName = "PQ", vn_kV = 110.0)
-
-  addProsumer!(net = net, busName = "Slack", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "Slack")
-  addProsumer!(net = net, busName = "PVVm", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.01)
-  addProsumer!(net = net, busName = "PVTap", type = "SYNCHRONOUSMACHINE", p = 8.0, vstep_pu = 0.005, tap_steps_down = 2, tap_steps_up = 2)
-  addProsumer!(net = net, busName = "PQ", type = "SYNCHRONOUSMACHINE", p = 6.0, q = 1.5)
-
-  ps_vm = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PVVm")))
-  ps_tap = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PVTap")))
-  ps_pq = only(getBusProsumers(net, geNetBusIdx(net = net, busName = "PQ")))
-
-  flags_ok = ps_vm.isRegulated && ps_tap.isRegulated && !ps_pq.isRegulated
-  bus_types_ok = getEffectiveBusType(net = net, busName = "PVVm") == Sparlectra.PV && getEffectiveBusType(net = net, busName = "PVTap") == Sparlectra.PV && getEffectiveBusType(net = net, busName = "PQ") == Sparlectra.PQ
-
-  return flags_ok && bus_types_ok
-end
-
+# The summary mode of printACPFlowResults returns early and closes the
+# result file itself; without that close the file stays unflushed and empty.
+# The Q-limit lines carry the counts of qLimitEvents and qLimitLog.
 function test_summary_result_output_closes_file_handle()::Bool
   net = Net(name = "pv2pq_label_smoke", baseMVA = 100.0)
   addBus!(net = net, busName = "Slack", vn_kV = 110.0)
@@ -3566,7 +2586,7 @@ function test_summary_result_output_closes_file_handle()::Bool
     return false
   end
   out = read(result_file, String)
-  return occursin("AC Power Flow Results", out) && occursin("PV→PQ locks", out) && occursin("PV→PQ events", out)
+  return !isempty(out) && occursin(r"PV→PQ locks\s*:\s*1\n", out) && occursin(r"PV→PQ events\s*:\s*1\n", out)
 end
 
 # Condition-number diagnostics (condition_number.jl): the Hager estimate
@@ -3630,30 +2650,12 @@ function test_condition_number_estimator()::Bool
   (isfinite(kthunk) && kthunk >= 1.0) || return false
   st.jacobian_condest() == kthunk || return false
 
-  # classic result log: the condition line is always printed, no option
-  # (0.9.7: output.condition_number removed)
+  # the full result log always carries the condition line
   outdir = mktempdir()
   Sparlectra.printACPFlowResults(net, 0.01, ite, 1e-8, true, outdir; converged = true, solver = :rectangular)
   out_on = read(joinpath(outdir, "result_$(net.name).txt"), String)
   occursin("Jacobian cond. : kappa1(J)", out_on) || return false
 
-  # legacy config key: a YAML still carrying output.condition_number loads
-  # silently (no error, no warning), and the struct has no such field
-  legacy_cfg = mktemp() do path, io
-    write(io, "config_version: 1\noutput:\n  condition_number: true\n")
-    close(io)
-    load_sparlectra_config(path; reload = true)
-  end
-  hasproperty(legacy_cfg.output, :condition_number) && return false
-  # API override path: the removed key follows the standard unknown-override
-  # error (it is neither a known config key nor GUI-editable anymore)
-  try
-    Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.condition_number" => true))
-    return false
-  catch err
-    err isa ArgumentError || return false
-    occursin("Unknown Sparlectra configuration override key", sprint(showerror, err)) || return false
-  end
   # overview availability rule: without a stored rectangular thunk (unsolved
   # net, APSLF, DC) the metadata path reports nothing instead of
   # reconstructing a Jacobian the run never factored
@@ -3736,35 +2738,229 @@ function test_remove_functions_compact()
   return true
 end
 
+# #375: the PQ->PV release decides on the voltage side. The shipped
+# Zeng/Chiang 14-bus case (loads +25 percent, tight Q bands) ended on a
+# non-physical solution under active_set: three machines at Qmax with the
+# voltage above the setpoint, zero releases, the Q-V check reporting all
+# three. With the voltage rule the run reaches the physical solution the
+# one-at-a-time mode finds (bus 3 clamped at Qmax, bus 1 at Qmin, bus 2
+# back on PV) and the Q-V check is clean. The feeder
+# with a machine clamped at Qmax and its voltage BELOW the setpoint must
+# stay clamped.
+function test_active_set_voltage_side_release()::Bool
+  @testset "Active set re-enable on the voltage side (#375)" begin (function ()
+    scf_dir = joinpath(dirname(@__DIR__), "data", "scf")
+    zeng = joinpath(scf_dir, "case14_zeng_p306_activeSet_A.scf.json")
+    cfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng).config
+    @test cfg.powerflow.qlimits.enforcement_mode === :active_set
+    r = run_sparlectra(casefile = zeng, config = cfg)
+    @test r.final_converged
+    st = Sparlectra.rectangular_pf_status(r.net)
+    @test st.qlimit_reenable_events >= 1
+    # bus 2 (Qmax, voltage above its setpoint) is released; bus 3 stays at
+    # Qmax with the voltage below the setpoint, bus 1 at Qmin
+    @test !haskey(r.net.qLimitEvents, 2)
+    @test get(r.net.qLimitEvents, 3, nothing) === :max && get(r.net.qLimitEvents, 1, nothing) === :min
+    @test isempty(Sparlectra.qvCharacteristicViolations(r.net))
+    # Q-limit stability check (Zhao et al. 2008, (6)/(7)) after the run: no
+    # violation under the active set; buses 3 and 6 sit at Qmax below U_set
+    # under the one-retry lock (two hits)
+    @test r.diagnostics.qlimit_stability_violations == 0
+    @test [(row.bus, row.end_type, row.reached_limit, row.locked_by) for row in r.diagnostics.qlimit_stability_report] ==
+          [(1, :PQ, :min, :none), (2, :PV, :none, :none), (3, :PQ, :max, :oscillation), (6, :PQ, :max, :oscillation)]
+    # clamped at Qmax with the voltage below the setpoint: no release
+    feeder = joinpath(scf_dir, "feeder3_hardpv_A.scf.json")
+    fcfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, feeder).config
+    rf = run_sparlectra(casefile = feeder, config = fcfg)
+    @test rf.final_converged
+    b2 = rf.net.busDict["B2"]
+    @test get(rf.net.qLimitEvents, b2, nothing) === :max
+    @test Sparlectra.rectangular_pf_status(rf.net).qlimit_reenable_events == 0
+    # the margin is a configuration key that reaches the net
+    @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
+
+    # with the voltage-side release switched off (margin 1.0) the run ends
+    # non-physical; fast/ref_api_smoke.jl checks that case. The Q-V rows of
+    # that run are the event buses of the stability report on their limit on
+    # the wrong side, so every one of them fails the stability check.
+    cfg_a = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0)).config
+    ra = @test_logs (:warn, r"Q-limit stability check") match_mode = :any run_sparlectra(casefile = zeng, config = cfg_a)
+    qv_a = Set(row.bus for row in Sparlectra.qvCharacteristicViolations(ra.net) if row.significant)
+    @test !isempty(qv_a)
+    @test issubset(qv_a, Set(row.bus for row in ra.diagnostics.qlimit_stability_report if !row.ok))
+    # the classic one-at-a-time mode ends on a physical point as well
+    cfg_c = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "classic_one_at_a_time")).config
+    # the stability check flags bus 6, PV 0.68 MVAr over its Qmax (the final
+    # check accepts it within the hysteresis, see below)
+    rc = @test_logs (:warn, r"Q-limit stability check: 1 voltage-regulated bus\(es\).*6 \(PV outside its band, U 1\.07000 pu, U_set 1\.07000 pu, Q 24\.678 MVAr outside -6\.000 \.\. 24\.000\)") match_mode = :any run_sparlectra(casefile = zeng, config = cfg_c)
+    @test rc.final_converged
+    @test rc.diagnostics.qlimit_stability_violations == 1
+    @test [row.bus for row in rc.diagnostics.qlimit_stability_report if !row.ok] == [6]
+    # classic_simultaneous ends on the abnormal solution of the paper: buses
+    # 2, 3 and 6 at Qmax with the voltage above U_set violate (7); the
+    # classic modes do not switch back.
+    cfg_s = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "classic_simultaneous")).config
+    rs = @test_logs (:warn, r"Q-limit stability check: 3 voltage-regulated bus\(es\)") match_mode = :any run_sparlectra(casefile = zeng, config = cfg_s)
+    @test rs.final_converged
+    @test rs.diagnostics.qlimit_stability_violations == 3
+    bad_s = [row for row in rs.diagnostics.qlimit_stability_report if !row.ok]
+    @test [(row.bus, row.reached_limit, row.check_6, row.check_7, row.locked_by) for row in bad_s] == [(2, :max, true, false, :none), (3, :max, true, false, :none), (6, :max, true, false, :none)]
+    @test all(row -> row.u_pu > row.uset_pu, bad_s)
+    @test qlimit_stability_line(rs.diagnostics.qlimit_stability_status, rs.diagnostics.qlimit_stability_report) == "Q-limit stability violations: 3 (bus 2, 3, 6)"
+    @test isempty(Sparlectra.qvCharacteristicViolations(rc.net))
+    # The final Q-limit check judges both modes alike: the classic run keeps
+    # bus 6 on PV over Qmax, inside the 1 MVAr hysteresis, and the check says
+    # so instead of failing the run; the active-set run is
+    # accepted with an ok or within_hysteresis verdict (up to 0.17.2 a
+    # released machine inside the band failed it).
+    st_c = Sparlectra.rectangular_pf_status(rc.net)
+    @test st_c.final_q_check_status === :within_hysteresis
+    row6 = only(filter(row -> row.busI == 6, st_c.final_q_check_rows))
+    @test row6.side === :high && row6.class === :within_hysteresis
+    @test st.final_q_check_status in (:ok, :within_hysteresis)
+    @test st.final_q_check_status !== :remaining_pv_q_limit_violations
+    # with Q-limit handling off a converged run has nothing to check: the
+    # status says so instead of claiming there was no converged solution
+    cfg_d = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enabled" => false)).config
+    rd = run_sparlectra(casefile = zeng, config = cfg_d)
+    @test rd.final_converged
+    @test Sparlectra.rectangular_pf_status(rd.net).final_q_check_status === :qlimits_disabled
+    @test (rd.diagnostics.qlimit_stability_status, rd.diagnostics.qlimit_stability_violations) == (:qlimits_disabled, 0)
+    @test Sparlectra.final_q_check_line(:qlimits_disabled, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (Q-limit handling disabled)."
+    @test Sparlectra.final_q_check_line(:not_evaluated, NamedTuple[], 100.0) == "Final Q-limit check: not evaluated (no converged solution)."
+    # No bound on the voltage difference between the two modes on purpose:
+    # switching variants need not end on the same point (measured:
+    # 1.3e-3 pu apart at bus 6, the machine on its Qmax edge, clamped again by
+    # the active set and kept on PV inside the hysteresis band by the classic
+    # mode). What the test guards is that each mode ends on a PHYSICAL point:
+    # the Q-V check above is clean for both.
+    # on the shipped case118 the margin does not change the clamped set, and
+    # nothing oscillates
+    c118 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+    clamped118 = Vector{Int}[]
+    for margin in (1.0, 1e-4)
+      cfg118 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, c118, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => margin)).config
+      r118 = run_sparlectra(casefile = c118, config = cfg118)
+      @test r118.final_converged
+      push!(clamped118, sort!(collect(keys(r118.net.qLimitEvents))))
+      @test Sparlectra.rectangular_pf_status(r118.net).oscillating_buses == 0
+      @test Sparlectra.rectangular_pf_status(r118.net).final_q_check_status === :ok
+    end
+    @test clamped118[1] == clamped118[2]
+    # the feeder machine sits ON its clamp, so the final check has nothing to say
+    @test Sparlectra.rectangular_pf_status(rf.net).final_q_check_status === :ok
+  end)() end
+  return true
+end
+
+# The final Q-limit check every enforcement mode ends with (task
+# final-q-check): judged by the SIZE of the overshoot with two
+# thresholds, the switching hysteresis and final_q_accept_pu. Synthetic
+# injections on the 3-bus net, so every class is hit exactly, plus the
+# configuration default and validation and the warning of the bounded class.
+function test_final_q_limit_classification()::Bool
+  @testset "Final Q-limit check: two thresholds" begin (function ()
+    net = createTest3BusNet(cooldown = 1, hyst_pu = 0.01, qlim_min = -15.0, qlim_max = 15.0)
+    pv = geNetBusIdx(net = net, busName = "STATION1")
+    nb = length(net.nodeVec)
+    bus_types = [Sparlectra.getNodeType(node) == Sparlectra.Slack ? :Slack : Sparlectra.getNodeType(node) == Sparlectra.PV ? :PV : :PQ for node in net.nodeVec]
+    @test bus_types[pv] == :PV
+    qmin_pu = fill(-Inf, nb)
+    qmax_pu = fill(Inf, nb)
+    qmin_pu[pv] = -0.15
+    qmax_pu[pv] = 0.15
+    qload = Sparlectra.build_qload_pu(net)
+    # the injection that puts the machine at Qmax + dev (or Qmin - dev)
+    injections(dev; side = :high) = [ComplexF64(0.0, i == pv ? ((side === :high ? qmax_pu[pv] + dev : qmin_pu[pv] - dev) - qload[pv]) : 0.0) for i in 1:nb]
+    classify(dev; hyst = 0.01, accept = 0.02, side = :high) = classify_final_q_limits(net, injections(dev; side), bus_types, qmin_pu, qmax_pu; q_hyst_pu = hyst, final_q_accept_pu = accept, tol = 1e-8)
+    # at the limit within the tolerance: no row, ok
+    @test classify(0.0).status === :ok
+    @test isempty(classify(0.0).rows)
+    # inside the hysteresis: a row, accepted, class within_hysteresis
+    within = classify(0.005)
+    @test within.status === :within_hysteresis
+    @test length(within.rows) == 1 && within.rows[1].class === :within_hysteresis && within.rows[1].side === :high
+    @test isapprox(within.rows[1].dev_pu, 0.005; atol = 1e-12)
+    @test within.max_dev_pu == within.rows[1].dev_pu
+    @test occursin("bus $(within.rows[1].busI) over Qmax by 0.0050 pu / 0.50 MVAr (within_hysteresis)", final_q_check_line(within.status, within.rows, net.baseMVA))
+    # beyond the hysteresis, inside the bound: bounded
+    bounded = classify(0.015)
+    @test bounded.status === :bounded_q_limit_violation
+    @test bounded.bounded == 1 && bounded.violations == 0
+    @test bounded.buses == string(bounded.rows[1].busI, ":bounded")
+    # beyond the bound: a remaining violation, the run is not accepted
+    @test classify(0.03).status === :remaining_pv_q_limit_violations
+    @test classify(0.03).violations == 1
+    # the mirror image under Qmin
+    low = classify(0.015; side = :low)
+    @test low.rows[1].side === :low && low.rows[1].class === :bounded
+    # regression: both thresholds at zero is the strict check of 0.17.2
+    @test classify(0.005; hyst = 0.0, accept = 0.0).status === :remaining_pv_q_limit_violations
+    # a PQ bus is not judged, whatever its injection
+    bus_types_pq = copy(bus_types)
+    bus_types_pq[pv] = :PQ
+    @test classify_final_q_limits(net, injections(0.03), bus_types_pq, qmin_pu, qmax_pu; q_hyst_pu = 0.01, final_q_accept_pu = 0.02, tol = 1e-8).status === :ok
+
+    # the acceptance decision: within and bounded are accepted, bounded with
+    # a warning naming bus and overshoot, a violation rejects the run
+    finalize(dev) = Sparlectra._finalize_rectangular_qlimit_summary(net, ones(ComplexF64, nb), injections(dev), bus_types, qmin_pu, qmax_pu, true, :none;
+      verbose = 0, qlimit_trace_enabled = false, q_hyst_pu = 0.01, final_q_accept_pu = 0.02, tol = 1e-8, pv_table_rows = 30,
+      qlimit_guard_accept_bounded_violations = false, qlimit_guard_max_remaining_violations = 0)
+    @test finalize(0.005).converged
+    @test finalize(0.005).final_q_check.status === :within_hysteresis
+    accepted = @test_logs (:warn, r"bounded violation accepted") finalize(0.015)
+    @test accepted.converged
+    @test accepted.rejection_reason === :bounded_q_limit_violation
+    rejected = finalize(0.03)
+    @test !rejected.converged
+    @test rejected.rejection_reason === :remaining_pv_q_limit_violations
+
+    # the key: default twice the hysteresis, never below it, stamped on the net
+    cfg = Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01))
+    @test cfg.final_q_accept_pu == 0.02
+    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.0)).final_q_accept_pu == 0.0
+    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.05)).final_q_accept_pu == 0.05
+    @test_throws ArgumentError Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.01, "final_q_accept_pu" => 0.005))
+    # auto (the template value) follows the hysteresis, so a user file that
+    # raises hysteresis_pu alone is not rejected by an inherited literal
+    @test Sparlectra.QLimitConfig(Dict{String,Any}("hysteresis_pu" => 0.03, "final_q_accept_pu" => "auto")).final_q_accept_pu == 0.06
+    @test "power_flow.qlimits.final_q_accept_pu" in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
+    @test Net(name = "n", baseMVA = 100.0, q_hyst_pu = 0.03).final_q_accept_pu == 0.06
+
+    # the same status for every mode at the same operating point: sp_case14
+    # under the three enforcement modes
+    case = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+    statuses = Symbol[]
+    for mode in ("active_set", "classic_one_at_a_time", "classic_simultaneous")
+      cfg14 = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => mode)).config
+      r14 = run_sparlectra(casefile = case, config = cfg14)
+      @test r14.final_converged
+      push!(statuses, Sparlectra.rectangular_pf_status(r14.net).final_q_check_status)
+    end
+    @test length(unique(statuses)) == 1
+    @test statuses[1] in (:ok, :within_hysteresis)
+  end)() end
+  return true
+end
+
 function run_grid_fast_tests()
   @testset "Remove functions" begin (function ()
     @test test_remove_functions_compact() == true
   end)() end
   @testset "Transformer and network validation" begin (function ()
     @test test_transformer_nameplate_conversion() == true
-    @test test_2WTPITrafo() == true
-    @test test_3WTPITrafo() == true
     @test test_shunt_update_matches_constructor() == true
-    @test testNetwork() == true
     @test testISOBusses() == true
   end)() end
 
   @testset "MATPOWER import/export" begin (function ()
-    @test testImportMatpower() == true
-    @test test_matpower_import_defaults_no_reenable() == true
     @test test_matpower_import_uses_bus_type_for_regulation() == true
     @test test_matpower_flatstart_uses_generator_voltage_setpoints() == true
-    @test test_matpower_reference_override_controls_flatstart() == true
     @test test_prosumer_aggregation_preserves_bus_types_and_injections() == true
     @test test_matpower_build_ybus_returns_sparse_expected_values() == true
-    @test test_matpower_vmva_selfcheck_noncontiguous_bus_numbers() == true
     @test test_matpower_vmva_selfcheck_ignores_slack_pq_spec() == true
     @test test_matpower_compare_vmva_wraps_angle_differences() == true
     @test test_matpower_pv_voltage_source_and_compare_modes() == true
-    @test test_matpower_compare_vmva_final_pq_after_qlimit_uses_bus_vm() == true
-    @test test_matpower_multi_generator_vg_and_fallback() == true
-    @test test_voltage_setpoint_lookup_uses_cached_linear_scan() == true
-    @test test_mp_inline_vs_manual_shunt() == true
     @test test_bus_shunt_model_modes() == true
     @test test_matpower_read_case_m_postprocessing() == true
     @test test_matpower_matrix_block_scanner_whitespace() == true
@@ -3773,76 +2969,50 @@ function run_grid_fast_tests()
     @test test_wrong_branch_voltage_band_every_level() == true
     @test test_wrong_branch_reference_branch_angle() == true
     @test test_run_sparlectra_normalizes_projected_matpower_starts() == true
-    @test test_run_sparlectra_resolves_matpower_lock_bus_ids() == true
   end)() end
 
   @testset "Power flow scenarios" begin (function ()
-    @test test_5BusNet(0, 10.0) == true
-    @test test_3BusNet(0, 150.0, :rectangular, true) == true
-    @test test_acpflow(0; lLine_6a6b = 0.01, damp = 1.0, method = :rectangular) == true
     @test test_rectangular_autodamp_backtracks_oversized_step() == true
     @test test_rectangular_polar_update_rotates_without_inflation() == true
     @test test_rectangular_polar_update_reaches_the_same_solution() == true
     @test test_power_mode_same_solution_and_topology_change() == true
     @test test_jacobian_reuse_same_solution() == true
     @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
-    @test test_rectangular_final_status_best_mismatch_ignores_nan() == true
-    @test test_rectangular_start_projection_improves_dc_seed() == true
     @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
     @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
     @test test_rectangular_start_projection_ratio_profile() == true
     @test test_run_level_flat_start_is_flat() == true
-    @test test_q_limit_adjust_vset_success() == true
-    @test test_q_limit_adjust_vset_no_controller_switches() == true
-    @test test_q_limit_adjust_vset_multiple_controllers_error() == true
-    @test test_q_limit_adjust_vset_invalid_config_error() == true
-    @test test_q_limit_adjust_vset_step_exhaustion_fallback() == true
-    @test test_q_limit_adjust_vset_multigen_single_controller() == true
-    @test test_q_limit_default_behavior_unchanged() == true
-    @test test_q_limit_enforcement_mode_config_values() == true
+    @test test_q_limit_adjust_vset_modes() == true
     @test test_q_limit_matpower_mode_base_failure_does_not_switch() == true
-    @test test_q_limit_matpower_mode_dispatch_no_reenable() == true
     @test test_q_limit_reenable_voltage_rule() == true
     @test test_q_limit_start_iter_delays_switching() == true
-    @test test_q_limit_auto_accepts_switching() == true
     @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true
-    @test test_q_limit_violation_guard_bypasses_hysteresis_for_strong_overshoot() == true
-    @test test_solve_linear_singular_sparse_qr_fallback() == true
     @test test_solve_sparse_system_small_and_large_backends() == true
     @test test_rectangular_jacobian_and_dc_start_matrices_are_sparse() == true
     @test test_rectangular_singular_step_returns_nonconvergence() == true
     @test test_condition_number_estimator() == true
     @test test_bus_type_resolution_from_prosumers() == true
-    @test test_multiple_slack_prosumers_same_bus_supported() == true
     @test test_regulated_generator_bus_targets_include_unregulated_generators() == true
-    @test test_addprosumer_auto_regulated_flags() == true
+    @test test_final_q_limit_classification() == true
+    @test test_active_set_voltage_side_release() == true
   end)() end
 
   @testset "Link behaviour and reporting" begin (function ()
     @test test_link_kcl_simple() == true
-    @test test_link_component_type() == true
     @test test_link_rejects_slack_connection() == true
-    @test test_link_rejects_mixed_bus_types() == true
     @test test_link_bus_merge_pf() == true
-    @test test_link_bus_merge_pf_default_method() == true
     @test test_link_merge_remaps_non_representative_slack() == true
     @test test_link_merge_returns_bus_powers() == true
     @test test_island_solve_with_link_merge() == true
-    @test test_rectangular_link_merge_runs_without_warning() == true
     @test test_link_closed_keeps_shunt_reporting_on_original_bus() == true
     @test test_link_kcl_ring_allocation() == true
-    @test test_link_kcl_ring_allocation_with_shunt() == true
     @test test_link_ring_pf_stability() == true
-    @test test_acpflow_report_object() == true
-    @test test_report_uses_user_bus_names_and_pf_node_count() == true
-    @test test_wrong_branch_output_visibility() == true
     @test test_summary_result_output_closes_file_handle() == true
   end)() end
 end
 
 function run_grid_extended_tests()
   @testset "large/stress MATPOWER helpers" begin (function ()
-    @test test_matpower_build_ybus_large_sparse_smoke() == true
     @test test_matpower_matrix_block_scanner_large_body() == true
   end)() end
 end

@@ -13,13 +13,13 @@
 # limitations under the License.
 
 # file: test/test_matpower_example.jl
-# purpose: tests central configuration loading and the MATPOWER runner's
-#          operational output: compact summaries, Q-limit counters,
-#          performance profile rendering, warmup, and output routing
+# purpose: tests the MATPOWER runner: the standard path with warmup runs, the
+#          compact summary, the timing coverage of the performance profile,
+#          the benchmark mode with and without BenchmarkTools, and the
+#          runtime thread status
 using Sparlectra
 using LinearAlgebra
 using Test
-using Logging
 # the benchmark mode of the runner lives in the package extension
 # SparlectraBenchmarkToolsExt; loading BenchmarkTools here loads it (under
 # Pkg.test the test target brings the package, otherwise the test runner
@@ -27,312 +27,90 @@ using Logging
 using BenchmarkTools
 
 function run_matpower_example_tests()
-  @testset "Central Sparlectra configuration" begin (function ()
-    cfg = Sparlectra.load_sparlectra_config(; reload = true)
-    @test cfg.powerflow.method === :rectangular
-    @test cfg.matpower.matpower_dcline_mode === :pf_injections
-    @test cfg.powerflow.islands.enabled === true
-    @test cfg.powerflow.islands.diagnostic_continue_after_failure === true
+  # the shipped case, so the runner never fetches anything
+  case9 = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m"))
 
-    missing_safe_defaults_cfg = test_scratch_path(".yaml")
-    write(missing_safe_defaults_cfg, "config_version: 1\nscope: general\npower_flow:\n  tol: 1.0e-8\nmodel:\n  auto_profile: off\n")
-    missing_safe_defaults = Sparlectra.load_sparlectra_config(missing_safe_defaults_cfg; reload = true)
-    @test missing_safe_defaults.matpower.matpower_dcline_mode === :pf_injections
-    @test missing_safe_defaults.powerflow.islands.enabled === true
-
-    # reject_active in a configuration FILE is deprecated (stale early-template
-    # default) and normalizes to pf_injections with a warning; the strict mode
-    # stays a programmatic-only choice.
-    explicit_strict_cfg = test_scratch_path(".yaml")
-    write(explicit_strict_cfg, "config_version: 1\nscope: general\npower_flow:\n  islands:\n    enabled: false\nmatpower_import:\n  matpower_dcline_mode: reject_active\n")
-    explicit_strict = @test_logs (:warn, r"reject_active is deprecated in configuration files") Sparlectra.load_sparlectra_config(explicit_strict_cfg; reload = true)
-    @test explicit_strict.matpower.matpower_dcline_mode === :pf_injections
-    @test explicit_strict.powerflow.islands.enabled === false
-
-    bad_method_cfg = test_scratch_path(".yaml")
-    write(bad_method_cfg, "power_flow:\n  method: polar\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_method_cfg; reload = true)
-
-    # an unknown key in a configuration FILE (a stale or misspelled entry)
-    # is warned about and dropped, the file loads with the default for it;
-    # an invalid VALUE of a known key (method: polar above) stays an error
-    bad_sparse_cfg = test_scratch_path(".yaml")
-    write(bad_sparse_cfg, "power_flow:\n  sparse: true\n")
-    sparse_cfg = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.sparse is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_sparse_cfg; reload = true)
-    @test sparse_cfg isa Sparlectra.SparlectraConfig
-
-    bad_unknown_cfg = test_scratch_path(".yaml")
-    write(bad_unknown_cfg, "power_flow:\n  typo_tol: 1.0e-4\n")
-    unknown_cfg = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.typo_tol is ignored") match_mode = :any Sparlectra.load_sparlectra_config(bad_unknown_cfg; reload = true)
-    @test unknown_cfg isa Sparlectra.SparlectraConfig
-
-    # a removed key with a replacement names the replacement in its warning
-    # (once per process, so the text is checked on whatever was captured)
-    removed_key_cfg = test_scratch_path(".yaml")
-    write(removed_key_cfg, "matpower_import:\n  benchmark: true\n")
-    removed_logger = Test.TestLogger(min_level = Logging.Warn)
-    removed_cfg = Logging.with_logger(removed_logger) do
-      Sparlectra.load_sparlectra_config(removed_key_cfg; reload = true)
-    end
-    @test removed_cfg isa Sparlectra.SparlectraConfig
-    @test removed_cfg.benchmark.enabled == Sparlectra.SparlectraConfig().benchmark.enabled
-    for record in removed_logger.logs
-      # the once-per-session config_version notice of a version-less file is not the subject here
-      occursin("declares no config_version", record.message) && continue
-      @test occursin("matpower_import.benchmark", record.message)
-      @test occursin("benchmark.enabled", record.message)
-    end
-
-    bench_cfg = test_scratch_path(".yaml")
-    write(bench_cfg, "benchmark:\n  enabled: false\n  methods: [rectangular]\n  seconds: 0.1\n  samples: 2\n  show_once: true\n")
-    cfg_bench = Sparlectra.load_sparlectra_config(bench_cfg; reload = true)
-    @test cfg_bench.benchmark.enabled === false
-    @test cfg_bench.benchmark.methods == [:rectangular]
-
-    bad_bench_method_cfg = test_scratch_path(".yaml")
-    write(bad_bench_method_cfg, "benchmark:\n  methods: [polar]\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_bench_method_cfg; reload = true)
-
-    startmode_cfg = test_scratch_path(".yaml")
-    write(startmode_cfg, """
-power_flow:
-  start_mode:
-    angle_mode: dc
-    voltage_mode: pv_gen_vg
-""")
-    cfg_startmode = Sparlectra.load_sparlectra_config(startmode_cfg; reload = true)
-    @test cfg_startmode.powerflow.start_mode.angle_mode === :dc
-    @test cfg_startmode.powerflow.start_mode.voltage_mode === :pv_gen_vg
-    @test cfg_startmode.powerflow.start_current_iteration.enabled === false
-
-    current_iteration_cfg = test_scratch_path(".yaml")
-    write(current_iteration_cfg, """
-power_flow:
-  start_current_iteration:
-    enabled: true
-    max_iter: 4
-    tol: 1.0e-4
-    damping: 0.75
-    accept_only_if_improved: false
-    min_improvement_factor: 0.9
-    vm_min_pu: 0.6
-    vm_max_pu: 1.4
-    max_angle_step_deg: 20.0
-    only_for_large_cases: true
-""")
-    cfg_current_iteration = Sparlectra.load_sparlectra_config(current_iteration_cfg; reload = true)
-    @test cfg_current_iteration.powerflow.start_current_iteration.enabled === true
-    @test cfg_current_iteration.powerflow.start_current_iteration.max_iter == 4
-    @test cfg_current_iteration.powerflow.start_current_iteration.damping == 0.75
-    @test cfg_current_iteration.powerflow.start_current_iteration.accept_only_if_improved === false
-    @test cfg_current_iteration.powerflow.start_current_iteration.only_for_large_cases === true
-    bad_current_iteration_cfg = test_scratch_path(".yaml")
-    write(bad_current_iteration_cfg, "power_flow:\n  start_current_iteration:\n    damping: 2.0\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_current_iteration_cfg; reload = true)
-
-    old_refresh_cfg = test_scratch_path(".yaml")
-    write(old_refresh_cfg, "power_flow:\n  tol: 2.0e-6\n")
-    refresh = Sparlectra.refresh_sparlectra_config_file(old_refresh_cfg; write = false, backup = false)
-    @test "power_flow.start_current_iteration" in refresh.missing_keys
-    @test occursin("start_current_iteration:", refresh.refreshed_text)
-    @test occursin("tol: 2.0e-6", refresh.refreshed_text)
-
-    for mode in ("classic", "dc", "bus_va_blend", "matpower_va")
-      cfg_mode = test_scratch_path(".yaml")
-      write(cfg_mode, "power_flow:\n  start_mode:\n    angle_mode: $(mode)\n")
-      cfg_loaded = Sparlectra.load_sparlectra_config(cfg_mode; reload = true)
-      @test cfg_loaded.powerflow.start_mode.angle_mode === Symbol(mode)
-    end
-
-    for mode in ("classic", "pv_gen_vg", "pv_bus_vm", "all_bus_vm", "profile_blend")
-      cfg_mode = test_scratch_path(".yaml")
-      write(cfg_mode, "power_flow:\n  start_mode:\n    voltage_mode: $(mode)\n")
-      cfg_loaded = Sparlectra.load_sparlectra_config(cfg_mode; reload = true)
-      @test cfg_loaded.powerflow.start_mode.voltage_mode === Symbol(mode)
-    end
-    cfg_legacy = test_scratch_path(".yaml")
-    write(cfg_legacy, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n")
-    err_legacy = try
-      Sparlectra.load_sparlectra_config(cfg_legacy; reload = true)
-      nothing
-    catch err
-      err
-    end
-    @test err_legacy isa ArgumentError
-    @test occursin("bus_vm_va_blend alias has been removed", sprint(showerror, err_legacy))
-    @test occursin("profile_source: matpower_reference", sprint(showerror, err_legacy))
-
-    cfg_canonical = test_scratch_path(".yaml")
-    write(cfg_canonical, "power_flow:\n  start_mode:\n    voltage_mode: profile_blend\n    profile_source: matpower_reference\n")
-    cfg_canonical_loaded = Sparlectra.load_sparlectra_config(cfg_canonical; reload = true)
-    @test cfg_canonical_loaded.powerflow.start_mode.voltage_mode === :profile_blend
-    @test cfg_canonical_loaded.powerflow.start_mode.profile_source === :matpower_reference
-
-    bad_startmode_cfg = test_scratch_path(".yaml")
-    write(bad_startmode_cfg, "power_flow:\n  start_mode:\n    voltage_mode: nonsense\n")
-    err_startmode = try
-      Sparlectra.load_sparlectra_config(bad_startmode_cfg; reload = true)
-      nothing
-    catch err
-      err
-    end
-    @test err_startmode isa ArgumentError
-    @test occursin("power_flow.start_mode.voltage_mode", sprint(showerror, err_startmode))
-    @test occursin("pv_gen_vg", sprint(showerror, err_startmode))
-
-    cfg_roundtrip = test_scratch_path(".yaml")
-    write(cfg_roundtrip, """
-power_flow:
-  qlimits:
-    enabled: false
-    hysteresis_pu: 0.123
-    cooldown_iters: 7
-matpower_import:
-  enable_pq_gen_controllers: false
-  ratio: reciprocal
-model:
-  bus_shunt_model: voltage_dependent_injection
-state_estimation:
-  method: wls
-""")
-    cfg_loaded = Sparlectra.load_sparlectra_config(cfg_roundtrip; reload = true)
-    @test cfg_loaded.powerflow.qlimits.ignore_q_limits === true
-    @test cfg_loaded.powerflow.qlimits.hysteresis_pu == 0.123
-    # the packaged default (auto) follows the raised hysteresis instead of
-    # rejecting the file with an inherited literal below it
-    @test cfg_loaded.powerflow.qlimits.final_q_accept_pu == 2 * 0.123
-    @test cfg_loaded.powerflow.qlimits.cooldown_iters == 7
-    @test cfg_loaded.matpower.enable_pq_gen_controllers === false
-    @test cfg_loaded.matpower.ratio === :reciprocal
-    @test cfg_loaded.model.bus_shunt_model === :voltage_dependent_injection
-    @test cfg_loaded.state_estimation.method === :wls
-
-    for mode in ("gen_vg", "bus_vm", "auto", "strict_check")
-      cfg_mode = test_scratch_path(".yaml")
-      write(cfg_mode, "matpower_import:\n  pv_voltage_source: $(mode)\n")
-      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.pv_voltage_source === Symbol(mode)
-    end
-    for mode in ("bus_vm", "gen_vg", "imported_setpoint", "hybrid")
-      cfg_mode = test_scratch_path(".yaml")
-      write(cfg_mode, "matpower_import:\n  compare_voltage_reference: $(mode)\n")
-      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).matpower.compare_voltage_reference === Symbol(mode)
-    end
-    for mode in ("off", "on", "auto")
-      cfg_mode = test_scratch_path(".yaml")
-      write(cfg_mode, "power_flow:\n  rectangular_preallocate_workspace: $(mode)\n")
-      @test Sparlectra.load_sparlectra_config(cfg_mode; reload = true).powerflow.rectangular_preallocate_workspace === Symbol(mode)
-    end
-    bad_ws_cfg = test_scratch_path(".yaml")
-    write(bad_ws_cfg, "power_flow:\n  rectangular_preallocate_workspace: invalid\n")
-    @test_throws ArgumentError Sparlectra.load_sparlectra_config(bad_ws_cfg; reload = true)
-
-    cfg_method_copy = SparlectraConfig(
-      powerflow = PowerFlowConfig(
-        method = :polar,
-        rectangular_workspace_reuse = false,
-        rectangular_preallocate_workspace = :on,
-        rectangular_workspace_min_buses = 12345,
-      ),
-    )
-    cfg_rect = Sparlectra.with_powerflow_method(cfg_method_copy, :rectangular)
-    @test cfg_rect.powerflow.method === :rectangular
-    @test cfg_rect.powerflow.rectangular_workspace_reuse === false
-    @test cfg_rect.powerflow.rectangular_preallocate_workspace === :on
-    @test cfg_rect.powerflow.rectangular_workspace_min_buses == 12345
-  end)() end
-
-  @testset "MATPOWER runner operational output" begin (function ()
+  # The only run of the standard (non-benchmark) path of run_matpower_case,
+  # with the warmup loop switched on: two extra solves before the
+  # representative one.
+  @testset "MATPOWER runner standard path with warmup runs" begin (function ()
     test_cfg = test_scratch_path(".yaml")
     write(test_cfg, """
+config_version: 1
+scope: general
 benchmark:
   enabled: false
+performance:
+  enabled: true
+  representative_warmup_runs: 2
 power_flow:
   flatstart: true
   start_mode:
     angle_mode: dc
     voltage_mode: pv_gen_vg
-matpower_import:
-  case: case14.m
 """)
-    try
-      result = Sparlectra.run_matpower_case(; casefile = "case14.m", config_file = test_cfg)
-      @test isfile(result.logfile)
-      @test result.status_ref !== nothing
-      logtxt = read(result.logfile, String)
-      @test occursin("Sparlectra version", logtxt)
-      @test occursin("config default", logtxt)
-      @test occursin("config user", logtxt)
-      @test occursin("casefile", logtxt)
-      @test occursin("logfile", logtxt)
-      @test occursin("performance", logtxt)
-      @test occursin("summary method=", logtxt)
-      @test occursin("summary", logtxt)
-    catch err
-      # Network fetch can fail in CI/offline runs depending on HTTP stack versions.
-      et = string(typeof(err))
-      em = sprint(showerror, err)
-      @test occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
+    captured = Sparlectra.run_with_output_capture() do
+      Sparlectra.run_matpower_case(; casefile = case9, config_file = test_cfg)
+    end
+    result = captured.result
+    @test isfile(result.logfile)
+    @test result.status_ref !== nothing
+    @test occursin("summary method=", read(result.logfile, String))
+    profile = result.performance_profile
+    @test profile[:representative_warmup_runs] == 2
+    # set only inside the warmup loop
+    @test haskey(profile, :last_warmup_elapsed_s)
+    @test profile[:timing_mode] === :warm_steady_state
+  end)() end
+
+  @testset "Compact summary reports the canonical status fields" begin (function ()
+    base = (method = :rectangular, final_converged = false, iterations = 30, elapsed_s = 1.25)
+    # status fields, fragments the summary carries, fragments it must not carry
+    rows = [
+      # outcome, solution and limit check come from the canonical fields
+      ((outcome = :not_converged, numerical_converged = false, solution_available = false, limit_validation_status = :skip,
+        final_mismatch = 2.575667589, reason_text = "NR mismatch did not converge"),
+       ["outcome=not_converged", "numerical_solution=FAIL", "solution_available=false", "limit_validation=SKIP", "reason=\"NR mismatch did not converge\""],
+       String[]),
+      # a converged solve that fails the limit check is not a numerical failure
+      ((outcome = :converged_limits_failed, numerical_converged = true, solution_available = true, limit_validation_status = :fail,
+        final_mismatch = 1.2e-7, reason_text = "remaining PV Q-limit violations", iterations = 8, elapsed_s = 0.5),
+       ["outcome=converged_limits_failed", "numerical_solution=OK", "solution_available=true", "limit_validation=FAIL"],
+       String[]),
+      # the Q-limit counters are passed through
+      ((outcome = :not_converged, numerical_converged = false, solution_available = false, limit_validation_status = :skip,
+        final_mismatch = 1.0, iterations = 80, pv2pq_events = 0, pv2pq_buses = 0, qlimit_active_set_changes = 76, qlimit_reenable_events = 63,
+        reason_text = "NR mismatch did not converge; Q-limit active set changed repeatedly"),
+       ["pv2pq_events=0", "qlimit_active_set_changes=76", "qlimit_reenable_events=63"],
+       String[]),
+      # representative and solver time are not swapped, the benchmark median is in ms
+      ((outcome = :converged, numerical_converged = true, solution_available = true, limit_validation_status = :ok, final_converged = true,
+        final_mismatch = 1e-8, iterations = 5, elapsed_s = 14.522494, solver_elapsed_s = 8.948731, benchmark_median_s = 0.018227,
+        pv2pq_events = 0, pv2pq_buses = 0, reason_text = "none"),
+       ["representative_time=14.522494 s", "solver_time=8.948731 s", "benchmark_median=18.227 ms"],
+       ["solver_time=14.522494 s"]),
+    ]
+    for (status, present, absent) in rows
+      summary = Sparlectra._compact_run_summary(merge(base, status))
+      for fragment in present
+        @test occursin(fragment, summary)
+      end
+      for fragment in absent
+        @test !occursin(fragment, summary)
+      end
     end
   end)() end
 
-  @testset "Compact summary uses canonical outcome fields" begin (function ()
-    summary_not_conv = Sparlectra._compact_run_summary((
-      method = :rectangular,
-      outcome = :not_converged,
-      numerical_converged = false,
-      solution_available = false,
-      limit_validation_status = :skip,
-      final_converged = false,
-      final_mismatch = 2.575667589,
-      reason_text = "NR mismatch did not converge",
-      iterations = 30,
-      elapsed_s = 1.25,
-    ))
-    @test occursin("outcome=not_converged", summary_not_conv)
-    @test occursin("numerical_solution=FAIL", summary_not_conv)
-    @test occursin("solution_available=false", summary_not_conv)
-    @test occursin("limit_validation=SKIP", summary_not_conv)
-    @test occursin("reason=\"NR mismatch did not converge\"", summary_not_conv)
-
-    summary_limits = Sparlectra._compact_run_summary((
-      method = :rectangular,
-      outcome = :converged_limits_failed,
-      numerical_converged = true,
-      solution_available = true,
-      limit_validation_status = :fail,
-      final_converged = false,
-      final_mismatch = 1.2e-7,
-      reason_text = "remaining PV Q-limit violations",
-      iterations = 8,
-      elapsed_s = 0.5,
-    ))
-    @test occursin("outcome=converged_limits_failed", summary_limits)
-    @test occursin("numerical_solution=OK", summary_limits)
-    @test occursin("solution_available=true", summary_limits)
-    @test occursin("limit_validation=FAIL", summary_limits)
+  @testset "Q-limit stop reasons at the iteration limit have their own text" begin (function ()
+    # the three reasons of a run at max_iter (they replace
+    # :nr_mismatch_not_converged_active_set_unstable) have their own text,
+    # not the underscore fallback
+    for reason in Sparlectra.QLIMIT_MAX_ITER_STOP_REASONS
+      @test Sparlectra._rectangular_rejection_reason_text(reason) != replace(String(reason), "_" => " ")
+    end
   end)() end
 
-  @testset "Q-limit non-convergence reason and counters are explicit" begin (function ()
-    @test Sparlectra._rectangular_rejection_reason_text(:nr_mismatch_not_converged_active_set_unstable) ==
-          "NR mismatch did not converge; Q-limit active set changed repeatedly"
-    io = IOBuffer()
-    Sparlectra._print_qlimit_active_set_summary(io, (
-      numerical_converged = false,
-      q_limit_active_set_ok = false,
-      final_mismatch = 1.0,
-      pv_pq_switching_events = 0,
-      qlimit_active_set_changes = 5,
-      qlimit_reenable_events = 2,
-      oscillating_buses = 0,
-      guarded_narrow_q_pv_buses = 0,
-      status = :not_converged,
-    ))
-    txt = String(take!(io))
-    @test occursin("Q-limit active-set changes", txt)
-    @test occursin("Q-limit re-enable events", txt)
-  end)() end
-
-  @testset "MATPOWER performance profile output coverage" begin (function ()
+  @testset "MATPOWER performance profile timing coverage" begin (function ()
     profile = Dict{Symbol,Any}(
       :enabled => true,
       :level => :full,
@@ -349,142 +127,41 @@ matpower_import:
       :iterations => [(iter = 1, mismatch = 1.0, elapsed_s = 0.01)],
       :timing_mode => :cold_representative,
       :representative_warmup_runs => 0,
-      :rectangular_workspace_reuse => true,
-      :rectangular_workspace_preallocated => true,
-      :rectangular_workspace_reason => :auto_threshold,
-      :rectangular_workspace_nbus => 10000,
-      :rectangular_workspace_nstate => 19998,
     )
+    # the number on the one line that starts with the label
+    reported(txt, label) = parse(Float64, first(split(strip(split(only(filter(l -> startswith(l, label), split(txt, '\n'))), ':'; limit = 2)[2]))))
+
     io_full = IOBuffer()
     Sparlectra.print_performance_profile(io_full, profile; level = :full, max_rows = 25)
     txt_full = String(take!(io_full))
+    @test reported(txt_full, "Representative wall time") == 10.0
+    # top level: network construction 2 + start projection 1 + solver 6;
+    # the nested linear solve and the benchmark event stay out
+    @test reported(txt_full, "Top-level measured time") == 9.0
+    @test reported(txt_full, "Sum of all recorded phase timings") == 9.5
+    @test reported(txt_full, "Benchmark events total") == 0.025
+    # the full level carries the phase table and the iteration block
     @test occursin("network_construction", txt_full)
-    @test occursin("benchmark_rectangular", txt_full)
-    @test occursin("Timing coverage", txt_full)
-    @test occursin("Representative wall time", txt_full)
-    @test occursin("Top-level measured time", txt_full)
-    @test occursin("Sum of all recorded phase timings", txt_full)
-    @test occursin("Benchmark events total", txt_full)
-    @test occursin("Coverage status", txt_full)
-    @test occursin("Nested timing note", txt_full)
-    @test occursin("10.0", txt_full)
-    @test occursin("9.0", txt_full)
-    @test !occursin("9.025", txt_full)
-    @test occursin("Bytes", txt_full)
-    @test occursin("Bytes/Call", txt_full)
     @test occursin("Iteration diagnostics", txt_full)
 
-    io_compact = IOBuffer()
-    Sparlectra.print_performance_profile(io_compact, profile; level = :compact, max_rows = 25)
-    txt_compact = String(take!(io_compact))
-    @test occursin("network_construction", txt_compact)
-    @test occursin("benchmark_rectangular", txt_compact)
-    @test occursin("Timing coverage", txt_compact)
-    @test occursin("Timing mode", txt_compact)
-    @test occursin("cold / representative", txt_compact)
-    @test occursin("Representative warmup runs", txt_compact)
-    @test occursin("Warmup guidance", txt_compact)
-    @test occursin("Rectangular workspace", txt_compact)
-    @test occursin("auto_threshold", txt_compact)
-  end)() end
-
-  @testset "Performance warmup configuration parsing" begin (function ()
-    cfg_default = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
-    @test cfg_default.performance.representative_warmup_runs == 0
-    @test cfg_default.performance.compare_cold_warm == false
-  end)() end
-
-  @testset "Performance warmup sentinel is rendered in profile output" begin (function ()
-    profile = Dict{Symbol,Any}(
-      :timing_mode => :warm_steady_state,
-      :representative_warmup_runs => 2,
-      :representative_elapsed_s => 0.1,
-      :events => NamedTuple[],
-      :timings => Dict{Symbol,Any}(),
-      :iterations => NamedTuple[],
-    )
-    io = IOBuffer()
-    Sparlectra.print_performance_profile(io, profile; level = :compact, max_rows = 5)
-    txt = String(take!(io))
-    @test occursin("warm / steady-state", txt)
-    @test occursin("Representative warmup runs     : 2", txt)
-  end)() end
-
-  @testset "Automatic timing mode labels are rendered in profile output" begin (function ()
-    profile_auto_cold = Dict{Symbol,Any}(
-      :timing_mode => :auto_cold_session_first,
-      :representative_warmup_runs => 0,
-      :representative_elapsed_s => 0.1,
-      :events => NamedTuple[],
-      :timings => Dict{Symbol,Any}(),
-      :iterations => NamedTuple[],
-    )
-    io_cold = IOBuffer()
-    Sparlectra.print_performance_profile(io_cold, profile_auto_cold; level = :compact, max_rows = 5)
-    txt_cold = String(take!(io_cold))
-    @test occursin("auto: cold first session-run", txt_cold)
-    @test occursin("Timing note", txt_cold)
-
-    profile_auto_warm = Dict{Symbol,Any}(
-      :timing_mode => :auto_warm_session_reuse,
-      :representative_warmup_runs => 0,
-      :representative_elapsed_s => 0.1,
-      :events => NamedTuple[],
-      :timings => Dict{Symbol,Any}(),
-      :iterations => NamedTuple[],
-    )
-    io_warm = IOBuffer()
-    Sparlectra.print_performance_profile(io_warm, profile_auto_warm; level = :compact, max_rows = 5)
-    txt_warm = String(take!(io_warm))
-    @test occursin("auto: warm session-reuse", txt_warm)
-    @test !occursin("Timing note", txt_warm)
-  end)() end
-
-  @testset "Performance warmup override reason is explicit when warmup is zero" begin (function ()
-    profile = Dict{Symbol,Any}(
-      :timing_mode => :cold_representative,
-      :representative_warmup_runs => 0,
-      :warmup_override_reason => "benchmark-mode override",
-      :representative_elapsed_s => 0.1,
-      :events => NamedTuple[],
-      :timings => Dict{Symbol,Any}(),
-      :iterations => NamedTuple[],
-    )
-    io = IOBuffer()
-    Sparlectra.print_performance_profile(io, profile; level = :compact, max_rows = 5)
-    txt = String(take!(io))
-    @test occursin("Representative warmup runs     : 0", txt)
-    @test occursin("Warmup override reason         : benchmark-mode override", txt)
-    @test !occursin("Warmup guidance", txt)
-  end)() end
-
-  @testset "Compact summary includes Q-limit aggregate counters" begin (function ()
-    summary = Sparlectra._compact_run_summary((
-      method = :rectangular,
-      outcome = :not_converged,
-      numerical_converged = false,
-      solution_available = false,
-      limit_validation_status = :skip,
-      final_converged = false,
-      final_mismatch = 1.0,
-      iterations = 80,
-      elapsed_s = 1.25,
-      pv2pq_events = 0,
-      pv2pq_buses = 0,
-      qlimit_active_set_changes = 76,
-      qlimit_reenable_events = 63,
-      reason_text = "NR mismatch did not converge; Q-limit active set changed repeatedly",
-    ))
-    @test occursin("pv2pq_events=0", summary)
-    @test occursin("qlimit_active_set_changes=76", summary)
-    @test occursin("qlimit_reenable_events=63", summary)
+    # compact logging prints the coverage alone: no phase table, no
+    # iteration block, the same numbers
+    compact_profile = merge(profile, Dict{Symbol,Any}(:compact_logging => true))
+    output = Sparlectra.run_with_output_capture() do
+      Sparlectra.emit_performance_summary(compact_profile; print_to_console = true, write_to_logfile = false, console_level = :compact)
+    end
+    txt_compact = output.stdout
+    @test !occursin("network_construction", txt_compact)
+    @test !occursin("Iteration diagnostics", txt_compact)
+    @test reported(txt_compact, "Top-level measured time") == 9.0
   end)() end
 
   # Without BenchmarkTools the benchmark mode stops before the case is read,
-  # with the way to get it, and a run with the mode off needs nothing. A
-  # process of its own, in the library environment alone: in this process
-  # the extension is loaded already.
-  @testset "benchmark mode without BenchmarkTools" begin (function ()
+  # with the way to get it. A process of its own, in the library environment
+  # alone: in this process the extension is loaded already. With the
+  # extension (this process) the benchmark block is written once, one row
+  # per method.
+  @testset "benchmark mode with and without BenchmarkTools" begin (function ()
     cfg_on = test_scratch_path(".yaml")
     write(cfg_on, "config_version: 1\nscope: general\nbenchmark:\n  enabled: true\n  methods: [rectangular]\n  seconds: 0.05\n  samples: 2\n")
     script = test_scratch_path(".jl")
@@ -495,6 +172,8 @@ matpower_import:
       Sparlectra.run_matpower_case(; casefile = "no_such_case_is_read.m", config_file = $(repr(cfg_on)))
       println("no error")
     catch err
+      # the expected failure is the ArgumentError naming BenchmarkTools;
+      # anything else is printed too and fails the assertions below
       println("error: ", sprint(showerror, err))
     end
     """)
@@ -510,185 +189,42 @@ matpower_import:
     @test occursin("using BenchmarkTools", out)
     # the check comes first: the case of the run is never looked for
     @test !occursin("no_such_case_is_read", out)
-  end)() end
 
-  @testset "MATPOWER benchmark output routing" begin
     @test Base.get_extension(Sparlectra, :SparlectraBenchmarkToolsExt) !== nothing
-    test_cfg = test_scratch_path(".yaml")
-    write(test_cfg, """
-benchmark:
-  enabled: true
-  methods: [rectangular]
-  seconds: 0.05
-  samples: 3
-output:
-  console_summary: true
-  console_diagnostics: compact
-  console_q_limit_events: summary
-  logfile_results: full
-  result_table_max_rows: 5
-  logfile_diagnostics: full
-performance:
-  enabled: true
-  write_to_logfile: true
-diagnostics:
-  log_effective_config: true
-matpower_import:
-  case: case14.m
-""")
-    result = try
-      captured = Sparlectra.run_with_output_capture() do
-        Sparlectra.run_matpower_case(; casefile = "case14.m", config_file = test_cfg)
-      end
-      captured
-    catch err
-      et = string(typeof(err))
-      em = sprint(showerror, err)
-      if occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
-        @test true
-        nothing
-      else
-        rethrow(err)
-      end
+    captured = Sparlectra.run_with_output_capture() do
+      Sparlectra.run_matpower_case(; casefile = case9, config_file = cfg_on)
     end
-    isnothing(result) && return
-    txt = result.stdout
-    @test count(occursin("Benchmark results", line) for line in split(txt, '\n')) == 1
-    @test count(occursin("benchmark method=rectangular", line) for line in split(txt, '\n')) == 1
-    @test occursin("representative=", txt)
-    @test count(occursin("Q-Limit Active-Set Summary", line) for line in split(txt, '\n')) <= 1
-    logtxt = read(result.result.logfile, String)
-    @test occursin("Effective Sparlectra Configuration", logtxt)
-    @test occursin("summary method=", logtxt)
-    @test occursin("representative_time=", logtxt)
-    @test occursin("solver_time=", logtxt)
-    @test occursin("benchmark_median=", logtxt)
-    @test occursin("Top-level measured time", logtxt)
-    @test occursin("Top-level excluding output", logtxt)
-    @test occursin("Result output time", logtxt)
-    @test occursin("Representative wall time", logtxt)
-    @test !occursin("Repr. time", logtxt)
-    @test occursin("Representative warmup runs", logtxt)
-    @test occursin("Large-case result output is row-limited", logtxt)
-    @test occursin("output.logfile_results=summary", logtxt)
-    @test !occursin("q_limit_active_set=OK final_converged=false", logtxt)
-    @test occursin("Representative solve diagnostics", logtxt) || occursin("Solve diagnostics (compact)", logtxt)
-  end
-
-  @testset "MATPOWER warmup output and compact console hygiene" begin
-    test_cfg = test_scratch_path(".yaml")
-    write(test_cfg, """
-benchmark:
-  enabled: false
-performance:
-  representative_warmup_runs: 2
-  compact_logging: true
-  enabled: true
-output:
-  console_summary: true
-  console_diagnostics: compact
-  logfile_results: compact
-  logfile_diagnostics: compact
-matpower_import:
-  case: case14.m
-""")
-    captured = try
-      Sparlectra.run_with_output_capture() do
-        Sparlectra.run_matpower_case(; casefile = "case14.m", config_file = test_cfg)
-      end
-    catch err
-      et = string(typeof(err))
-      em = sprint(showerror, err)
-      if occursin("RequestError", et) || occursin("FieldError", et) || occursin("RequestError", em)
-        nothing
-      else
-        rethrow(err)
-      end
-    end
-    isnothing(captured) && return
-    txt = captured.stdout
-    @test count(occursin("AC Power Flow Results", line) for line in split(txt, '\n')) <= 1
-    @test !occursin("status_ref =", txt)
-    @test !occursin("performance_profile = Dict", txt)
-  end
-
-  @testset "MATPOWER compact timing summary uses solver_total semantics" begin (function ()
-    summary = Sparlectra._compact_run_summary((
-      method = :rectangular,
-      outcome = :converged,
-      numerical_converged = true,
-      solution_available = true,
-      limit_validation_status = :ok,
-      final_converged = true,
-      final_mismatch = 1e-8,
-      iterations = 5,
-      elapsed_s = 14.522494,
-      solver_elapsed_s = 8.948731,
-      benchmark_median_s = 0.018227,
-      pv2pq_events = 0,
-      pv2pq_buses = 0,
-      reason_text = "none",
-    ))
-    @test occursin("representative_time=14.522494 s", summary)
-    @test occursin("solver_time=8.948731 s", summary)
-    @test occursin("benchmark_median=18.227 ms", summary)
-    @test !occursin("solver_time=14.522494 s", summary)
-  end)() end
-
-  @testset "Runtime config accepts numeric thread values" begin (function ()
-    cfg_file = test_scratch_path(".yaml")
-    write(cfg_file, "runtime:
-  julia_threads: 4
-  blas_threads: 16
-")
-    cfg_runtime = Sparlectra.load_sparlectra_config(cfg_file; reload = true)
-    @test cfg_runtime.runtime.julia_threads == "4"
-    @test cfg_runtime.runtime.blas_threads == "16"
+    lines = split(captured.stdout, '\n')
+    @test count(l -> occursin("Benchmark results", l), lines) == 1
+    @test count(l -> startswith(l, "benchmark method=rectangular"), lines) == 1
   end)() end
 
   @testset "Runtime thread status reporting" begin (function ()
+    # defaults: nothing requested, the parallel sites are on with one task
+    # per Julia thread
+    status_default = Sparlectra.runtime_thread_status(Sparlectra.RuntimeConfig(Dict{String,Any}()))
+    @test status_default.parallel_enabled === true
+    @test status_default.parallel_max_tasks == Threads.nthreads()
+    @test occursin("parallel: enabled=true max_tasks=$(Threads.nthreads())", sprint(Sparlectra.print_runtime_thread_config, status_default))
+
     cfg_keep = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = "keep", blas_threads = "keep")
     status_keep = Sparlectra.runtime_thread_status(cfg_keep)
     @test status_keep.julia_applied === true
     @test status_keep.julia_startup_required === false
 
+    # a Julia thread count can only be set at process start
     requested = Threads.nthreads() == 1 ? 2 : 1
     cfg_julia = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = string(requested), blas_threads = "keep")
     status_julia = Sparlectra.runtime_thread_status(cfg_julia)
     @test status_julia.requested_julia_threads_resolved == requested
     @test status_julia.julia_applied === false
     @test status_julia.julia_startup_required === true
-    io = IOBuffer()
-    Sparlectra.print_runtime_thread_config(io, status_julia)
-    txt = String(take!(io))
-    @test occursin("Request not applied: Julia threads must be set at process startup.", txt)
-    @test occursin("julia --threads=$(requested)", txt)
+    @test occursin("julia --threads=$(requested)", sprint(Sparlectra.print_runtime_thread_config, status_julia))
 
+    # a BLAS thread count applies at run time
     cfg_blas = Sparlectra.RuntimeConfig(; print_thread_config = true, julia_threads = "keep", blas_threads = string(LinearAlgebra.BLAS.get_num_threads()))
     status_blas = Sparlectra.runtime_thread_status(cfg_blas)
     @test status_blas.blas_applied === true
-  end)() end
-
-  @testset "Compact performance summary output" begin (function ()
-    profile = Dict{Symbol,Any}(
-      :compact_logging => true,
-      :representative_elapsed_s => 10.0,
-      :events => [(label = :benchmark_rectangular, seconds = 0.02)],
-      :timings => Dict(
-        :network_construction => (calls = 1, elapsed_s = 2.5, bytes = 10),
-        :result_output => (calls = 1, elapsed_s = 1.0, bytes = 10),
-        :solver_total => (calls = 1, elapsed_s = 5.0, bytes = 10),
-      ),
-      :iterations => NamedTuple[],
-    )
-    output = Sparlectra.run_with_output_capture() do
-      Sparlectra.emit_performance_summary(profile; print_to_console = true, write_to_logfile = false, console_level = :compact)
-    end
-    txt = output.stdout
-    @test occursin("Performance Summary (compact)", txt)
-    @test occursin("Coverage status", txt)
-    @test !occursin("Phase", txt)
-    @test !occursin("Iteration diagnostics", txt)
   end)() end
 end
 

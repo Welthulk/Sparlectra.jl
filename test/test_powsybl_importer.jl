@@ -14,17 +14,13 @@
 
 # file: test/test_powsybl_importer.jl
 # purpose: the PowSyBl adapter on the five shipped bundles under
-#          test/fixtures/powsybl: bundle reader failures and round trip,
-#          builder structure, the power flow against the OpenLoadFlow
-#          reference voltages, the Y-bus against MATPOWER case14, branch
-#          flows against the OLF columns, patched fixtures (open terminal,
-#          open switch, remote regulation), the slack override, the Web UI
-#          wiring (format hint, option section, help topics, the shipped
-#          bundles in the selector), the N-1 outage of the PST, the MATPOWER
-#          export rule with its read-back, the SE self-test, the native
-#          IIDM reader against every bundle with the power flow from the
-#          .xiidm file, and the import_case dispatch on both sources.
-#          Profile `adapters`.
+#          test/fixtures/powsybl: bundle reader failures, the flat start
+#          on every fixture, the slack override, the N-1 outage of the PST,
+#          the SE self-test, the short-circuit sources, the import_case
+#          dispatch on both sources with the Web UI format hint, selector
+#          and staging, and the tap changer sets of the state estimation.
+#          The voltages, the Y-bus and the branch flows against their
+#          references are in fast/ref_openloadflow.jl.
 
 using Sparlectra
 using SparlectraApp
@@ -101,78 +97,31 @@ function run_powsybl_importer_tests()
       lines = readlines(vl)
       lines[1] = replace(lines[1], "\"nominal_v\"" => "\"nominal_kv\"")
       write(vl, join(lines, "\n") * "\n")
-      err = try
-        read_powsybl_bundle(bad)
-        nothing
-      catch e
-        e
-      end
-      @test err isa ArgumentError
-      @test occursin("voltage_levels", err.msg) && occursin("nominal_v", err.msg)
+      err = @test_throws ArgumentError read_powsybl_bundle(bad)
+      @test occursin("voltage_levels", err.value.msg) && occursin("nominal_v", err.value.msg)
       # the version check comes before any table
       m = joinpath(bad, "manifest.json")
       write(m, replace(read(m, String), "\"format_version\": 1" => "\"format_version\": 2"))
-      err2 = try
-        read_powsybl_bundle(bad)
-        nothing
-      catch e
-        e
-      end
-      @test err2 isa ArgumentError
-      @test occursin("format_version 2", err2.msg)
+      err2 = @test_throws ArgumentError read_powsybl_bundle(bad)
+      @test occursin("format_version 2", err2.value.msg)
       # detection reads the manifest marker, not the directory name alone
       @test !Sparlectra.detect(PowsyblAdapter, dir)
     end
   end)() end
 
-  @testset "power flow against the OpenLoadFlow reference (every fixture)" begin (function ()
-    bands = Dict("ieee14" => (1e-6, 1e-4), "ieee57" => (1e-6, 1e-4), "four_substations" => (1e-5, 1e-3), "micro_grid_be" => (1e-5, 1e-3), "eurostag_tie_lines" => (1e-5, 1e-3))
+  # the voltages against OpenLoadFlow are checked in fast/ref_openloadflow.jl;
+  # here the same networks from a flat start with the default Q-limit hysteresis
+  @testset "flat start converges (every fixture)" begin (function ()
     for case in _POWSYBL_CASES
-      dir = _powsybl_fixture(case)
-      tables = read_powsybl_bundle(dir)
+      tables = read_powsybl_bundle(_powsybl_fixture(case))
       # remote regulation as OLF does it (voltageRemoteControl on by default)
       opts = case == "micro_grid_be" ? PowsyblAdapterOptions(remote_regulation = :remote) : PowsyblAdapterOptions()
-      net, report = build_net_from_powsybl(tables, opts)
-      res = run_sparlectra(net = net, config = _powsybl_olf_config())
-      @test res.numerical_converged
-      dev = _powsybl_voltage_deviation(net, tables, dir)
-      dv_band, da_band = bands[case]
-      @test dev.max_dv <= dv_band
-      @test dev.max_da <= da_band
-      println("      powsybl $(case): max |dV| $(round(dev.max_dv; sigdigits = 3)) pu, max |dtheta| $(round(dev.max_da; sigdigits = 3)) deg (bands $(dv_band) / $(da_band), worst bus $(dev.worst))")
-      # the same network converges from a flat start with the default Q-limit hysteresis
       flat, _ = build_net_from_powsybl(tables, opts)
       for nd in flat.nodeVec
         Sparlectra.setVmVa!(node = nd, vm_pu = 1.0, va_deg = 0.0)
       end
       flat_cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 60, tol = 1e-8, islands_enabled = true), output = OutputConfig(logfile_results = :off, startup_latency_hint = false), control = ControlConfig())
-      flat_res = run_sparlectra(net = flat, config = flat_cfg)
-      @test flat_res.numerical_converged
-    end
-  end)() end
-
-  @testset "Y-bus identity ieee14 against MATPOWER case14" begin (function ()
-    case14 = joinpath(Sparlectra.large_cases_dir(), "case14.m")
-    if !isfile(case14)
-      println("      powsybl Y-bus identity: SKIPPED (case14.m not in the large-case directory $(Sparlectra.large_cases_dir()))")
-    else
-      println("      powsybl Y-bus identity: RAN on $(case14)")
-      tables = read_powsybl_bundle(_powsybl_fixture("ieee14"))
-      net, _ = build_net_from_powsybl(tables, PowsyblAdapterOptions())
-      mp = createNetFromMatPowerFile(filename = case14)
-      # bus-breaker ids B1..B14 in bus order, MATPOWER buses 1..14 in bus order
-      order = sortperm([parse(Int, match(r"(\d+)$", b).match) for b in tables.bus_breaker_view_buses.id])
-      Y = Matrix(createYBUS(net = net))[order, order]
-      Ym = Matrix(createYBUS(net = mp))
-      # branches 7-8 (14/20 kV) and 7-9 (14/12 kV) carry tap 1 in MATPOWER
-      # and are lines between voltage levels in PowSyBl's IEEE-CDF import,
-      # with large opposite b1/b2 that turn the physical conductor into the
-      # nominal-ratio transformer; the per-terminal arms of the branch
-      # reproduce them without any bus shunt, so the identity holds
-      # everywhere
-      for i in 1:14, j in 1:14
-        @test abs(Y[i, j] - Ym[i, j]) <= 1e-9
-      end
+      @test (case, run_sparlectra(net = flat, config = flat_cfg).numerical_converged) == (case, true)
     end
   end)() end
 
@@ -190,44 +139,6 @@ function run_powsybl_importer_tests()
     _, unknown = build_net_from_powsybl(tables, PowsyblAdapterOptions(slack_ids = ["NOPE"]))
     @test unknown.slack[1].generator == "B1-G"
     @test any(m -> occursin("NOPE", m), unknown.messages)
-  end)() end
-
-  # the Web UI knows the format: the format hint of a bundle, the option
-  # section derived from PowsyblAdapterOptions, and the help topics that
-  # point at the configuration section of the docs page
-  @testset "Web UI wiring (ieee14)" begin (function ()
-    bundle = _powsybl_fixture("ieee14")
-    @test SparlectraApp._webui_case_format_hint(bundle) == :powsybl
-    @test SparlectraApp._webui_case_format_hint(joinpath(bundle, "ieee14.xiidm")) == :powsybl
-    html = SparlectraApp._webui_adapter_options_html(:powsybl, Dict{String,Any}())
-    for field in ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva")
-      @test occursin("name=\"$(field)\"", html)
-      @test SparlectraApp.WEBUI_FORM_HELP_TOPICS[field] == "powsybl_import." * field[length("powsybl_import_")+1:end]
-    end
-    # the shipped IIDM files under data/powsybl are offered in the case
-    # selector and staged into the case directory; a table bundle is a
-    # test reference and not offered
-    root = dirname(@__DIR__)
-    offered = SparlectraApp._webui_bundled_scf_options(root)
-    @test "ieee14.xiidm" in offered && "four_substations.xiidm" in offered && "micro_grid_be.xiidm" in offered && "ieee14_sc.xiidm" in offered
-    @test !any(endswith(".powsybl"), offered)
-    @test !SparlectraApp._webui_is_user_selectable_case("ieee14.powsybl")
-    mktempdir() do cache
-      staged = SparlectraApp._webui_stage_bundled_case!(root, cache, "ieee14.xiidm")
-      @test staged == joinpath(cache, "ieee14.xiidm")
-      @test isfile(staged)
-      @test Sparlectra.detect(PowsyblAdapter, staged)
-      @test SparlectraApp._webui_stage_bundled_case!(root, cache, "ieee14.powsybl") === nothing
-    end
-    # every shipped file is the file of its test fixture, whose frozen
-    # OpenLoadFlow reference the band tests compare against
-    for case in ("ieee14", "four_substations", "micro_grid_be")
-      @test read(joinpath(root, "data", "powsybl", case * ".xiidm")) == read(joinpath(_powsybl_fixture(case), case * ".xiidm"))
-    end
-    topics = [t for t in keys(SparlectraApp.WEBUI_HELP_TOPICS) if startswith(t, "powsybl_import.")]
-    @test length(topics) == 5
-    @test all(startswith(String(SparlectraApp.WEBUI_HELP_TOPICS[t].doc), "powsybl_import/#") for t in topics)
-    @test occursin("(@id powsybl-import-config)", read(joinpath(dirname(@__DIR__), "docs", "src", "powsybl_import.md"), String))
   end)() end
 
   # block E.1 (0.20.0): the PST of four_substations carries its magnetizing
@@ -384,6 +295,29 @@ function run_powsybl_importer_tests()
     @test ix.format == :powsybl
     @test length(ix.net.nodeVec) == 14
     @test ix.provenance["powsybl_manifest"]["source"] == "Sparlectra IIDM reader"
+    # the Web UI knows the format of the bundle and of the file
+    @test SparlectraApp._webui_case_format_hint(bundle) == :powsybl
+    @test SparlectraApp._webui_case_format_hint(xiidm) == :powsybl
+    # the shipped IIDM files under data/powsybl are offered in the case
+    # selector and staged into the case directory; a table bundle is a
+    # test reference and not offered
+    root = dirname(@__DIR__)
+    offered = SparlectraApp._webui_bundled_scf_options(root)
+    @test "ieee14.xiidm" in offered && "four_substations.xiidm" in offered && "micro_grid_be.xiidm" in offered && "ieee14_sc.xiidm" in offered
+    @test !any(endswith(".powsybl"), offered)
+    @test !SparlectraApp._webui_is_user_selectable_case("ieee14.powsybl")
+    mktempdir() do cache
+      staged = SparlectraApp._webui_stage_bundled_case!(root, cache, "ieee14.xiidm")
+      @test staged == joinpath(cache, "ieee14.xiidm")
+      @test isfile(staged)
+      @test Sparlectra.detect(PowsyblAdapter, staged)
+      @test SparlectraApp._webui_stage_bundled_case!(root, cache, "ieee14.powsybl") === nothing
+    end
+    # every shipped file is the file of its test fixture, whose frozen
+    # OpenLoadFlow reference the band tests compare against
+    for case in ("ieee14", "four_substations", "micro_grid_be")
+      @test read(joinpath(root, "data", "powsybl", case * ".xiidm")) == read(joinpath(_powsybl_fixture(case), case * ".xiidm"))
+    end
     # the service entry accepts the bundle directory and the file
     run_cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 40, tol = 1e-8), output = OutputConfig(logfile_results = :off, startup_latency_hint = false))
     res = run_sparlectra(casefile = bundle, config = run_cfg)
@@ -403,5 +337,121 @@ function run_powsybl_importer_tests()
     @test case60.sparlectra.meta["f_nom"] == 60.0
     # the c1 written at 60 Hz reads back to the same susceptance
     @test Sparlectra.createYBUS(net = Sparlectra.build_net(case60; config = cfg60), sparse = true) == Sparlectra.createYBUS(net = Sparlectra.build_net(case; config = cfg60), sparse = true)
+  end)() end
+
+  # The import stores per transformer branch the tap changers of the state
+  # estimation (se_tap_changers, origin :powsybl): one table
+  # changer per IIDM ratio or phase tap changer, side :to. The truth is a
+  # re-import of the .xiidm with one changer at another tapPosition: at the
+  # import step and at the two table ends the stored set gives the ratio
+  # and shift of the re-imported branch (1e-12) and its r, x, g, b relative
+  # to the import step. four_substations has a ratio and a phase changer on
+  # one transformer (the phase table carries r and x), micro_grid_be a
+  # ratio table with r, x, g, b, a phase changer and a tapped 3W leg,
+  # eurostag_tie_lines one ratio changer. A transformer without changer and
+  # a line across voltage levels (ieee14) get an empty set. The bundle
+  # gives the same sets as the .xiidm.
+  @testset "tap changer sets of the tap estimation" begin (function ()
+    S = Sparlectra
+    source_of(case) = read(joinpath(_powsybl_fixture(case), case * ".xiidm"), String)
+    build(text) = mktempdir() do dir
+      f = joinpath(dir, "case.xiidm")
+      write(f, text)
+      first(build_net_from_powsybl(S.read_iidm_tables(f), PowsyblAdapterOptions()))
+    end
+    # `text` with the tap changer element `elem` of transformer `id` at tapPosition k
+    function at_step(text, id, elem, k)
+      a = findfirst("Transformer id=\"$(id)\"", text)
+      t = findnext("<iidm:$(elem) ", text, last(a))
+      e = findnext(">", text, last(t))
+      tag = replace(text[first(t):first(e)], r" tapPosition=\"-?\d+\"" => " tapPosition=\"$(k)\"")
+      return text[1:first(t)-1] * tag * text[first(e)+1:end]
+    end
+    function agrees(text, net, k, c)
+      b0 = net.branchVec[k]
+      set = b0.se_tap_changers
+      ch = set.changers[c]
+      s0 = Float64[x.step - x.neutral for x in set.changers]
+      F0 = S._tap_impedance_factors(set, s0)
+      ok = true
+      for st in unique([Int(ch.step), ch.table[1].step, ch.table[end].step])
+        bk = build(at_step(text, ch.mrid, ch.name, st)).branchVec[k]
+        s = copy(s0)
+        s[c] = st - ch.neutral
+        R, P = S._tap_set_ratio_shift(set, s)
+        F = S._tap_impedance_factors(set, s)
+        ok &= isapprox(R, bk.tap_ratio; rtol = 1e-12) && abs(P - bk.phase_shift_deg) <= 1e-12
+        ok &= isapprox(b0.r_pu * F[1] / F0[1], bk.r_pu; rtol = 1e-12) && isapprox(b0.x_pu * F[2] / F0[2], bk.x_pu; rtol = 1e-12)
+        ok &= isapprox(b0.g_from_pu * F[3] / F0[3], bk.g_from_pu; rtol = 1e-12, atol = 1e-15) && isapprox(b0.b_from_pu * F[4] / F0[4], bk.b_from_pu; rtol = 1e-12, atol = 1e-15)
+      end
+      ok || println("      tap changer set of branch ", k, ", changer ", ch.name, ": no match with the re-import")
+      return ok
+    end
+    trafo_idx(net) = [k for (k, b) in enumerate(net.branchVec) if b.ratio != 0.0]
+    checked = 0
+    for case in ("four_substations", "micro_grid_be", "eurostag_tie_lines")
+      text = source_of(case)
+      net = build(text)
+      for k in trafo_idx(net), c in eachindex(net.branchVec[k].se_tap_changers.changers)
+        @test agrees(text, net, k, c)
+        checked += 1
+      end
+      # the bundle carries the same sets
+      bnet, _ = build_net_from_powsybl(read_powsybl_bundle(_powsybl_fixture(case)), PowsyblAdapterOptions())
+      for k in trafo_idx(net)
+        a, b = net.branchVec[k].se_tap_changers, bnet.branchVec[k].se_tap_changers
+        @test b.origin === :powsybl && isapprox(a.ratio_n, b.ratio_n; rtol = 1e-12) && length(a.changers) == length(b.changers)
+        for (x, y) in zip(a.changers, b.changers)
+          @test (x.name, x.mrid, x.role, x.neutral, x.low, x.high, x.step, x.impedance) == (y.name, y.mrid, y.role, y.neutral, y.low, y.high, y.step, y.impedance)
+          @test all(((p, q),) -> p.step == q.step && isapprox(p.ratio, q.ratio; rtol = 1e-12) && isapprox(p.angle_deg, q.angle_deg; atol = 1e-12) && isapprox(p.x, q.x; rtol = 1e-12), zip(x.table, y.table))
+        end
+      end
+    end
+    @test checked == 7
+    # four_substations: ratio then phase changer, neutral where rho is 1 and
+    # alpha 0, the ratio at rho 1 from the rated voltages
+    net = build(source_of("four_substations"))
+    k = only(trafo_idx(net))
+    set = net.branchVec[k].se_tap_changers
+    vn(b) = net.nodeVec[b].comp.cVN
+    @test set.origin === :powsybl && set.shift_n_deg == 0.0
+    @test isapprox(set.ratio_n, vn(net.branchVec[k].toBus) / (400.0 / 225.0 * vn(net.branchVec[k].fromBus)); rtol = 1e-14)
+    @test [(c.name, c.kind, c.role, c.side, c.neutral, c.low, c.high, c.step, c.impedance) for c in set.changers] == [("ratioTapChanger", :tabular, :ratio, :to, 1, 0, 2, 1.0, :none), ("phaseTapChanger", :tabular, :phase, :to, 16, 0, 32, 15.0, :table)]
+    @test S._tap_release_mode(net.branchVec[k]) === :both
+    @test S._tap_s_from_branch(set, net.branchVec[k]) == [0.0, -1.0]
+    # micro_grid_be: the tapped 3W leg carries its changer, the two other
+    # legs an empty set
+    mg = build(source_of("micro_grid_be"))
+    star = mg.busDict["84ed55f4-61f5-4d9d-8755-bba7b877a246_star"]
+    legs = [b.se_tap_changers for b in mg.branchVec if b.toBus == star]
+    @test length(legs) == 3 && count(st -> isempty(st.changers), legs) == 2
+    @test only(only(filter(st -> !isempty(st.changers), legs)).changers).name == "ratioTapChanger2"
+    # ieee14: three transformers without changer and two lines across voltage
+    # levels map to ratio branches with an empty set, never released
+    ieee = build(source_of("ieee14"))
+    sets = [ieee.branchVec[k].se_tap_changers for k in trafo_idx(ieee)]
+    @test length(sets) == 5 && all(st -> st.origin === :powsybl && isempty(st.changers), sets)
+    @test all(k -> S._tap_release_mode(ieee.branchVec[k]) === nothing, trafo_idx(ieee))
+    # a phase changer with a step the estimation cannot use (rho -1 away
+    # from the import step) is left out with a notice; its import factor
+    # stays fixed in the set, which still gives the branch at the import step
+    text = source_of("four_substations")
+    p = findfirst("<iidm:phaseTapChanger ", text)
+    s1 = findnext("<iidm:step ", text, last(p))
+    q = findnext("rho=\"", text, last(s1))
+    v = findnext("\"", text, last(q) + 1)
+    bad = text[1:last(q)] * "-1.0" * text[first(v):end]
+    tables = mktempdir() do dir
+      f = joinpath(dir, "bad.xiidm")
+      write(f, bad)
+      S.read_iidm_tables(f)
+    end
+    bnet, rep = build_net_from_powsybl(tables, PowsyblAdapterOptions())
+    bb = bnet.branchVec[only(trafo_idx(bnet))]
+    bset = bb.se_tap_changers
+    @test [c.name for c in bset.changers] == ["ratioTapChanger"]
+    @test any(m -> occursin("TWT/phaseTapChanger is not estimable", m), rep.messages)
+    R, P = S._tap_set_ratio_shift(bset, [0.0])
+    @test isapprox(R, bb.tap_ratio; rtol = 1e-12) && abs(P - bb.phase_shift_deg) <= 1e-12 && bset.shift_n_deg != 0.0
   end)() end
 end

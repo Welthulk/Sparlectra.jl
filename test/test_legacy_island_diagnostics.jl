@@ -34,7 +34,7 @@ function run_legacy_island_diagnostics_tests()
           solution_available = false,
           limit_validation_status = :skip,
           final_converged = false,
-          reason = :nr_mismatch_not_converged_active_set_unstable,
+          reason = :type_identification_divergence,
           reason_text = "NR mismatch did not converge",
           final_mismatch = 240324.3267233851,
         )
@@ -54,7 +54,7 @@ function run_legacy_island_diagnostics_tests()
         @test !occursin("iterations=0", out.reason_text)
         @test !occursin("stage=before_nr", out.reason_text)
         @test occursin("final_mismatch=240324.3267233851", out.reason_text)
-        @test occursin("reason=nr_mismatch_not_converged_active_set_unstable", out.reason_text)
+        @test occursin("reason=type_identification_divergence", out.reason_text)
 
         # When the combined status is untagged, the failing island is looked up
         # in the per-island statuses -- not assumed to be the first row.
@@ -103,7 +103,7 @@ function run_legacy_island_diagnostics_tests()
           # 15 significant digits, the result-CSV writer (#386), in technical or excel_de
           @test row1[col["final_mismatch"]] in ("240324.326723385", "240.324,326723385")
           @test row1[col["final_status"]] == "not_converged"
-          @test row1[col["failure_reason"]] == "nr_mismatch_not_converged_active_set_unstable"
+          @test row1[col["failure_reason"]] == "type_identification_divergence"
           @test row1[col["stage"]] == "newton_iteration"
           @test row1[col["pv_pq_switching_events"]] == "435"
 

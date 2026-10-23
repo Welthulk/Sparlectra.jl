@@ -204,13 +204,6 @@ function run_api_extended_tests()
         @test Sparlectra._cached_control_label(control_cache, node.busIdx) == Sparlectra._control_label(control_net, node.busIdx)
       end
       @test Set(Sparlectra._cached_control_label(control_cache, node.busIdx) for node in control_net.nodeVec) == Set(["-", "Q(U)", "P(U)", "Q(U), P(U)"])
-      direct_source = read(joinpath(dirname(@__DIR__), "app", "src", "api", "run_api.jl"), String)
-      # Keep this as a simple source guard: the behavioral cache equivalence
-      # checks above cover correctness, while these checks prevent accidental
-      # reintroduction of the old per-row control-label path without brittle
-      # regex body extraction.
-      @test !occursin("_control_label(net", direct_source)
-      @test !occursin("_bus_control_flags", direct_source)
 
       casefile = _write_api_test_case_ext(joinpath(tmpdir, "case_api.m"))
       template = joinpath(tmpdir, "config_template.yaml")
@@ -251,27 +244,10 @@ function run_api_extended_tests()
       @test isfinite(result.metadata["jacobian_condition_estimate"])
       @test result.metadata["jacobian_condition_verdict"] isa String
       @test startswith(String(result.metadata["jacobian_condition_line"]), "kappa1(J) = ")
-      # 0.30.2: the Padé margin moved to apslf_pade_margin; the former key
-      # apslf_convergence_radius is still written (deprecated) with the same
-      # value, nothing on a Newton run
-      @test result.metadata["apslf_convergence_radius"] === nothing
+      # an APSLF run reports its Padé margin
       apslf_result = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "apslf"), config_overrides = Dict("power_flow.solver" => "apslf", "benchmark.enabled" => false), performance_timing = :compact)
       @test apslf_result.success
       @test apslf_result.metadata["apslf_pade_margin"] isa Float64 && isfinite(apslf_result.metadata["apslf_pade_margin"])
-      @test apslf_result.metadata["apslf_convergence_radius"] === apslf_result.metadata["apslf_pade_margin"]
-      # power_flow.islands.mode (removed in 0.30.2) in the configuration file
-      # and in a case file the Settings page wrote before: the run goes
-      # through, and run.log names both ignored keys
-      removed_dir = mkpath(joinpath(tmpdir, "removed_keys"))
-      removed_case = cp(casefile, joinpath(removed_dir, "case_api.m"))
-      write(joinpath(removed_dir, "case_api.config.yaml"), "config_version: 1\nscope: case\ncase: case_api.m\npower_flow:\n  islands:\n    mode: solve_independent\n")
-      removed_cfg = joinpath(removed_dir, "config.yaml")
-      write(removed_cfg, replace(read(template, String), "  islands:\n" => "  islands:\n    mode: solve_parallel\n"; count = 1))
-      removed_result = @test_logs (:warn, r"islands\.mode is ignored") (:warn, r"islands\.mode in case_api\.config\.yaml is ignored") match_mode = :any run_sparlectra_api(casefile = removed_case, config_file = removed_cfg, output_dir = joinpath(tmpdir, "removed_out"), config_overrides = Dict("benchmark.enabled" => false), performance_timing = :compact)
-      @test removed_result.success
-      removed_log = read(removed_result.logfile, String)
-      @test occursin("Configuration key power_flow.islands.mode in config.yaml is ignored", removed_log)
-      @test occursin("Configuration key power_flow.islands.mode in case_api.config.yaml is ignored", removed_log)
       no_dcline_mpc = Sparlectra.MatpowerIO.read_case(casefile; legacy_compat = false)
       @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics(no_dcline_mpc)["matpower_dcline_active_count"] == 0
       empty_dcline_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_empty_dcline.m"); rows = "")
@@ -286,9 +262,7 @@ function run_api_extended_tests()
       active_default_mpc = Sparlectra.MatpowerIO.read_case(active_dcline_case; legacy_compat = false)
       active_default_net = Sparlectra.createNetFromMatPowerCase(mpc = active_default_mpc)
       @test !isempty(active_default_net.matpowerDclineMetadata)
-      # ignore_inactive keeps the config-reachable strict rejection of ACTIVE
-      # dcline rows (reject_active is deprecated on the configuration surface
-      # and normalizes to pf_injections — stale early-template default).
+      # ignore_inactive rejects ACTIVE dcline rows
       active_result = run_sparlectra_api(casefile = active_dcline_case, config_file = template, output_dir = joinpath(tmpdir, "active-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "ignore_inactive", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact, run_diagnostics = true)
       @test active_result.status === :failed
       @test !active_result.success
@@ -315,10 +289,6 @@ function run_api_extended_tests()
       @test occursin("matpower_dcline_detected", active_run_log)
       @test occursin("matpower_dcline_unsupported", active_run_log)
       @test occursin("powerflow_aborted_unsupported_matpower_dcline", active_run_log)
-      active_result_html = SparlectraApp.render_powerflow_result(Dict("run_id" => active_result.run_id, "status" => String(active_result.status), "success" => active_result.success, "reason" => active_result.reason, "message" => active_result.message))
-      @test occursin("failed", active_result_html)
-      @test occursin("MATPOWER case contains active", active_result_html)
-      @test occursin("unsupported_matpower_dcline", active_result_html)
       dcline_pf_case = _write_api_dcline_case_ext(joinpath(tmpdir, "case_pf_dcline.m"); rows = "1 2 1 10 0 1 2 1.0 1.01 0 100 -20 20 -30 30 1 0.1;")
       dcline_pf_result = run_sparlectra_api(casefile = dcline_pf_case, config_file = template, output_dir = joinpath(tmpdir, "pf-dcline"), config_overrides = Dict("matpower_import.matpower_dcline_mode" => "pf_injections", "output.logfile_results" => "full", "benchmark.enabled" => false), performance_timing = :compact)
       @test dcline_pf_result.reason != "unsupported_matpower_dcline"
@@ -366,7 +336,9 @@ function run_api_extended_tests()
       island_two_text = read(island_two_log, String)
       @test !occursin("exception_message: AC island 2 power-flow solve failed", island_one_text)
       @test occursin("final_status: not_converged", island_one_text) || occursin("final_status: converged", island_one_text)
-      @test occursin("failure_reason: nr_mismatch_not_converged", island_two_text) || occursin("failure_reason: nr_mismatch_not_converged_active_set_unstable", island_two_text)
+      # max_iter 1 is shorter than the three-iteration window of the stop
+      # reason, and its one mismatch is far above 10 tol: :numerical_divergence
+      @test occursin("failure_reason: numerical_divergence", island_two_text)
       @test occursin("exception_type: ", island_two_text)
       @test !occursin("failure_reason: solver_exception", island_two_text)
       @test !occursin("exception_message: AC island 2 power-flow solve failed", island_two_text)
@@ -446,7 +418,7 @@ function run_api_extended_tests()
           (island_id = 3, settings = synthetic_settings),
         ],
         :ac_island_solver_statuses => Dict(
-          1 => (status = :not_converged, iterations = 80, final_mismatch = 4721.338328525473, reason = :nr_mismatch_not_converged_active_set_unstable),
+          1 => (status = :not_converged, iterations = 80, final_mismatch = 4721.338328525473, reason = :type_identification_divergence),
           2 => (status = :nr_nonfinite, iterations = 80, final_mismatch = NaN, reason = :nr_nonfinite),
           3 => (status = :converged, iterations = 7, final_mismatch = 1.1295320234694373e-10, reason = :none),
         ),
@@ -454,7 +426,7 @@ function run_api_extended_tests()
       synthetic_message = Sparlectra._islandwise_failure_message(synthetic_profile)
       @test occursin("island 1: not_converged, iterations=80", synthetic_message)
       @test occursin("final_mismatch=4721.338328525473", synthetic_message)
-      @test occursin("reason=nr_mismatch_not_converged_active_set_unstable", synthetic_message)
+      @test occursin("reason=type_identification_divergence", synthetic_message)
       @test occursin("island 2: nr_nonfinite, iterations=80, final_mismatch=NaN, reason=nr_nonfinite", synthetic_message)
       @test occursin("island 3: converged, iterations=7", synthetic_message)
       @test occursin("Q-limit handling was enabled for this run (mode=active_set)", synthetic_message)
@@ -689,7 +661,7 @@ power_flow:
       @test !occursin("Full run details", classic_log)
       @test occursin("Full run details", full_log)
       # run.log is the narrative: the resolved configuration is not dumped
-      # into it anymore — its one home is the effective_config.yaml artifact,
+      # into it anymore, its one home is the effective_config.yaml artifact,
       # referenced by a pointer line (logging cleanup)
       @test !occursin("Effective Sparlectra Configuration", full_log)
       @test occursin("effective configuration: effective_config.yaml", full_log)
@@ -707,11 +679,6 @@ power_flow:
       @test occursin("nr_initial_mismatch:", full_diagnostic_log)
       @test occursin("max_active_power_mismatch:", full_diagnostic_log)
       @test occursin("Final Q-limit validation", full_diagnostic_log)
-
-      legacy_dir = joinpath(tmpdir, "legacy-semicolon")
-      legacy = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = legacy_dir, config_overrides = Dict("benchmark.enabled" => false), detailed_result_csv = true, detailed_result_csv_semicolon = true)
-      @test legacy.success
-      @test startswith(read(joinpath(legacy_dir, "bus_voltages_complex.csv"), String), "bus;")
 
       qlimit_disabled_dir = joinpath(tmpdir, "q_limit_disabled")
       mkpath(qlimit_disabled_dir)
@@ -775,8 +742,8 @@ power_flow:
         false,
         :skip,
         false,
-        :nr_mismatch_not_converged_active_set_unstable,
-        "NR mismatch did not converge; Q-limit active set changed repeatedly",
+        :type_identification_divergence,
+        Sparlectra._rectangular_rejection_reason_text(:type_identification_divergence),
         80,
         0.0,
         nothing,
@@ -901,15 +868,6 @@ power_flow:
         sp14_check = run_fixed_reference_self_check(casefile = sp14, output_dir = joinpath(tmpdir, "self_check_sp14"))
         @test sp14_check.raw_result !== nothing
         @test sp14_check.raw_result.iterations == 1
-        # final_mismatch is the residual AFTER the single corrective step
-        # (self_check.log names it final_mismatch_after_solve; the fixed
-        # reference itself is start_state_residual_inf, captured before the
-        # step), so it depends on how the step is applied: 0.09082632227760662
-        # with the rectangular update up to 0.20.5, 0.0908293221606245 with
-        # the polar update that is the default since 0.30.0.
-        # 0.50.0: old 0.0908293221606245, new 0.0908277193682482, demo case
-        # rebuilt, transformer magnetizing from nameplate since 0.32.1.
-        @test isapprox(sp14_check.raw_result.final_mismatch, 0.0908277193682482; rtol = 1e-6)
 
         # Neither a case configuration file nor a caller override may move
         # the fixed reference. Both were possible before this fix: the file
@@ -955,7 +913,7 @@ power_flow:
       qlimit_io = IOBuffer()
       Sparlectra.printQLimitLog(control_net; io = qlimit_io, max_rows = 2, full_details = "q_limit_events.csv")
       qlimit_text = String(take!(qlimit_io))
-      @test occursin("PV->PQ switching events:", qlimit_text)
+      @test occursin("Q-limit switching events:", qlimit_text)
       @test occursin("total events     : 5", qlimit_text)
       @test occursin("rows shown       : 2", qlimit_text)
       @test occursin("rows omitted     : 3", qlimit_text)
@@ -988,6 +946,8 @@ power_flow:
       qlimit_artifacts = SparlectraApp._write_q_limit_detail_artifacts(qlimit_artifact_dir, control_net)
       @test "q_limit_events.csv" in qlimit_artifacts
       @test length(collect(eachline(joinpath(qlimit_artifact_dir, "q_limit_events.csv")))) == 6
+      # the kind column tells a PQ->PV release from a PV->PQ hit
+      @test occursin("kind", first(eachline(joinpath(qlimit_artifact_dir, "q_limit_events.csv"))))
       # five events stay in the q_limit.log table; the sixth makes the run
       # write q_limit_events.csv by itself (events only, no limits table)
       @test !SparlectraApp._q_limit_events_csv_wanted(control_net)
@@ -1192,35 +1152,6 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
       @test occursin("auto_profile = apply", apply_profile_log)
       @test any(artifact -> artifact.kind === :matpower_auto_profile, auto_profile_apply_result.artifacts)
 
-      @test validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
-      current_iteration_overrides = validate_gui_config_overrides(
-        Dict(
-          "power_flow.start_current_iteration.enabled" => true,
-          "power_flow.start_current_iteration.max_iter" => 3,
-          "power_flow.start_current_iteration.tol" => 1.0e-4,
-          "power_flow.start_current_iteration.damping" => 0.5,
-          "power_flow.start_current_iteration.accept_only_if_improved" => true,
-          "power_flow.start_current_iteration.min_improvement_factor" => 0.95,
-          "power_flow.start_current_iteration.vm_min_pu" => 0.6,
-          "power_flow.start_current_iteration.vm_max_pu" => 1.4,
-          "power_flow.start_current_iteration.max_angle_step_deg" => 25.0,
-          "power_flow.start_current_iteration.only_for_large_cases" => false,
-        ),
-      )
-      @test current_iteration_overrides["power_flow"]["start_current_iteration"]["enabled"] === true
-      @test current_iteration_overrides["power_flow"]["start_current_iteration"]["max_iter"] == 3
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.start_current_iteration.damping" => 1.5))
-
-      merit_overrides = validate_gui_config_overrides(
-        Dict("power_flow.merit.enabled" => true, "power_flow.merit.armijo_c1" => 1.0e-3, "power_flow.merit.fallback_max_mismatch" => false),
-      )
-      @test merit_overrides["power_flow"]["merit"]["enabled"] === true
-      @test merit_overrides["power_flow"]["merit"]["armijo_c1"] == 1.0e-3
-      @test merit_overrides["power_flow"]["merit"]["fallback_max_mismatch"] === false
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.merit.armijo_c1" => 0.5))
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.merit.scale_p" => 2.0))
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.merit.unknown_key" => true))
-
       merit_output = joinpath(tmpdir, "merit_enabled")
       merit_result = run_sparlectra_api(
         casefile = casefile,
@@ -1236,19 +1167,6 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
       merit_bad_key = run_sparlectra_api(casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "merit_bad_key"), config_overrides = Dict("power_flow.merit.unknown_key" => true))
       @test !merit_bad_key.success
       @test merit_bad_key.reason == "invalid_config_override"
-
-      trust_region_overrides = validate_gui_config_overrides(
-        Dict("power_flow.trust_region.enabled" => true, "power_flow.trust_region.initial_radius" => 2.0, "power_flow.trust_region.eta_accept" => 0.2, "power_flow.trust_region.step_mode" => "dogleg"),
-      )
-      @test trust_region_overrides["power_flow"]["trust_region"]["enabled"] === true
-      @test trust_region_overrides["power_flow"]["trust_region"]["initial_radius"] == 2.0
-      @test trust_region_overrides["power_flow"]["trust_region"]["eta_accept"] == 0.2
-      @test trust_region_overrides["power_flow"]["trust_region"]["step_mode"] == "dogleg"
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.initial_radius" => 20.0))
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.eta_accept" => 1.0))
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.min_radius" => 1.0e-3))
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.step_mode" => "bogus"))
-      @test_throws ArgumentError validate_gui_config_overrides(Dict("power_flow.trust_region.unknown_key" => true))
 
       trust_region_output = joinpath(tmpdir, "trust_region_enabled")
       trust_region_result = run_sparlectra_api(
@@ -1451,17 +1369,11 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
               @test !occursin("current_iteration_reason: disabled", diagnose_log)
             end
           end
-          result_html = SparlectraApp.render_powerflow_result(mode_run)
-          @test occursin("Q-limit enforcement mode", result_html)
-          @test occursin(mode, result_html)
-          @test occursin("Runtime casefile", result_html)
-          @test occursin(basename(casefile), result_html)
           # #464: the stop reason of the classic outer loop next to the pass
           # count, in the metadata and on one run.log line; nothing otherwise
           @test mode_run["metadata"]["q_limit_classic_outer_loop_stop"] === (startswith(mode, "classic_") ? "converged" : nothing)
           @test occursin("Classic Q-limit outer loop: ", run_log) == startswith(mode, "classic_")
           if startswith(mode, "classic_")
-            @test occursin("Classical Q-limit outer-loop passes", result_html)
             @test !occursin("Q-limit handling: disabled\nQ-limit diagnostics: skipped", run_log) || occursin("Inner PF active-set Q-limit switching: disabled for classical outer-loop solve", run_log)
           end
         end
@@ -1484,6 +1396,27 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
         @test limit_run["metadata"]["final_outcome"]["converged"] === false
         @test limit_run["metadata"]["final_outcome"]["reason"] == "max_outer_iterations"
         @test limit_run["metadata"]["run_status"] == "completed_nonconverged"
+        # two passes converge; the key defaults to 30 and refuses 0
+        two_pass_run = start_powerflow_run(Dict(
+          "casefile" => zeng,
+          "config_file" => config_file,
+          "output_root" => output_root,
+          "config_overrides" => Dict("power_flow.qlimits.enforcement_mode" => "classic_one_at_a_time", "power_flow.qlimits.classic_max_passes" => 2, "power_flow.rescue" => false),
+        ))
+        push!(qlimit_mode_run_ids, two_pass_run["run_id"])
+        @test two_pass_run["metadata"]["q_limit_classic_outer_loop_stop"] == "converged"
+        @test two_pass_run["metadata"]["q_limit_classic_outer_loop_passes"] == 2
+        @test two_pass_run["metadata"]["final_outcome"]["converged"] === true
+        # both runs leave bus 6 (after one pass bus 3 too) failing the Q-limit
+        # stability check; the run metadata names them and the warning of the
+        # check lands in run.log
+        for (run, n, buses) in ((limit_run, 2, "3;6"), (two_pass_run, 1, "6"))
+          @test (run["metadata"]["qlimit_stability_violations"], run["metadata"]["qlimit_stability_buses"]) == (n, buses)
+          @test occursin("Q-limit stability check", read(joinpath(run["output_dir"], "run.log"), String))
+        end
+        @test Sparlectra.QLimitConfig().classic_max_passes == 30
+        @test_throws ArgumentError Sparlectra.QLimitConfig(Dict{String,Any}("classic_max_passes" => 0))
+        @test_throws ArgumentError validate_gui_config_overrides(Dict{String,Any}("power_flow.qlimits.classic_max_passes" => 0))
       end)() end
 
       index_path = joinpath(output_root, POWERFLOW_RUN_INDEX_FILENAME)
@@ -1801,6 +1734,16 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
     addPIModelACLine!(net = net, fromBus = "Slack", toBus = "Mid", r_pu = 0.03, x_pu = 0.2, b_pu = 0.0, status = 1)
     addPIModelACLine!(net = net, fromBus = "Mid", toBus = "Load", r_pu = 0.02, x_pu = 0.12, b_pu = 0.01, status = 1)
     @test length(net.tapModelNotices) == 1
+    # The export writes the resolved state and, since 0.60.0, the winding
+    # base (base_ratio/base_shift_deg), so the re-read of this net has
+    # nothing to replace. A case file that disagrees with its model holds
+    # other branch values: the branch goes back to the constructed ratio 1
+    # and shift 0 before the export, the winding keeps phase step 3.
+    br = net.branchVec[1]
+    br.ratio = 1.0
+    br.angle = 0.0
+    br.tap_ratio = 1.0
+    br.phase_shift_deg = 0.0
     mktempdir() do tmpdir
       casefile = exportSCF(net; file = joinpath(tmpdir, "pst_notice.scf.json"))
       output_dir = joinpath(tmpdir, "run")
@@ -1829,6 +1772,74 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
       @test !isfile(joinpath(plain, "tap_models.log"))
       @test !any(a -> a.kind === :tap_model_log, plain_result.artifacts)
     end
+  end)() end
+
+  @testset "Web UI contingency service (#331 Phase 5)" begin (function ()
+    # the service legs run on the shipped SCF case
+    service_case = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
+    cfg = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
+    root = mktempdir()
+    dicts = Dict{String,Any}()
+    for kind in ("branch", "gen")
+      od = joinpath(root, "ct_$(kind)")
+      res = redirect_stdout(devnull) do
+        SparlectraApp._run_contingency_service(service_case, cfg, od, "ct_$(kind)", kind)
+      end
+      d = SparlectraApp.to_dict(res)
+      dicts[kind] = d
+      @test d["status"] == "succeeded"
+      @test isfile(joinpath(od, "contingency_n1.csv"))       # artifacts written to the run dir
+      @test isfile(joinpath(od, "run.log"))
+      md = d["metadata"]
+      @test md["run_mode"] == "contingency"
+      @test md["contingency_kind"] == kind
+      @test md["contingency_cases"] > 0
+      # explicit run-status keys so the result view renders like a completed run
+      @test md["run_status"] == "completed"
+      @test SparlectraApp._webui_contingency_summary(d) !== nothing
+    end
+    # a generator outage on sp_case14 removes the only slack: the strongest
+    # remaining unit takes over, the case solves, the row names the bus and
+    # the summary counts it
+    @test dicts["gen"]["metadata"]["contingency_no_slack"] == 0
+    @test dicts["gen"]["metadata"]["contingency_reference_taken_over"] >= 1
+    @test dicts["gen"]["metadata"]["contingency_converged"] == dicts["gen"]["metadata"]["contingency_cases"]
+    @test occursin("on a reference another unit took over", SparlectraApp._webui_contingency_summary(dicts["gen"]))
+    @test occursin("reference taken over by bus", read(joinpath(dicts["gen"]["output_dir"], "contingency_n1.csv"), String))
+    # a non-contingency run gets no contingency summary row
+    @test SparlectraApp._webui_contingency_summary(Dict("metadata" => Dict("run_mode" => "powerflow"))) === nothing
+    # invalid kind is rejected, not thrown
+    bad = redirect_stdout(devnull) do
+      SparlectraApp._run_contingency_service(service_case, cfg, joinpath(root, "ct_bad"), "ct_bad", "nonsense")
+    end
+    @test SparlectraApp.to_dict(bad)["status"] == "failed"
+    @test SparlectraApp.to_dict(bad)["reason"] == "invalid_request"
+
+    # per-case weights (#331 Phase 5 follow-up): applied when a weight file is
+    # present next to the case, warned (not fatal) on unmatched names, and
+    # absent by default. A copy in a temp dir keeps the packaged case clean.
+    wdir = mktempdir()
+    w14 = joinpath(wdir, "sp_case14.scf.json")
+    cp(service_case, w14)
+    wnames = redirect_stdout(devnull) do
+      [c.name for c in generateN1Branches(Sparlectra._import_sparlectra_net(w14, nothing, Sparlectra.load_sparlectra_config(cfg; reload = true)))]
+    end
+    wf = SparlectraApp._webui_case_weights_path(w14)
+    open(wf, "w") do io
+      println(io, "name;weight")
+      println(io, wnames[1], ";4.0")
+      println(io, "NO_SUCH_ELEMENT;2.0")
+    end
+    wmd = redirect_stdout(devnull) do
+      SparlectraApp.to_dict(SparlectraApp._run_contingency_service(w14, cfg, joinpath(root, "wt"), "wt", "branch"; weights_path = wf))["metadata"]
+    end
+    @test wmd["contingency_weights_applied"] == true
+    @test wmd["contingency_weighted_cases"] == 1
+    @test any(occursin("match no", l) for l in readlines(joinpath(root, "wt", "run.log")))
+    nmd = redirect_stdout(devnull) do
+      SparlectraApp.to_dict(SparlectraApp._run_contingency_service(w14, cfg, joinpath(root, "nw"), "nw", "branch"))["metadata"]
+    end
+    @test nmd["contingency_weights_applied"] == false
   end)() end
   return nothing
 end

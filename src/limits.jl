@@ -36,8 +36,10 @@ Pretty-prints the structured Q-limit log (`net.qLimitLog`) as a small table.
 - `sort_by`:  `:iter` (default) or `:bus`, controls sorting.
 - `io`: optional output stream (default = `stdout`).
 
-Each line shows:
-where `Side` is `:min` or `:max`.
+Each row shows the iteration, the bus, the side (`:min` or `:max`) and the
+change: `PV->PQ` for a limit hit, `PV->PQ (group)` for the revert of a
+jointly released group, `PQ->PV` for a release (the side is the limit the
+bus was clamped at).
 """
 function printQLimitLog(net::Net; sort_by::Symbol = :iter, io::IO = stdout, max_rows::Int = 200, full_details::Union{Nothing,AbstractString} = nothing)
   logdata = collect(net.qLimitLog)
@@ -53,23 +55,27 @@ function printQLimitLog(net::Net; sort_by::Symbol = :iter, io::IO = stdout, max_
     sort!(logdata, by = x -> x.iter)
   end
 
-  println(io, "PV->PQ switching events:")
+  println(io, "Q-limit switching events:")
   println(io, "  total events     : ", length(logdata))
+  println(io, "  PV->PQ           : ", count(ev -> _qlimit_event_kind(ev) !== :release, logdata))
+  println(io, "  PQ->PV           : ", count(ev -> _qlimit_event_kind(ev) === :release, logdata))
   shown = max_rows < 0 ? length(logdata) : min(max_rows, length(logdata))
   println(io, "  rows shown       : ", shown)
   println(io, "  rows omitted     : ", length(logdata) - shown)
   isnothing(full_details) || println(io, "  full details     : ", full_details)
   shown == 0 && return
-  println(io, "─"^34)
-  println(io, " Iteration │ Bus │ Side")
-  println(io, "─"^34)
+  println(io, "─"^50)
+  println(io, " Iteration │ Bus │ Side │ Change")
+  println(io, "─"^50)
 
   for i in 1:shown
     ev = logdata[i]
-    @printf(io, " %9d │ %3d │ %-4s\n", ev.iter, ev.bus, String(ev.side))
+    kind = _qlimit_event_kind(ev)
+    change = kind === :release ? "PQ->PV" : kind === :group_revert ? "PV->PQ (group)" : "PV->PQ"
+    @printf(io, " %9d │ %3d │ %-4s │ %s\n", ev.iter, ev.bus, String(ev.side), change)
   end
 
-  println(io, "─"^34)
+  println(io, "─"^50)
 end
 
 Base.@kwdef struct QLimitEvent
@@ -79,7 +85,8 @@ Base.@kwdef struct QLimitEvent
   # :hit for a limit hit; :group_revert when a jointly released group of
   # twice-clamped buses goes back to its limits (#475). A revert is a switch
   # but not a hit: the per-bus hit counts (one-retry guard, max_switches)
-  # leave it out
+  # leave it out. :release for a PQ->PV release, `side` is the limit the
+  # bus was clamped at; up to 0.50 the log held the PV->PQ switches only
   kind::Symbol = :hit
 end
 
@@ -93,6 +100,15 @@ function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol; kind::Symbol
   push!(net.qLimitLog, QLimitEvent(iter = iter, bus = bus, side = side, kind = kind))
   net.qLimitEvents[bus] = side
 end
+
+# The kind of a log entry; net.qLimitLog is a Vector{Any}, and an entry
+# written by other code without a `kind` field (a test pushes a plain
+# NamedTuple) counts as a hit, as every entry did before the field existed.
+_qlimit_event_kind(ev)::Symbol = hasproperty(ev, :kind) ? ev.kind : :hit
+
+# The PV->PQ switches of the log (hits and group reverts) without the
+# releases; the run summaries report this number as "PV->PQ events".
+qlimit_pv_to_pq_event_count(net::Net)::Int = count(ev -> _qlimit_event_kind(ev) !== :release, net.qLimitLog)
 
 function qlimit_switch_count(net::Net, bus::Int)::Int
   return count(ev -> ev.bus == bus && ev.kind === :hit, net.qLimitLog)
@@ -110,7 +126,8 @@ end
 "Returns the last iteration number where `bus` hit a Q-limit, or `nothing`."
 function lastQLimitIter(net::Net, bus::Int)
   for i = length(net.qLimitLog):-1:1
-    if net.qLimitLog[i].bus == bus
+    # a release is not a hit; the cooldown measures from the last clamp
+    if net.qLimitLog[i].bus == bus && net.qLimitLog[i].kind !== :release
       return net.qLimitLog[i].iter
     end
   end
@@ -413,6 +430,9 @@ function _qv_effective_qgen(net::Net, bus::Int, limit_mvar::Float64 = NaN)::Floa
   controlled = any(ps -> getPosumerBusIndex(ps) == bus && has_qu_controller(ps), net.prosumpsVec)
   _, q_spec, _, _ = _effective_bus_power_components(net, bus)
   q_spec = Float64(q_spec)
+  # a bus with a Q(U) unit: the node is not an independent candidate there,
+  # a converged solve writes the same characteristic value to _qƩGen of an
+  # unclamped PQ bus (_write_controlled_generation!)
   controlled && return q_spec
   q_node = isnothing(node._qƩGen) ? NaN : Float64(node._qƩGen)
   isfinite(q_node) || return q_spec
@@ -427,8 +447,8 @@ end
 Generators that ended a solve AT a reactive limit while their voltage sits on
 the WRONG side of their own setpoint:
 
-- `Q = Qmax` with `Vm > Vset`, or
-- `Q = Qmin` with `Vm < Vset`.
+- `Q = Qmax` with `Vm > Vset` (condition (7) of [`qlimitStabilityReport`](@ref) fails), or
+- `Q = Qmin` with `Vm < Vset` (condition (6) fails).
 
 Such a point satisfies the power-flow equations and still contradicts the
 physical Q-V characteristic: a machine that is already at its upper reactive
@@ -437,43 +457,39 @@ this a *non-physical* solution (Zeng, Chiang, Neves, Alberto, IJEPES 147
 (2023) 108905) or an *anomalous* one (Sundaresh, Rao 2015), and it is a
 property of the PV/PQ switching strategy, not of the network.
 
+The rows are a view of [`qlimitStabilityReport`](@ref), not a check of their
+own: the buses with a Q-limit event whose report row sits on the limit of
+that event and fails the condition of that limit. Q, the set point and the
+tolerances (1e-3 MVAr on the limit, 1e-6 pu off the set point) are those of
+the stability report, so the two verdicts cannot disagree.
+
 Each row carries `(bus, side, vm_pu, vset_pu, dv_pu, q_MVAr, limit_MVAr,
 significant)`. `dv_pu` is `Vm - Vset` and therefore signed; `significant` is
 `abs(dv_pu) > band_pu`. The band exists because a converged solve leaves
-voltages within its tolerance of the setpoint, so a bus that sits ON its
+voltages within its tolerance of the setpoint, so a bus close to its
 setpoint can fall to either side by rounding. Report BOTH counts: the raw one
 is the literature's definition, the significant one is what a reader can act
 on.
 
-Returns an empty vector when no bus hit a limit, and also when the state does
-not come from a converged solve (`converged = false` at the call site).
+Returns an empty vector when no bus hit a limit. The caller decides whether
+the state comes from a converged solve (`converged = false` at the call site).
 """
 function qvCharacteristicViolations(net::Net; band_pu::Float64 = 1.0e-4)
   rows = NamedTuple[]
   isempty(net.qLimitEvents) && return rows
-  vset = _bus_voltage_setpoints_from_prosumers(net)
-  qmin_pu, qmax_pu = getQLimits_pu(net)
-  for (bus, side) in net.qLimitEvents
-    (1 <= bus <= length(net.nodeVec) && bus <= length(vset)) || continue
-    node = net.nodeVec[bus]
-    isnothing(node._vm_pu) && continue
-    isfinite(vset[bus]) || continue
-    limit_pu = side === :max ? (bus <= length(qmax_pu) ? qmax_pu[bus] : Inf) : (bus <= length(qmin_pu) ? qmin_pu[bus] : -Inf)
-    isfinite(limit_pu) || continue
-    limit_mvar = limit_pu * net.baseMVA
-    q = _qv_effective_qgen(net, bus, limit_mvar)
-    isfinite(q) || continue
-    # only a bus that really sits ON the limit can be non-physical; a stale
-    # event whose machine has moved back inside its band is not a violation
-    isapprox(q, limit_mvar; atol = 1.0e-6 * max(1.0, abs(limit_mvar))) || continue
-    vm = Float64(node._vm_pu)
-    dv = vm - vset[bus]
-    wrong_side = (side === :max && dv > 0.0) || (side === :min && dv < 0.0)
+  for r in qlimitStabilityReport(net)
+    side = get(net.qLimitEvents, r.bus, nothing)
+    (side === :max || side === :min) || continue
+    # only a bus that really sits ON the limit of its event can be
+    # non-physical; a stale event whose machine moved back inside its band
+    # is not a violation
+    r.reached_limit === side || continue
+    wrong_side = side === :max ? !r.check_7 : !r.check_6
     wrong_side || continue
-    push!(rows, (bus = bus, side = side, vm_pu = vm, vset_pu = vset[bus], dv_pu = dv,
-      q_MVAr = q, limit_MVAr = limit_mvar, significant = abs(dv) > band_pu))
+    dv = r.u_pu - r.uset_pu
+    push!(rows, (bus = r.bus, side = side, vm_pu = r.u_pu, vset_pu = r.uset_pu, dv_pu = dv,
+      q_MVAr = r.q_MVar, limit_MVAr = side === :max ? r.qmax_MVar : r.qmin_MVar, significant = abs(dv) > band_pu))
   end
-  sort!(rows; by = r -> r.bus)
   return rows
 end
 
@@ -504,6 +520,398 @@ function printQVCharacteristicCheck(net::Net; io::IO = stdout, band_pu::Float64 
       r.bus, String(r.side), r.vm_pu, r.vset_pu, r.dv_pu, r.q_MVAr, r.limit_MVAr, r.significant ? "" : "  (within band)")
   end
   return rows
+end
+
+# --- Q-limit stability check of the final solution ---------------------------
+#
+# Zhao, Chiang, Li, Ju, "On PV-PQ bus type switching logic in power flow
+# computation", PSCC 2008, conditions (6) and (7) of a stable solution:
+#   (6) (U - U_set)(Q_max - Q) >= 0,   (7) (U - U_set)(Q - Q_min) <= 0.
+# A machine at Q_max must not sit above its set point ((7) fails), one at
+# Q_min not below it ((6) fails), and a machine inside its band must hold the
+# set point. qvCharacteristicViolations (machines with a Q-limit event, on the
+# limit, on the wrong side) is the subset of this check for the event buses,
+# read from its rows; there is one check, not two. Set points come from
+# _bus_voltage_setpoints_from_prosumers, bus bands from getQLimits_pu. Q is the value of the result report
+# (_bus_power_component_cache: the solver result of a PV bus, the clamp of a
+# PQ bus through _qv_effective_qgen), and the value from the solved voltages
+# (_qlimit_stability_qgen) on a net with a closed link and at a bus that
+# carries a Q(U) generator: there the report gives the regulating machine
+# its scheduled qVal, not its solved Q.
+
+"""
+    QLIMIT_STABILITY_TOL_Q_MVAR
+
+Reactive power tolerance of the Q-limit stability check (1e-3 MVAr): a
+machine within this distance of a limit is on that limit, and a band is
+exceeded only beyond it. Fixed, not a configuration key: the check asks
+whether the solved machine sits on its limit, which `power_flow.tol` (a
+mismatch tolerance) does not answer.
+"""
+const QLIMIT_STABILITY_TOL_Q_MVAR = 1.0e-3
+
+"""
+    QLIMIT_STABILITY_TOL_U_PU
+
+Voltage tolerance of the Q-limit stability check (1e-6 pu): a bus within
+this distance of its set point holds it. Fixed like
+`QLIMIT_STABILITY_TOL_Q_MVAR`.
+"""
+const QLIMIT_STABILITY_TOL_U_PU = 1.0e-6
+
+# sign of x with a dead band: 0 within tol, +1 / -1 outside; an infinite
+# margin (an open limit) counts as positive, so no Inf * 0 can appear
+_qlimit_stability_sign(x::Float64, tol::Float64)::Int = abs(x) <= tol ? 0 : (x > 0.0 ? 1 : -1)
+
+# The buses the check judges: a generator with a voltage regulator and a set
+# point, in service, solved as PV or PQ, with no reference unit on the bus
+# or on a bus joined to it by a closed link. The classic outer loop may hand
+# the reference to such a bus; it is Slack then and out of the check like
+# every reference bus. A link cluster with a reference is one node whose Q
+# the reference balances: the Q of a regulated member is only its share of
+# the cluster Q, which no limit binds (the 3-bus test net with a machine of
+# 1 MVAr band on a bus coupled to the slack bus: reported as a PV machine at
+# 10.8 MVAr outside its band before this exclusion). The island references
+# of a net without a slack in some island are left out in
+# qlimitStabilityReport by the same cluster rule.
+function _qlimit_stability_buses(net::Net)::Vector{Int}
+  n = length(net.nodeVec)
+  reps = _active_link_representative_map(net)
+  regulated = falses(n)
+  # indexed by the cluster representative: a reference unit, or a bus the
+  # solver runs as Slack, anywhere in the cluster
+  reference = falses(n)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    b = getPosumerBusIndex(ps)
+    1 <= b <= n || continue
+    isSlack(ps) && (reference[reps[b]] = true)
+    (isRegulating(ps) && !isnothing(ps.vm_pu)) && (regulated[b] = true)
+  end
+  for b = 1:n
+    getNodeType(net.nodeVec[b]) == Slack && (reference[reps[b]] = true)
+  end
+  iso = Set{Int}(net.isoNodes)
+  return [b for b = 1:n if regulated[b] && !reference[reps[b]] && !(b in iso) && getNodeType(net.nodeVec[b]) in (PV, PQ)]
+end
+
+# Generator Q (MVAr) of the regulated buses `vbuses` from the solved
+# voltages, on the network the solver works on (`wnet`, contracted on a net
+# with a closed link): the injection of the bus, or of its link cluster,
+# plus what the cluster draws itself (_bus_consumption_MVA at the
+# representative: the loads of its members and its voltage-dependent
+# shunts, which the Y-bus leaves out) minus the generation the report gives
+# the other members. A cluster with a reference never gets here
+# (_qlimit_stability_buses), so no member's Q is a share of a slack.
+#
+# Two cases need it:
+#  - a closed link: the solve runs on a contracted copy and its results are
+#    split back onto the buses, so the voltages are the value that does not
+#    depend on that write-back. Before 0.60.0 the write-back left a clamped
+#    bus PV under the classic modes and the report took a wrong value:
+#    sp_case60 with a 4.0 .. 5.5 MVAr band at Birkkamp_110 (one closed
+#    coupler elsewhere in the net) reported 7.389 MVAr, its voltages give
+#    5.500 (_sync_merged_qlimit_outcome!); the report agrees since;
+#  - a Q(U) generator on the bus: the report keeps the scheduled qVal of the
+#    regulating machine (issue #374 keeps the Q(U) value from being
+#    overwritten), so the 3-bus test net with a Q(U) unit next to the
+#    machine at STATION1 read 34.379 MVAr at a bus clamped at 8.909.
+# Elsewhere the report is the solver result itself and agreed with the
+# voltages to 4e-6 MVAr on case14_zeng in all three enforcement modes, so
+# the Y-bus, the main cost of the check, is built only for these buses.
+#
+# The value is in the terms of the bus band (_buildQLimits!): a Q(U) unit
+# that follows its characteristic on the regulated bus is in the band with
+# its Q at the held voltage, so its Q at the solved voltage is replaced by
+# that one. At a bus that holds its set point both are the same.
+# `wnet` and `wreps` are the result of _merged_pf_net(net), `vset` the set
+# points of _bus_voltage_setpoints_from_prosumers(net). Returns an empty
+# dictionary when `vbuses` is empty.
+function _qlimit_stability_qgen(net::Net, vbuses::Vector{Int}, cache, wnet::Net, wreps::Vector{Int}, vset::Vector{Float64})::Dict{Int,Float64}
+  out = Dict{Int,Float64}()
+  isempty(vbuses) && return out
+  n = length(net.nodeVec)
+  base = net.baseMVA
+  Yred = createYBUS(net = wnet, sparse = true, printYBUS = false)
+  Y = size(Yred, 1) == n ? Yred : _expand_ybus_for_isolated_nodes(Yred, n, wnet.isoNodes)
+  iso = Set{Int}(wnet.isoNodes)
+  V = zeros(ComplexF64, n)
+  for k = 1:n
+    nd = wnet.nodeVec[k]
+    (k in iso || isnothing(nd._vm_pu) || isnothing(nd._va_deg)) && continue
+    V[k] = Float64(nd._vm_pu) * cis(deg2rad(Float64(nd._va_deg)))
+  end
+  I = Y * V
+  members = Dict{Int,Vector{Int}}()
+  for b = 1:n
+    push!(get!(members, wreps[b], Int[]), b)
+  end
+  # the prosumers and shunts of a cluster sit at its representative in wnet
+  _, q_cons = _bus_consumption_MVA(wnet, n)
+  # Q(U) followers of each bus: their Q at the held voltage minus their Q at
+  # the solved voltage, the shift from the solved total to the band terms
+  follow = Dict{Int,Float64}()
+  wanted = Set{Int}(vbuses)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    b = getPosumerBusIndex(ps)
+    (b in wanted && _qband_follows_characteristic(ps, true)) || continue
+    vm = _safe_vm(abs(V[wreps[b]]))
+    follow[b] = get(follow, b, 0.0) + (first(evaluate_controller(ps.quController, vset[b])) - first(evaluate_controller(ps.quController, vm))) * base
+  end
+  for b in vbuses
+    r = wreps[b]
+    M = members[r]
+    q_inj = imag(V[r] * conj(I[r])) * base
+    q_load = q_cons[r]
+    q_other = sum((cache[m].q_gen for m in M if m != b && haskey(cache, m)); init = 0.0)
+    out[b] = q_inj + q_load - q_other + get(follow, b, 0.0)
+  end
+  return out
+end
+
+"""
+    qlimitStabilityReport(net; locked_by = Dict{Int,Symbol}()) -> Vector{NamedTuple}
+
+The stability conditions of Zhao, Chiang, Li, Ju (PSCC 2008) checked on the
+solved network, one row per voltage-regulated generator bus (a generator with
+a voltage regulator and a set point, no reference unit on the bus or on a bus
+joined to it by a closed link, not the reference the solver gives an island
+without a slack), whether it ended PV or PQ, switched or locked:
+
+- (6) `(U - U_set)(Q_max - Q) >= 0`: holds at `Q_max` (the factor is zero)
+  and fails for a machine at `Q_min` below its set point;
+- (7) `(U - U_set)(Q - Q_min) <= 0`: holds at `Q_min` and fails for a
+  machine at `Q_max` above its set point.
+
+A bus inside its band (neither at a limit) meets both only at its set point.
+A bus that ended PV is `ok` when `Q_min <= Q <= Q_max`; a bus that ended PQ
+when (6), (7) and the band hold. Tolerances: `QLIMIT_STABILITY_TOL_Q_MVAR`
+(1e-3 MVAr) for Q against a limit, `QLIMIT_STABILITY_TOL_U_PU` (1e-6 pu) for
+U against U_set.
+
+Q is the generator Q of the bus (MVAr) as the result report shows it
+(`q_source = :report`). On a net with a closed link, and at a bus that
+carries a Q(U) generator, it comes from the solved voltages instead
+(`q_source = :voltages`): the injection of the bus on the contracted network
+the solver works on plus what it draws itself (loads and voltage-dependent
+shunts), minus the generation of the other buses of its link cluster, with
+a Q(U) unit of the bus at its Q at the held voltage, as the bus band counts
+it. The report value is kept as `q_report_MVar`; it differs at a Q(U) bus,
+where the report keeps the scheduled Q of the regulating machine. Q_min and Q_max are the
+bus bands of `getQLimits_pu`. U_set is the regulator set point
+(`_bus_voltage_setpoints_from_prosumers`), not the start voltage. `end_type`
+is `:PQ` for a bus that ended PQ or carries a Q-limit event.
+
+Row fields: `bus`, `bus_name`, `end_type`, `q_MVar`, `qmin_MVar`,
+`qmax_MVar`, `u_pu`, `uset_pu`, `reached_limit` (`:max`, `:min`, `:none`),
+`check_6`, `check_7`, `in_band`, `ok`, `locked_by` (from the `locked_by`
+lookup, `:none` for a bus not in it), `q_source` and `q_report_MVar`. The rows are in bus
+order. The caller decides whether the state is a solution; the function
+reads it as it is.
+"""
+function qlimitStabilityReport(net::Net; locked_by::AbstractDict{Int,Symbol} = Dict{Int,Symbol}())
+  rows = NamedTuple[]
+  buses = _qlimit_stability_buses(net)
+  isempty(buses) && return rows
+  wnet, wreps, merged = _merged_pf_net(net)
+  # an island without a slack runs with the bus of its best unit as its
+  # reference (detect_ac_islands, the choice the solver makes); that machine
+  # balances the island and its Q is free like that of a slack
+  # (two_islands_prio: Fennwiese_110 at 41.8 MVAr in a +-30 MVAr band)
+  if length(_active_ac_island_components(wnet)) > 1
+    # detect_ac_islands refreshes the bus types from the units first, which
+    # undid the clamps of the classic modes on the solved net (measured on
+    # case14_zeng), so it reads a copy; one island needs no lookup
+    island_refs = Set{Int}(row.chosen_ref_bus for row in detect_ac_islands(deepcopy(wnet); promote_generators = true).rows if row.chosen_ref_bus > 0)
+    filter!(b -> !(wreps[b] in island_refs), buses)
+  end
+  isempty(buses) && return rows
+  base = net.baseMVA
+  vset = _bus_voltage_setpoints_from_prosumers(net)
+  qmin_pu, qmax_pu = getQLimits_pu(net)
+  cache = _bus_power_component_cache(net)
+  # Q from the voltages: every bus on a net with a closed link, else the
+  # buses with a Q(U) generator (see _qlimit_stability_qgen)
+  vbuses = if merged
+    buses
+  else
+    qu_buses = Set{Int}(getPosumerBusIndex(ps) for ps in net.prosumpsVec if isGenerator(ps) && has_qu_controller(ps))
+    [b for b in buses if b in qu_buses]
+  end
+  q_solved = _qlimit_stability_qgen(net, vbuses, cache, wnet, wreps, vset)
+  names = _bus_name_by_idx(net)
+  tol_q = QLIMIT_STABILITY_TOL_Q_MVAR
+  tol_u = QLIMIT_STABILITY_TOL_U_PU
+  for b in buses
+    node = net.nodeVec[b]
+    isnothing(node._vm_pu) && continue
+    u = Float64(node._vm_pu)
+    us = vset[b]
+    q = get(q_solved, b, Float64(cache[b].q_gen))
+    qmin = b <= length(qmin_pu) ? qmin_pu[b] * base : -Inf
+    qmax = b <= length(qmax_pu) ? qmax_pu[b] * base : Inf
+    end_type = (haskey(net.qLimitEvents, b) || getNodeType(node) == PQ) ? :PQ : :PV
+    s_u = _qlimit_stability_sign(u - us, tol_u)
+    s_max = _qlimit_stability_sign(qmax - q, tol_q)
+    s_min = _qlimit_stability_sign(q - qmin, tol_q)
+    check_6 = s_u * s_max >= 0
+    check_7 = s_u * s_min <= 0
+    in_band = s_max >= 0 && s_min >= 0
+    # on both limits (a zero-width band) the side of the event names it
+    reached = if s_max == 0 && s_min == 0
+      get(net.qLimitEvents, b, :max)
+    elseif s_max == 0
+      :max
+    elseif s_min == 0
+      :min
+    else
+      :none
+    end
+    ok = end_type === :PV ? in_band : (in_band && check_6 && check_7)
+    push!(rows, (bus = b, bus_name = _effective_bus_name(names, net, b), end_type = end_type, q_MVar = q, qmin_MVar = qmin, qmax_MVar = qmax,
+      u_pu = u, uset_pu = us, reached_limit = reached, check_6 = check_6, check_7 = check_7, in_band = in_band, ok = ok,
+      locked_by = get(locked_by, b, :none), q_source = haskey(q_solved, b) ? :voltages : :report, q_report_MVar = Float64(cache[b].q_gen)))
+  end
+  return rows
+end
+
+# Why a regulated bus could not switch freely at the end of the run, from
+# the run configuration and the Q-limit log (no solver state survives the
+# solve). Precedence: the configured lock list, the guard, then the active-set
+# locks. Under the classic modes only the list locks a bus; their clamp is
+# the mode itself (one-sided, no release) and carries :none.
+#  - :lock_pv_to_pq_buses: listed in power_flow.qlimits.lock_pv_to_pq_buses;
+#  - :guard_lock_pq: active set with the guard, a band narrower than
+#    guard_min_q_range_pu whose mode runs the bus PQ (zero range or
+#    prefer_pq) or locks it at the first limit it reaches (lock_pq), and the
+#    bus ended clamped;
+#  - :max_switches: active set, guard_freeze_after_repeated_switching, at
+#    least guard_max_switches hits, the bus ended PV (the freeze keeps it);
+#  - :oscillation: active set, two or more hits and the bus ended clamped:
+#    the one-retry lock of active_set_q_limits! releases it no more.
+function _qlimit_stability_locks(net::Net, qlim::QLimitConfig, mode::Symbol, buses::Vector{Int})::Dict{Int,Symbol}
+  locks = Dict{Int,Symbol}()
+  listed = Set{Int}(qlim.lock_pv_to_pq_buses)
+  active_set = mode === :active_set
+  qmin_pu, qmax_pu = active_set ? getQLimits_pu(net) : (Float64[], Float64[])
+  hits = active_set ? qlimit_switch_counts(net) : Dict{Int,Int}()
+  for b in buses
+    if b in listed
+      locks[b] = :lock_pv_to_pq_buses
+      continue
+    end
+    active_set || continue
+    clamped = haskey(net.qLimitEvents, b) || getNodeType(net.nodeVec[b]) == PQ
+    if qlim.guard && clamped && b <= length(qmin_pu) && b <= length(qmax_pu) && isfinite(qmin_pu[b]) && isfinite(qmax_pu[b])
+      width = abs(qmax_pu[b] - qmin_pu[b])
+      guard_mode = width <= eps(Float64) ? qlim.guard_zero_range_mode : qlim.guard_narrow_range_mode
+      if width < qlim.guard_min_q_range_pu && guard_mode in (:lock_pq, :prefer_pq)
+        locks[b] = :guard_lock_pq
+        continue
+      end
+    end
+    h = get(hits, b, 0)
+    if !clamped && qlim.guard_freeze_after_repeated_switching && h >= max(qlim.guard_max_switches, 1)
+      locks[b] = :max_switches
+    elseif clamped && h >= 2
+      locks[b] = :oscillation
+    end
+  end
+  return locks
+end
+
+"""
+    qlimit_stability_line(status, rows) -> String
+
+The Q-limit stability check of a run in one line, for the result print,
+`run.log`, the result metadata and the Web UI result page:
+`"Q-limit stability violations: n"`, followed by the buses that fail when
+`n > 0`. `status` is `:ok` or `:violations` for a checked run, `:not_checked`
+for a run without a converged solution, `:last_iterate` for a run stopped at
+`power_flow.max_iter` (the check of its last iterate, which is no solution;
+after `power_flow.dc.fallback` the net no longer holds that iterate and the
+run is `:not_checked`) and `:qlimits_disabled` for a run without Q-limit handling.
+"""
+function qlimit_stability_line(status::Symbol, rows)::String
+  status === :not_checked && return "Q-limit stability violations: not checked (no converged solution)"
+  status === :qlimits_disabled && return "Q-limit stability violations: not checked (Q-limit handling disabled)"
+  bad = [r for r in rows if !r.ok]
+  buses = isempty(bad) ? "" : string(" (bus ", join((r.bus_name for r in bad), ", "), ")")
+  status === :last_iterate && return string("Q-limit stability violations: ", length(bad), buses, " at the last iterate (no converged solution)")
+  return string("Q-limit stability violations: ", length(bad), buses)
+end
+
+# one failing row as the warning names it
+function _qlimit_stability_row_text(r)::String
+  where_ = r.reached_limit === :max ? "at Qmax" : r.reached_limit === :min ? "at Qmin" : r.in_band ? "inside its band" : "outside its band"
+  q_text = r.in_band ? "" : @sprintf(", Q %.3f MVAr outside %.3f .. %.3f", r.q_MVar, r.qmin_MVar, r.qmax_MVar)
+  lock_text = r.locked_by === :none ? "" : string(", locked by ", r.locked_by)
+  return @sprintf("%s (%s %s, U %.5f pu, U_set %.5f pu%s%s)", r.bus_name, String(r.end_type), where_, r.u_pu, r.uset_pu, q_text, lock_text)
+end
+
+# The check after a converged run (_build_sparlectra_result): diagnostics
+# fields, the line, and the warning text ("" without a violation). A run
+# without a converged solution and a run without Q-limit handling are not
+# checked: there is no final state, or no switching to judge. A run stopped
+# at max_iter (reason :iteration_limit, :type_identification_divergence or
+# :numerical_divergence) gets the rows of its last iterate with the status
+# :last_iterate and no warning: the run has failed already, the rows show
+# where the bus types stood when it stopped. A run that went on to the DC
+# fallback is not checked. `qlim` is the
+# configuration of the attempt that produced the result (in auto mode the
+# last stage, which may have locked buses or switched the handling off);
+# `st` is the solver status of that run (`nothing` off the rectangular
+# path), whose final_q_check_status also says when the solver ran without
+# Q-limit handling.
+function _qlimit_stability_diagnostics(net::Net, qlim::QLimitConfig, numerical_converged::Bool, st)
+  disabled = qlim.ignore_q_limits || (st !== nothing && hasproperty(st, :final_q_check_status) && st.final_q_check_status === :qlimits_disabled)
+  # after power_flow.dc.fallback the net holds the restored start voltages
+  # or the DC state (vm = 1 pu), not the last iterate: not checked
+  dc_fallback = st !== nothing && hasproperty(st, :dc_fallback_applied)
+  max_iter_stop = !numerical_converged && !dc_fallback && st !== nothing && hasproperty(st, :reason) && Symbol(st.reason) in QLIMIT_MAX_ITER_STOP_REASONS
+  status = !numerical_converged ? (max_iter_stop && !disabled ? :last_iterate : :not_checked) : disabled ? :qlimits_disabled : :checked
+  if !(status in (:checked, :last_iterate))
+    return (qlimit_stability_status = status, qlimit_stability_violations = 0, qlimit_stability_report = NamedTuple[], qlimit_stability_line = qlimit_stability_line(status, NamedTuple[]), qlimit_stability_warning = "")
+  end
+  # the classic outer loop records its mode; the auto mode may end on another
+  # strategy than the configuration names
+  mode = st !== nothing && hasproperty(st, :qlimit_enforcement_mode) ? Symbol(st.qlimit_enforcement_mode) : qlim.enforcement_mode
+  buses = _qlimit_stability_buses(net)
+  rows = qlimitStabilityReport(net; locked_by = _qlimit_stability_locks(net, qlim, mode, buses))
+  bad = [r for r in rows if !r.ok]
+  status === :last_iterate && return (qlimit_stability_status = status, qlimit_stability_violations = length(bad), qlimit_stability_report = rows, qlimit_stability_line = qlimit_stability_line(status, rows), qlimit_stability_warning = "")
+  status = isempty(bad) ? :ok : :violations
+  warning = isempty(bad) ? "" :
+            string("Q-limit stability check: ", length(bad), " voltage-regulated bus(es) violate the stability conditions of the final solution ",
+    "(a machine at Qmax above its set point, at Qmin below it, inside its band off it, or a PV machine outside its band): ",
+    join((_qlimit_stability_row_text(r) for r in bad), "; "))
+  return (qlimit_stability_status = status, qlimit_stability_violations = length(bad), qlimit_stability_report = rows, qlimit_stability_line = qlimit_stability_line(status, rows), qlimit_stability_warning = warning)
+end
+
+"""
+    printQLimitStabilityLine(net; io=stdout, converged=true) -> String
+
+Print the line of the Q-limit stability check ([`qlimit_stability_line`](@ref))
+and return it. A run through `run_sparlectra` stores its line in the solver
+status, with the lock reasons of its configuration; on a network solved by
+`runpf!` alone the check runs here on the solved state. Part of the result
+print.
+"""
+function printQLimitStabilityLine(net::Net; io::IO = stdout, converged::Bool = true)
+  st = rectangular_pf_status(net)
+  line = if st !== nothing && hasproperty(st, :qlimit_stability_line)
+    String(st.qlimit_stability_line)
+  elseif !converged
+    qlimit_stability_line(:not_checked, NamedTuple[])
+  elseif st !== nothing && hasproperty(st, :final_q_check_status) && st.final_q_check_status === :qlimits_disabled
+    qlimit_stability_line(:qlimits_disabled, NamedTuple[])
+  else
+    rows = qlimitStabilityReport(net)
+    qlimit_stability_line(any(r -> !r.ok, rows) ? :violations : :ok, rows)
+  end
+  println(io, "  ", line)
+  return line
 end
 
 """
@@ -621,7 +1029,7 @@ function active_set_q_limits!(
       ev = net.qLimitLog[counted_upto]
       if ev.kind === :hit
         switch_counts[ev.bus] = get(switch_counts, ev.bus, 0) + 1
-      else
+      elseif ev.kind === :group_revert
         group_reverted = true
       end
     end
@@ -759,6 +1167,9 @@ function active_set_q_limits!(
   release! = function (bus::Int, side::Symbol, voltage_rule::Bool, qreq::Float64, lo::Float64, hi::Float64)
     make_pv!(bus)
     delete!(net.qLimitEvents, bus)   # clear event after re-enable
+    # the release goes into the log with the side the bus was clamped at;
+    # not through logQLimitHit!, which records a clamp in qLimitEvents
+    push!(net.qLimitLog, QLimitEvent(iter = it, bus = bus, side = side, kind = :release))
     reenabled = true
     if verbose > 0
       if voltage_rule

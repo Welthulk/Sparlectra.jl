@@ -698,13 +698,17 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     pmin = 0.0
     pmax = 0.0
     pcur = 0.0
-    psi = 0.0
-    psi_given = nothing
+    psi = 90.0
     dustep = 0.0
     tgrid = :fraction
+    pdeclared = true
+    rdeclared = true
     for ctrl in row.controllers
       idx = ctrl.index
       if idx == 1
+        # declared false: the default ratio grid of a branch no nameplate
+        # row declared, kept apart from a declared ratio changer
+        ctrl.declared === false && (rdeclared = false)
         tstep = something(ctrl.step, 0.0)
         tmin = Float64(something(ctrl.pos_min, 0.0))
         tmax = Float64(something(ctrl.pos_max, 0.0))
@@ -715,8 +719,13 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
         g in ("fraction", "linear") || throw(ArgumentError("SCF: tap_changer controller grid must be \"fraction\" or \"linear\", got $(repr(g))."))
         tgrid = Symbol(g)
       elseif idx == 2
-        psi = something(ctrl.alpha_deg, 0.0)
-        ctrl.alpha_deg === nothing || (psi_given = psi)
+        # a stated alpha_deg is the direction as given, 0 included (a
+        # Delta-u changer in phase with the voltage); a missing key reads
+        # as the 90 deg symmetric PST, which is what the shipped cases carry
+        ctrl.alpha_deg === nothing || (psi = ctrl.alpha_deg)
+        # declared false: the constructor grid of a branch no nameplate row
+        # declared, written so the re-read stays out of the mass release
+        ctrl.declared === false && (pdeclared = false)
         pmin = Float64(something(ctrl.pos_min, 0.0))
         pmax = Float64(something(ctrl.pos_max, 0.0))
         pcur = Float64(something(ctrl.pos, 0.0))
@@ -735,20 +744,29 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     # brackets the neutral, so it is applied on a widened band and the file's
     # exact ratio band is restored afterwards: the reader stays faithful, the
     # single construction path stays intact, and the oddity is named once.
+    # a stated psi of 0 stays 0 (unlike MATPOWER, where 0 reads as 90), so a
+    # ratio changer next to a Delta-u changer at psi 0 or 180 is a collinear
+    # pair: with a Delta-u position off 0 the writers cannot split the
+    # stored branch tap, refuse it. At position 0 and psi 0 the Delta-u
+    # factor is 1 and the split is exact; the SCF writer gives such a file
+    # for a pair stated at 0 or whose psi a caller set to 0, and it has to
+    # read back. 180 is refused at every position, as applyTapNameplate! does.
+    (tstep > 0.0 && dustep > 0.0 && abs(sin(deg2rad(psi))) < 1e-9 && !(psi == 0.0 && pcur == 0.0)) && throw(ArgumentError("SCF: sparlectra.components.tap_changer for branch $(row.branch): a ratio changer and a Delta-u changer at position $(pcur) with alpha_deg = $(psi) act along the same real direction; their positions cannot be told apart."))
     widened = tstep > 0.0 && !(tmin <= 0.0 <= tmax)
     if widened
       @warn "SCF: the neutral tap position lies outside the regulation band of this transformer; the band is restored as stated in the file" branch = row.branch pos_min = tmin pos_max = tmax
     end
-    applyTapNameplate!(br; tap_step = tstep, tap_min_step = widened ? min(tmin, 0.0) : tmin, tap_max_step = widened ? max(tmax, 0.0) : tmax, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pmin, phase_max_step = pmax, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "sparlectra.components.tap_changer for branch $(row.branch)")
+    # the internal path builds psi as given; applyTapNameplate! would read a
+    # stated 0 as 90 and the model would not match the alpha_deg it stores
+    _apply_tap_nameplate!(br, psi; tap_step = tstep, tap_min_step = widened ? min(tmin, 0.0) : tmin, tap_max_step = widened ? max(tmax, 0.0) : tmax, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pmin, phase_max_step = pmax, phase_current_step = pcur, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "sparlectra.components.tap_changer for branch $(row.branch)")
+    pdeclared || (br.phase_tap_declared = false)
+    rdeclared || (br.ratio_tap_declared = false)
     if widened
       # the band ends on the grid of the file (_tap_r1_at gives the cascade
       # fraction of a position on either grid)
       br.tap_min = br.ratio / (1.0 + _tap_r1_at(br, tmax))
       br.tap_max = br.ratio / (1.0 + _tap_r1_at(br, tmin))
     end
-    # the nameplate reads psi = 0 as "not given" and substitutes the 90 deg
-    # symmetric-PST convention; a file that states 0 means 0
-    psi_given === nothing || (br.tap_est_alpha_deg = psi_given)
   end
 
   # --- asymmetric branch shunt split (0.20.0) ---------------------------
@@ -764,7 +782,11 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
 
   # --- typed tap-changer models (0.20.0) --------------------------------
   # restored onto the from-side winding after the nameplate, then the
-  # resolver derives ratio, shift, impedance and grid from the model
+  # resolver derives ratio, shift, impedance and grid from the model. The
+  # key `estimation` (0.60.0) is the tap changer set of the state
+  # estimation and goes onto the branch as it stands; an entry that has
+  # only this key runs no resolver (the branch keeps its nameplate taps).
+  # An entry without the key reads as before.
   for (sid, d) in spar.tap_changer_models
     bid = tryparse(Int, String(sid))
     bid === nothing && throw(ArgumentError("SCF: tap_changer_models keys are branch ids, got $(repr(sid))."))
@@ -772,11 +794,14 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     bidx = branch_index_by_id[bid]
     haskey(trafo_by_branch_idx, bidx) || throw(ArgumentError("SCF: tap_changer_models entry $(bid) is not a generic_branch (transformer)."))
     d isa AbstractDict || throw(ArgumentError("SCF: tap_changer_models entry $(bid) must be an object."))
-    w = trafo_by_branch_idx[bidx].side1
-    _scf_apply_tap_models!(w, d, bid)
-    correction = Symbol(String(_scf_get(d, "tap_changer_model", "ideal")))
-    note = resolve_branch_taps!(net.branchVec[bidx], w; tap_changer_model = correction)
-    note === nothing || push!(net.tapModelNotices, note)
+    if haskey(d, "ratio") || haskey(d, "phase") || !haskey(d, "estimation")
+      w = trafo_by_branch_idx[bidx].side1
+      _scf_apply_tap_models!(w, d, bid)
+      correction = Symbol(String(_scf_get(d, "tap_changer_model", "ideal")))
+      note = resolve_branch_taps!(net.branchVec[bidx], w; tap_changer_model = correction)
+      note === nothing || push!(net.tapModelNotices, note)
+    end
+    haskey(d, "estimation") && (net.branchVec[bidx].se_tap_changers = _scf_read_se_tap_changers(d["estimation"], bid))
   end
 
   # --- appliances -------------------------------------------------------
@@ -1875,13 +1900,11 @@ function scf_case_config(file::AbstractString; dropped::Union{Nothing,Vector{Str
   # setting which quietly does not apply is exactly the silent acceptance this
   # format exists to prevent. Older files that carried the whole form need one
   # re-export.
-  # a key removed from the configuration is dropped with the warning the
-  # configuration file gets, never refused (same rule as a case configuration)
-  for key in sort!(String[k for k in keys(out) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
-    @warn "SCF: configuration key $(key) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])" maxlog = 1 _id = Symbol("removed_scf_key_", key)
-    delete!(out, key)
-  end
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])
+  # a key this version does not know (removed or misspelled) is dropped
+  # with a warning, as in a case configuration; known keys outside the case
+  # scope stay refused
+  bad = _drop_unknown_case_config_keys!(out, bad, string("sparlectra.config in ", basename(String(file))))
   writer = _scf_writer_version(spar)
   if !isempty(bad) && writer !== nothing && writer < _SCF_MACHINE_KEYS_TOLERATED_BELOW
     # an old file: the machine keys are dropped, the caller reports them
@@ -1893,6 +1916,111 @@ function scf_case_config(file::AbstractString; dropped::Union{Nothing,Vector{Str
   end
   isempty(bad) || throw(ArgumentError("SCF: config key(s) $(join(bad, ", ")) are not case scope (logging, benchmarking, parallelism, Web UI and export settings belong in the configuration file). Re-export the case with format revision $(SCF_FORMAT_VERSION), or remove them."))
   return out
+end
+
+# Keys of the `estimation` object of a tap_changer_models entry (0.60.0),
+# of one changer in it, of its reactance curve and of one table point. An
+# unknown key is refused by name, a misspelt field would otherwise vanish.
+const _SCF_SE_TAP_SET_KEYS = ["origin", "ratio_n", "shift_n_deg", "changers"]
+const _SCF_SE_TAP_CHANGER_KEYS = ["name", "mrid", "kind", "role", "side", "neutral", "low", "high", "step", "impedance", "additive", "du", "alpha_deg", "dphi_deg", "step_abs", "outside_du", "x_curve", "rx_correction", "table"]
+const _SCF_SE_TAP_X_CURVE_KEYS = ["x_min", "x_max", "a_max_deg", "form"]
+const _SCF_SE_TAP_POINT_KEYS = ["step", "ratio", "angle_deg", "r", "x", "g", "b"]
+
+# every key of object `d` is in `known`, else an ArgumentError naming it
+function _scf_check_keys(d::AbstractDict, known::Vector{String}, context::AbstractString)
+  for k in keys(d)
+    String(k) in known || throw(ArgumentError("SCF: $(context) has the unknown key \"$(k)\". Known keys: $(join(known, ", "))."))
+  end
+  return nothing
+end
+
+_scf_str(v, context::AbstractString)::String = v isa AbstractString ? String(v) : throw(ArgumentError("SCF: $(context) must be a string, got $(repr(v))."))
+_scf_flag(v, context::AbstractString)::Bool = v isa Bool ? v : throw(ArgumentError("SCF: $(context) must be true or false, got $(repr(v))."))
+
+# The tap changer set of the state estimation from the `estimation` object
+# of tap_changer_models entry `bid` (written by _scf_se_tap_changers_dict).
+# The SETapChanger and SETapChangerSet constructors check the values; their
+# ArgumentError comes back with the entry named.
+function _scf_read_se_tap_changers(e, bid::Int)::SETapChangerSet
+  ctx = "tap_changer_models $(bid) estimation"
+  e isa AbstractDict || throw(ArgumentError("SCF: $(ctx) must be an object."))
+  _scf_check_keys(e, _SCF_SE_TAP_SET_KEYS, ctx)
+  raw = _scf_require(e, "changers", ctx)
+  raw isa AbstractVector || throw(ArgumentError("SCF: $(ctx).changers must be a list."))
+  chs = SETapChanger[]
+  for (k, c) in enumerate(raw)
+    cc = "$(ctx).changers[$(k)]"
+    c isa AbstractDict || throw(ArgumentError("SCF: $(cc) must be an object."))
+    _scf_check_keys(c, _SCF_SE_TAP_CHANGER_KEYS, cc)
+    req(key) = _scf_require(c, key, cc)
+    opt(key) = haskey(c, key) ? _scf_num(c[key], "$(cc).$(key)") : nothing
+    xc = nothing
+    form = :sin2
+    if haskey(c, "x_curve")
+      x = c["x_curve"]
+      x isa AbstractDict || throw(ArgumentError("SCF: $(cc).x_curve must be an object."))
+      _scf_check_keys(x, _SCF_SE_TAP_X_CURVE_KEYS, "$(cc).x_curve")
+      xc = (_scf_num(_scf_require(x, "x_min", "$(cc).x_curve"), "$(cc).x_curve.x_min"), _scf_num(_scf_require(x, "x_max", "$(cc).x_curve"), "$(cc).x_curve.x_max"), _scf_num(_scf_require(x, "a_max_deg", "$(cc).x_curve"), "$(cc).x_curve.a_max_deg"))
+      form = Symbol(_scf_str(_scf_require(x, "form", "$(cc).x_curve"), "$(cc).x_curve.form"))
+    end
+    table = nothing
+    if haskey(c, "table")
+      c["table"] isa AbstractVector || throw(ArgumentError("SCF: $(cc).table must be a list."))
+      table = SETapPoint[]
+      for (j, pt) in enumerate(c["table"])
+        pc = "$(cc).table[$(j)]"
+        pt isa AbstractDict || throw(ArgumentError("SCF: $(pc) must be an object."))
+        _scf_check_keys(pt, _SCF_SE_TAP_POINT_KEYS, pc)
+        num(key) = _scf_num(_scf_require(pt, key, pc), "$(pc).$(key)")
+        push!(table, SETapPoint(_scf_int(_scf_require(pt, "step", pc), "$(pc).step"), num("ratio"), num("angle_deg"), num("r"), num("x"), num("g"), num("b")))
+      end
+    end
+    kw = (
+      name = _scf_str(req("name"), "$(cc).name"),
+      mrid = _scf_str(req("mrid"), "$(cc).mrid"),
+      kind = Symbol(_scf_str(req("kind"), "$(cc).kind")),
+      role = Symbol(_scf_str(req("role"), "$(cc).role")),
+      side = Symbol(_scf_str(req("side"), "$(cc).side")),
+      additive = haskey(c, "additive") ? _scf_flag(c["additive"], "$(cc).additive") : false,
+      du = opt("du"),
+      alpha_deg = opt("alpha_deg"),
+      dphi_deg = opt("dphi_deg"),
+      step_abs = opt("step_abs"),
+      neutral = _scf_int(req("neutral"), "$(cc).neutral"),
+      low = _scf_int(req("low"), "$(cc).low"),
+      high = _scf_int(req("high"), "$(cc).high"),
+      step = _scf_num(req("step"), "$(cc).step"),
+      table = table,
+      outside_du = opt("outside_du"),
+      x_curve = xc,
+      x_curve_form = form,
+      impedance = Symbol(_scf_str(req("impedance"), "$(cc).impedance")),
+      rx_correction = haskey(c, "rx_correction") ? _scf_flag(c["rx_correction"], "$(cc).rx_correction") : false,
+    )
+    ch = try
+      SETapChanger(; kw...)
+    catch err
+      # the field checks of the constructor (kind, role, side, band, the
+      # data a kind needs): same text, with the entry named
+      err isa ArgumentError || rethrow()
+      throw(ArgumentError("SCF: $(cc): $(err.msg)"))
+    end
+    push!(chs, ch)
+  end
+  ratio_n = _scf_num(_scf_require(e, "ratio_n", ctx), "$(ctx).ratio_n")
+  shift_n_deg = _scf_num(_scf_require(e, "shift_n_deg", ctx), "$(ctx).shift_n_deg")
+  origin = Symbol(_scf_str(_scf_require(e, "origin", ctx), "$(ctx).origin"))
+  # only a set an import stored is a branch record; typed and fields sets
+  # are derived on demand, and a stored one would skip the write-back of
+  # the steps after a tap estimation (_tap_apply_position!)
+  origin in (:cgmes, :powsybl) || throw(ArgumentError("SCF: $(ctx).origin must be \"cgmes\" or \"powsybl\", got $(repr(String(origin)))."))
+  return try
+    SETapChangerSet(ratio_n = ratio_n, shift_n_deg = shift_n_deg, changers = chs, origin = origin)
+  catch err
+    # the set checks (ratio_n, origin, an additive changer first)
+    err isa ArgumentError || rethrow()
+    throw(ArgumentError("SCF: $(ctx): $(err.msg)"))
+  end
 end
 
 # The typed tap-changer models of one sparlectra.tap_changer_models entry
@@ -1939,5 +2067,11 @@ function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid
       table = table,
     )
   end
+  # the winding ratio and shift the models move from; the k and theta of
+  # the data section already carry the steps, so a file that states them
+  # is read without applying the steps a second time. Without the keys
+  # the winding keeps k and theta as before.
+  haskey(d, "base_ratio") && (w.ratio = _scf_num(d["base_ratio"], "tap_changer_models $(bid) base_ratio"))
+  haskey(d, "base_shift_deg") && (w.shift_degree = _scf_num(d["base_shift_deg"], "tap_changer_models $(bid) base_shift_deg"))
   return w
 end

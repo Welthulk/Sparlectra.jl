@@ -9,7 +9,6 @@
 #          output, and entry points
 # Configuration-driven AC power-flow framework runner.
 include("start_modes.jl")
-include("net_cache.jl")
 include("import_context.jl")
 include("execution.jl")
 include("auto_powerflow.jl")

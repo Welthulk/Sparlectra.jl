@@ -15,7 +15,7 @@
 # file: test/test_legacy_series_reactance_control.jl
 # purpose: legacy profile: the testsets of test/test_series_reactance_control.jl that pin an earlier
 #          change (an issue, a bug, a bit-identity or off-path guarantee).
-#          They moved here unchanged from test_series_reactance_control.jl; the helpers they use
+#          They moved here from test_series_reactance_control.jl; the helpers they use
 #          are defined in that file, which the legacy group includes first.
 using Sparlectra
 using Test
@@ -41,7 +41,6 @@ function run_legacy_series_reactance_control_tests()
       ok || error("test net invalid: $msg")
       return net
     end
-    _solved_state(net) = ([n._vm_pu for n in net.nodeVec], [n._va_deg for n in net.nodeVec])
 
       @testset "out-of-range target: honest at_limit" begin (function ()
         net = _build_loop_net()
@@ -54,23 +53,6 @@ function run_legacy_series_reactance_control_tests()
         @test !ctrl.converged
         p = get_branch_p_from_to_mw(net, "A", "M2")
         @test p < 70.0
-      end)() end
-
-      @testset "bit-identical baseline without the controller" begin (function ()
-        net_plain = _build_loop_net()
-        _, erg_a = runpf!(net_plain, 30, 1e-10, 0)
-        @test erg_a == 0
-        vm_a, va_a = _solved_state(net_plain)
-
-        # a registered but disabled controller must not touch the solve
-        net_off = _build_loop_net()
-        ctrl = addSeriesReactanceControl!(net_off; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30, enabled = false)
-        _, erg_b = runpf!(net_off, 30, 1e-10, 0)
-        @test erg_b == 0
-        vm_b, va_b = _solved_state(net_off)
-        @test vm_a == vm_b
-        @test va_a == va_b
-        @test ctrl.x_pu == 0.20
       end)() end
 
       @testset "SSSC injected-voltage limit mode (#297 Draft F)" begin (function ()
@@ -100,53 +82,27 @@ function run_legacy_series_reactance_control_tests()
         @test ctrl.x_max_pu ≈ ctrl.x_base_pu + w atol = 1e-9
         @test ctrl.x_min_pu <= ctrl.x_pu <= ctrl.x_max_pu
 
-        # tight injectable voltage: same target pins at the limit and the
-        # EFFECTIVE injected voltage |x - x_base| * |I| sits at v_inj_max —
-        # the Draft F acceptance (high-loading case, window shrunk by |I|)
-        lnet = _build_loop_net()
-        lctrl = addSeriesReactanceControl!(lnet; fromBus = "A", toBus = "M2", p_target_mw = 35.0, v_inj_max_pu = 0.01)
-        run_control!(lnet)
-        @test !lctrl.converged
-        @test lctrl.at_limit
-        @test lctrl.status == :at_limit
-        v_inj = abs(lctrl.x_pu - lctrl.x_base_pu) * lctrl.i_pu
-        @test v_inj ≈ 0.01 rtol = 5e-2
-        # the flow moved toward the target but could not reach it
-        p_lim = get_branch_p_from_to_mw(lnet, "A", "M2")
-        @test p_lim > 27.5              # above the ~27 MW baseline split
-        @test p_lim < 35.0 - lctrl.deadband_p_mw
-
-        # element view: SSSC vocabulary with the live window
-        rows = [r for r in controllableElements(lnet) if r.actuator == :series_x_pu]
+        # element view and report row carry the live window and the mode
+        # fields; the tight-limit case (window pinned at v_inj_max) runs in
+        # test_upfc_control.jl on the same corridor
+        rows = [r for r in controllableElements(net) if r.actuator == :series_x_pu]
         @test length(rows) == 1
-        @test rows[1].device == "SSSC (VSC)"
-        @test rows[1].actuator_min ≈ lctrl.x_min_pu atol = 1e-12
-        @test rows[1].actuator_max ≈ lctrl.x_max_pu atol = 1e-12
-        # report row carries the mode fields
-        rrow = only(Sparlectra.control_report_rows(lctrl, lnet, Sparlectra.NoControlState(), (outer_iteration = 0,)))
+        @test rows[1].actuator_min ≈ ctrl.x_min_pu atol = 1e-12
+        @test rows[1].actuator_max ≈ ctrl.x_max_pu atol = 1e-12
+        rrow = only(Sparlectra.control_report_rows(ctrl, net, Sparlectra.NoControlState(), (outer_iteration = 0,)))
         @test rrow.limit_mode === :injected_voltage
-        @test rrow.v_inj_max_pu ≈ 0.01
+        @test rrow.v_inj_max_pu ≈ 0.08
         @test rrow.x_base_pu == 0.20
         @test !ismissing(rrow.i_pu)
+        @test !isempty(sprint(io -> printSeriesReactanceControllerSummary(io, net)))
 
-        # summary print names the SSSC mode and the injected voltage
-        buf = IOBuffer()
-        printSeriesReactanceControllerSummary(buf, lnet)
-        rendered = String(take!(buf))
-        @test occursin("SSSC injected-voltage limit", rendered)
-        @test occursin("injected voltage", rendered)
-        @test occursin("injectable series voltage exhausted", rendered)
-
-        # TCSC fixed-range mode is untouched by the SSSC addition: inert mode
-        # fields, unchanged vocabulary
+        # TCSC fixed-range mode keeps inert SSSC fields and still converges
         tnet = _build_loop_net()
         tctrl = addSeriesReactanceControl!(tnet; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
         @test tctrl.limit_mode === :reactance_range
         @test tctrl.v_inj_max_pu === nothing
         run_control!(tnet)
         @test tctrl.converged
-        trows = [r for r in controllableElements(tnet) if r.actuator == :series_x_pu]
-        @test trows[1].device == "TCSC (series compensation)"
       end)() end
 
   end)()

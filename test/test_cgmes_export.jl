@@ -261,15 +261,6 @@ function run_cgmes_export_tests()
     @test length(eq_a) == 1 && length(eq_b) == 1 && eq_a != eq_b
   end)() end
 
-  @testset "re-export is byte-identical" begin (function ()
-    net = _export_test_net()
-    f1 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
-    f2 = writeCGMESFiles(net; path = mktempdir(), created = _EXPORT_STAMP)
-    for i in eachindex(f1)
-      @test read(f1[i]) == read(f2[i])
-    end
-  end)() end
-
   @testset "independent builds identical, names carry no identity" begin (function ()
     n1 = _export_test_net()
     n2 = _export_test_net()
@@ -280,6 +271,9 @@ function run_cgmes_export_tests()
     for i in eachindex(f1)
       @test read(f1[i]) == read(f2[i])
     end
+    # a second export of the same net, its ids already minted, is byte-equal
+    f1b = writeCGMESFiles(n1; path = mktempdir(), created = _EXPORT_STAMP)
+    @test all(read(f1[i]) == read(f1b[i]) for i in eachindex(f1))
     # renaming a component changes only its display name, never its mRID
     n2.linesAC[1].comp.cName = "renamed_line"
     f3 = writeCGMESFiles(n2; path = mktempdir(), created = _EXPORT_STAMP)
@@ -287,6 +281,29 @@ function run_cgmes_export_tests()
     eq3 = read(f3[1], String)
     @test occursin("rdf:ID=\"_$(n1.cgmes_ids["ACL|A|B|1"])\"", eq3)
     @test occursin(">renamed_line<", eq3)
+    # a line pairs with its branch by bus pair and order, not by the branch
+    # name: renaming the branch leaves TP and SV unchanged, with the open
+    # terminal and two flows per line; a line without a branch stops the
+    # export before anything is written
+    net = _export_test_net()
+    net.branchVec[2].from_status = 0
+    plain = mktempdir()
+    writeCGMESFiles(net; path = plain, created = _EXPORT_STAMP)
+    renamed = deepcopy(net)
+    renamed.branchVec[1].comp.cName = "Corridor_north"
+    again = mktempdir()
+    writeCGMESFiles(renamed; path = again, created = _EXPORT_STAMP)
+    for profile in ("TP", "SV")
+      @test read(joinpath(plain, "exportnet_$(profile).xml"), String) == read(joinpath(again, "exportnet_$(profile).xml"), String)
+    end
+    @test count("<cim:ACDCTerminal.connected>false", read(joinpath(again, "exportnet_TP.xml"), String)) == 1
+    @test count("<cim:SvPowerFlow ", read(joinpath(again, "exportnet_SV.xml"), String)) == 2 * length(renamed.linesAC)
+    broken = _export_test_net()
+    push!(broken.linesAC, broken.linesAC[1])
+    dir = mktempdir()
+    err = @test_throws ErrorException writeCGMESFiles(broken; path = dir, created = _EXPORT_STAMP)
+    @test occursin("has no branch in the network", sprint(showerror, err.value))
+    @test isempty(readdir(dir))
   end)() end
 
   @testset "self-roundtrip is power-flow-identical" begin (function ()

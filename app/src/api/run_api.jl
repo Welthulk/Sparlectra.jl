@@ -633,10 +633,6 @@ function _run_sparlectra_api_body(
   # machine-scope keys an old case file carried and the resolution dropped:
   # named in run.log next to the resolved options
   qlimit_metadata["case_file_dropped_keys"] = resolved.scf_dropped_keys
-  # removed keys (power_flow.islands.mode since 0.30.2) in the configuration
-  # or case file: the loader's warning is printed before the run starts, so
-  # run.log names them itself
-  qlimit_metadata["ignored_config_keys"] = ignored_removed_config_keys(config_path, case_path)
   qlimit_metadata["runtime_casefile"] = basename(case_path)
   qlimit_metadata["runtime_casefile_path"] = case_path
   matpower_metadata = _resolved_matpower_import_runtime_options(config)
@@ -1171,6 +1167,9 @@ function _run_sparlectra_api_body(
     # whether the end point is physical, in the narrative as well: the
     # detail lives in q_limit.log, the verdict must not
     println(io, _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged).line)
+    # the stability conditions (6)/(7) at every voltage-regulated bus; the
+    # warning of a run with a violation is in the captured log above
+    println(io, _qlimit_stability_summary(raw_result).line)
     # with Q-limit handling off neither the final-check line nor the
     # artifact block appears (the solver log carries the one "disabled"
     # line); an option that is off prints no sub-parameters (0.30.1)

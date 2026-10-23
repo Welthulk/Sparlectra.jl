@@ -99,7 +99,11 @@ Settled against the OpenLoadFlow voltages of the example files:
   ratio of the from-side to the to-side voltage in pu. IIDM's `rho` is the
   ideal ratio at side 1 in kV and already carries `rated_u2 / rated_u1`, so
   `ratio = vn_to / (rho * vn_from)`; the phase shift is `-alpha`. The
-  `_at_current_tap` impedances are used, no tap tables reach the network.
+  `_at_current_tap` impedances are used. The step tables reach the network
+  only as the tap changer sets of the state estimation (one table changer
+  per ratio or phase tap changer, see
+  [State Estimation Extensions](state_estimation_extensions.md)); power
+  flow does not read them.
 - **Magnetizing admittance.** The whole `g`, `b` of a transformer sits on
   side 1, behind the ideal transformer, as OpenLoadFlow places it; the
   branch carries it as its from-terminal arm, a line keeps `g1`, `b1` and
@@ -191,5 +195,5 @@ by `tools/build_powsybl_sc_demo.jl`.
 ## Out of scope
 
 Snapshots with missing injections and injection patching, time-series
-batches, tap and voltage controllers from IIDM regulation data (the step
-tables are read, not used), IIDM export.
+batches, tap and voltage controllers from IIDM regulation data, IIDM
+export.

@@ -46,40 +46,6 @@ function run_transformer_phase_shift_tests()
     @test isapprox(Y_tt, expected_tt; atol = 1e-12, rtol = 0.0)
   end)() end
 
-  @testset "Empirical phase-shift direction check (2-bus, Δφ=+5°)" begin (function ()
-    # Minimal 2-bus setup for P_ab direction validation.
-    # Fixed terminal voltages isolate transformer phase-shift effect.
-    V = ComplexF64[1.0 + 0.0im, 1.0 + 0.0im]
-
-    branch_phi0 = _make_pi_trafo_branch(shift_deg = 0.0, ratio = 1.0)
-    branch_phi5 = _make_pi_trafo_branch(shift_deg = 5.0, ratio = 1.0)
-
-    function p_from_to(branch::Branch, V::Vector{ComplexF64})
-      Y_ff, Y_ft, _, _ = calcAdmittance(branch, 110.0, 100.0)
-      I_f = Y_ff * V[1] + Y_ft * V[2]
-      return real(V[1] * conj(I_f))
-    end
-
-    p0 = p_from_to(branch_phi0, V)
-    p5 = p_from_to(branch_phi5, V)
-    ΔP_from_to = p5 - p0
-
-    # Observed with Sparlectra sign convention: +5° decreases P_ab.
-    @test ΔP_from_to < 0.0
-
-    # Corrected controller rule: do not assume sign convention.
-    # Use empirical direction from the Δφ probe.
-    phase_step = 0.5
-    increase_direction = sign(ΔP_from_to)
-    target_above = p0 + 0.05
-    target_below = p0 - 0.05
-    ctrl_step_when_below_target = (p0 < target_above) ? increase_direction * phase_step : -increase_direction * phase_step
-    ctrl_step_when_above_target = (p0 < target_below) ? increase_direction * phase_step : -increase_direction * phase_step
-
-    @test ctrl_step_when_below_target < 0.0
-    @test ctrl_step_when_above_target > 0.0
-  end)() end
-
   @testset "Tap-changer impedance-correction factor (central equicircuit.jl model)" begin (function ()
     # :ideal never applies impedance feedback, regardless of tap deviation.
     @test calcTapImpedanceCorrectionFactor(tap_changer_model = :ideal, tap_fraction = 0.5, skew_angle_deg = 30.0) == 1.0

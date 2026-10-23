@@ -94,7 +94,10 @@ function _rectangular_rejection_reason_text(reason::Symbol)
   reason == :active_pv_voltage_residual && return "active PV voltage residual exceeds tolerance"
   reason == :singular_newton_step && return "singular Newton step"
   reason == :nr_mismatch_not_converged && return "NR mismatch did not converge"
-  reason == :nr_mismatch_not_converged_active_set_unstable && return "NR mismatch did not converge; Q-limit active set changed repeatedly"
+  # the three reasons of a run at max_iter (_max_iter_stop_reason)
+  reason == :iteration_limit && return "iteration limit (power_flow.max_iter) reached while the mismatch was still falling"
+  reason == :type_identification_divergence && return "bus types kept switching between PV and PQ at a small mismatch (type identification divergence)"
+  reason == :numerical_divergence && return "NR mismatch did not converge (numerical divergence)"
   reason == :wrong_branch_detected && return "wrong-branch solution detected"
   reason == :wrong_branch_rescue_not_implemented && return "wrong-branch rescue requested but not implemented"
   reason == :rescue_requested_but_not_available && return "wrong-branch rescue requested but not available"

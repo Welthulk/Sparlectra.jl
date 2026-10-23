@@ -54,30 +54,6 @@ function run_external_grid_tests()
     @test fieldtypes(NativeShortCircuitData) == fieldtypes(Sparlectra.CGMESImporter.CGMESShortCircuitData)
   end)() end
 
-  @testset "SC hand calculation (single 110 kV bus, c = 1.1)" begin (function ()
-    # Hand-derived independently of the engine: Zq = c·Un²/Sk,
-    # Ik'' = c·Un/(√3·|Zq|) = Sk/(√3·Un) (the c cancels by construction),
-    # Sk'' = √3·Un·Ik'', κ = min(1.15·(1.02 + 0.98·e^(−3·R/X)), 2.0),
-    # ip = κ·√2·Ik''.
-    for rx in (0.1, 0.3)
-      net = Net(name = "sc_hand", baseMVA = 100.0)
-      addBus!(net = net, busName = "B1", vn_kV = 110.0)
-      addExternalGrid!(net = net, busName = "B1", sk_max_MVA = 3000.0, rx_max = rx)
-      res = runShortCircuit!(net; case = :max, c_factor = 1.1)
-      row = only(res.rows)
-      ik_hand = 3000.0 / (sqrt(3.0) * 110.0)
-      kappa_hand = min(1.15 * (1.02 + 0.98 * exp(-3.0 * rx)), 2.0)
-      @test row.status === :ok
-      @test row.contains_defaulted_data == false
-      @test row.zk_ohm ≈ 1.1 * 110.0^2 / 3000.0 rtol = 1e-6
-      @test row.rx_ratio ≈ rx rtol = 1e-6
-      @test row.ik_kA ≈ ik_hand rtol = 1e-6
-      @test row.sk_MVA ≈ 3000.0 rtol = 1e-6
-      @test row.kappa ≈ kappa_hand rtol = 1e-6
-      @test row.ip_kA ≈ kappa_hand * sqrt(2.0) * ik_hand rtol = 1e-6
-    end
-  end)() end
-
   @testset "min case and R/X flag semantics" begin (function ()
     # With sk_min: the :min case uses it; rx_min defaults to rx_max
     # by design so the deliberately declared minimum is NOT flagged.

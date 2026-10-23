@@ -32,8 +32,7 @@ Characteristic `y = f(u)` of a Q(U) or P(U) controller, given by ordered
 `:spline` (natural cubic spline) or `:polynomial` (Newton form through the
 points); `make_characteristic` builds one from engineering units. Outside
 the point range, values are clamped to the edge points and the derivative
-is `0.0`. Known as `PiecewiseLinearCharacteristic` before 0.17.0; that name
-stays as an alias for one minor release.
+is `0.0`.
 """
 struct VoltageCharacteristic
   points::Vector{Tuple{Float64,Float64}}
@@ -69,10 +68,6 @@ struct VoltageCharacteristic
     end
   end
 end
-
-# the name the type carried while it held straight segments only; kept as
-# an alias for one minor release so existing scripts keep running
-const PiecewiseLinearCharacteristic = VoltageCharacteristic
 
 function _natural_spline_second_derivatives(points::Vector{Tuple{Float64,Float64}})
   n = length(points)

@@ -64,13 +64,6 @@ function _se_case_format_with_reason(case_path::AbstractString; requested::Symbo
   end
 end
 
-## A phase tap changer counts as DECLARED nameplate data (not a constructor
-## default) when the import stored its regulating-vector direction psi in
-## tap_est_alpha_deg (mpc.sparlectra.tap_changers, optional psi column,
-## default 90). Only declared phase changers join the mass release and the
-## generator's deviation targeting.
-_declared_phase_tap(br)::Bool = br.has_phase_tap && (br.phase_step_deg > 0.0 || br.phase_du_step > 0.0) && br.tap_est_alpha_deg != 0.0
-
 ## from-run truth resolution (measurement generator v2): resolve `run_id` in
 ## the persistent run index under `run_root`, enforce the case binding, and
 ## load the solved voltages into `net` WITHOUT re-solving. SE runs read
@@ -227,14 +220,14 @@ function _freeze_all_tap_estimation!(net::Net)::Int
   return frozen
 end
 
-## Which transformers are released, in which mode and regulator direction,
-## so a staged start can freeze them for one solve and release exactly the
-## same set again (setTapEstimation! with enabled = false clears alpha).
-_tap_release_snapshot(net::Net) = [(k, b.tap_est_mode, b.tap_est_alpha_deg) for (k, b) in enumerate(net.branchVec) if b.tap_est_mode !== :none]
+## Which transformers are released and in which mode, so a staged start can
+## freeze them for one solve and release exactly the same set again (the
+## direction of a phase changer comes from its changer data, 0.60.0).
+_tap_release_snapshot(net::Net) = [(k, b.tap_est_mode) for (k, b) in enumerate(net.branchVec) if b.tap_est_mode !== :none]
 
 function _restore_tap_release!(net::Net, snap)
-  for (k, mode, alpha) in snap
-    setTapEstimation!(net; trafo = k, mode = mode, alpha_deg = mode === :ratio ? nothing : alpha)
+  for (k, mode) in snap
+    setTapEstimation!(net; trafo = k, mode = mode)
   end
   return length(snap)
 end
@@ -253,29 +246,69 @@ function _se_reported_iterations(res)::Int
   return max(base, Int(get(tf, :iterations_estimation, 0)), Int(get(tf, :iterations_fixation, 0)))
 end
 
+## Columns of se_tap_estimates.csv, one row per tap regulator (since
+## 0.60.0): which changer, its data (kind, side, alpha, du), the continuous
+## estimate (step s relative to neutral, Delta U = s du, branch ratio and
+## angle at the estimate), the model step against the fixed step and the
+## deviation between them in steps, and the guard result. The metadata rows
+## of the result page carry the same keys plus `role` and `notice`.
+const _SE_TAP_CSV_COLUMNS = ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "kind", "side", "alpha_deg", "du", "s_est", "du_est", "ratio_est", "angle_est_deg", "step_model", "step_fixed", "deviation_steps", "out_of_range", "fixed", "frozen_reason", "note", "source"]
+
+## a step value as an Int when it is a whole step (start positions carry
+## round-off from the branch fields), else as it is
+_se_tap_step(x::Real) = abs(x - round(x)) < 1e-6 ? round(Int, x) : Float64(x)
+
+## a step for the run log: whole steps as integers, others with two decimals
+function _se_tap_step_text(x::Real)::String
+  v = _se_tap_step(x)
+  return v isa Int ? string(v) : string(round(v; digits = 2))
+end
+
+## the signed deviation of a regulator row for the run log
+_se_tap_deviation_text(d::Real)::String = d > 0 ? string("+", _se_tap_step_text(d)) : _se_tap_step_text(d)
+
+## one tap regulator row of SEResult.tapEstimates as the record of the
+## outputs: the CSV columns plus role and notice. Symbols become strings,
+## the values that do not exist for the changer (alpha of a ratio changer,
+## du of a linear changer or a table) stay `nothing`.
+function _se_tap_row_record(t)::Dict{String,Any}
+  return Dict{String,Any}(
+    "branch" => t.branch, "regulator" => t.regulator, "name" => t.name, "changer" => t.changer,
+    "mrid" => t.mrid, "changer_mrid" => t.changer_mrid, "kind" => String(t.kind), "side" => String(t.side),
+    "alpha_deg" => t.alpha_deg, "du" => t.du, "s_est" => t.s_est, "du_est" => t.du_est,
+    "ratio_est" => t.ratio_est, "angle_est_deg" => t.angle_est_deg,
+    "step_model" => _se_tap_step(t.step_model), "step_fixed" => _se_tap_step(t.step_fixed), "deviation_steps" => _se_tap_step(t.deviation_steps),
+    "out_of_range" => t.out_of_range, "fixed" => t.fixed, "frozen_reason" => String(t.frozen_reason), "note" => String(t.note),
+    "source" => "estimated", "role" => String(t.role), "notice" => t.notice,
+  )
+end
+
+## one record as a CSV line in the column order; `nothing` and the symbol
+## value "none" (kind, side, freeze reason, note) are empty cells, numbers
+## follow the regional CSV format, indices and whole steps are integers
+function _se_tap_csv_line(rec::AbstractDict, delim, fmt)::String
+  function cell(c)
+    v = get(rec, c, nothing)
+    v === nothing && return ""
+    (v isa Bool || v isa Integer) && return string(v)
+    v isa AbstractFloat && return _format_csv_number(v, fmt)
+    (c in ("kind", "side", "frozen_reason", "note") && v == "none") && return ""
+    return _csv_field(String(v), delim, fmt)
+  end
+  return join((cell(c) for c in _SE_TAP_CSV_COLUMNS), delim)
+end
+
+## the regulator rows of SEResult.tapEstimates (rows of transformers without
+## a changer of the released kind have regulator 0)
+_se_tap_regulator_rows(rows) = rows === nothing ? NamedTuple[] : [t for t in rows if t.regulator > 0]
+
+## number of distinct transformers among the tap regulator rows
+_se_tap_transformer_count(rows)::Int = length(unique(t.branch for t in _se_tap_regulator_rows(rows)))
+
 ## the comment lines of a measurement CSV without their `# ` prefix, split
 ## into those before the header (case binding, provenance, taps table) and
 ## those after the data rows (the generator's truth blocks), so a rewrite of
 ## the file keeps what the generator recorded
-## model step against the fixed step of one tap row: the change is what a
-## reader looks for ("was the tap wrong, was it corrected"). Ratio taps count
-## step 1, phase shifters step 2, :both shows both. A model position off the
-## step grid is shown with two decimals instead of being rounded away.
-function _se_tap_model_and_change(t)
-  shown(x) = abs(x - round(x)) < 0.01 ? string(round(Int, x)) : string(round(x; digits = 2))
-  signed(d) = d > 0 ? string("+", d) : string(d)
-  m1 = round(Int, t.model_step_1)
-  m2 = round(Int, t.model_step_2)
-  d1 = t.fixed_step_1 - m1
-  d2 = t.fixed_step_2 - m2
-  if t.mode == :pst
-    return shown(t.model_step_2), signed(d2), d2 != 0
-  elseif t.mode == :both
-    return string(shown(t.model_step_1), " / ", shown(t.model_step_2)), string(signed(d1), " / ", signed(d2)), d1 != 0 || d2 != 0
-  end
-  return shown(t.model_step_1), signed(d1), d1 != 0
-end
-
 function _measurement_csv_comments(path::AbstractString)
   head = String[]
   tail = String[]
@@ -706,10 +739,12 @@ chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
 
 Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
 `update_shunts`, `report_correlation` mirror the estimator keywords.
-`tap_estimation = true` releases the tap of every in-service transformer
-that carries a ratio tap changer (`setTapEstimation!` mode `:ratio`) before
-the solve; the estimator then fixes each tap to its nearest mechanical step
-and reports J before versus after the fixation (`se_tap_estimates.csv`).
+`tap_estimation = true` releases every tap changer of every in-service
+transformer except machine transformers (`setTapEstimation!` with the mode
+its changers give, `:ratio`, `:pst` or `:both`) before the solve; the
+estimator then fixes each regulator to its nearest physical step and
+reports J before versus after the fixation (`se_tap_estimates.csv`, one row
+per regulator).
 That release is staged: one solve with the taps frozen first, the estimate
 from that state, kept only if its fixed positions fit at least as well as
 the model positions (otherwise the frozen-tap fallback, reason
@@ -1044,9 +1079,9 @@ function _run_state_estimation_service_body(
     return _api_failure("se_not_observable", msg, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
-  # released transformer taps: every in-service transformer with a
-  # ratio tap changer becomes an estimation state (mode :ratio; PST release
-  # stays an API-level choice via setTapEstimation!). Released AFTER the
+  # released transformer taps: every tap changer of an in-service
+  # transformer becomes an estimation state (the mode from its changer set,
+  # _tap_release_mode). Released AFTER the
   # observability verdict: tap states are deliberately outside the
   # observability count, like the gated current rows.
   # the generator documents an injected tap deviation inside the set; a run
@@ -1077,10 +1112,25 @@ function _run_state_estimation_service_body(
     for d in set_tap_devs
       b = d.branch
       (1 <= b <= length(net.branchVec)) || continue
+      set = _effective_tap_changers(net.branchVec[b])
+      if set === nothing
+        open(logfile, "a") do io
+          println(io, "note: tap estimation could not be released automatically on branch ", b, ": the branch is a line")
+        end
+        continue
+      end
+      # release the role of the changer the deviation moved: the
+      # generator moves the first ratio changer, else the first phase
+      # changer (_tap_deviation_changer), so only that role is released
+      c = _tap_deviation_changer(set)
+      mode = (c > 0 && set.changers[c].role === :phase) ? :pst : :ratio
       try
-        setTapEstimation!(net; trafo = b, enabled = true)
+        setTapEstimation!(net; trafo = b, mode = mode)
         push!(auto_tap_branches, b)
       catch err
+        # expected: the ArgumentError of setTapEstimation! for a transformer
+        # without tap changer data (empty set, c == 0); anything else is a bug
+        err isa ArgumentError || rethrow()
         open(logfile, "a") do io
           println(io, "note: tap estimation could not be released automatically on branch ", b, ": ", sprint(showerror, err))
         end
@@ -1134,13 +1184,12 @@ function _run_state_estimation_service_body(
   tap_machine_idxs = Int[]
   if tap_estimation
     for (k, br) in enumerate(net.branchVec)
-      hasR = br.has_ratio_tap
-      # DECLARED phase changers only (nameplate psi carried in
-      # tap_est_alpha_deg by the mpc.sparlectra.tap_changers import): the
-      # constructor gives every MATPOWER trafo default phase fields, and
-      # mass-releasing those would add meaningless states everywhere
-      hasP = _declared_phase_tap(br)
-      (br.ratio != 0.0 && (hasR || hasP) && _branch_terminal_state(br) == :closed) || continue
+      # the release mode from the changer set of the branch (ratio and
+      # DECLARED phase changers; the constructor gives every MATPOWER trafo
+      # default phase fields, and mass-releasing those would add meaningless
+      # states everywhere); no direction: it comes from the changer data
+      mode = _tap_release_mode(br)
+      (mode !== nothing && _branch_terminal_state(br) == :closed) || continue
       # machine (generator step-up) transformers are never mass-released:
       # the generator terminal voltage is set by the AVR, not observed, so
       # the tap state would absorb it. An explicit setTapEstimation! on a
@@ -1150,17 +1199,11 @@ function _run_state_estimation_service_body(
         push!(tap_machine_idxs, k)
         continue
       end
-      if hasR && hasP
-        setTapEstimation!(net; trafo = k, mode = :both, alpha_deg = br.tap_est_alpha_deg)
-      elseif hasP
-        setTapEstimation!(net; trafo = k, mode = :pst, alpha_deg = br.tap_est_alpha_deg)
-      else
-        setTapEstimation!(net; trafo = k, mode = :ratio)
-      end
+      setTapEstimation!(net; trafo = k, mode = mode)
       tap_released += 1
     end
     open(logfile, "a") do io
-      tap_released == 0 && println(io, "tap estimation requested, but the case has no in-service transformer with a ratio or declared phase tap changer", tap_skipped_machine > 0 ? " (besides $(tap_skipped_machine) machine transformer(s), which are never mass-released)" : "")
+      tap_released == 0 && println(io, "tap estimation requested, but the case has no in-service transformer with a tap changer", tap_skipped_machine > 0 ? " (besides $(tap_skipped_machine) machine transformer(s), which are never mass-released)" : "")
       tap_skipped_machine > 0 && tap_released > 0 && println(io, "tap estimation: $(tap_skipped_machine) machine transformer(s) skipped (generator step-up; release explicitly via setTapEstimation! if intended)")
       # loud warning when the set's documented deviation sits on a SKIPPED
       # machine transformer: estimate taps can then never absorb it and J
@@ -1433,7 +1476,9 @@ function _run_state_estimation_service_body(
       prow = findfirst(mm -> mm.active && mm.typ == PinjMeas && mm.busIdx == mside, net.measurements)
       try
         bt = calcMachineTrafoTapFromSE(net; trafo = k, p_mw = prow === nothing ? nothing : net.measurements[prow].value, q_mvar = qrow === nothing ? nothing : net.measurements[qrow].value)
-        push!(tap_calc_rows, Dict{String,Any}("branch" => k, "name" => getCompName(net.branchVec[k].comp), "mrid" => get(trm, k, ""), "mode" => "ratio", "electrical_step" => round(bt.electrical_step; digits = 3), "fixed_step" => bt.fixed_step, "model_step" => "", "change" => "", "electrical_shift_step" => 0.0, "fixed_shift_step" => 0, "out_of_range" => false, "fixed" => false, "frozen_reason" => "none", "source" => "calculated"))
+        # same record as an estimated regulator row: kind ratio,
+        # the back-calculated step s and the nearest step, nothing else
+        push!(tap_calc_rows, Dict{String,Any}("branch" => k, "name" => getCompName(net.branchVec[k].comp), "mrid" => get(trm, k, ""), "kind" => "ratio", "role" => "ratio", "s_est" => bt.s_est, "step_fixed" => bt.fixed_step, "source" => "calculated", "notice" => ""))
         open(logfile, "a") do io
           println(io, "machine transformer ", getCompName(net.branchVec[k].comp), ": tap CALCULATED (not estimated) from AVR setpoint and machine telemetry: electrical step ", round(bt.electrical_step; digits = 2), " -> step ", bt.fixed_step, " (Q residual ", round(bt.q_residual_mvar; digits = 2), " MVar)")
         end
@@ -1513,10 +1558,13 @@ function _run_state_estimation_service_body(
       end
       devByBranch = Dict{Int,Float64}(d.branch => d.steps for d in set_tap_devs)
       for t in something(res.tapEstimates, NamedTuple[])
-        dev = get(devByBranch, t.branch, 0.0)
+        # the documented deviation belongs to the deviation changer of the
+        # branch (the generator moves that one), 0 for the others
+        set = 1 <= t.branch <= length(net.branchVec) ? _effective_tap_changers(net.branchVec[t.branch]) : nothing
+        dev = (set !== nothing && t.regulator == _tap_deviation_changer(set)) ? get(devByBranch, t.branch, 0.0) : 0.0
         # a tap is never measured: `measured` and the deltas against it stay
         # empty rather than repeating the truth and pretending a zero residual
-        println(io, join(("tap", cfD(t.name), cfD(t.mode), "", "", "", "", fmt(dev), t.fixed_step_1, "", fmt(Float64(t.fixed_step_1) - dev), "", "", "", false), se_csv_delim))
+        println(io, join(("tap", cfD(t.name), cfD(t.mode), "", "", "", "", fmt(dev), fmt(t.deviation_steps), "", fmt(t.deviation_steps - dev), "", "", "", false), se_csv_delim))
       end
       deltas_written = true
     end
@@ -1524,19 +1572,12 @@ function _run_state_estimation_service_body(
 
   if res.tapEstimates !== nothing || !isempty(tap_calc_rows)
     open(joinpath(output_dir, "se_tap_estimates.csv"), "w") do io
-      println(io, join(("branch", "name", "mrid", "mode", "alpha_deg", "electrical_step", "fixed_step", "electrical_shift_step", "fixed_shift_step", "r1_est", "r2_est", "out_of_range", "fixed", "frozen_reason", "source", "model_step", "change"), se_csv_delim))
-      cfT(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
+      println(io, join(_SE_TAP_CSV_COLUMNS, se_csv_delim))
       for t in something(res.tapEstimates, NamedTuple[])
-        println(
-          io,
-          join(
-            (t.branch, cfT(t.name), cfT(t.mrid), cfT(t.mode), _format_csv_number(Float64(t.alpha_deg), se_csv_format), _format_csv_number(round(t.electrical_step_1; digits = 4), se_csv_format), t.fixed_step_1, _format_csv_number(round(t.electrical_step_2; digits = 4), se_csv_format), t.fixed_step_2, t.r1_est, t.r2_est, t.out_of_range, t.fixed, t.frozen_reason == :none ? "" : t.frozen_reason, "estimated", cfT(_se_tap_model_and_change(t)[1]), cfT(_se_tap_model_and_change(t)[2])),
-            se_csv_delim,
-          ),
-        )
+        println(io, _se_tap_csv_line(_se_tap_row_record(t), se_csv_delim, se_csv_format))
       end
       for c in tap_calc_rows
-        println(io, join((c["branch"], cfT(c["name"]), cfT(c["mrid"]), "ratio", _format_csv_number(0.0, se_csv_format), c["electrical_step"], c["fixed_step"], _format_csv_number(0.0, se_csv_format), 0, "", "", false, false, "", "calculated", "", ""), se_csv_delim))
+        println(io, _se_tap_csv_line(c, se_csv_delim, se_csv_format))
       end
     end
   end
@@ -1578,13 +1619,19 @@ function _run_state_estimation_service_body(
     if res.tapEstimates !== nothing
       if res.tapFixation !== nothing
         tf = res.tapFixation
-        println(io, "tap estimation: ", length(res.tapEstimates), " transformer(s); J before fixation = ", round(tf.j_before; sigdigits = 4), " (dof ", tf.dof_before, "), J after fixation = ", round(tf.j_after; sigdigits = 4), " (dof ", tf.dof_after, ")", tf.fixed ? "" : "; NOT fixed (estimation run did not converge)")
+        println(io, "tap estimation: ", _se_tap_transformer_count(res.tapEstimates), " transformer(s), ", length(_se_tap_regulator_rows(res.tapEstimates)), " regulator(s); J before fixation = ", round(tf.j_before; sigdigits = 4), " (dof ", tf.dof_before, "), J after fixation = ", round(tf.j_after; sigdigits = 4), " (dof ", tf.dof_after, ")", tf.fixed ? "" : "; NOT fixed (estimation run did not converge)")
         tf.offgrid_residual && println(io, "note :offgrid_tap_residual: the band failure appears only through the fixation; this is an off-grid true position or a wrong step table, NOT bad data")
+        isempty(get(tf, :delta_j_notice, "")) || println(io, "notice: ", tf.delta_j_notice)
       else
         println(io, "tap estimation: every released tap was frozen by the guards; no tap state entered the solve")
       end
       for t in res.tapEstimates
-        println(io, "  ", t.name, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", ": electrical step ", round(t.electrical_step_1; digits = 2), " -> fixed step ", t.fixed_step_1, t.mode == :ratio ? "" : string(", shift step ", round(t.electrical_step_2; digits = 2), " -> ", t.fixed_step_2), t.out_of_range ? " (OUT OF RANGE, clamped)" : "", t.frozen_reason == :none ? "" : " (FROZEN: $(t.frozen_reason))")
+        # one line per regulator: estimate, branch ratio and angle at it,
+        # model step -> fixed step with the deviation
+        println(io, "  ", t.name, isempty(t.changer) ? "" : "/" * t.changer, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", " (", t.kind, "): s ", round(t.s_est; digits = 3), t.du_est === nothing ? "" : string(" (dU ", round(t.du_est; sigdigits = 4), ")"), ", ratio ", round(t.ratio_est; digits = 5), ", angle ", round(t.angle_est_deg; digits = 3), " deg, step ", _se_tap_step_text(t.step_model), " -> ", _se_tap_step_text(t.step_fixed), " (deviation ", _se_tap_deviation_text(t.deviation_steps), ")", t.out_of_range ? " (OUT OF RANGE, clamped)" : "", t.frozen_reason == :none ? "" : " (FROZEN: $(t.frozen_reason))")
+      end
+      for t in res.tapEstimates
+        isempty(t.notice) || println(io, "notice: tap regulator ", t.name, isempty(t.changer) ? "" : "/" * t.changer, ": ", t.notice)
       end
     end
     (!isempty(suspicious) || !isempty(eliminations) || !isempty(suppressedIds)) && println(io, "bad data: measurements_verdict.csv (", length(suspicious), " suspicious, ", length(eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted; ", verdict_flagged, " table row(s) flagged)")
@@ -1632,18 +1679,24 @@ function _run_state_estimation_service_body(
       "se_islands_estimated" => res.islands === nothing ? 1 : count(i -> i.estimated, res.islands),
       "se_islands_skipped" => res.islands === nothing ? 0 : count(i -> !i.estimated, res.islands),
       "se_tap_estimation" => tap_estimation,
-      "se_tap_count" => res.tapEstimates === nothing ? 0 : length(res.tapEstimates),
+      # the impedance rule the run used (configuration, case file or override)
+      "se_tap_impedance_correction" => String(run_cfg.state_estimation.tap_estimation.impedance_correction),
+      "se_tap_count" => _se_tap_transformer_count(res.tapEstimates),
+      "se_tap_regulators" => length(_se_tap_regulator_rows(res.tapEstimates)),
       "se_tap_skipped_machine" => tap_skipped_machine,
-      "se_tap_frozen" => res.tapEstimates === nothing ? 0 : count(t -> t.frozen_reason != :none, res.tapEstimates),
+      "se_tap_frozen" => count(t -> t.frozen_reason != :none, _se_tap_regulator_rows(res.tapEstimates)),
       "se_tap_fixed" => res.tapFixation === nothing ? false : res.tapFixation.fixed,
       "se_tap_j_before" => res.tapFixation === nothing ? nothing : res.tapFixation.j_before,
       "se_tap_dof_before" => res.tapFixation === nothing ? nothing : res.tapFixation.dof_before,
       "se_tap_j_after" => res.tapFixation === nothing ? nothing : res.tapFixation.j_after,
       "se_tap_dof_after" => res.tapFixation === nothing ? nothing : res.tapFixation.dof_after,
       "se_tap_offgrid_residual" => res.tapFixation === nothing ? false : res.tapFixation.offgrid_residual,
+      "se_tap_j_rise_exceeds_quantile" => res.tapFixation === nothing ? false : res.tapFixation.j_rise_exceeds_quantile,
+      "se_tap_sequential_fixation" => res.tapFixation === nothing ? false : res.tapFixation.sequential,
       "se_topology_station_findings" => diag.topology_findings === nothing ? nothing : [Dict{String,Any}("location" => tf.location, "evidence" => tf.evidence, "notes" => [String(n) for n in tf.notes]) for tf in diag.topology_findings],
-      # per-trafo rows for the result page table (steps, not raw r values)
-      "se_tap_estimates" => res.tapEstimates === nothing && isempty(tap_calc_rows) ? nothing : vcat([Dict{String,Any}("branch" => t.branch, "name" => t.name, "mrid" => t.mrid, "mode" => String(t.mode), "electrical_step" => round(t.electrical_step_1; digits = 3), "fixed_step" => t.fixed_step_1, "electrical_shift_step" => round(t.electrical_step_2; digits = 3), "fixed_shift_step" => t.fixed_step_2, "out_of_range" => t.out_of_range, "fixed" => t.fixed, "frozen_reason" => String(t.frozen_reason), "source" => "estimated", "model_step" => _se_tap_model_and_change(t)[1], "change" => _se_tap_model_and_change(t)[2]) for t in something(res.tapEstimates, NamedTuple[])], tap_calc_rows),
+      # rows for the result page table, one per regulator: the columns of
+      # se_tap_estimates.csv plus role and notice
+      "se_tap_estimates" => res.tapEstimates === nothing && isempty(tap_calc_rows) ? nothing : vcat([_se_tap_row_record(t) for t in something(res.tapEstimates, NamedTuple[])], tap_calc_rows),
       "artifact_status" => "completed",
       "solver_status" => "completed",
       "service_status" => "completed",
@@ -1661,7 +1714,7 @@ function _run_state_estimation_service_body(
     length(suspicious), " suspicious, ",
     length(eliminations), " eliminated.",
     diag.topology_findings === nothing ? "" : string(" Topology error suspected at ", join((tf.location for tf in diag.topology_findings), ", "), "; run the hypothesis test."),
-    res.tapFixation === nothing ? "" : string(" Tap fixation (", length(res.tapEstimates), " transformer(s)): J ", round(res.tapFixation.j_before; sigdigits = 3), " -> ", round(res.tapFixation.j_after; sigdigits = 3), res.tapFixation.offgrid_residual ? "; off-grid tap residual, not bad data" : "", "."),
+    res.tapFixation === nothing ? "" : string(" Tap fixation (", _se_tap_transformer_count(res.tapEstimates), " transformer(s)): J ", round(res.tapFixation.j_before; sigdigits = 3), " -> ", round(res.tapFixation.j_after; sigdigits = 3), res.tapFixation.offgrid_residual ? "; off-grid tap residual, not bad data" : "", "."),
     get(base_metadata, "se_set_tap_deviation", false) == true ? (isempty(get(base_metadata, "se_auto_released_taps", Int[])) ? " Hint: the set documents a tap deviation that could not be released automatically; enable 'estimate taps'." : string(" Tap estimation was released automatically on ", length(get(base_metadata, "se_auto_released_taps", Int[])), " transformer(s) named by the set.")) : "",
     duplicate_rows > 0 ? string(" Warning: ", duplicate_rows, " measurement(s) repeat an already measured quantity - that alone inflates J; regenerate the set.") : "",
   )

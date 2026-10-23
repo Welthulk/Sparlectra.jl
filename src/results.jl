@@ -333,10 +333,12 @@ function _effective_bus_power_components(net::Net, bus_idx::Int)
   q_gen = 0.0
   p_load = 0.0
   q_load = 0.0
-  # a Q(U)-controlled machine's LIVE evaluated value is authoritative (its
-  # own _qƩGen write-back is a separate, known gap - issue #374's own
-  # "related" note); every other generator prefers the solved _qƩGen/_pƩGen
-  # over the per-prosumer nameplate the loop above sums by default.
+  # a Q(U)-controlled machine's LIVE evaluated value is authoritative: the
+  # solver writes it to _qƩGen only at an unclamped PQ bus after a converged
+  # solve (_write_controlled_generation!, rectangular_finalization.jl), at a PV
+  # bus _qƩGen is the solved bus total; every other generator prefers the
+  # solved _qƩGen/_pƩGen over the per-prosumer nameplate the loop below
+  # sums by default.
   bus_has_qu_gen = false
 
   for ps in net.prosumpsVec
@@ -1114,7 +1116,7 @@ function printACPFlowResults(
 
   if qlimits_handled
     num_guarded_locks = length(net.qLimitEvents)
-    num_iterative_events = length(net.qLimitLog)
+    num_iterative_events = qlimit_pv_to_pq_event_count(net)
     @printf(io, "PV→PQ locks    :%10d\n", num_guarded_locks)
     @printf(io, "PV→PQ events   :%10d\n", num_iterative_events)
   end
@@ -1389,6 +1391,9 @@ function printACPFlowResults(
   # nothing else in this report would say so. Prints one line when there is
   # nothing to report, so its absence is never mistaken for a clean result.
   printQVCharacteristicCheck(net; io = io, converged = converged)
+  # the stability conditions (6)/(7) at every voltage-regulated bus, the
+  # same line as run.log and the Web UI result page
+  printQLimitStabilityLine(net; io = io, converged = converged)
   if toFile
     close(io)
     #println("Results have been written to $(joinpath(path, filename))")

@@ -629,9 +629,15 @@ version comment) and renders the
 `sparlectra-taps v1` tap table of a generated file. **Add noise to this
 set** perturbs each value with the sigma its own row declares. **Reset
 saved settings** under the generator deletes the per-case settings
-sidecar. **estimate taps** (on by default) releases every in-service
-transformer with a ratio tap changer except machine transformers; the
-result page shows the per-transformer table and the fixation J drop. The
+sidecar. **estimate taps** (on by default when the case has tap changers, that is
+a declared changer on a transformer that is no machine transformer)
+releases every tap changer, ratio and phase, of every in-service
+transformer except machine transformers; the result page shows one row per
+tap changer (estimated step, Delta U, ratio, angle, model and fixed step,
+deviation) and the J change of the fixation.
+**tap impedance per step** (`auto`, `off`) is
+`state_estimation.tap_estimation.impedance_correction` of the case, see
+[Transformer tap estimation](@ref se-tap-estimation). The
 form warns when `k_suppress < k_eliminate`, because suppressed rows then
 rarely reach the elimination.
 

@@ -1479,7 +1479,8 @@ end
 # The baseline is the chain resolve_config uses for this case: with a case
 # configuration file the packaged defaults (plus the in-file SCF block),
 # without one the configuration file over the defaults. Form-block fields
-# inherit their spec default, `case_format` inherits auto, and
+# inherit their spec default (`se_tap_estimation` the case flag of
+# _webui_case_import_facts, which the form shows), `case_format` inherits auto, and
 # `measurement_file` the convention set the SE section arms without a
 # stored choice (`default_measurement_file`, `nothing` when there is none). Machine-scope keys are returned in
 # `dropped`. Throws what the configuration read throws (see
@@ -1518,7 +1519,11 @@ function _webui_case_save_plan(config_file::AbstractString, source::AbstractStri
   for (field, value) in form_updates
     field = String(field)
     spec = get(_WEBUI_OPTION_BY_FIELD, field, nothing)
-    at_default = if spec !== nothing
+    at_default = if field == "se_tap_estimation"
+      # the form shows the case flag when nothing is stored, so that
+      # flag is what the case inherits, not the spec default
+      _webui_same_config_value(value, _webui_case_import_facts(source, config_file)[3])
+    elseif spec !== nothing
       _webui_same_config_value(value, spec.default)
     elseif field == "case_format"
       value == "auto"
@@ -2850,6 +2855,13 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   end
   for (k, v) in query
     startswith(String(k), "g_") && (gen_values[String(k)[3:end]] = String(v))
+  end
+  # "estimate taps" is checked by default when the case has tap changers; a
+  # value saved for the case or a sticky form value wins. The flag comes
+  # from the cached import the sigma table below reads too (same path), so
+  # the page imports the case once.
+  if !isempty(selected) && !haskey(gen_values, "se_tap_estimation")
+    gen_values["se_tap_estimation"] = _webui_case_import_facts(joinpath(directory, selected), config_file)[3] ? "true" : "false"
   end
   # measurement generator v2: successful PF/SE runs of the selected case as
   # candidates for the 'from run' truth state (newest first)

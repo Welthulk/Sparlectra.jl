@@ -64,47 +64,6 @@ function _mp_rows_ybus(path::AbstractString)
   return Y
 end
 
-# The text an exporter before 0.50.0 wrote for the same net: TAP/SHIFT of
-# every tap-block row (and its loss row) at the neutral position, the block
-# without columns 13 and 14, and without column 12 when no row needs it.
-# Checked against a file of the 0.50.0 exporter (3d04b5ee) on sp_case14:
-# identical apart from the time stamp
-function _mp_old_format_text(text::AbstractString)::String
-  lines = split(String(text), '\n')
-  i0 = findfirst(l -> startswith(l, "mpc.sparlectra.tap_changers = ["), lines)
-  neutral = Dict{Int,Tuple{String,String}}()
-  i = i0 + 1
-  while lines[i] != "];"
-    f = split(strip(lines[i], ['\t', ';']), '\t')
-    neutral[parse(Int, f[1])] = (f[13], f[14])
-    i += 1
-  end
-  ncol = all(k -> split(strip(lines[k], ['\t', ';']), '\t')[12] == "0.0", (i0 + 1):(i - 1)) ? 11 : 12
-  for k in (i0 + 1):(i - 1)
-    lines[k] = "\t" * join(split(strip(lines[k], ['\t', ';']), '\t')[1:ncol], '\t') * ";"
-  end
-  lines[i0 - 1] = "%% tap-changer nameplate data (branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step psi_deg phase_du_step" * (ncol == 12 ? " ratio_grid" : "") * ")"
-  b0 = findfirst(l -> startswith(l, "mpc.branch = ["), lines)
-  row = 0
-  for k in (b0 + 2):length(lines)
-    lines[k] == "];" && break
-    row += 1
-    haskey(neutral, row) || continue
-    head, tail = split(lines[k], ';'; limit = 2)
-    f = split(head, '\t')
-    f[9], f[10] = neutral[row]
-    lines[k] = join(f, '\t') * ";" * tail
-  end
-  # the loss rows named the neutral position as well
-  for (k, l) in enumerate(lines)
-    m = match(r"^struct\('branch_row', (\d+),", l)
-    (m === nothing || !haskey(neutral, parse(Int, m.captures[1]))) && continue
-    r, a = neutral[parse(Int, m.captures[1])]
-    lines[k] = replace(l, r"'tap_ratio', [^,]+, 'phase_shift_deg', [^,]+," => "'tap_ratio', $(r), 'phase_shift_deg', $(a),")
-  end
-  return join(lines, '\n')
-end
-
 function run_matpower_metadata_tests()
   @testset "Newline-separated matrix rows (RTS-GMLC style)" begin (function ()
     # MATLAB accepts bare newlines as matrix row separators; official MATPOWER
@@ -136,6 +95,57 @@ mpc.branch = [
       # Mixed style (';' plus newlines) keeps working unchanged.
       net = createNetFromMatPowerFile(filename = path)
       @test length(net.nodeVec) == 2
+    end
+
+    # MATLAB comments: '%' up to the line end, also in CRLF files and after
+    # multibyte characters
+    strip_comments = Sparlectra.MatpowerIO._strip_matlab_comments
+    @test strip_comments("no comments\nat all\n") === "no comments\nat all\n"
+    @test strip_comments("abc%x\ndef\n") == "abc\ndef\n"
+    @test strip_comments("abc%x\r\ndef\n") == "abc\ndef\n"
+    @test strip_comments("%full line\nkeep\n") == "\nkeep\n"
+    @test strip_comments("tail%no newline") == "tail"
+    @test strip_comments("a%%b\nc%d") == "a\nc"
+    @test strip_comments("ümläut%kommentar\nzeile") == "ümläut\nzeile"
+
+    mktempdir() do dir
+      path = joinpath(dir, "case_tokenizer_edges.m")
+      write(path, """
+function mpc = case_tokenizer_edges
+mpc.version = '2';
+mpc.baseMVA = 100.0; % inline comment after statement
+% full-line comment
+mpc.bus = [
+\t1\t3\t0.0\t0.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95; % row comment
+
+\t2\t1\t10.0\t3.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95
+\t3\t1\t5.0\t1.0\t0.0\t0.0\t1\t1.0\t0.0\t110.0\t1\t1.05\t0.95\t99.0\t88.0
+\t4\t1\t2.0
+];
+mpc.gen = [
+\t1\t10.0\t3.0\t99\t-99\t1.0\t100.0\t1\t99\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0
+];
+mpc.branch = [
+\t1\t2\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360;
+\t2\t3\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360;
+\t3\t4\t0.01\t0.1\t0.0\t100\t100\t100\t0.0\t0.0\t1\t-360\t360
+];
+mpc.gencost = [
+\t2\t0\t0\t3\t0.1\t5.0\t0.0;
+\t2\t0\t0\t2\t4.0\t0.0
+];
+""")
+      mpc = Sparlectra.MatpowerIO.read_case_m(path; legacy_compat = false)
+      # blank line + comment-only rows ignored; short row zero-padded;
+      # overlong row truncated to the fixed 13 columns
+      @test size(mpc.bus) == (4, 13)
+      @test mpc.bus[3, 13] == 0.95
+      @test mpc.bus[4, 3] == 2.0
+      @test mpc.bus[4, 4] == 0.0
+      # auto-width block: ragged rows padded with 0.0 to maxcols
+      @test size(mpc.gencost) == (2, 7)
+      @test mpc.gencost[2, 5] == 4.0
+      @test mpc.gencost[2, 7] == 0.0
     end
   end)() end
 
@@ -461,10 +471,219 @@ mpc.sparlectra.tap_changers = [
         @test netdu2.branchVec[2].phase_du_step == 0.01
         @test netdu2.branchVec[2].tap_ratio ≈ bdu.tap_ratio
         @test netdu2.branchVec[2].phase_shift_deg ≈ bdu.phase_shift_deg
+        # a release and a disable keep psi 90; a psi a caller sets to 0 on
+        # this 90 model at step -2: the writer splits along 90 and the reader
+        # builds 90, so the round trip is exact and the writer gives no psi-0
+        # warning
+        netdc = Sparlectra.createNetFromMatPowerFile(filename = pathdu)
+        Sparlectra.setTapEstimation!(netdc; trafo = 2, mode = :pst, alpha_deg = 90.0)
+        Sparlectra.setTapEstimation!(netdc; trafo = 2, enabled = false)
+        @test netdc.branchVec[2].tap_est_alpha_deg == 90.0
+        netdc.branchVec[2].tap_est_alpha_deg = 0.0
+        pathdc = joinpath(dir, "case_taps_du_clr.m")
+        @test_logs min_level = Logging.Warn Sparlectra.writeMatpowerCasefile(netdc, pathdc; write_solution = false)
+        bdc = Sparlectra.createNetFromMatPowerFile(filename = pathdc).branchVec[2]
+        @test (bdc.phase_du_step, bdc.tap_est_alpha_deg) == (0.01, 90.0)
+        @test bdc.tap_ratio ≈ bdu.tap_ratio
+        @test bdc.phase_shift_deg ≈ bdu.phase_shift_deg
+        # SCF with alpha_deg 0 stated for this changer: 0 means 0, a Delta-u
+        # changer in phase with the voltage. Hand calculation: step -2 of
+        # 0.01 at psi 0 gives t = cis(-2 deg) / (1 - 0.02). The SCF writer
+        # gives step -2 and alpha_deg 0 back. Until 0.60.0 the import built
+        # the model along 90 and stored 0, and the writer wrote step 0. A
+        # missing alpha_deg key still reads as 90, as in the shipped cases.
+        scfdu = read(exportSCF(netdu; file = joinpath(dir, "case_taps_du.scf.json")), String)
+        @test count(r"\"alpha_deg\":\s*90\.0", scfdu) == 1
+        scfdu0 = joinpath(dir, "case_taps_du_0.scf.json")
+        write(scfdu0, replace(scfdu, r"\"alpha_deg\":\s*90\.0" => "\"alpha_deg\": 0.0"))
+        netdu0 = importSCF(scfdu0)
+        bdu0 = only(b for b in netdu0.branchVec if b.has_phase_tap && b.phase_du_step > 0.0)
+        tl0 = cis(deg2rad(-2.0)) / (1.0 - 0.02)
+        @test bdu0.tap_est_alpha_deg == 0.0
+        @test bdu0.tap_ratio ≈ abs(tl0)
+        @test bdu0.phase_shift_deg ≈ rad2deg(angle(tl0))
+        tcdu0 = Sparlectra.net_to_scf(netdu0)["sparlectra"]["components"]["tap_changer"]
+        cdu0 = only(c for t in tcdu0 for c in t["controllers"] if c["index"] == 2)
+        @test (Int(cdu0["pos"]), cdu0["alpha_deg"]) == (-2, 0.0)
+        bdu0rt = only(b for b in importSCF(exportSCF(netdu0; file = joinpath(dir, "case_taps_du_0_rt.scf.json"))).branchVec if b.has_phase_tap && b.phase_du_step > 0.0)
+        @test (bdu0rt.tap_est_alpha_deg, bdu0rt.phase_du_step) == (0.0, 0.01)
+        @test bdu0rt.tap_ratio ≈ bdu0.tap_ratio
+        @test bdu0rt.phase_shift_deg ≈ bdu0.phase_shift_deg
+        # MATPOWER reads psi 0 as 90 and cannot carry this changer: the
+        # writer refuses it instead of writing step 0
+        @test_throws ArgumentError Sparlectra.writeMatpowerCasefile(netdu0, joinpath(dir, "case_taps_du_0.m"); write_solution = false)
+        scfdum = joinpath(dir, "case_taps_du_nokey.scf.json")
+        write(scfdum, replace(scfdu, r"\"alpha_deg\":\s*90\.0,\s*" => ""))
+        bdum = only(b for b in importSCF(scfdum).branchVec if b.has_phase_tap && b.phase_du_step > 0.0)
+        @test bdum.tap_est_alpha_deg == 90.0
+        @test bdum.tap_ratio ≈ bdu.tap_ratio
+        @test bdum.phase_shift_deg ≈ bdu.phase_shift_deg
+        # the same stated 0 at position 0: t is the neutral tap, the MATPOWER
+        # writer passes it, but its psi column knows only 0 = not given and
+        # the reader builds 90. The writer warns; the direction comes back
+        # as 90 (known gap, no format change).
+        scfdz = joinpath(dir, "case_taps_du_0_pos0.scf.json")
+        rdz = r"\"alpha_deg\":\s*90\.0,(\s*\"index\":\s*2,\s*\"pos\":\s*)-2"
+        @test count(rdz, scfdu) == 1
+        write(scfdz, replace(scfdu, rdz => s"\"alpha_deg\": 0.0,\g<1>0"))
+        netdz = importSCF(scfdz)
+        bdz = only(b for b in netdz.branchVec if b.has_phase_tap && b.phase_du_step > 0.0)
+        @test bdz.tap_est_alpha_deg == 0.0
+        @test bdz.tap_ratio ≈ 1.0 && bdz.phase_shift_deg ≈ -2.0
+        pathdz = joinpath(dir, "case_taps_du_0_pos0.m")
+        @test_logs (:warn, r"Delta-u changer with psi 0") match_mode = :any Sparlectra.writeMatpowerCasefile(netdz, pathdz; write_solution = false)
+        bdz2 = only(b for b in Sparlectra.createNetFromMatPowerFile(filename = pathdz).branchVec if b.has_phase_tap && b.phase_du_step > 0.0)
+        @test bdz2.tap_est_alpha_deg == 90.0
+        @test bdz2.tap_ratio ≈ bdz.tap_ratio
+        @test bdz2.phase_shift_deg ≈ bdz.phase_shift_deg
+        # a degree-form phase changer as the CGMES import leaves it: psi
+        # not set, tap_est_alpha_deg at the constructor 0 (_setPhaseTapRange!
+        # does not touch it), which is also what a stated SCF alpha_deg 0
+        # stores. The SCF writer writes the degree form with alpha_deg 0 and
+        # the reader keeps kind, neutral shift, positions and the 0. MATPOWER
+        # writes psi 0 and the reader builds 90, so the changer comes back
+        # declared (known gap until S5).
+        netg = Sparlectra.createNetFromMatPowerFile(filename = path)
+        bg = netg.branchVec[2]
+        bg.tap_est_alpha_deg = 0.0
+        tcg = only(c for t in Sparlectra.net_to_scf(netg)["sparlectra"]["components"]["tap_changer"] for c in t["controllers"] if c["index"] == 2)
+        @test (tcg["alpha_deg"], tcg["step_deg"], Int(tcg["pos"]), Int(tcg["pos_min"]), Int(tcg["pos_max"]), haskey(tcg, "step")) == (0.0, 0.5, -2, -10, 10, false)
+        bg2 = only(b for b in importSCF(exportSCF(netg; file = joinpath(dir, "case_taps_deg0.scf.json"))).branchVec if b.has_phase_tap && b.ratio != 0.0 && b.phase_step_deg == 0.5)
+        @test (bg2.phase_du_step, bg2.tap_est_alpha_deg, bg2.angle) == (0.0, 0.0, -2.0)
+        @test bg2.phase_shift_deg ≈ -3.0
+        @test bg2.phase_min_deg ≈ -5.0 && bg2.phase_max_deg ≈ 5.0
+        pathg = joinpath(dir, "case_taps_deg0.m")
+        Sparlectra.writeMatpowerCasefile(netg, pathg; write_solution = false)
+        bg3 = Sparlectra.createNetFromMatPowerFile(filename = pathg).branchVec[2]
+        @test (bg3.phase_step_deg, bg3.angle, bg3.tap_est_alpha_deg) == (0.5, -2.0, 90.0)
+        @test bg3.phase_shift_deg ≈ -3.0
         # both phase grids at once are contradictory nameplate data
         badgrid = joinpath(dir, "case_taps_badgrid.m")
         write(badgrid, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => "2 0 0 0 0 0.5 -10 10 -2 90 0.01;"))
         @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = badgrid)
+
+        # ratio changer plus Delta-u changer on one branch: the Delta-u factor
+        # divides the LIVE ratio. Hand calculation: ratio step 2 of 2.5 %
+        # gives 1 / 1.05, Delta-u step -10 of 0.01 at psi 90 gives 1 - 0.1j,
+        # so t = (1 / 1.05) * cis(-2 deg) / (1 - 0.1j). Until 0.60.0 the
+        # import built t on the neutral ratio 1 and lost the ratio position;
+        # the writers and the generator read both positions from t as if the
+        # branch had one changer (the SCF writer gave Delta-u step -11).
+        pathpair = joinpath(dir, "case_taps_pair.m")
+        write(pathpair, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => "2 0.025 -2 2 2 0 -10 10 -10 90 0.01;"))
+        netp = Sparlectra.createNetFromMatPowerFile(filename = pathpair)
+        bp = netp.branchVec[2]
+        tpair = (1.0 / 1.05) * cis(deg2rad(-2.0)) / (1.0 - 0.1im)
+        @test bp.has_ratio_tap && bp.has_phase_tap
+        @test bp.tap_ratio ≈ abs(tpair)
+        @test bp.phase_shift_deg ≈ rad2deg(angle(tpair))
+        # MATPOWER writer: both positions in their own columns, reimport
+        # gives the same branch tap
+        pathpair2 = joinpath(dir, "case_taps_pair_rt.m")
+        Sparlectra.writeMatpowerCasefile(netp, pathpair2; write_solution = false)
+        tcp = Sparlectra._matpower_sparlectra_tap_changers(Sparlectra.MatpowerIO.read_case(pathpair2))
+        rowp = only(r for r in eachrow(tcp) if r[1] == 2.0)
+        @test rowp[5] ≈ 2.0 && rowp[9] ≈ -10.0
+        netp2 = Sparlectra.createNetFromMatPowerFile(filename = pathpair2)
+        @test netp2.branchVec[2].tap_ratio ≈ bp.tap_ratio
+        @test netp2.branchVec[2].phase_shift_deg ≈ bp.phase_shift_deg
+        # SCF writer: controller 1 at position 2, controller 2 at -10, and
+        # the reimport gives the same branch tap
+        tcs = Sparlectra.net_to_scf(netp)["sparlectra"]["components"]["tap_changer"]
+        ctrl = only(t["controllers"] for t in tcs if length(t["controllers"]) == 2)
+        @test sort([(Int(c["index"]), Int(c["pos"])) for c in ctrl]) == [(1, 2), (2, -10)]
+        netp3 = importSCF(exportSCF(netp; file = joinpath(dir, "case_taps_pair.scf.json")))
+        bp3 = only(b for b in netp3.branchVec if b.has_ratio_tap && b.has_phase_tap)
+        @test bp3.tap_ratio ≈ bp.tap_ratio
+        @test bp3.phase_shift_deg ≈ bp.phase_shift_deg
+        # SE generator: one ratio step down on both transformers. The pair
+        # keeps its Delta-u position. Truth: the same net with branch 1 at
+        # ratio 1 (step 0) and branch 2 at t = (1 / 1.025) * cis(-2 deg) /
+        # (1 - 0.1j), set by hand; the branch flows have to agree.
+        gen = SparlectraApp._se_generate_measurement_set(pathpair, joinpath(dir, "pair.measurements.csv"), SparlectraApp.MeasurementGeneratorOptions(; noise = false, gross_k = 0.0, tap_steps = -1.0, tap_count = 2, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0))
+        nett = Sparlectra.createNetFromMatPowerFile(filename = pathpair)
+        tgen = (1.0 / 1.025) * cis(deg2rad(-2.0)) / (1.0 - 0.1im)
+        nett.branchVec[1].tap_ratio = 1.0
+        nett.branchVec[2].tap_ratio = abs(tgen)
+        nett.branchVec[2].phase_shift_deg = rad2deg(angle(tgen))
+        _, terr = runpf!(nett, 40, 1e-10, 0)
+        @test terr == 0
+        tmp = generateMeasurementsFromPF(nett; noise = false)
+        for k in (1, 2), typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas)
+          want = only(m.value for m in tmp if m.typ == typ && m.branchIdx == k && m.direction == :from)
+          got = only(m.value for m in gen.measurements if m.typ == typ && m.branchIdx == k && m.direction == :from)
+          @test isapprox(got, want; atol = 1e-6)
+        end
+        # psi 180 puts the Delta-u factor on the real axis: the two
+        # positions cannot be told apart, so the import refuses the pair
+        pathcol = joinpath(dir, "case_taps_pair_180.m")
+        write(pathcol, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => "2 0.025 -2 2 1 0 -10 10 -2 180 0.01;"))
+        @test_throws ArgumentError Sparlectra.createNetFromMatPowerFile(filename = pathcol)
+        # SCF keeps a stated alpha_deg 0 (MATPOWER reads 0 as 90), which is
+        # the same collinear pair: the SCF import refuses it as well
+        scfpair = read(exportSCF(netp; file = joinpath(dir, "case_taps_pair_a.scf.json")), String)
+        scf0 = joinpath(dir, "case_taps_pair_0.scf.json")
+        write(scf0, replace(scfpair, r"\"alpha_deg\":\s*90\.0" => "\"alpha_deg\": 0.0"))
+        @test_throws ArgumentError importSCF(scf0)
+        # setTapEstimation! with enabled = false and mode = :ratio keeps the
+        # nameplate psi (30 here), so both writers split the pair at either
+        # Delta-u position and the reimport gives the same branch tap. Until
+        # 0.60.0 both calls set psi to 0 and the writers refused the pair
+        # off Delta-u position 0.
+        # A psi a caller sets to 0 is gone. Off Delta-u position 0 no writer
+        # can split t without it: both refuse instead of writing positions
+        # along psi 0 (SCF) or a guessed 90 (MATPOWER, ratio step 2 and
+        # Delta-u step -10 at psi 30 came out as other positions). At
+        # Delta-u position 0 the factor is 1, the split is exact and the SCF
+        # file with alpha_deg 0 reads back.
+        for (dupos, writable) in ((-10, false), (0, true))
+          pathclr = joinpath(dir, "case_taps_pair_clr.m")
+          write(pathclr, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => "2 0.025 -2 2 2 0 -10 10 $(dupos) 30 0.01;"))
+          netc = Sparlectra.createNetFromMatPowerFile(filename = pathclr)
+          Sparlectra.setTapEstimation!(netc; trafo = 2, mode = :both, alpha_deg = 30.0)
+          Sparlectra.setTapEstimation!(netc; trafo = 2, enabled = false)
+          # :ratio is consistent with the branch state only at Delta-u position 0
+          dupos == 0 && Sparlectra.setTapEstimation!(netc; trafo = 2, mode = :ratio)
+          @test netc.branchVec[2].tap_est_alpha_deg == 30.0
+          pathkeep = joinpath(dir, "case_taps_pair_keep_rt.m")
+          Sparlectra.writeMatpowerCasefile(netc, pathkeep; write_solution = false)
+          for bk in (Sparlectra.createNetFromMatPowerFile(filename = pathkeep).branchVec[2], only(b for b in importSCF(exportSCF(netc; file = joinpath(dir, "case_taps_pair_keep.scf.json"))).branchVec if b.has_ratio_tap && b.has_phase_tap))
+            @test bk.tap_est_alpha_deg == 30.0
+            @test bk.tap_ratio ≈ netc.branchVec[2].tap_ratio
+            @test bk.phase_shift_deg ≈ netc.branchVec[2].phase_shift_deg
+          end
+          netc.branchVec[2].tap_est_alpha_deg = 0.0
+          pathclr2 = joinpath(dir, "case_taps_pair_clr_rt.m")
+          if writable
+            # the psi 0 goes out as not given (90): the writer warns
+            @test_logs (:warn, r"Delta-u changer with psi 0") match_mode = :any Sparlectra.writeMatpowerCasefile(netc, pathclr2; write_solution = false)
+            rowc = only(r for r in eachrow(Sparlectra._matpower_sparlectra_tap_changers(Sparlectra.MatpowerIO.read_case(pathclr2))) if r[1] == 2.0)
+            @test rowc[5] == 2.0 && rowc[9] == 0.0
+            netc3 = importSCF(exportSCF(netc; file = joinpath(dir, "case_taps_pair_clr.scf.json")))
+            bc3 = only(b for b in netc3.branchVec if b.has_ratio_tap && b.has_phase_tap)
+            @test bc3.tap_ratio ≈ netc.branchVec[2].tap_ratio
+            @test bc3.phase_shift_deg ≈ netc.branchVec[2].phase_shift_deg
+          else
+            @test_throws ArgumentError Sparlectra.writeMatpowerCasefile(netc, pathclr2; write_solution = false)
+            @test_throws ArgumentError Sparlectra.net_to_scf(netc)
+          end
+        end
+        # a 1.25 % ratio step at either band end: the band ends of the
+        # fraction grid carry their own rounding noise (1.999999999999993
+        # for +2), so the writer snaps them with the position, else the
+        # reimport found the ratio step outside its band
+        for (row, pos) in (("2 0.0125 -2 2 2 0 -10 10 -10 90 0.01;", 2.0), ("2 0.0125 -1 1 -1 0 -10 10 -10 90 0.01;", -1.0))
+          pathend = joinpath(dir, "case_taps_pair_end.m")
+          write(pathend, replace(read(path, String), "2 0 0 0 0 0.5 -10 10 -2;" => row))
+          nete = Sparlectra.createNetFromMatPowerFile(filename = pathend)
+          pathend2 = joinpath(dir, "case_taps_pair_end_rt.m")
+          Sparlectra.writeMatpowerCasefile(nete, pathend2; write_solution = false)
+          rowe = only(r for r in eachrow(Sparlectra._matpower_sparlectra_tap_changers(Sparlectra.MatpowerIO.read_case(pathend2))) if r[1] == 2.0)
+          @test rowe[5] == pos && rowe[9] == -10.0
+          nete2 = Sparlectra.createNetFromMatPowerFile(filename = pathend2)
+          @test nete2.branchVec[2].tap_ratio ≈ nete.branchVec[2].tap_ratio
+          @test nete2.branchVec[2].phase_shift_deg ≈ nete.branchVec[2].phase_shift_deg
+        end
 
         # short rows are zero-padded like MATPOWER optional trailing
         # columns (the phase columns of a pure ratio changer may be
@@ -541,21 +760,6 @@ mpc.sparlectra.tap_changers = [
         @test maximum(abs(a._vm_pu - b._vm_pu) for (a, b) in zip(pf14.nodeVec, pfb.nodeVec)) <= 1e-12
         @test maximum(abs(a._va_deg - b._va_deg) for (a, b) in zip(pf14.nodeVec, pfb.nodeVec)) <= 1e-12
 
-        # a file of the exporter before 0.50.0 (TAP the neutral 1.025, block
-        # of 11 columns) still reads with the old rule: the position applies
-        # on top of TAP and gives the same net as the new file, bitwise
-        p14old = joinpath(dir, "sp_case14_old.m")
-        write(p14old, _mp_old_format_text(read(p14, String)))
-        mpold = Sparlectra.MatpowerIO.read_case_m(p14old; legacy_compat = false)
-        @test (mpold.branch[17, 9], size(mpold.sparlectra.tap_changers, 2)) == (1.025, 11)
-        # plain MATPOWER sees Wehrden at 1.025 in such a file
-        @test maximum(abs.(Y14 .- _mp_rows_ybus(p14old))) > 1e-3
-        old14 = Sparlectra.createNetFromMatPowerFile(filename = p14old)
-        @test tapfields(old14) == tapfields(back14)
-        pfo = deepcopy(old14)
-        @test runpf!(pfo, 40, 1e-10, 0)[2] == 0
-        @test [(n._vm_pu, n._va_deg) for n in pfo.nodeVec] == [(n._vm_pu, n._va_deg) for n in pfb.nodeVec]
-
         # TAP edited by hand in a new file: the tap position is kept and the
         # difference is named
         p14ed = joinpath(dir, "sp_case14_edited.m")
@@ -568,6 +772,8 @@ mpc.sparlectra.tap_changers = [
       end
     end)() end
 
+    # one active row (status 1 in column 3) counts as active
+    @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics((; dcline = [1 2 1 10 9 0 0 1 1 0 100]))["matpower_dcline_active_count"] == 1
     dcline = [1.0 2.0 1.0 100.0 0.0 4.0 5.0 1.0 1.0 0.0 200.0 -50.0 50.0 -50.0 50.0 2.0 0.01]
     mpc_dcline = Sparlectra.MatpowerIO.legacy_sort_bus(_metadata_case(dcline = dcline))
     @test_throws Sparlectra.MatpowerIO.UnsupportedMatpowerDclineError Sparlectra.createNetFromMatPowerCase(mpc = mpc_dcline, matpower_dcline_mode = :reject_active)
@@ -756,19 +962,6 @@ mpc.sparlectra.tap_changers = [
         # an SCF round trip keeps the role (roles.aux_nodes)
         scf3 = Sparlectra.scf_to_net(Sparlectra.net_to_scf(n3))
         @test [Sparlectra._is_aux_node(n) for n in scf3.nodeVec] == aux3
-        # a file written before 0.50.0: no bus list, the star points under
-        # their schematic name Aux_<idx>_<kV>; both readers keep them auxiliary
-        old = read(path3, String)
-        old = replace(old, r"%% auxiliary buses[^\n]*\n" => "", r"mpc\.sparlectra\.aux_buses = \[[^\]]*\];\n" => "")
-        old = replace(old, "'X1';" => "'Aux_4_380';", "'X2';" => "'Aux_5_380';")
-        @test !occursin("aux_buses", old) && occursin("'Aux_4_380';", old)
-        path_old = joinpath(dir, "star_old.m")
-        write(path_old, old)
-        back_old = Sparlectra.createNetFromMatPowerFile(filename = path_old)
-        @test [Sparlectra._is_aux_node(n) for n in back_old.nodeVec] == aux3
-        solves_like_n3(back_old)
-        conv_old = Sparlectra.build_net(Sparlectra.convert_case(Sparlectra.MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(path_old; legacy_compat = true), Sparlectra.matpower_adapter_options(cfg3)); config = cfg3)
-        @test [Sparlectra._is_aux_node(n) for n in conv_old.nodeVec] == aux3
       end
     end)() end
 
@@ -777,6 +970,10 @@ mpc.sparlectra.tap_changers = [
       tap_gen = [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0]
       tap_branch = [1 2 0.01 0.05 0.0 100.0 0.0 0.0 0.9 0.0 1 -60.0 60.0]
       mpc_tap = Sparlectra.MatpowerIO.MatpowerCase("tap_marker_case", 100.0, tap_bus, tap_gen, tap_branch, nothing, nothing)
+
+      # a case without the marker: :ideal keeps x, the correction changes it
+      @test mpc_tap.sparlectra === nothing
+      @test Sparlectra.createNetFromMatPowerCase(mpc = mpc_tap, tap_changer_model = :ideal).branchVec[1].x_pu ≈ 0.05
 
       net_native = Sparlectra.createNetFromMatPowerCase(mpc = mpc_tap, tap_changer_model = :impedance_correction)
       @test length(net_native.trafos) == 1
@@ -801,17 +998,52 @@ mpc.sparlectra.tap_changers = [
       end
     end)() end
 
-    @testset "Standard MATPOWER case without tap-changer-model marker is unaffected" begin (function ()
-      no_marker_bus = [1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9; 2 1 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9]
-      no_marker_gen = [1 10.0 0.0 100.0 -100.0 1.0 100.0 1 100.0 0.0 0 0 0 0 0 0 0 0 0 0 0]
-      no_marker_branch = [1 2 0.01 0.05 0.0 100.0 0.0 0.0 0.9 0.0 1 -60.0 60.0]
-      mpc_no_marker = Sparlectra.MatpowerIO.MatpowerCase("no_marker_case", 100.0, no_marker_bus, no_marker_gen, no_marker_branch, nothing, nothing)
-      @test mpc_no_marker.sparlectra === nothing
-
-      net_ideal = Sparlectra.createNetFromMatPowerCase(mpc = mpc_no_marker, tap_changer_model = :ideal)
-      net_corrected = Sparlectra.createNetFromMatPowerCase(mpc = mpc_no_marker, tap_changer_model = :impedance_correction)
-      @test net_ideal.branchVec[1].x_pu ≈ 0.05
-      @test net_corrected.branchVec[1].x_pu != net_ideal.branchVec[1].x_pu
+    @testset "one reference per synchronous area (#465)" begin (function ()
+      # each island keeps the type-3 bus of the file; a second type-3 bus in
+      # the same AC island stays a voltage-regulated PV bus, with a warning
+      dir = mktempdir()
+      two_refs = """
+function mpc = case_b2b
+mpc.version = '2';
+mpc.baseMVA = 100;
+mpc.bus = [
+1 3 0 0 0 0 1 1.0 0 380 1 1.1 0.9;
+2 1 40 10 0 0 1 1.0 0 380 1 1.1 0.9;
+3 3 0 0 0 0 1 1.0 0 380 1 1.1 0.9;
+4 1 50 12 0 0 1 1.0 0 380 1 1.1 0.9;
+];
+mpc.gen = [
+1 60 0 300 -300 1.0 100 1 300 0;
+3 40 0 300 -300 1.0 100 1 300 0;
+];
+mpc.branch = [
+1 2 0.01 0.08 0 250 250 250 0 0 1 -360 360;
+3 4 0.01 0.08 0 250 250 250 0 0 1 -360 360;
+];
+mpc.dcline = [
+2 4 1 80 76 0 0 1.0 1.0 0 100 -50 50 -50 50 3 0.0125;
+];
+"""
+      path_refs = joinpath(dir, "case_b2b_two_refs.m")
+      write(path_refs, two_refs)
+      net_refs = createNetFromMatPowerFile(filename = path_refs, matpower_dcline_mode = :pf_injections)
+      @test Sparlectra.getNodeType(net_refs.nodeVec[1]) == Sparlectra.Slack
+      @test Sparlectra.getNodeType(net_refs.nodeVec[3]) == Sparlectra.Slack
+      _, erg_refs = runpf!(net_refs, 40, 1e-9, 0; method = :rectangular, islands_enabled = true)
+      @test erg_refs == 0
+      # the SCF conversion of the case carries the same two references
+      mpc_refs = Sparlectra.MatpowerIO.read_case(path_refs; legacy_compat = true)
+      scf_refs = Sparlectra.convert_case(Sparlectra.MatpowerAdapter(), mpc_refs, Sparlectra.matpower_adapter_options(Sparlectra.active_sparlectra_config()))
+      @test length(scf_refs.sparlectra.roles.slack.nodes) == 2
+      path_tied = joinpath(dir, "case_b2b_tied.m")
+      write(path_tied, replace(two_refs, "3 4 0.01 0.08 0 250 250 250 0 0 1 -360 360;" => "3 4 0.01 0.08 0 250 250 250 0 0 1 -360 360;\n2 3 0.01 0.08 0 250 250 250 0 0 1 -360 360;"))
+      net_tied = @test_logs (:warn, r"second reference bus 3 in the AC island of reference bus 1") match_mode = :any createNetFromMatPowerFile(filename = path_tied, matpower_dcline_mode = :pf_injections)
+      @test Sparlectra.getNodeType(net_tied.nodeVec[1]) == Sparlectra.Slack
+      @test Sparlectra.getNodeType(net_tied.nodeVec[3]) == Sparlectra.PV
+      # type 3 is reference priority 1 for every unit of the bus, the demoted
+      # second reference included; the SCF conversion writes the same
+      @test [ps.referencePriority for ps in net_tied.prosumpsVec if Sparlectra.getPosumerBusIndex(ps) in (1, 3)] == [1, 1]
+      @test count(e -> e isa AbstractDict && get(e, "reference_priority", 0) == 1, values(scf_refs.sparlectra.extra)) == 2
     end)() end
   end)() end
 end

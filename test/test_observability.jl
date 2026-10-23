@@ -172,12 +172,8 @@ function test_observability_metrics(fx)::Bool
     for _ = 1:40
       keep = Measurement[m for m in full if rand(rng) < 0.55]
       isempty(keep) && continue
-      obs = try
-        with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
-          evaluate_global_observability(net14, keep)
-        end
-      catch
-        continue
+      obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+        evaluate_global_observability(net14, keep)
       end
       if obs.numerical_rank < obs.n_states
         @test obs.quality == :not_observable
@@ -586,21 +582,6 @@ function test_observability_takahashi_diagnostics(fx)::Bool
       println("      fd coloring ", demo, ": ", ncolors, " colors for ", size(H1, 2), " states")
       @test ncolors < size(H1, 2) / 5
     end
-    # size probe: the shipped data/mpower/sp_case1354.m (synthetic 1354-bus
-    # grid, not shipped generator) replaces the cache-gated case1354pegase
-    big1354 = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
-    @test isfile(big1354)
-    begin
-      netp = Sparlectra.createNetFromMatPowerFile(filename = big1354, flatstart = false, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
-      runpf!(netp, 60, 1e-8, 0)
-      msp = generateMeasurementsFromPF(netp; includeVm = true, includePinj = true, includeQinj = true, includePflow = false, includeQflow = false, noise = true, rng = Xoshiro(42))
-      empty!(netp.measurements)
-      append!(netp.measurements, msp)
-      H1, H2, col = fd_probe(netp)
-      @test (H2.colptr == H1.colptr, H2.rowval == H1.rowval, H2.nzval == H1.nzval) == (true, true, true)
-      println("      fd coloring sp_case1354: RAN (", length(col.groups), " colors for ", size(H1, 2), " states)")
-      @test length(col.groups) < size(H1, 2) / 5
-    end
 
     # 7) criticality (issue #394): the default reads diag(Omega) from one
     # selected-inverse pass and knows no budget; a 600 x 600 identity has
@@ -659,4 +640,80 @@ function run_observability_tests()
       end)() end
     end
   end)() end
+end
+
+function run_observability_rank_tests()
+  # the rank read from the LDLt pivots against the decomposition
+  @testset "observability: the rank from the LDLt pivots agrees with the decomposition (#399)" begin (function ()
+    # the pivot rule reads the rank from the factorization the criticality
+    # pass needs anyway; it is selectable and must agree with the SVD/QR
+    # verdict on every case here, a disagreement is a finding
+    both(H; tol = nothing) = begin
+      a = evaluate_observability_matrix(H; tol = tol, rank_method = :decomposition)
+      b = evaluate_observability_matrix(H; tol = tol, rank_method = :pivots)
+      @test a.rank_method === :decomposition
+      @test b.numerical_rank == a.numerical_rank
+      @test b.numerical_observable == a.numerical_observable
+      b
+    end
+    # full rank with one critical row
+    Hc = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0; 1.0 1.0 0.0; 1.0 1.0 0.0]
+    @test both(Hc).rank_method === :pivots
+    @test both(Hc).numerical_rank == 3
+    # an unmeasured state (a dark column, the unmeasured island in matrix
+    # form): the gain matrix is singular, the pivot path states the deficit
+    # through the decomposition and says so
+    Hd = [1.0 0.0 0.0; 0.0 1.0 0.0; 1.0 1.0 0.0]
+    bd = both(Hd)
+    @test bd.numerical_rank == 2 && !bd.numerical_observable
+    @test bd.rank_method === :decomposition
+    # a weight spread of 1e6 in the rows (sigma 1e-4 next to 1.0 scales a
+    # row by 1e4) changes neither verdict
+    Hw = copy(Hc)
+    Hw[1, :] .*= 1.0e4
+    Hw[4, :] .*= 1.0e4
+    @test both(Hw).rank_method === :pivots
+    # FD noise: a column that carries nothing but a 1e-9 entry is dark at
+    # the rank tolerance of the estimator (FD noise floor), for both rules
+    Hn = [1.0 0.0 1.0e-9; 0.0 1.0 0.0; 1.0 1.0 0.0]
+    bn = both(Hn; tol = 1.0e-6)
+    @test bn.numerical_rank == 2 && !bn.numerical_observable
+    # the fixture networks through the estimator's own path
+    fx = observability_fixture()
+    for (label, net_fx) in (("3-bus", fx.net3), ("sp_case14", fx.net14), ("link", fx.net_link), ("link with shunt", fx.net_link_shunt))
+      # the fixture nets carry no measurements; a full set from the solved
+      # state, as the other observability sets attach it
+      net_a = deepcopy(net_fx)
+      empty!(net_a.measurements)
+      append!(net_a.measurements, generateMeasurementsFromPF(net_a; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false))
+      net_b = deepcopy(net_a)
+      obs_a = with_state_estimation_config(() -> evaluate_global_observability(net_a); rank_method = :decomposition)
+      obs_b = with_state_estimation_config(() -> evaluate_global_observability(net_b); rank_method = :pivots)
+      @test (label, obs_b.numerical_rank, obs_b.numerical_observable) == (label, obs_a.numerical_rank, obs_a.numerical_observable)
+    end
+    # the large shipped case: sparse QR against the CHOLMOD pivots
+    big = abspath(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"))
+    netq = Sparlectra.createNetFromMatPowerFile(filename = big, flatstart = false, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
+    runpf!(netq, 60, 1e-8, 0)
+    msq = generateMeasurementsFromPF(netq; includeVm = true, includePinj = true, includeQinj = true, includePflow = false, includeQflow = false, noise = true, rng = Xoshiro(399))
+    empty!(netq.measurements)
+    append!(netq.measurements, msq)
+    obs_a = with_state_estimation_config(() -> evaluate_global_observability(netq); rank_method = :decomposition)
+    obs_b = with_state_estimation_config(() -> evaluate_global_observability(netq); rank_method = :pivots)
+    @test obs_b.numerical_rank == obs_a.numerical_rank
+    @test obs_b.numerical_observable == obs_a.numerical_observable
+    @test obs_b.rank_method === :pivots
+    # a deficit on the large case: eleven buses without any measurement.
+    # The raw pivot count came out two below the QR rank here, so the pivot
+    # rule hands a deficit to the decomposition and says so
+    dark = Set(50:60)
+    filter!(m -> !(hasproperty(m, :busIdx) && m.busIdx in dark), netq.measurements)
+    def_a = with_state_estimation_config(() -> evaluate_global_observability(netq); rank_method = :decomposition)
+    def_b = with_state_estimation_config(() -> evaluate_global_observability(netq); rank_method = :pivots)
+    @test !def_a.numerical_observable
+    @test def_b.numerical_rank == def_a.numerical_rank
+    @test def_b.rank_method === :decomposition
+  end)() end
+
+  return true
 end

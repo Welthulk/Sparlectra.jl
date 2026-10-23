@@ -22,9 +22,8 @@
 #          and CSV name every pair, changed line parameters count as
 #          parameter drift while switch states, set points and dispatch do not,
 #          a power electronics connection and its unit count as injection
-#          churn, a store and a path take model key and
-#          time from the headers, and a case configuration file overrides
-#          the general one.
+#          churn, and a store and a path take model key and time from the
+#          headers.
 
 using Dates
 import ZipArchives
@@ -278,17 +277,6 @@ function run_cgmes_series_tests()
     @test a.label == "snapshot" && b.label == "path"
     @test a.counts == b.counts && a.has_tp && b.has_tp
     @test length(r.series) == 1 && only(r.pairs).structural_overlap == 1.0 && only(r.pairs).injection_churn == 0.0
-  end)() end
-
-  @testset "CGMES series check: case configuration file" begin (function ()
-    mktempdir() do d
-      case = joinpath(d, "series.zip")
-      cp(files[1], case)
-      write(Sparlectra.case_config_path(case), "config_version: 1\nscope: case\ncase: series.zip\nqsts:\n  series:\n    min_structural_overlap: 1.0\n    max_gap: 45\n")
-      cfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case).config
-      @test cfg.qsts.series.min_structural_overlap == 1.0 && cfg.qsts.series.max_gap == 45.0 && cfg.qsts.series.max_injection_churn === nothing
-      @test Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "other.zip")).config.qsts.series == QstsSeriesConfig()
-    end
   end)() end
 
   # a switch closed in the SSH while the TP keeps its two sides on two TNs

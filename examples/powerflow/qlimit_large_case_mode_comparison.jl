@@ -84,16 +84,6 @@ function main(args = ARGS)
   return result
 end
 
-# SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN=1 is a test-only escape hatch: it lets
-# test/test_qlimit_large_case_comparison.jl load this file's function
-# definitions (e.g. _parse_args) without triggering the real, network/large
-# case-dependent comparison run. It has no effect on normal console/
-# interactive use — those always run main() unconditionally, exactly like
-# every other examples/*.jl program (see
-# examples/exp_transformer_tap_changer_model.jl for why no
-# `abspath(PROGRAM_FILE) == @__FILE__` guard is used here).
-if get(ENV, "SPARLECTRA_QLIMIT_LARGE_CASE_NO_MAIN", "0") != "1"
-  run_example(main)
-end
+run_example(main)
 nothing
 

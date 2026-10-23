@@ -613,20 +613,37 @@ function getEffectiveBusType(; net::Net, busName::String)::NodeType
   return getEffectiveBusType(net, busIdx)
 end
 
-# the stamping happens exactly once per
-# importer; this atomic exists for the format test that proves it and
-# costs one integer add per import
-const _NET_PARAM_STAMP_COUNT = Base.Threads.Atomic{Int}(0)
+"""
+    _apply_qlimit_net_parameters!(net, qlim::QLimitConfig) -> Net
+
+Stamp the four Q-limit switching parameters of `power_flow.qlimits` onto a
+network: `cooldown_iters`, `hysteresis_pu` (field `q_hyst_pu`),
+`reenable_v_hyst_pu` and `final_q_accept_pu`. The solver reads these four
+from the network only (active set, classic outer loop and the final Q-limit
+check), so this function is the one place where the configuration reaches
+them. Two callers: `_apply_config_net_parameters!` at import, and every
+configured solve (`_runpf_config_once!`) right before it starts, so the run
+configuration wins over the values the network was imported with.
+"""
+function _apply_qlimit_net_parameters!(net::Net, qlim::QLimitConfig)
+  net.cooldown_iters = qlim.cooldown_iters
+  net.q_hyst_pu = qlim.hysteresis_pu
+  net.reenable_v_hyst_pu = qlim.reenable_v_hyst_pu
+  # the size bound of the final Q-limit check travels with the hysteresis:
+  # both are read off the net by every enforcement mode
+  net.final_q_accept_pu = qlim.final_q_accept_pu
+  return net
+end
 
 """
     _apply_config_net_parameters!(net, pf_cfg) -> Net
 
 Stamp the solver-behaviour parameters the configuration owns onto a network:
-the Q-limit switching cooldown and hysteresis, and the flat-start flag. The
-method for a full `SparlectraConfig` also stamps the system frequency
-(`model.nominal_frequency_hz`) unless the case file stated one. Every
-construction path calls this, and no path carries its own copy of the
-assignments, because four paths setting them differently is exactly how a
+the Q-limit switching parameters (`_apply_qlimit_net_parameters!`) and the
+flat-start flag. The method for a full `SparlectraConfig` also stamps the
+system frequency (`model.nominal_frequency_hz`) unless the case file stated
+one. Every construction path calls this, and no path carries its own copy of
+the assignments, because four paths setting them differently is exactly how a
 case file came to run with hysteresis 0 whatever the configuration said.
 
 `bus_shunt_model` is NOT among them on purpose: it is consumed while the
@@ -635,23 +652,17 @@ moment) and never again, so it has to reach the constructor of the path in
 question. Setting it afterwards would change the field without changing a
 single shunt.
 
-Reach of the flat-start stamp: a CONFIGURED run overrides it anyway, because
-the solver entry passes `opt_flatstart = start.flatstart` from the run
-configuration directly (see `rectangular_network_solver.jl`), and on CGMES
-runs the `cgmes_import.start_values` rewrite wins on that route as intended.
-The stamp is what makes config-less direct solves (`runpf!(net, ...)`,
-library use, SE internals) follow the configuration that was in hand at
-import. The switching parameters and the final-check bound have no such override and are read off
-the network on every path.
+Reach of the stamps: a CONFIGURED run overrides both. The solver entry passes
+`opt_flatstart = start.flatstart` from the run configuration directly (see
+`rectangular_network_solver.jl`), and on CGMES runs the
+`cgmes_import.start_values` rewrite wins on that route as intended. The
+Q-limit switching parameters are stamped again from the run configuration
+before every configured solve. The import stamp is what makes config-less
+direct solves (`runpf!(net, ...)`, library use, SE internals) follow the
+configuration that was in hand at import.
 """
 function _apply_config_net_parameters!(net::Net, pf_cfg)
-  Base.Threads.atomic_add!(_NET_PARAM_STAMP_COUNT, 1)
-  net.cooldown_iters = pf_cfg.qlimits.cooldown_iters
-  net.q_hyst_pu = pf_cfg.qlimits.hysteresis_pu
-  net.reenable_v_hyst_pu = pf_cfg.qlimits.reenable_v_hyst_pu
-  # the size bound of the final Q-limit check travels with the hysteresis:
-  # both are read off the net by every enforcement mode
-  net.final_q_accept_pu = pf_cfg.qlimits.final_q_accept_pu
+  _apply_qlimit_net_parameters!(net, pf_cfg.qlimits)
   net.flatstart = pf_cfg.start_mode.flatstart
   return net
 end
@@ -2561,10 +2572,30 @@ function distribute_bus_generation!(net::Net, bus::Int; unit_shares::AbstractDic
   qmin   = Float64[]
   qmax   = Float64[]
 
-  for idx in gens_idx
+  # A unit with a P(U) or Q(U) characteristic runs at that characteristic
+  # at the solved voltage, as the solve takes it and as the converged
+  # solver writes it into the bus sums (_write_controlled_generation!).
+  # Its P counts with that value, a reference unit's P excepted (the slack
+  # balance stays free). Its Q is fixed at the characteristic and the other
+  # units share the rest of the bus Q, a unit that holds the voltage
+  # excepted (its Q is part of the solved bus value, like at a clamped bus).
+  # Spread over the schedules, the gap between the characteristic and the
+  # schedule landed on the units without one: a fixed 10 MVAr unit next to
+  # a Q(U) unit at sp_case118 bus 4 got 1.02 MVAr.
+  vm = _safe_vm(Float64(something(node._vm_pu, 1.0)))
+  base = net.baseMVA
+  q_fixed = falses(length(gens_idx))
+  for (k, idx) in enumerate(gens_idx)
     ps = net.prosumpsVec[idx]
-    push!(P_spec, isnothing(ps.pVal) ? 0.0 : ps.pVal)
-    push!(Q_spec, isnothing(ps.qVal) ? 0.0 : ps.qVal)
+    p_spec = isnothing(ps.pVal) ? 0.0 : ps.pVal
+    has_pu_controller(ps) && !isSlack(ps) && (p_spec = first(evaluate_controller(ps.puController, vm)) * base)
+    push!(P_spec, p_spec)
+    q_spec = isnothing(ps.qVal) ? 0.0 : ps.qVal
+    if has_qu_controller(ps) && !isRegulating(ps) && !isSlack(ps)
+      q_spec = first(evaluate_controller(ps.quController, vm)) * base
+      q_fixed[k] = true
+    end
+    push!(Q_spec, q_spec)
     push!(qmin, isnothing(ps.minQ) ? -Inf : ps.minQ)
     push!(qmax, isnothing(ps.maxQ) ? Inf : ps.maxQ)
   end
@@ -2594,7 +2625,12 @@ function distribute_bus_generation!(net::Net, bus::Int; unit_shares::AbstractDic
   end
 
   # --- Q-Verteilung mit Waterfilling ---
-  Q_alloc = _wattterfillQ(Q_target, Q_spec, qmin, qmax)
+  # units on a characteristic keep it, the others share what is left
+  Q_alloc = copy(Q_spec)
+  free_q = .!q_fixed
+  if any(free_q)
+    Q_alloc[free_q] .= _wattterfillQ(Q_target - sum(Q_spec[q_fixed]; init = 0.0), Q_spec[free_q], qmin[free_q], qmax[free_q])
+  end
 
   # Ergebnisse zurück in Prosumer
   for (pq, idx) in enumerate(gens_idx)

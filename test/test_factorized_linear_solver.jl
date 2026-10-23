@@ -15,12 +15,10 @@
 # file: test/test_factorized_linear_solver.jl
 # purpose: tests the umfpack_reuse linear-solver backend of the rectangular
 #          Newton step: UMFPACK equivalence, factorization reuse,
-#          pattern-drift guards, singular fallback, config and Web UI wiring.
-#          The former klu backend was removed in 0.9.10; the config and Web UI
-#          tests assert that "klu" is rejected. Since 0.30.1 KLU returns as
-#          the sparse LU of power mode through a package extension (loaded
-#          by `using KLU`); the last testset below runs it when KLU is
-#          loadable and says so.
+#          pattern-drift guards, singular fallback, the estimator's linear
+#          solver. KLU is the sparse LU of power mode through a package
+#          extension (loaded by `using KLU`); the last testset below runs it
+#          when KLU is loadable and says so.
 
 using Sparlectra
 const _KLU_AVAILABLE = Base.find_package("KLU") !== nothing
@@ -65,16 +63,13 @@ function run_factorized_linear_solver_tests()
     @test status_reuse.linear_solver_fallback_count == 0
     @test status_umf.linear_solver_analyze_count == 0
     @test status_umf.linear_solver_refactor_count == 0
-  end)() end
-
-  @testset "Refactorization reuse across iterations" begin (function ()
+    # one more reuse run without Q limits: with the structural
+    # (value-independent) Jacobian pattern exactly one symbolic analysis
+    # runs, everything else is numeric refactorization
     net = createTest3BusNet()
     _, erg = runpf!(net, 20, 1e-10, 0; method = :rectangular, linear_solver = :umfpack_reuse, qlimits_enabled = false)
     @test erg == 0
     status = Sparlectra.rectangular_pf_status(net)
-    @test status.linear_solver === :umfpack_reuse
-    # With the structural (value-independent) Jacobian pattern exactly one
-    # symbolic analysis runs; everything else is numeric refactorization.
     @test status.linear_solver_analyze_count == 1
     @test status.linear_solver_refactor_count >= 1
     @test status.linear_solver_fallback_count == 0
@@ -195,52 +190,6 @@ function run_factorized_linear_solver_tests()
     end
   end)() end
 
-  @testset "Configuration validation and defaults (klu rejected)" begin (function ()
-    @test Sparlectra.PowerFlowConfig(Dict{String,Any}()).linear_solver === :umfpack_reuse
-    @test powerflow_config().linear_solver === :umfpack_reuse
-    raw_reuse = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "umfpack_reuse"))
-    @test Sparlectra.PowerFlowConfig(raw_reuse).linear_solver === :umfpack_reuse
-    # the removed klu backend and arbitrary values are rejected alike
-    raw_klu = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "klu"))
-    @test_throws ArgumentError Sparlectra.PowerFlowConfig(raw_klu)
-    raw_bad = Dict{String,Any}("power_flow" => Dict{String,Any}("linear_solver" => "nonsense"))
-    @test_throws ArgumentError Sparlectra.PowerFlowConfig(raw_bad)
-    net = createTest3BusNet()
-    @test_throws ArgumentError runpf_rectangular!(net; linear_solver = :klu)
-    overrides = Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.linear_solver" => "umfpack_reuse"))
-    @test overrides["power_flow"]["linear_solver"] == "umfpack_reuse"
-    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.linear_solver" => "klu"))
-  end)() end
-
-  @testset "Web UI option spec, rendering, and sidecar round-trip" begin (function ()
-    spec = SparlectraApp._webui_option_spec("power_flow_linear_solver")
-    @test spec.config_key == "power_flow.linear_solver"
-    @test spec.default == "umfpack_reuse"
-    @test spec.control === :select
-    @test spec.section === :expert
-    @test spec.save_in_case_sidecar
-    @test Tuple(String(v) for v in spec.allowed_values) == ("umfpack", "umfpack_reuse")
-    @test "power_flow_linear_solver" in SparlectraApp._WEBUI_CASE_PROFILE_FIELDS
-    @test SparlectraApp._webui_normalize_case_profile_form_value("power_flow_linear_solver", "umfpack_reuse") == "umfpack_reuse"
-    @test_throws ArgumentError SparlectraApp._webui_normalize_case_profile_form_value("power_flow_linear_solver", "klu")
-
-    # the expert options render on the Settings page
-    form_html = SparlectraApp.render_settings_page()
-    expert_parts = split(form_html, "<summary>Advanced options</summary>")
-    @test length(expert_parts) == 2
-    expert_html = expert_parts[2]
-    @test occursin("name=\"power_flow_linear_solver\"", expert_html)
-    @test occursin("<option value=\"umfpack_reuse\" selected>", expert_html)
-    @test occursin("<option value=\"umfpack\"", expert_html)
-    # klu is no value of power_flow.linear_solver (it is one of the
-    # power-mode LU select since 0.30.2, so only the linear-solver select
-    # is searched)
-    linear_select = match(r"<select id=\"power_flow_linear_solver\"[^>]*>.*?</select>"s, expert_html)
-    @test linear_select !== nothing && !occursin("<option value=\"klu\"", linear_select.match)
-    linear_topic = SparlectraApp.resolve_webui_help_topic("power_flow.linear_solver")
-    @test linear_topic !== nothing && !isempty(linear_topic.hint)
-    @test occursin("href=\"$(SparlectraApp.webui_help_page_url("power_flow.linear_solver"))\"", form_html)
-  end)() end
   @testset "power mode: KLU extension and power_mode_lu" begin (function ()
     path = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
     state(n) = [b._vm_pu * cis(deg2rad(b._va_deg)) for b in n.nodeVec]

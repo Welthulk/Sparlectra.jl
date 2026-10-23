@@ -67,8 +67,6 @@ function run_api_fast_tests()
       presolver_transport = SparlectraApp._api_result(run_id = "synthetic-presolver", status = :failed, success = false, reason = "invalid_case", message = "missing case", casefile = joinpath(tmpdir, "missing.m"), config_file = template, output_dir = joinpath(tmpdir, "missing"), logfile = nothing, result_file = nothing)
       @test !haskey(SparlectraApp.to_dict(presolver_transport), "solver_elapsed_s")
 
-      @test Sparlectra.MatpowerIO.matpower_dcline_diagnostics((; dcline = [1 2 1 10 9 0 0 1 1 0 100]))["matpower_dcline_active_count"] == 1
-
       mkpath(joinpath(tmpdir, "synthetic-failure"))
       failed_transport = SparlectraApp._api_failure("execution_error", "numerical failure"; casefile = casefile, config_file = template, output_dir = joinpath(tmpdir, "synthetic-failure"), logfile = joinpath(tmpdir, "synthetic-failure", "run.log"), result_file = joinpath(tmpdir, "synthetic-failure", "result.json"), metadata = Dict("solver_elapsed_s" => 0.001))
       @test SparlectraApp.to_dict(failed_transport)["solver_elapsed_s"] > 0.0

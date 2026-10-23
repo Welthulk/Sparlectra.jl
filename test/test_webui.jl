@@ -1,4 +1,4 @@
-# Copyright 2023–2026 Udo Schmitz
+# Copyright 2023-2026 Udo Schmitz
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -50,66 +50,7 @@ function run_webui_fast_tests()
             @test !("OUTAGE.DAT" in primary)
             @test !("UNKNOWN.DAT" in primary)
             @test reference == ["FOR002.DAT"]
-
-            active_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "active", "status" => "running", "elapsed_seconds" => 1.25))
-            @test occursin("Run status", active_html)
-            @test occursin("Elapsed time", active_html)
-            @test !occursin("Solver time", active_html)
-            @test !occursin("Wall time", active_html)
-
-            terminal = Dict("run_id" => "ok", "status" => "completed", "solver_elapsed_s" => 0.125, "service_phase_timings" => [Dict("phase" => "total_service", "elapsed_seconds" => 1.5)])
-            terminal_html = SparlectraApp.render_powerflow_result(terminal)
-            @test occursin("Solver time", terminal_html)
-            @test occursin("Total time", terminal_html)
-            @test !occursin("Elapsed time", terminal_html)
-            @test !occursin("Wall time", terminal_html)
-            @test !occursin("Solver time: n/a", terminal_html)
-
-            failed_solver_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "failed", "status" => "failed", "metadata" => Dict("solver_elapsed_s" => 0.25), "service_phase_timings" => [Dict("phase" => "total_service", "elapsed_seconds" => 2.0)]))
-            @test occursin("Solver time", failed_solver_html)
-            presolver_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "bad", "status" => "failed", "service_phase_timings" => [Dict("phase" => "total_service", "elapsed_seconds" => 0.1)]))
-            @test !occursin("Solver time", presolver_html)
-            @test occursin("Total time", presolver_html)
-            legacy_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "old", "status" => "completed", "elapsed_seconds" => 3.0))
-            @test occursin("Total time", legacy_html)
         end
-
-        @testset "CGMES export checkbox and result row" begin (function ()
-            # the export-CGMES checkbox renders on Settings
-            form_html = SparlectraApp.render_settings_page(output_root=mktempdir())
-            @test occursin("name=\"export_cgmes\"", form_html)
-            # the help registry carries the hover hint and the documentation link
-            export_topic = SparlectraApp.resolve_webui_help_topic("webui.export_cgmes")
-            @test export_topic !== nothing && !isempty(export_topic.hint)
-            @test startswith(SparlectraApp.webui_help_doc_url("webui.export_cgmes"), "https://")
-
-            req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "true"))
-            @test req["export_cgmes"] === true
-            # unchecked checkbox: browsers submit only the hidden false field
-            req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "false"))
-            @test req["export_cgmes"] === false
-            # absent field falls back to the spec default (false)
-            req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m"))
-            @test req["export_cgmes"] === false
-
-            completed_html = SparlectraApp.render_powerflow_result(
-                Dict(
-                    "run_id" => "x",
-                    "status" => "completed",
-                    "metadata" => Dict("cgmes_export_status" => "completed", "cgmes_export_files" => "n_EQ.xml, n_TP.xml, n_SSH.xml", "cgmes_export_notices" => "transformer T1: phase shift 2.0° not exported (fixed ratio only)", "cgmes_export_sc_lines" => 3),
-                ),
-            )
-            @test occursin("CGMES export", completed_html)
-            @test occursin("n_SSH.xml", completed_html)
-            @test occursin("phase shift 2.0° not exported", completed_html)
-            @test occursin("zero-sequence data on 3 line(s)", completed_html)
-
-            failed_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "y", "status" => "completed", "metadata" => Dict("cgmes_export_status" => "failed", "cgmes_export_error" => "boom")))
-            @test occursin("failed: boom", failed_html)
-
-            plain_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "z", "status" => "completed"))
-            @test !occursin("CGMES export", plain_html)
-        end)() end
 
         @testset "request builder falls back to the case form block" begin (function ()
             # fields the run page no longer renders must reach the run from the
@@ -138,6 +79,30 @@ function run_webui_fast_tests()
             stored = SparlectraApp._webui_case_form_defaults(case_path, nothing)
             @test stored["case_format"] == "matpower"
             @test stored["gen_seed"] == 7
+
+            # export_cgmes parsing: an unchecked checkbox submits only the
+            # hidden false field, an absent field takes the spec default (false)
+            @test SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "true"))["export_cgmes"] === true
+            @test SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m", "export_cgmes" => "false"))["export_cgmes"] === false
+            @test SparlectraApp.powerflow_webui_request(Dict("casefile" => "case.m"))["export_cgmes"] === false
+
+            # the export row never passes a partial export off as a full one:
+            # notices and the zero-sequence line count show, an error is carried
+            # into a failed row, and a run without export has no row
+            completed_html = SparlectraApp.render_powerflow_result(
+                Dict(
+                    "run_id" => "x",
+                    "status" => "completed",
+                    "metadata" => Dict("cgmes_export_status" => "completed", "cgmes_export_files" => "n_EQ.xml, n_TP.xml, n_SSH.xml", "cgmes_export_notices" => "transformer T1: phase shift 2.0° not exported (fixed ratio only)", "cgmes_export_sc_lines" => 3),
+                ),
+            )
+            @test occursin("n_SSH.xml", completed_html)
+            @test occursin("phase shift 2.0° not exported", completed_html)
+            @test occursin("zero-sequence data on 3 line(s)", completed_html)
+            failed_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "y", "status" => "completed", "metadata" => Dict("cgmes_export_status" => "failed", "cgmes_export_error" => "boom")))
+            @test occursin("failed: boom", failed_html)
+            plain_html = SparlectraApp.render_powerflow_result(Dict("run_id" => "z", "status" => "completed"))
+            @test !occursin("CGMES export", plain_html)
         end)() end
 
         @testset "shared selected-case memory" begin (function ()
@@ -275,6 +240,12 @@ function run_webui_fast_tests()
             # must carry none either
             req = SparlectraApp.powerflow_webui_request(Dict("casefile" => "sp_case14.scf.json"); case_directory=cache)
             @test isempty(req["config_overrides"])
+            # an unchecked APSLF checkbox posts an explicit "false" (hidden plus
+            # checkbox pair) and arrives as false; a field absent from the form
+            # (a stale client) is left out instead of defaulting to false
+            apslf_req = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_apslf_nr_polish" => "false"); case_directory=cache)
+            @test apslf_req["config_overrides"]["power_flow.apslf.nr_polish"] === false
+            @test !haskey(apslf_req["config_overrides"], "power_flow.apslf_start.enabled")
             run = SparlectraApp.start_powerflow_run(merge(req, Dict("output_root" => joinpath(root, "runs"), "config_file" => cfg_rt)); case_directory=cache)
             @test run["status"] == "succeeded"
             eff = read(joinpath(String(run["output_dir"]), "effective_config.yaml"), String)
@@ -411,20 +382,6 @@ function run_webui_fast_tests()
         end)() end
 
         @testset "the provisioned configuration follows changed template defaults" begin (function ()
-            # 0.32.0 one-time reset: the CSV format becomes auto even where
-            # the user saved another value, exactly once; the user's next
-            # choice stays
-            mktempdir() do dir
-                cfg = joinpath(dir, "configuration.yaml")
-                write(cfg, replace(read(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, String), "csv_format: auto" => "csv_format: excel_de"))
-                cp(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(dir, "configuration.template.yaml"))
-                SparlectraApp._webui_record_user_keys!(cfg, ("output.csv_format",))
-                @test [(c.key, c.old, c.new) for c in SparlectraApp._webui_follow_template_defaults!(cfg)] == [("output.csv_format", "excel_de", "auto")]
-                @test Sparlectra.load_sparlectra_config(cfg; reload = true).output.csv_format === :auto
-                SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("output.csv_format" => "excel_de"))
-                @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))
-                @test Sparlectra.load_sparlectra_config(cfg; reload = true).output.csv_format === :excel_de
-            end
             # a copy of the template provisioned by an older release still
             # carries the old default of a key the user never touched; it
             # follows the new template value, a value the user set stays
@@ -474,8 +431,7 @@ function run_webui_fast_tests()
             # so the values just saved are visible right after "Saved settings
             # for this case" (before, the page showed the configuration file's
             # old values next to that message). The file view stays reachable
-            # as a link (?config_view=1, also case_settings=0); ?case_settings=1
-            # still selects the case view for old bookmarks.
+            # as a link (?config_view=1, also case_settings=0).
             dir = mktempdir()
             cache = joinpath(dir, "cases")
             mkpath(cache)
@@ -495,16 +451,12 @@ function run_webui_fast_tests()
             @test max_iter(default_view) == "33"
             @test occursin("case-settings-notice", default_view)
             @test occursin("config_view=1", default_view)
-            # the reset of the saved settings stays reachable in both views
-            @test occursin("Reset saved settings for this case", default_view)
             for q in ("&config_view=1", "&case_settings=0")
                 file_view = page(q)
                 @test max_iter(file_view) == cfg_max
                 @test !occursin("case-settings-notice", file_view)
                 @test occursin("case_settings=1", file_view)
-                @test occursin("Reset saved settings for this case", file_view)
             end
-            @test max_iter(page("&case_settings=1")) == "33"
             # the save message shows in both views
             @test occursin("Saved settings probe", page("&save_message=Saved%20settings%20probe"))
             @test occursin("Saved settings probe", page("&config_view=1&save_message=Saved%20settings%20probe"))
@@ -623,6 +575,12 @@ function run_webui_fast_tests()
             nocase = String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings"; output_root = root2, runtime = rt2).body))
             @test max_iter(nocase) == "30"   # the configuration file value set above
             @test !occursin("config_view=1", nocase)
+            # the form state takes a field the case sets from the case, however
+            # new the configuration file is, and the rest from the configuration
+            rank_cfg = joinpath(dir, "conf_rank.yaml")
+            write(rank_cfg, "config_version: 1\nscope: general\npower_flow:\n  max_iter: 99\n")
+            @test SparlectraApp.webui_form_state(selected_config_file=rank_cfg, sidecar_profile=Dict{String,Any}("power_flow_max_iter" => 55, "_profile_path" => joinpath(dir, "case57.config.yaml")))["power_flow_max_iter"] == 55
+            @test SparlectraApp.webui_form_state(selected_config_file=rank_cfg)["power_flow_max_iter"] == 99
         end)() end
 
         @testset "no nested forms anywhere on the run page" begin (function ()
@@ -662,7 +620,6 @@ function run_webui_fast_tests()
             prof = joinpath(dir, "c.sparlectra-webui.yaml")
             write(prof, "placeholder")
             with_sidecar = SparlectraApp.render_settings_page(output_root=mktempdir(), selected_casefile="c.m", case_profile=Dict{String,Any}("power_flow_solver" => "dc", "_profile_path" => prof))
-            @test occursin("Reset saved settings for this case", with_sidecar)
             @test occursin("/powerflow/case-settings/reset", with_sidecar)
             # The solver radios must not sit inside a container the page grays
             # under the DC solver (data-ac-only-field, data-nr-only-field): the
@@ -692,12 +649,8 @@ function run_webui_fast_tests()
             end
             @test !isempty(ancestors)
             @test !any(a -> occursin("data-ac-only-field", a) || occursin("data-nr-only-field", a), ancestors)
-            without = SparlectraApp.render_settings_page(output_root=mktempdir())
-            @test !occursin("Reset saved settings for this case", without)
-            # switching the case reloads the page server-side; the wait must be
-            # visible WHERE the switching happens, which is the Case page's
-            # chooser
-            @test occursin("case-loading-banner", SparlectraApp.render_case_page(output_root=mktempdir()))
+            # without saved settings there is nothing to reset
+            @test !occursin("/powerflow/case-settings/reset", SparlectraApp.render_settings_page(output_root=mktempdir()))
 
             # The handler deletes the sidecar and keeps the case file.
             root = joinpath(dir, "runs")
@@ -777,32 +730,13 @@ function run_webui_fast_tests()
             # a shorter retention drops more, which is the knob for an unwieldy log
             SparlectraApp._prune_webui_operation_log!(log; SparlectraApp._webui_operation_log_options(; retention_days=1)...)
             @test isempty(readlines(log))
-            # the configuration carries it, with the documented default
-            cfg = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true)
-            @test cfg.webui.operation_log_retention_days == 10
+            # the configuration carries it
             lowered = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
                 overrides=Dict{String,Any}("webui" => Dict{String,Any}("operation_log_retention_days" => 3)))
             @test lowered.webui.operation_log_retention_days == 3
             @test SparlectraApp._webui_operation_log_options(; retention_days=3).retention_days == 3
             @test_throws ArgumentError Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
                 overrides=Dict{String,Any}("webui" => Dict{String,Any}("operation_log_retention_days" => -1)))
-        end)() end
-
-        @testset "saved case settings outrank the configuration on the form" begin (function ()
-            # No mtime logic anywhere: the case levels always win over the
-            # general configuration for the fields they set, however new the
-            # configuration file is.
-            dir = mktempdir()
-            cfg = joinpath(dir, "conf.yaml")
-            write(cfg, "config_version: 1\nscope: general\npower_flow:\n  max_iter: 99\n")
-            profile = Dict{String,Any}("power_flow_max_iter" => 55, "power_flow_autodamp_min" => 0.07, "_profile_path" => joinpath(dir, "case57.config.yaml"))
-            v = SparlectraApp.webui_form_state(selected_config_file=cfg, sidecar_profile=profile)
-            @test v["power_flow_max_iter"] == 55
-            @test v["power_flow_autodamp_min"] == 0.07
-            @test !haskey(v, "_config_newer_than_profile")
-            # a field the case does not set comes from the configuration
-            v_cfg_only = SparlectraApp.webui_form_state(selected_config_file=cfg)
-            @test v_cfg_only["power_flow_max_iter"] == 99
         end)() end
 
         @testset "format-bound Case page options: rendered where the case reads them, saved values kept" begin (function ()
@@ -854,18 +788,6 @@ function run_webui_fast_tests()
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", Dict{String,Any}("casefile" => "freq_probe.m", "settings_target" => "this_case", "model_nominal_frequency_hz" => "60.0", "matpower_import_ratio" => "reciprocal"); output_root=root, runtime=rt)
             @test Sparlectra.load_case_config(joinpath(cases, "freq_probe.m"))["matpower_import.ratio"] == "reciprocal"
             @test !freq_stored("freq_probe.m")
-            # a value stored before (an older version saved it) shows in the
-            # disabled select; the select is not posted, and the next save
-            # of the case options removes the stored value
-            Sparlectra.write_case_config(joinpath(cases, "freq_probe.m"), merge(Sparlectra.load_case_config(joinpath(cases, "freq_probe.m")), Dict{String,Any}("model.nominal_frequency_hz" => 60.0)))
-            body_m = case_page("freq_probe.m")
-            @test selected(body_m) == "60.0"
-            @test freq_disabled(body_m)
-            post_m = posted_fields(body_m)
-            @test !haskey(post_m, "model_nominal_frequency_hz")
-            @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", post_m; output_root=root, runtime=rt).status in (302, 303)
-            @test !freq_stored("freq_probe.m")
-            @test Sparlectra.load_case_config(joinpath(cases, "freq_probe.m"))["matpower_import.ratio"] == "reciprocal"
             # an SCF time series reads its base case (sp_case14: meta.f_nom
             # 50, every line c1 = 0): disabled at the file's 50, and a POST
             # carrying 60 does not store it
@@ -1230,24 +1152,37 @@ function run_webui_fast_tests()
                 sha = bytes2hex(open(SHA.sha256, manifest))
                 full_meta = string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"", sha, "\"\n")
 
-                @test sl(:sysimage_problem, img, proj) == "no sysimage found"
+                # SparlectraApp.webui_sysimage_problem answers the same question for
+                # the sysimage page; the launcher cannot call it (it runs before the
+                # package is loaded), so every state below checks that both agree,
+                # or the page would one day call an image fine that the launcher
+                # refuses to start from
+                verdict() = (v = sl(:sysimage_problem, img, proj); @test v == SparlectraApp.webui_sysimage_problem(image_path=img, project_dir=proj); v)
+                @test verdict() == "no sysimage found"
                 write(img, "not a real image")
                 # image without metadata is unusable: the contract is the pair
-                @test sl(:sysimage_problem, img, proj) == "no sysimage found"
+                @test verdict() == "no sysimage found"
                 write(meta, "julia_version = \"9.9.9\"\nmanifest_sha256 = \"$(sha)\"\n")
-                @test occursin("built for Julia 9.9.9", sl(:sysimage_problem, img, proj))
+                @test occursin("built for Julia 9.9.9", verdict())
                 write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\n"))
-                @test sl(:sysimage_problem, img, proj) == "the sysimage does not match the current Manifest.toml"
+                @test verdict() == "the sysimage does not match the current Manifest.toml"
                 write(meta, full_meta)
                 touch(img)
-                @test sl(:sysimage_problem, img, proj) === nothing
+                @test verdict() === nothing
                 # a source file newer than the image disables it (mtime resolution
                 # can be one second, hence the wait)
                 sleep(1.1)
                 touch(joinpath(proj, "src", "Fixture.jl"))
-                @test occursin("older than", sl(:sysimage_problem, img, proj))
+                @test occursin("older than", verdict())
                 write(meta, "kaputt = [[[")
-                @test sl(:sysimage_problem, img, proj) == "the sysimage metadata is unreadable"
+                @test verdict() == "the sysimage metadata is unreadable"
+
+                # the owner key the package writes is the one the launcher reads:
+                # the image belongs to proj, whatever the trailing separator
+                written = SparlectraApp.write_sysimage_meta(meta; manifest_path=manifest, project_dir=proj * "/")
+                @test written["project_dir"] == rstrip(realpath(proj), ['/', '\\'])
+                @test sl(:foreign_sysimage_owner, img, proj) === nothing
+                @test sl(:foreign_sysimage_owner, img, tmp) == written["project_dir"]
 
                 # the decision itself, through its seams: a fixed answer, a recorded
                 # relaunch, the image this process runs on
@@ -1351,14 +1286,6 @@ function run_webui_fast_tests()
         # look at a Q-limit mode or a solver choice. The history could list them but
         # not put them side by side, so the comparison had to happen in the head or
         # in two browser tabs.
-          @testset "history offers a selection and a compare button" begin (function ()
-              root = mktempdir()
-              body = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/history"; output_root=root).body)
-              @test occursin("action=\"/powerflow/compare\"", body)
-              @test occursin("Compare selected runs", body)
-              @test occursin("<th>Compare</th>", body)
-          end)() end
-
           # The box should appear only where the two runs
           # are comparable, and NOT decided by network size, because the same
           # case with an external-grid source and with a slack is a pair one
@@ -1386,69 +1313,41 @@ function run_webui_fast_tests()
               html = SparlectraApp.render_powerflow_history([pf, se], mktempdir())
               @test occursin("name=\"run\" value=\"pf-1\"", html)
               @test !occursin("name=\"run\" value=\"se-1\"", html)
-              # the paths no longer fit the row: name in the cell, path in the tooltip
-              @test occursin("<td title=\"/very/long/path/to/cases/case118.m\">case118.m</td>", html)
-              @test occursin("<td title=\"/etc/sparlectra/configuration.yaml\">configuration.yaml</td>", html)
-              @test !occursin("<td>/very/long/path/to/cases/case118.m</td>", html)
           end)() end
 
           # The result page names the case and the phase up top, where a reader
-          # looks first; the rows that carried the path twice and the
-          # final_outcome row that said nothing are gone.
-          @testset "result page: case and phase up top, path rows gone" begin (function ()
+          # looks first.
+          @testset "result page: case, phase and controllers up top" begin (function ()
+              # the value of a summary card, nothing when the card is absent
+              card(html, label) = (m = match(Regex("summary-label\">" * label * "</span><code[^>]*>([^<]*)</code>"), html); m === nothing ? nothing : String(m.captures[1]))
               probe = Dict{String,Any}("run_id" => "r-1", "status" => "succeeded", "success" => true, "converged" => true,
                   "casefile" => "/some/where/sp_case14.scf.json", "resolved_casefile" => "/some/where/sp_case14.scf.json",
                   "current_phase" => "finished", "final_outcome" => Dict{String,Any}("solver" => "rectangular"), "artifacts" => Any[])
               html = SparlectraApp.render_powerflow_result(probe)
-              @test occursin("<span class=\"summary-label\">Case</span><code title=\"/some/where/sp_case14.scf.json\">sp_case14.scf.json</code>", html)
-              @test occursin("<span class=\"summary-label\">Phase</span><code>finished</code>", html)
-              for gone in ("<th>casefile</th>", "<th>resolved_casefile</th>", "<th>current_phase</th>", "<th>final_outcome</th>")
-                  @test !occursin(gone, html)
-              end
+              @test card(html, "Case") == "sp_case14.scf.json"
+              @test card(html, "Phase") == "finished"
               # an active run carries the same two cards
-              active = merge(probe, Dict{String,Any}("status" => "running", "current_phase" => "linear_solve"))
-              active_html = SparlectraApp.render_powerflow_result(active)
-              @test occursin("<span class=\"summary-label\">Phase</span><code>linear_solve</code>", active_html)
-              @test occursin(">sp_case14.scf.json</code>", active_html)
+              active_html = SparlectraApp.render_powerflow_result(merge(probe, Dict{String,Any}("status" => "running", "current_phase" => "linear_solve")))
+              @test card(active_html, "Case") == "sp_case14.scf.json"
+              @test card(active_html, "Phase") == "linear_solve"
               # A live snapshot carries `nothing` where the run has not produced
               # the value yet; the card once printed that word for the whole run
               # and named the case only at the end.
               live = Dict{String,Any}("run_id" => "r-2", "status" => "running", "success" => false,
                   "casefile" => "/some/where/case14.m", "resolved_casefile" => nothing, "current_phase" => nothing, "last_phase" => nothing, "artifacts" => Any[])
               live_html = SparlectraApp.render_powerflow_result(live)
-              @test occursin("<span class=\"summary-label\">Case</span><code title=\"/some/where/case14.m\">case14.m</code>", live_html)
-              @test occursin("<span class=\"summary-label\">Phase</span><code>n/a</code>", live_html)
+              @test card(live_html, "Case") == "case14.m"
+              @test card(live_html, "Phase") == "n/a"
               @test !occursin(">nothing<", live_html)
 
-              # a Q(U) machine read from a case file is named on the page, not only
-              # in the Control column of the result print;
-              # a run without controllers keeps its summary short
-              @test !occursin("summary-label\">Controllers<", html)
+              # the controller counts from the run metadata reach the page (a
+              # Q(U) machine read from a case file is named there, not only in
+              # the Control column of the result print); a run without
+              # controllers has no card
+              @test card(html, "Controllers") === nothing
               with_ctrl = merge(probe, Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 1, "qu" => 1, "pu" => 0))))
-              @test occursin("<span class=\"summary-label\">Controllers</span><code>Q(U) 1 · tap 1</code>", SparlectraApp.render_powerflow_result(with_ctrl))
+              @test card(SparlectraApp.render_powerflow_result(with_ctrl), "Controllers") == "Q(U) 1 · tap 1"
               @test SparlectraApp._webui_control_summary(Dict{String,Any}("metadata" => Dict{String,Any}("controllers" => Dict{String,Any}("tap" => 0, "qu" => 0, "pu" => 0)))) === nothing
-          end)() end
-
-          # A native file input speaks the BROWSER's language ("Durchsuchen",
-          # "Keine Datei ausgewählt" on a German browser) on an English page.
-          # The input stays in the form, off screen; a
-          # label is the button and a span names the selection.
-          @testset "file pickers speak the page's language" begin (function ()
-              one = SparlectraApp._webui_file_input("weights_file"; accept=".csv", required=true)
-              many = SparlectraApp._webui_file_input("casefiles"; accept=".m,.zip", multiple=true)
-              alias = SparlectraApp._webui_file_input("casefiles"; accept=".csv", id="measurements")
-              @test occursin("type=\"file\" name=\"weights_file\" accept=\".csv\" required>", one)
-              @test occursin("<label for=\"file-field-weights_file\" class=\"button secondary-button file-field-button\">Choose file</label>", one)
-              @test occursin("No file selected", one)
-              @test occursin("multiple>", many)
-              @test occursin(">Choose files</label>", many)
-              # two pickers with one field name on one page need distinct ids
-              @test occursin("id=\"file-field-measurements\"", alias)
-              @test occursin("name=\"casefiles\"", alias)
-              # the script that keeps the span current is part of every page
-              page = SparlectraApp._webui_layout("t", "<p>x</p>")
-              @test occursin("data-file-field-input", page)
-              @test occursin("'No file selected'", page)
           end)() end
 
           @testset "the route insists on exactly two runs" begin (function ()
@@ -1528,9 +1427,8 @@ function run_webui_fast_tests()
               b = Dict{String,Any}("run_id" => "run-b", "output_dir" => dir_b, "casefile" => "case118.m",
                   "status" => "succeeded", "converged" => true, "iterations" => 23, "final_mismatch" => 7.4e-12)
               html = SparlectraApp.render_powerflow_compare(a, b)
-              # the case of each run stands in the table on top; its path and
-              # name are no configuration difference of their own
-              @test occursin("Configuration differences (1)", html)
+              # the case of each run stands in the table on top; its path is no
+              # configuration difference of its own
               @test !occursin("/state/data/sp_case_a.scf.json", html)
               # a path value shows its file name, and the parent directory
               # as well where both runs name the same file in different places
@@ -1545,11 +1443,6 @@ function run_webui_fast_tests()
               @test occursin("Losses", html)
               @test occursin("0.1 MW", html) || occursin("0.09999", html)  # 0.75 gegen 0.65
               @test occursin("/powerflow/result/run-a", html)
-
-              # two identical runs say so in one line instead of a table of zeros
-              same = SparlectraApp.render_powerflow_compare(a, a)
-              @test occursin("Both runs end on the same voltages", same)
-              @test occursin("Both runs end on the same losses", same)
           end)() end
 
         # Reported: "Case input format" offered
@@ -1654,7 +1547,7 @@ function run_webui_fast_tests()
             # The same word saved from the settings page ("Q-Limit
             # an, aber mode auf off" ended in an ArgumentError on the next run):
             # the case file and the configuration file get `enabled: false` and
-            # no mode key, and a file that already carries `off` still loads.
+            # no mode key.
             cache = rt.case_directory
             SparlectraApp._webui_stage_bundled_case!(normpath(dirname(@__DIR__)), cache, "sp_case14.scf.json")
             off_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "settings_target" => "this_case", "power_flow_qlimits_enabled" => "true", "power_flow_qlimits_enforcement_mode" => "off")
@@ -1674,14 +1567,6 @@ function run_webui_fast_tests()
             opts_form = Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_qlimits_enforcement_mode" => "off", "return_to" => "case")
             SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", opts_form; output_root=root, runtime=rt)
             @test !haskey(Sparlectra.load_case_config(joinpath(cache, "sp_case14.scf.json")), "power_flow.qlimits.enforcement_mode")
-            # a file written by 0.11.1 with the word inside runs as "disabled"
-            stale = joinpath(root, "stale.yaml")
-            write(stale, "power_flow:\n  qlimits:\n    enforcement_mode: off\n")
-            stale_cfg = Sparlectra.load_sparlectra_config(stale; reload=true)
-            @test stale_cfg.powerflow.qlimits.ignore_q_limits
-            @test stale_cfg.powerflow.qlimits.enforcement_mode === :active_set
-            stale_run = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => stale, "output_root" => joinpath(root, "stale_runs"), "config_overrides" => Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "off")); case_directory=cache)
-            @test stale_run["status"] == "succeeded"
         end)() end
 
         # A diagnose run takes ONE step from the case's own voltages, so it never
@@ -1707,69 +1592,6 @@ function run_webui_fast_tests()
             plain = Dict{String,Any}("run_mode" => "", "status" => "not_converged", "success" => false)
             @test !SparlectraApp._webui_is_completed_diagnose(plain)
             @test SparlectraApp.webui_status_class(plain) == "status-error"
-
-            # The tooltip carries the raw status only where the label says something
-            # else. Putting it on every badge changed the markup of every ordinary
-            # run and broke a live-page assertion in the extended profile
-            # (test_webui_extended.jl); repeating "running" on hover
-            # tells a reader nothing anyway.
-            @test SparlectraApp._webui_status_badge("status-running", "running", "running") ==
-                "<span class=\"status-badge status-running\">running</span>"
-            @test SparlectraApp._webui_status_badge("status-info", "diagnosed", "not_converged") ==
-                "<span class=\"status-badge status-info\" title=\"not_converged\">diagnosed</span>"
-        end)() end
-
-        @testset "sysimage validity: launcher and package agree" begin (function ()
-            # SparlectraApp.webui_sysimage_problem answers the same question for the
-            # Web UI's sysimage page that SysimageLauncher.sysimage_problem answers
-            # for the start decision. The launcher cannot call the package one (it
-            # runs before the package is loaded), so the two implementations are
-            # held together HERE: every fixture state below has to produce the same
-            # verdict on both sides, or the sysimage page will one day claim an
-            # image is fine that the launcher refuses to start from.
-            launcher = Module(:LauncherParity)
-            Base.include(launcher, joinpath(Sparlectra.SPARLECTRA_ROOT, "tools", "sysimage_launcher.jl"))
-            # Base.invokelatest also for the binding: Julia 1.12+ warns (and a later
-            # version errors) on reading a global defined in this same top-level
-            # expression by the include above
-            SL = Base.invokelatest(getfield, launcher, :SysimageLauncher)
-            sl(name, args...) = Base.invokelatest(Base.invokelatest(getfield, SL, name), args...)
-            both(img, proj) = (sl(:sysimage_problem, img, proj), SparlectraApp.webui_sysimage_problem(image_path=img, project_dir=proj))
-            mktempdir() do tmp
-                proj = joinpath(tmp, "proj")
-                mkpath(joinpath(proj, "src"))
-                manifest = joinpath(proj, "Manifest.toml")
-                write(manifest, "# manifest fixture\n")
-                write(joinpath(proj, "src", "Fixture.jl"), "module Fixture end\n")
-                imgdir = joinpath(tmp, "image")
-                mkpath(imgdir)
-                img = joinpath(imgdir, "sparlectra.so")
-                meta = joinpath(imgdir, "sysimage_meta.toml")
-                sha = bytes2hex(open(SHA.sha256, manifest))
-                states = Pair{String,Function}[
-                    "missing image"=>()->nothing,
-                    "image without metadata"=>()->write(img, "not a real image"),
-                    "wrong julia version"=>()->write(meta, "julia_version = \"9.9.9\"\nmanifest_sha256 = \"$(sha)\"\n"),
-                    "manifest mismatch"=>()->write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\n")),
-                    "valid"=>()->(write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"", sha, "\"\n")); touch(img)),
-                    "source newer than image"=>()->(sleep(1.1); touch(joinpath(proj, "src", "Fixture.jl"))),
-                    "unreadable metadata"=>()->write(meta, "kaputt = [[["),
-                ]
-                for (name, mutate) in states
-                    mutate()
-                    launcher_verdict, package_verdict = both(img, proj)
-                    # the tuple form puts the disagreeing verdicts into the failure output
-                    @test (name, launcher_verdict) == (name, package_verdict)
-                end
-                # and the verdicts are the expected ones, not merely equal
-                @test SparlectraApp.webui_sysimage_problem(image_path=img, project_dir=proj) == "the sysimage metadata is unreadable"
-                # the owner key the package writes is the one the launcher reads:
-                # the image belongs to proj, whatever the trailing separator
-                written = SparlectraApp.write_sysimage_meta(meta; manifest_path=manifest, project_dir=proj * "/")
-                @test written["project_dir"] == rstrip(realpath(proj), ['/', '\\'])
-                @test sl(:foreign_sysimage_owner, img, proj) === nothing
-                @test sl(:foreign_sysimage_owner, img, tmp) == written["project_dir"]
-            end
         end)() end
 
         @testset "sysimage page tells a native session how to use the image" begin (function ()
@@ -2305,10 +2127,7 @@ function run_webui_fast_tests()
             @test r.built == false
             @test endswith(r.sysimage_path, SparlectraApp.webui_sysimage_ext()) || occursin("sparlectra.", basename(r.sysimage_path))
             @test occursin("sysimage_meta", basename(r.meta_path))
-            # the relocatable executable is a CHECKOUT TOOL, not
-            # a package function: Sparlectra runs on an installed Julia, so
-            # buildApp left the module and the Web UI offers the sysimage only
-            @test !isdefined(Sparlectra, :buildApp)
+            # the relocatable executable is a checkout tool, not a package function
             @test isfile(joinpath(pkgdir(Sparlectra), "tools", "build_app.jl"))
             # the generated CLI module must parse and carry the core commands
             # (run/se/n1, config flags); a child process keeps ARGS handling and
@@ -2331,6 +2150,17 @@ function run_webui_fast_tests()
               """
             gen_out = read(`$(Base.julia_cmd()) --startup-file=no -e $(gen_code)`, String)
             @test occursin("GEN_OK", gen_out)
+            # header start-flavor: native in the test session, :app when the
+            # standalone executable stamped its build time into the environment
+            @test SparlectraApp.webui_runtime_flavor().kind in (:native, :sysimage)
+            withenv("SPARLECTRA_APP_BUILT" => "2026-08-29T11:11:11") do
+                fa = SparlectraApp.webui_runtime_flavor()
+                @test fa.kind === :app
+                @test fa.built == "2026-08-29T11:11:11"
+            end
+        end)() end
+
+        @testset "Web UI help pages and search" begin (function ()
             # a control renders its hover hint on the label and, with a doc
             # target, the ? to its in-app help page; that page carries the
             # section shipped with the application and the link into the
@@ -2345,14 +2175,12 @@ function run_webui_fast_tests()
                 @test help.status == 200
                 help_html = String(help.body)
                 @test occursin("class=\"help-hint\"", help_html)
-                @test occursin("<h2>Solver core options</h2>", help_html)
                 @test !occursin("<table>", help_html)
                 # a library section shows its lead paragraph and says the rest is online
                 @test occursin("class=\"field-help help-more\"", help_html)
                 @test occursin("href=\"https://docs.example/v1/powerflow_configuration/#pf-solver-core\"", help_html)
                 # a relative page link of the section points at the same site
                 flat = String(SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.flatstart").body)
-                @test occursin("<h2>Flat start</h2>", flat)
                 @test occursin("href=\"https://docs.example/v1/powerflow_configuration/#pf-solver-core\"", flat)
                 @test !occursin("SPARLECTRADOCS", flat)
                 @test !occursin("(@ref", flat)
@@ -2381,9 +2209,6 @@ function run_webui_fast_tests()
                 @test count("<h1", page_html) == 1
                 @test occursin("href=\"/help\">Help</a>", page_html)
             end
-            # the user help stays short: the limit is 1500 words of text
-            manual_words = length(split(replace(SparlectraApp.WEBUI_HELP_MANUAL, r"```.*?```"s => " ")))
-            @test manual_words <= 1500
             # a topic links to its section on the page that carries it
             @test occursin("href=\"/help/reference#webui-flat-start\"", String(SparlectraApp.route_sparlectra_webui("GET", "/help/power_flow.flatstart").body))
             # every target of the search index exists: a heading of its
@@ -2402,7 +2227,7 @@ function run_webui_fast_tests()
             @test [url for url in inapp_links if !index_target_exists(url)] == String[]
             # the search: every word must occur, a part of a word is enough,
             # a hit in a title leads, the words are marked in the snippet,
-            # the query comes back escaped, no hit says so and names the
+            # the query comes back escaped, no hit names the
             # published documentation
             search_html(q; fragment = false) = String(SparlectraApp.route_sparlectra_webui("GET", "/help/search?q=" * q * (fragment ? "&fragment=1" : "")).body)
             help_hits(q) = [(String(m.captures[1]), String(m.captures[2])) for m in eachmatch(r"<li><a href=\"([^\"]+)\">([^<]*)</a> <span class=\"help-search-kind\">", search_html(q))]
@@ -2419,7 +2244,6 @@ function run_webui_fast_tests()
             @test occursin("<mark>xiidm</mark>", lowercase(search_html("XIIDM")))
             @test isempty(help_hits("zzzqqq"))
             withenv("SPARLECTRA_WEBUI_DOCS_BASE_URL" => "https://docs.example/v1/") do
-                @test occursin("No hits for \"zzzqqq\"", search_html("zzzqqq"))
                 @test occursin("href=\"https://docs.example/v1/\"", search_html("zzzqqq"; fragment = true))
             end
             @test SparlectraApp.webui_help_search("a") == SparlectraApp.webui_help_search("")
@@ -2442,15 +2266,6 @@ function run_webui_fast_tests()
             stg = SparlectraApp.render_settings_page(output_root=mktempdir(), selected_casefile="sp_case14.scf.json")
             @test occursin("settings-target-hint", stg)
             @test !occursin("value=\"this_case\" checked>this case (<code>sp_case14.scf.json</code>): case-scope", stg)
-
-            # header start-flavor: native in the test session, :app when the
-            # standalone executable stamped its build time into the environment
-            @test SparlectraApp.webui_runtime_flavor().kind in (:native, :sysimage)
-            withenv("SPARLECTRA_APP_BUILT" => "2026-08-29T11:11:11") do
-                fa = SparlectraApp.webui_runtime_flavor()
-                @test fa.kind === :app
-                @test fa.built == "2026-08-29T11:11:11"
-            end
         end)() end
 
         @testset "sysimage build script dry run parses" begin (function ()

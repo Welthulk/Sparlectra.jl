@@ -75,7 +75,6 @@ setup_linux.md
 # untracked, it carries no package function.
 tools/sparlectra_mentions.py
 
-.sparlectra_net_cache/
 data/CGMES/*
 !data/CGMES/README.md
 

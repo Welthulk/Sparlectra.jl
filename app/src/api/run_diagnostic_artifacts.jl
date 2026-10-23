@@ -401,9 +401,11 @@ _q_limit_events_csv_wanted(net::Net)::Bool = length(net.qLimitLog) > Q_LIMIT_EVE
 
 function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; format = "technical", events_only::Bool = false)::Vector{String}
   artifacts = String[]
-  events = [(iteration = ev.iter, bus = ev.bus, side = String(ev.side)) for ev in net.qLimitLog]
+  # kind: hit (PV->PQ), group_revert (PV->PQ of a jointly released group)
+  # or release (PQ->PV, side = the limit the bus was clamped at)
+  events = [(iteration = ev.iter, bus = ev.bus, side = String(ev.side), kind = String(ev.kind)) for ev in net.qLimitLog]
   if !isempty(events)
-    _write_namedtuple_csv(joinpath(output_path, "q_limit_events.csv"), events, (:iteration, :bus, :side); format = format)
+    _write_namedtuple_csv(joinpath(output_path, "q_limit_events.csv"), events, (:iteration, :bus, :side, :kind); format = format)
     push!(artifacts, "q_limit_events.csv")
   end
   events_only && return artifacts
@@ -491,7 +493,7 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
       println(io, "qlimit_enforcement_started : ", getproperty(rect_status, :qlimit_enforcement_started))
       println(io, "final_outcome              : ", getproperty(rect_status, :final_outcome))
       println(io, "outer_iterations           : ", getproperty(rect_status, :matpower_outer_iterations))
-      println(io, "PV->PQ Q-limit events      : ", length(result.net.qLimitLog))
+      println(io, "PV->PQ Q-limit events      : ", qlimit_pv_to_pq_event_count(result.net))
       println(io, "PQ->PV re-enable events    : 0")
       println(io)
     else
@@ -500,7 +502,7 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
       println(io, "Q-limit handling enabled    : true")
       println(io, "active-set switching used   : true")
       println(io, "classical outer-loop used   : false")
-      println(io, "PV->PQ Q-limit events      : ", length(result.net.qLimitLog))
+      println(io, "PV->PQ Q-limit events      : ", qlimit_pv_to_pq_event_count(result.net))
       println(io, "PQ->PV re-enable events    : ", hasproperty(result.diagnostics, :qlimit_reenable_events) ? result.diagnostics.qlimit_reenable_events : 0)
       println(io)
     end
@@ -522,7 +524,7 @@ function _write_q_limit_log_artifact(output_path::AbstractString, result::Sparle
       numerical_converged = result.numerical_converged,
       final_mismatch = result.final_mismatch,
       q_limit_active_set_ok = hasproperty(result.diagnostics, :q_limit_active_set_ok) ? result.diagnostics.q_limit_active_set_ok : false,
-      pv_pq_switching_events = hasproperty(result.diagnostics, :pv_pq_switching_events) ? result.diagnostics.pv_pq_switching_events : length(result.net.qLimitLog),
+      pv_pq_switching_events = hasproperty(result.diagnostics, :pv_pq_switching_events) ? result.diagnostics.pv_pq_switching_events : qlimit_pv_to_pq_event_count(result.net),
       qlimit_active_set_changes = hasproperty(result.diagnostics, :qlimit_active_set_changes) ? result.diagnostics.qlimit_active_set_changes : 0,
       qlimit_reenable_events = hasproperty(result.diagnostics, :qlimit_reenable_events) ? result.diagnostics.qlimit_reenable_events : 0,
       oscillating_buses = hasproperty(result.diagnostics, :oscillating_buses) ? result.diagnostics.oscillating_buses : 0,

@@ -13,8 +13,8 @@
 # limitations under the License.
 
 # file: test/test_configuration_coverage.jl
-# purpose: tests configuration YAML key coverage, sentinel forwarding,
-#          value-domain validation, deprecated and removed key handling,
+# purpose: tests that every configuration key is reachable and arrives,
+#          value-domain validation, case precedence, unknown-key handling,
 #          MATPOWER auto-profile decision rules, and console_live capture
 using Sparlectra
 using Test
@@ -128,188 +128,11 @@ end
 # against 3027) for less than half the cost in Main, so the shape is the
 # expense and not the content.
 #
-# The split is mechanical: testset names, order, nesting and assertion count
-# are unchanged, so the test output is the same line for line. Nothing is
-# shared between these functions - the monolith had no state at function
-# level either, which is why it could be cut without untangling anything.
-
-function test_configuration_yaml_key_coverage()
-  @testset "Configuration YAML key coverage" begin (function ()
-    leaves = _canonical_yaml_leaf_keys()
-
-    mapped_keys = Set([
-      "power_flow.method", "power_flow.mode", "power_flow.solver", "power_flow.linear_solver", "power_flow.newton_update", "power_flow.power_mode", "power_flow.power_mode_lu", "power_flow.jacobian_reuse", "power_flow.jacobian_reuse_min_reduction", "power_flow.jacobian_reuse_max_steps", "contingency.max_iter", "contingency.screening.mode", "contingency.screening.margin_pct", "contingency.warm_active_set", "contingency.warm_cold_check", "contingency.warm_cold_check_margin_pu", "power_flow.apslf.order", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.apslf_start.order", "power_flow.flatstart", "power_flow.tol", "power_flow.max_iter", "power_flow.autodamp", "power_flow.autodamp_min", "power_flow.auto_slack", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.wrong_branch_detection", "power_flow.wrong_branch_rescue", "power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_max_plain_steps", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_max_reference_branch_angle_deg", "power_flow.wrong_branch_rescue_max_attempts", "power_flow.rectangular_workspace_reuse", "power_flow.rectangular_preallocate_workspace", "power_flow.rectangular_workspace_min_buses",
-      "power_flow.islands.enabled", "power_flow.islands.parallel_min_buses", "power_flow.islands.reference_policy", "power_flow.islands.diagnostic_continue_after_failure",
-      "power_flow.distributed_slack.enabled", "power_flow.distributed_slack.p_mode", "power_flow.distributed_slack.respect_p_limits", "power_flow.distributed_slack.fallback", "power_flow.distributed_slack.weights",
-      "power_flow.external_grid.enabled", "power_flow.external_grid.source", "power_flow.external_grid.sk_MVA", "power_flow.external_grid.rx",
-      "power_flow.plausibility.vmin_warn",
-      "power_flow.start_mode.angle_mode", "power_flow.start_mode.voltage_mode", "power_flow.start_mode.profile_source", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.branch_guard", "power_flow.start_mode.measure_candidates", "power_flow.start_mode.accept_unmeasured_dc_start", "power_flow.start_mode.dc_seed_unconditional", "power_flow.start_mode.ratio_profile", "power_flow.start_mode.reuse_import_data", "power_flow.start_mode.blend_lambdas", "power_flow.start_mode.dc_angle_limit_deg",
-      "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.max_iter", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.start_current_iteration.only_for_large_cases",
-      "power_flow.merit.enabled", "power_flow.merit.armijo_c1", "power_flow.merit.scale_p", "power_flow.merit.scale_q", "power_flow.merit.scale_v", "power_flow.merit.fallback_max_mismatch",
-      "power_flow.trust_region.enabled", "power_flow.trust_region.initial_radius", "power_flow.trust_region.min_radius", "power_flow.trust_region.max_radius", "power_flow.trust_region.eta_accept", "power_flow.trust_region.shrink_factor", "power_flow.trust_region.expand_factor", "power_flow.trust_region.expand_threshold", "power_flow.trust_region.step_mode",
-      "power_flow.qlimits.enabled", "power_flow.qlimits.enforcement_mode", "power_flow.qlimits.start_iter", "power_flow.qlimits.start_mode", "power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.reenable_v_hyst_pu", "power_flow.qlimits.final_q_accept_pu", "power_flow.qlimits.classic_max_passes", "power_flow.qlimits.trace_buses", "power_flow.qlimits.lock_pv_to_pq_buses",
-      "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.narrow_range_mode", "power_flow.qlimits.guard.zero_range_mode", "power_flow.qlimits.guard.violation_mode", "power_flow.qlimits.guard.violation_threshold_pu", "power_flow.qlimits.guard.max_switches", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log",
-      "state_estimation.enabled", "state_estimation.method", "state_estimation.tol", "state_estimation.max_iter", "state_estimation.flatstart", "state_estimation.jac_eps", "state_estimation.update_net", "state_estimation.pmu_ref_offset", "state_estimation.observability.enabled",
-      "matpower_import.pv_voltage_source", "matpower_import.pv_voltage_mismatch_tol_pu", "matpower_import.compare_voltage_reference", "matpower_import.shift_unit", "matpower_import.shift_sign", "matpower_import.ratio", "matpower_import.enable_pq_gen_controllers", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_import.matpower_dcline_mode",
-      "model.bus_shunt_model", "model.tap_changer_model", "model.auto_profile", "model.auto_profile_log", "model.auto_profile_max_fit_pu", "model.net_cache_enabled", "model.preallocate_network", "model.preallocate_min_buses", "model.nominal_frequency_hz",
-      "cgmes_import.path", "cgmes_import.base_mva", "cgmes_import.require_boundary", "cgmes_import.tap_control", "cgmes_import.machine_control", "cgmes_import.ignore_connected", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "cgmes_import.vset_min_pu", "cgmes_import.vset_max_pu", "cgmes_import.multi_slack", "cgmes_import.equivalent_branch_min_z_pu", "cgmes_import.start_values", "cgmes_import.placeholder_guards", "cgmes_import.infer_base_voltages", "cgmes_import.hvdc_mode",
-      "powsybl_import.base_mva", "powsybl_import.hvdc_mode", "powsybl_import.slack_ids", "powsybl_import.multi_slack", "powsybl_import.remote_regulation",
-      "short_circuit.c_factor", "short_circuit.converter_current_factor", "short_circuit.sweep_method", "short_circuit.takahashi_min_buses",
-      "matpower_export.write_solution",
-      "performance.enabled", "performance.level", "performance.print_to_console", "performance.write_to_logfile", "performance.show_allocations", "performance.show_iteration_table", "performance.compact_logging", "performance.representative_warmup_runs", "performance.compare_cold_warm", "performance.skip_reference_comparison", "performance.skip_expensive_diagnostics", "performance.skip_branch_neighborhood_report", "performance.max_diagnostic_rows",
-      "config_version", "scope",
-      "runtime.case", "runtime.cases", "runtime.print_thread_config", "runtime.julia_threads", "runtime.blas_threads", "runtime.casefile", "runtime.case_name", "runtime.case_source", "runtime.configured_default_casefile",
-      "runtime.parallel.enabled", "runtime.parallel.max_tasks", "runtime.parallel.min_work_items",
-      "diagnostics.log_effective_config",
-      "output.console_summary", "output.console_live", "output.console_auto_profile", "output.console_diagnostics", "output.console_q_limit_events", "output.console_max_rows", "output.logfile_results", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses", "output.result_table_large_case_mode", "output.detailed_result_csv_write_mode", "output.detailed_result_csv_exporter", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.csv_format", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.startup_latency_hint",
-      "benchmark.enabled", "benchmark.methods", "benchmark.seconds", "benchmark.samples", "benchmark.show_once", "benchmark.show_once_output", "benchmark.show_once_max_nodes",
-      "contingency.events.enabled", "contingency.events.double_circuits", "contingency.events.busbars", "contingency.events.substations", "contingency.events.links", "contingency.events.name_groups", "contingency.events.name_stem_pattern", "contingency.events.max_members",
-      "contingency.pairs.enabled", "contingency.pairs.rule", "contingency.pairs.max_pairs",
-      "qsts.mode", "qsts.base_step", "qsts.snapshot_controls",
-      "qsts.sequential_start", "qsts.resync_every", "qsts.dead_time_steps", "qsts.hunting_window", "qsts.vm_min_pu", "qsts.vm_max_pu", "qsts.loading_max_pct",
-      "qsts.series.min_structural_overlap", "qsts.series.max_injection_churn", "qsts.series.max_gap",
-      "contingency.rescue_ladder", "contingency.screening.mode", "contingency.screening.margin_pct",
-      "control.enabled", "control.max_outer_iterations", "control.trace", "control.log_iterations", "control.stop_on_pf_failure", "control.verbose_passes", "control.controllers",
-      "webui.show_case_settings_notice", "webui.operation_log_retention_days", "webui.docs_base_url",
-      "webui.window_width", "webui.window_height", "webui.window_x", "webui.window_y",
-      # these were in the typed configuration and
-      # documented, but missing from the template, which made them
-      # unreachable ("Unknown Sparlectra configuration key") for every user
-      # who followed the documentation
-      "power_flow.tol_MW", "power_flow.dc.angle_reference_deg", "power_flow.dc.ignore_out_of_service",
-      "state_estimation.imag_activation_iteration", "state_estimation.ia_current_floor_A",
-      "state_estimation.update_shunts", "state_estimation.update_taps", "state_estimation.measurement_table", "state_estimation.zero_injection", "state_estimation.sigma_by_voltage_level",
-      "state_estimation.report_residual_correlation", "state_estimation.k_eliminate",
-      "state_estimation.robust_mode", "state_estimation.robust", "state_estimation.robust_start_iteration",
-      "state_estimation.robust_k1", "state_estimation.robust_k2", "state_estimation.k_suppress",
-      "state_estimation.suppression_sigma", "state_estimation.max_eliminations",
-      "state_estimation.rank_tol_factor",
-      "state_estimation.takahashi_min_states", "state_estimation.linear_solver", "state_estimation.symmetric_gain", "state_estimation.criticality_method", "state_estimation.rank_method", "state_estimation.topology_precheck",
-      "state_estimation.topology_open_flow_k", "state_estimation.topology_dead_flow_k",
-      "state_estimation.topology_voltage_k", "state_estimation.topology_kcl_k",
-      "state_estimation.topology_cluster_min",
-    ])
-    reserved_keys = Set(["extensions.reserved"])
-    mapped_or_reserved = union(mapped_keys, reserved_keys)
-
-    @test isempty(setdiff(leaves, mapped_or_reserved))
-    @test isempty(setdiff(reserved_keys, leaves))
-
-    expected_consumers = Dict(
-      "power_flow.tol" => :PowerFlowConfig,
-      "power_flow.solver" => :PowerFlowConfig,
-      "power_flow.apslf.order" => :ApslfConfig,
-      "power_flow.apslf.convergence_radius" => :ApslfConfig,
-      "power_flow.apslf_start.enabled" => :ApslfStartConfig,
-      "power_flow.max_iter" => :PowerFlowConfig,
-      "power_flow.autodamp" => :PowerFlowConfig,
-      "power_flow.autodamp_min" => :PowerFlowConfig,
-      "power_flow.newton_update" => :PowerFlowConfig,
-      "power_flow.power_mode" => :PowerFlowConfig,
-      "power_flow.power_mode_lu" => :PowerFlowConfig,
-      "power_flow.jacobian_reuse" => :PowerFlowConfig,
-      "power_flow.jacobian_reuse_min_reduction" => :PowerFlowConfig,
-      "power_flow.jacobian_reuse_max_steps" => :PowerFlowConfig,
-      "contingency.screening.mode" => :ContingencyConfig,
-      "contingency.screening.margin_pct" => :ContingencyConfig,
-      "contingency.warm_active_set" => :ContingencyConfig,
-      "contingency.max_iter" => :ContingencyConfig,
-      "contingency.warm_cold_check" => :ContingencyConfig,
-      "contingency.warm_cold_check_margin_pu" => :ContingencyConfig,
-      "contingency.events.enabled" => :ContingencyConfig,
-      "contingency.events.double_circuits" => :ContingencyConfig,
-      "contingency.events.busbars" => :ContingencyConfig,
-      "contingency.events.substations" => :ContingencyConfig,
-      "contingency.events.links" => :ContingencyConfig,
-      "contingency.events.name_groups" => :ContingencyConfig,
-      "contingency.events.max_members" => :ContingencyConfig,
-      "contingency.pairs.enabled" => :ContingencyConfig,
-      "contingency.pairs.rule" => :ContingencyConfig,
-      "contingency.pairs.max_pairs" => :ContingencyConfig,
-      "qsts.mode" => :QstsConfig,
-      "qsts.base_step" => :QstsConfig,
-      "qsts.snapshot_controls" => :QstsConfig,
-      "qsts.sequential_start" => :QstsConfig,
-      "qsts.resync_every" => :QstsConfig,
-      "qsts.dead_time_steps" => :QstsConfig,
-      "qsts.hunting_window" => :QstsConfig,
-      "qsts.vm_min_pu" => :QstsConfig,
-      "qsts.vm_max_pu" => :QstsConfig,
-      "qsts.loading_max_pct" => :QstsConfig,
-      "qsts.series.min_structural_overlap" => :QstsConfig,
-      "qsts.series.max_injection_churn" => :QstsConfig,
-      "qsts.series.max_gap" => :QstsConfig,
-      "power_flow.wrong_branch_detection" => :PowerFlowConfig,
-      "power_flow.start_mode.angle_mode" => :StartModeConfig,
-      "power_flow.start_mode.voltage_mode" => :StartModeConfig,
-      "power_flow.start_mode.profile_source" => :StartModeConfig,
-      "power_flow.qlimits.enforcement_mode" => :QLimitConfig,
-      "power_flow.qlimits.start_iter" => :QLimitConfig,
-      "power_flow.merit.enabled" => :MeritLineSearchConfig,
-      "power_flow.merit.armijo_c1" => :MeritLineSearchConfig,
-      "power_flow.trust_region.enabled" => :TrustRegionConfig,
-      "power_flow.trust_region.initial_radius" => :TrustRegionConfig,
-      "matpower_import.shift_sign" => :MatpowerImportConfig,
-      "runtime.cases" => :RuntimeConfig,
-      "model.tap_changer_model" => :ModelConfig,
-      "matpower_export.write_solution" => :MatpowerExportConfig,
-      "output.logfile_performance" => :OutputConfig,
-      "benchmark.enabled" => :BenchmarkConfig,
-      "state_estimation.method" => :StateEstimationConfig,
-      "state_estimation.linear_solver" => :StateEstimationConfig,
-      "state_estimation.symmetric_gain" => :StateEstimationConfig,
-      "runtime.julia_threads" => :RuntimeConfig,
-      "diagnostics.log_effective_config" => :DiagnosticsConfig,
-      "extensions.reserved" => :Reserved,
-      "webui.show_case_settings_notice" => :WebUIConfig,
-    )
-    @test all(haskey(expected_consumers, key) for key in keys(expected_consumers))
-    @test expected_consumers["extensions.reserved"] === :Reserved
-  end)() end
-  return nothing
-end
+# Nothing is shared between these functions.
 
 function test_configuration_version_scope_and_case_precedence()
   @testset "configuration version, scope, and case precedence" begin (function ()
     dir = mktempdir()
-    # a file without config_version reads as version 0, with one warning and
-    # the 0 => 1 aliases applied
-    v0 = joinpath(dir, "v0.yaml")
-    write(v0, "matpower_import:\n  bus_shunt_model: voltage_dependent_injection\n  case: case57.m\ntransformer:\n  tap_changer_model: impedance_correction\n")
-    cfg0 = Sparlectra.load_sparlectra_config(v0; reload = true)
-    @test cfg0.model.bus_shunt_model === :voltage_dependent_injection
-    @test cfg0.model.tap_changer_model === :impedance_correction
-    @test cfg0.runtime.case == "case57.m"
-    # ONE alias warning per file, not one per key: a user file
-    # with six legacy names produced six boxed warnings at every start, which
-    # is what a Windows start reported as "still all those warnings". The
-    # information that matters is WHICH names are still in use, and that fits
-    # in a single line. TestLogger, not the message count on the console:
-    # maxlog suppression is a property of the logger, the emission is not.
-    v0_many = joinpath(dir, "v0_many.yaml")
-    write(v0_many, "matpower_import:\n  auto_profile: true\n  auto_profile_log: false\n  preallocate_network: true\n  preallocate_min_buses: 500\n  case: case57.m\ntransformer:\n  tap_changer_model: impedance_correction\n")
-    logger = Test.TestLogger(min_level = Logging.Warn)
-    Logging.with_logger(logger) do
-      Sparlectra.load_sparlectra_config(v0_many; reload = true)
-    end
-    alias_records = [r for r in logger.logs if occursin("legacy key name", r.message)]
-    @test length(alias_records) == 1
-    # and it names every one of them, so nothing is lost by collapsing
-    for key in ("matpower_import.auto_profile", "matpower_import.auto_profile_log",
-                "matpower_import.preallocate_network", "matpower_import.preallocate_min_buses",
-                "matpower_import.case", "transformer.tap_changer_model")
-      @test (key, occursin(key, alias_records[1].message)) == (key, true)
-    end
-    # after the documented one-time refresh the file loads without any of it
-    Sparlectra.refresh_sparlectra_config_file(v0_many; write = true, backup = false)
-    quiet = Test.TestLogger(min_level = Logging.Warn)
-    migrated = Logging.with_logger(quiet) do
-      Sparlectra.load_sparlectra_config(v0_many; reload = true)
-    end
-    @test isempty([r for r in quiet.logs if occursin("legacy key name", r.message)])
-    @test migrated.model.tap_changer_model === :impedance_correction
-    @test migrated.runtime.case == "case57.m"
-    @test migrated.model.preallocate_min_buses == 500
     # a version newer than the running Sparlectra is an error, not a guess
     v9 = joinpath(dir, "v9.yaml")
     write(v9, "config_version: 99\n")
@@ -348,23 +171,6 @@ function test_configuration_version_scope_and_case_precedence()
     @test occursin("not case scope", sprint(showerror, err_scope))
     # the canonical .scf.json double extension binds <stem>.config.yaml
     @test basename(Sparlectra.case_config_path(joinpath(dir, "case57.scf.json"))) == "case57.config.yaml"
-    # shared stem (a Web UI run): an older case57.config.yaml written
-    # for case57.m is still read for the .m case, does not apply to the SCF
-    # case with the same stem, and moves to its own name when the SCF case
-    # writes its file
-    shared_dir = mktempdir()
-    write(joinpath(shared_dir, "case57.m"), "% fixture\n")
-    write(joinpath(shared_dir, "case57.scf.json"), "{}")
-    legacy = joinpath(shared_dir, "case57.config.yaml")
-    write(legacy, "config_version: 1\nscope: case\ncase: case57.m\npower_flow:\n  max_iter: 45\n")
-    @test Sparlectra.case_config_path(joinpath(shared_dir, "case57.m")) == legacy
-    @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.m"))["power_flow.max_iter"] == 45
-    @test isempty(Sparlectra.load_case_config(joinpath(shared_dir, "case57.scf.json")))
-    Sparlectra.write_case_config(joinpath(shared_dir, "case57.scf.json"), Dict{String,Any}("power_flow.max_iter" => 46))
-    @test isfile(joinpath(shared_dir, "case57.m.config.yaml"))
-    @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.m"))["power_flow.max_iter"] == 45
-    @test Sparlectra.load_case_config(joinpath(shared_dir, "case57.scf.json"))["power_flow.max_iter"] == 46
-
     # precedence, one key on each level, highest first: override,
     # case configuration file, deprecated in-file block, general file
     general = joinpath(dir, "general.yaml")
@@ -383,8 +189,8 @@ function test_configuration_version_scope_and_case_precedence()
     rm(scf_cc)
     with_block = Sparlectra.resolve_config(general, scf_case)
     @test with_block.config.powerflow.max_iter == 42
-    # issue #1 point 1 (decided: defaults, format independent per stage-2
-    # review): the PRESENCE of a case configuration file makes the case
+    # case-scope keys resolve against the defaults, format independent:
+    # the PRESENCE of a case configuration file makes the case
     # self-contained, so a case-scope key the file does not set resolves
     # to the packaged default, NOT to the general file, for every input
     # format alike; machine-scope keys still come from the general file,
@@ -476,6 +282,14 @@ function test_configuration_version_scope_and_case_precedence()
     @test Sparlectra.load_case_config(plain)["model.auto_profile"] == "off"
     Sparlectra.write_case_config(plain, Dict{String,Any}())
     @test !isfile(written)
+    # a case file next to a CGMES zip sets the qsts.series keys; a zip
+    # without one keeps the defaults (resolve_config does not open the zip,
+    # so the zip itself is not created)
+    zip_case = joinpath(dir, "series.zip")
+    write(Sparlectra.case_config_path(zip_case), "config_version: 1\nscope: case\ncase: series.zip\nqsts:\n  series:\n    min_structural_overlap: 1.0\n    max_gap: 45\n")
+    zcfg = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zip_case).config
+    @test zcfg.qsts.series.min_structural_overlap == 1.0 && zcfg.qsts.series.max_gap == 45.0 && zcfg.qsts.series.max_injection_churn === nothing
+    @test Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(dir, "other.zip")).config.qsts.series == Sparlectra.QstsSeriesConfig()
   end)() end
   return nothing
 end
@@ -565,72 +379,6 @@ function test_configuration_runner_output_modes()
   return nothing
 end
 
-function test_configuration_sentinel_forwarding()
-  @testset "Configuration forwarding with sentinel values" begin (function ()
-    cfgfile = test_scratch_path(".yaml")
-    write(cfgfile, """
-power_flow:
-  tol: 1.0e-7
-  max_iter: 17
-  autodamp: true
-  autodamp_min: 0.17
-  wrong_branch_detection: fail
-  wrong_branch_rescue: true
-  wrong_branch_min_vm_pu: 0.65
-  wrong_branch_rescue_max_attempts: 1
-  start_mode:
-    angle_mode: dc
-    voltage_mode: profile_blend
-    profile_source: matpower_reference
-    start_projection: true
-    try_dc_start: false
-    try_blend_scan: false
-    blend_lambdas: [0.11, 0.22]
-    dc_angle_limit_deg: 33.0
-  qlimits:
-    enabled: true
-    start_iter: 4
-    cooldown_iters: 6
-matpower_import:
-  shift_unit: rad
-  shift_sign: -1.0
-  ratio: reciprocal
-output:
-  logfile_performance: full
-benchmark:
-  enabled: false
-matpower_export:
-  write_solution: false
-""")
-    cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
-    @test cfg.powerflow.tol == 1.0e-7
-    @test cfg.powerflow.max_iter == 17
-    @test cfg.powerflow.autodamp === true
-    @test cfg.powerflow.autodamp_min == 0.17
-    @test cfg.powerflow.wrong_branch_detection === :fail
-    @test cfg.powerflow.wrong_branch_rescue === true
-    @test cfg.powerflow.wrong_branch_min_vm_pu == 0.65
-    @test cfg.powerflow.wrong_branch_rescue_max_attempts == 1
-    @test cfg.powerflow.start_mode.angle_mode === :dc
-    @test cfg.powerflow.start_mode.voltage_mode === :profile_blend
-    @test cfg.powerflow.start_mode.profile_source === :matpower_reference
-    @test cfg.powerflow.start_mode.start_projection === true
-    @test cfg.powerflow.start_mode.try_dc_start === false
-    @test cfg.powerflow.start_mode.try_blend_scan === false
-    @test cfg.powerflow.start_mode.blend_lambdas == [0.11, 0.22]
-    @test cfg.powerflow.start_mode.dc_angle_limit_deg == 33.0
-    @test cfg.powerflow.qlimits.start_iter == 4
-    @test cfg.powerflow.qlimits.cooldown_iters == 6
-    @test cfg.matpower.shift_unit === :rad
-    @test cfg.matpower.shift_sign == -1.0
-    @test cfg.matpower.ratio === :reciprocal
-    @test cfg.output.logfile_performance === :full
-    @test cfg.benchmark.enabled === false
-    @test cfg.matpower_export.write_solution === false
-  end)() end
-  return nothing
-end
-
 function test_configuration_matpower_auto_profile_rules()
   @testset "MATPOWER auto-profile decision rules" begin (function ()
     mpc = _auto_profile_shift_case()
@@ -668,14 +416,6 @@ function test_configuration_matpower_auto_profile_rules()
     @test ambiguous.config.matpower.compare_voltage_reference === :hybrid
     @test any(pair -> first(pair) === :compare_voltage_reference && last(pair) === :hybrid, ambiguous.applied)
 
-    io = IOBuffer()
-    Sparlectra.print_matpower_import_auto_profile(io, ambiguous.rows)
-    Sparlectra.print_matpower_import_auto_profile_effective_options(io, ambiguous.config)
-    text = String(take!(io))
-    @test occursin("MATPOWER auto-profile recommendations", text)
-    @test occursin("Final effective MATPOWER auto-profile options", text)
-    @test occursin("matpower_import.compare_voltage_reference", text)
-
     explicit_start_cfg = Sparlectra.SparlectraConfig(Dict(
       "model" => Dict("auto_profile" => "apply"),
       "power_flow" => Dict(
@@ -710,42 +450,6 @@ function test_configuration_matpower_auto_profile_rules()
     @test start_angle_row.recommended == "dc"
     @test start_angle_row.action === :skipped
     @test qlimit_row.action === :skipped
-    # The full block is what `output.console_auto_profile = :full` asks for.
-    # It is no longer the default: a run where every check says "keep" used
-    # to print about seventy console lines of MATPOWER option names, which
-    # made a Sparlectra study read like a MATPOWER front end.
-    verbose_cfg = Sparlectra.SparlectraConfig(Dict("output" => Dict("console_auto_profile" => "full")))
-    io = IOBuffer()
-    Sparlectra.write_matpower_import_auto_profile(io, conservative, verbose_cfg; casefile = "synthetic_fragile.m")
-    conservative_text = String(take!(io))
-    @test occursin("power_flow.start_mode.angle_mode", conservative_text)
-    @test occursin("skipped", conservative_text)
-
-    io = IOBuffer()
-    Sparlectra.write_matpower_import_auto_profile(io, applied, verbose_cfg; casefile = "case13659pegase.m")
-    apply_text = String(take!(io))
-    @test occursin("Runtime casefile: case13659pegase.m", apply_text)
-    @test occursin("Original MATPOWER import options:", apply_text)
-    @test occursin("Auto-profile recommendation:", apply_text)
-    @test occursin("Final effective MATPOWER import options:", apply_text)
-    @test occursin("shift_unit   = deg", apply_text)
-
-    # the DEFAULT is compact: one line when nothing changes, and only the
-    # rows that actually recommend something when they do
-    io = IOBuffer()
-    Sparlectra.write_matpower_import_auto_profile(io, applied, applied.config; casefile = "case13659pegase.m")
-    compact_text = String(take!(io))
-    @test occursin("Import conventions:", compact_text)
-    @test !occursin("Original MATPOWER import options", compact_text)
-    @test !occursin("Runtime casefile", compact_text)
-    @test occursin("shift_unit", compact_text)
-    @test count(==('\n'), compact_text) <= 6
-    # and :off says nothing at all
-    quiet_cfg = Sparlectra.SparlectraConfig(Dict("output" => Dict("console_auto_profile" => "off")))
-    io = IOBuffer()
-    Sparlectra.write_matpower_import_auto_profile(io, applied, quiet_cfg; casefile = "case13659pegase.m")
-    @test isempty(String(take!(io)))
-
     oom_cfg = Sparlectra.SparlectraConfig(Dict(
       "model" => Dict("auto_profile" => "apply"),
       "matpower_import" => Dict("shift_unit" => "rad"),
@@ -850,17 +554,8 @@ end
 
 function test_configuration_tolerance_in_mw()
   @testset "Tolerance can be stated in MW" begin (function ()
-    # power_flow.tol_MW existed and was reachable only
-    # by editing a YAML file, and even that failed because the template did
-    # not carry the key. The form now states ONE value with a unit: two
-    # fields side by side read like two competing tolerances.
-    spec = SparlectraApp._webui_option_spec("power_flow_tol_unit")
-    @test spec.config_key === nothing
-    @test spec.allowed_values == ("pu", "MW")
-    html = SparlectraApp.render_settings_page(output_root = mktempdir())
-    @test occursin("name=\"power_flow_tol_unit\"", html)
-    @test !occursin("power_flow_tol_mw", html)
-
+    # the form states ONE tolerance value with a unit; the unit decides
+    # which of the two keys the request carries
     # pu (the default): the value becomes power_flow.tol and nothing else
     pu_req = SparlectraApp.powerflow_webui_request(
       Dict{String,Any}("casefile" => "case14.m", "power_flow_tol" => "1e-8", "power_flow_tol_unit" => "pu");
@@ -875,11 +570,6 @@ function test_configuration_tolerance_in_mw()
       default_output_root = mktempdir())
     @test mw_req["config_overrides"]["power_flow.tol_MW"] == 0.001
     @test !haskey(mw_req["config_overrides"], "power_flow.tol")
-
-    # the key arrives in the typed configuration, from YAML and as override
-    cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("tol_MW" => 1.0)))
-    @test cfg.powerflow.tol_MW == 1.0
-    @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.tol_MW" => 0.002))["power_flow"]["tol_MW"] == 0.002
   end)() end
   return nothing
 end
@@ -930,7 +620,7 @@ function test_configuration_every_key_arrives()
     # deleted from the configuration structures instead (the old KEY is
     # still refused by name, so a stored file says what happened).
     excluded = Dict(
-      "power_flow.islands.mode" => "removed in 0.30.2: the field stays for struct users, a file value is ignored with a warning (asserted in \"Stored configurations survive removed keys\")",
+      "power_flow.islands.mode" => "removed in 0.30.2: the field stays for struct users, a file value is not read",
       "power_flow.qlimits.ignore_q_limits" => "internal inverse of power_flow.qlimits.enabled, never written by a user",
       "power_flow.start_mode.flatstart" => "set through power_flow.flatstart; the constructor files it under start_mode",
       "power_flow.distributed_slack.weights" => "free-form mapping (block style), present in the template and validated separately",
@@ -967,10 +657,14 @@ function test_configuration_every_key_arrives()
       end
       return cfg
     end
+    # the paths carry the YAML name of the section (power_flow), the struct
+    # the field name (powerflow); the catch below took the FieldError of the
+    # YAML name for a refused value until it named its failure
+    yaml_section = Dict(v => k for (k, v) in section_yaml)
     read_key(cfg, path) = begin
       cur = cfg
-      for p in split(path, ".")
-        cur = getfield(cur, Symbol(p))
+      for (i, p) in enumerate(split(path, "."))
+        cur = getfield(cur, Symbol(i == 1 ? get(yaml_section, p, p) : p))
       end
       cur
     end
@@ -1003,7 +697,9 @@ function test_configuration_every_key_arrives()
         try
           load_with(ypath, value)
           reached = true
-        catch
+        catch err
+          # the loader refuses the value under this spelling of the key
+          err isa ArgumentError || rethrow()
         end
         reached && break
       end
@@ -1033,9 +729,10 @@ function test_configuration_every_key_arrives()
           got = read_key(cfg, path)
           got isa Symbol && (got = String(got))
           isequal(got, differing) && (moved = true)
-        catch
+        catch err
           # a domain validation may refuse default+1 (ordered knees, ranges);
           # the key is reachable, which is what this loop proves
+          err isa ArgumentError || rethrow()
         end
         moved && break
       end
@@ -1051,21 +748,61 @@ function test_configuration_every_key_arrives()
     @test arrived >= 60
     @test arrived + reach_only + length(excluded) == length(entries)
 
-    # the four settings that started this task, by name
+    # the other direction: every leaf of the template is the YAML spelling of
+    # a typed field, apart from these, one reason each
+    template_only = Dict(
+      "config_version" => "file header, read by the loader before the typed configuration",
+      "scope" => "file header (general or case), policed by the loader",
+      "power_flow.flatstart" => "the constructor files it under power_flow.start_mode.flatstart",
+      "power_flow.qlimits.enabled" => "stored as its inverse power_flow.qlimits.ignore_q_limits",
+      "power_flow.qlimits.guard.enabled" => "the field is power_flow.qlimits.guard",
+      "extensions.reserved" => "reserved block without a consumer",
+    )
+    typed_spellings = Set(ypath for (path, _) in entries for ypath in yaml_variants(path))
+    @test sort!(collect(setdiff(_canonical_yaml_leaf_keys(), typed_spellings))) == sort!(collect(keys(template_only)))
+
+    # settings checked by name: the four that started this task first
     for (path, differing, reader) in (
         ("power_flow.tol_MW", 0.002, cfg -> cfg.powerflow.tol_MW),
         ("state_estimation.k_suppress", 5.5, cfg -> cfg.state_estimation.k_suppress),
         ("state_estimation.rank_tol_factor", 25.0, cfg -> cfg.state_estimation.rank_tol_factor),
-        ("output.console_auto_profile", "full", cfg -> cfg.output.console_auto_profile))
+        ("output.console_auto_profile", "full", cfg -> cfg.output.console_auto_profile),
+        # symbols without a form spec and a vector: the generic loop above
+        # only checks that they load
+        ("power_flow.start_mode.profile_source", "flat", cfg -> cfg.powerflow.start_mode.profile_source),
+        ("output.logfile_performance", "full", cfg -> cfg.output.logfile_performance),
+        ("power_flow.start_mode.blend_lambdas", [0.11, 0.22], cfg -> cfg.powerflow.start_mode.blend_lambdas),
+        # the public Q-limit start modes besides the default iteration_or_auto
+        ("power_flow.qlimits.start_mode", "iteration", cfg -> cfg.powerflow.qlimits.start_mode),
+        ("power_flow.qlimits.start_mode", "auto", cfg -> cfg.powerflow.qlimits.start_mode))
       cfg = load_with(path, differing)
       got = reader(cfg)
       @test (got isa Symbol ? String(got) : got) == differing
     end
+    # the logging surface is in the GUI allowlist, which a case file's config
+    # block uses too
+    for key in ("output.console_summary", "output.console_diagnostics", "output.console_q_limit_events", "output.logfile_diagnostics", "output.logfile_performance", "output.logfile_warnings", "output.result_table_max_rows", "output.startup_latency_hint")
+      @test (key, key in Sparlectra.GUI_EDITABLE_CONFIG_KEYS) == (key, true)
+    end
+    @test haskey(Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.logfile_warnings" => "table", "output.console_summary" => false, "output.result_table_max_rows" => 50, "output.startup_latency_hint" => false)), "output")
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.logfile_warnings" => "bogus"))
     # the on/off switch: YAML reads a bare on/off as a boolean, a quoted one
     # as text; both arrive, anything else is refused with the key named
     @test load_with("state_estimation.zero_injection", false).state_estimation.zero_injection === :off
     @test load_with("state_estimation.zero_injection", "on").state_estimation.zero_injection === :on
     @test_throws "state_estimation.zero_injection" load_with("state_estimation.zero_injection", "maybe")
+    # the tap impedance rule has two values (auto and off, there is no on):
+    # a bare YAML off arrives as off, on (bare or quoted) is refused with the
+    # key named, a scalar where the block belongs names the block
+    tap_key = "state_estimation.tap_estimation.impedance_correction"
+    @test load_with(tap_key, false).state_estimation.tap_estimation.impedance_correction === :off
+    @test load_with(tap_key, "auto").state_estimation.tap_estimation.impedance_correction === :auto
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.tap_estimation.impedance_correction === :auto
+    @test_throws tap_key load_with(tap_key, "on")
+    @test_throws tap_key load_with(tap_key, true)
+    @test_throws "state_estimation.tap_estimation" Sparlectra.StateEstimationConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("tap_estimation" => true)))
+    @test_throws tap_key Sparlectra.validate_gui_config_overrides(Dict{String,Any}(tap_key => "on"))
+    @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}(tap_key => "off"))["state_estimation"]["tap_estimation"]["impedance_correction"] == "off"
     # the sigma table: block style keyed by the nominal voltage in kV
     # arrives row by row, sorted by level; a bad row is refused with the
     # key, the row key and the reason word
@@ -1161,27 +898,79 @@ function test_configuration_every_key_arrives()
     # the same parser guards a GUI override, and the key is case scope
     @test_throws "bad_value" Sparlectra.validate_gui_config_overrides(Dict{String,Any}(key => Dict{String,Any}("20" => row(u_kv = -1.0))))
     @test Sparlectra.scf_is_case_config_key(key)
+
+    # invalid values of known keys are refused; the start voltage mode names
+    # its key and the allowed values
+    for (path, value) in (
+        ("power_flow.method", "polar"),
+        ("benchmark.methods", ["polar"]),
+        ("power_flow.start_current_iteration.damping", 2.0),
+        ("power_flow.start_mode.voltage_mode", "nonsense"),
+        ("power_flow.rectangular_preallocate_workspace", "invalid"))
+      @test_throws ArgumentError load_with(path, value)
+    end
+    @test_throws ["power_flow.start_mode.voltage_mode", "pv_gen_vg"] load_with("power_flow.start_mode.voltage_mode", "nonsense")
+    # YAML integers for the thread counts arrive as the text the runtime
+    # parses; the generic loop above only forms string values for them
+    @test load_with("runtime.julia_threads", 4).runtime.julia_threads == "4"
+    @test load_with("runtime.blas_threads", 16).runtime.blas_threads == "16"
+    # switching the method keeps the workspace settings
+    cfg_method_copy = Sparlectra.SparlectraConfig(
+      powerflow = Sparlectra.PowerFlowConfig(
+        method = :polar,
+        rectangular_workspace_reuse = false,
+        rectangular_preallocate_workspace = :on,
+        rectangular_workspace_min_buses = 12345,
+      ),
+    )
+    cfg_rect = Sparlectra.with_powerflow_method(cfg_method_copy, :rectangular)
+    @test cfg_rect.powerflow.method === :rectangular
+    @test cfg_rect.powerflow.rectangular_workspace_reuse === false
+    @test cfg_rect.powerflow.rectangular_preallocate_workspace === :on
+    @test cfg_rect.powerflow.rectangular_workspace_min_buses == 12345
+
+    # runtime.parallel: values the typed configuration refuses, and a
+    # max_tasks override that arrives as a number of tasks
+    for (par_key, par_value) in (("max_tasks", "0"), ("max_tasks", "many"), ("min_work_items", 0))
+      par_raw = Dict{String,Any}("runtime" => Dict{String,Any}("parallel" => Dict{String,Any}(par_key => par_value)))
+      @test_throws ArgumentError Sparlectra.RuntimeConfig(par_raw)
+    end
+    par_loaded = Sparlectra.load_sparlectra_config(; reload = true, overrides = Dict{String,Any}("runtime" => Dict{String,Any}("parallel" => Dict{String,Any}("max_tasks" => "3"))))
+    @test parallel_max_tasks(par_loaded.runtime.parallel) == 3
+
+    # power_flow.solver and the APSLF sections: value domains and the one
+    # refused combination (the start generator runs ahead of Newton, so it
+    # cannot go with solver = apslf)
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "polar")))
+    @test Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf"))).powerflow.solver === :apslf
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("order" => 0))))
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("order" => -1))))
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "apslf_start" => Dict("enabled" => true))))
+    hybrid = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true, "order" => 12))))
+    @test hybrid.powerflow.apslf_start.enabled && hybrid.powerflow.apslf_start.order == 12 && hybrid.powerflow.solver === :rectangular
+
+    # the minimal YAML reader reads the default `weights: {}` as the string
+    # "{}"; the constructor treats it as an empty table, otherwise every
+    # default-merged load fails. Block-style weights are user data (bus
+    # names) and pass the unknown-key check.
+    ds_default = test_scratch_path(".yaml")
+    write(ds_default, "config_version: 1\npower_flow:\n  tol: 1.0e-8\n")
+    ds0 = Sparlectra.load_sparlectra_config(ds_default; reload = true).powerflow.distributed_slack
+    @test !ds0.enabled && isempty(ds0.weights)
+    ds_weights = test_scratch_path(".yaml")
+    write(ds_weights, "config_version: 1\npower_flow:\n  distributed_slack:\n    enabled: true\n    p_mode: explicit\n    weights:\n      B1: 2.0\n      B2: 1.0\n")
+    ds1 = Sparlectra.load_sparlectra_config(ds_weights; reload = true).powerflow.distributed_slack
+    @test ds1.enabled && ds1.p_mode == :explicit
+    @test ds1.weights == Dict("B1" => 2.0, "B2" => 1.0)
   end)() end
   return nothing
 end
 
 function test_configuration_form_defaults()
   @testset "Form defaults do not drift from the code they mirror" begin (function ()
-    # No numeric literal in a service or
-    # API signature may duplicate something the configuration owns. After the
-    # SE service moved to configuration-resolved keywords, the remaining
-    # literals belong to the measurement GENERATOR and to the server start,
-    # neither of which is a configuration key. They are still mirrored by
-    # form defaults, so the two are pinned against each other here: a change
-    # on one side without the other fails this test instead of silently
-    # giving a run different numbers than the form promised.
-    @test SparlectraApp._webui_option_default("gen_passive_sigma") == 0.05
-    @test SparlectraApp._webui_option_default("gen_seed") == 42
-    # and the ones that DO have a configuration key take it from there.
-    # max_eliminations joined them after review: a form
-    # field whose value no configuration key can set is exactly the
-    # asymmetry this task removed, so the elimination budget became
-    # state_estimation.max_eliminations instead of a service literal.
+    # a form default that mirrors a configuration key takes its value from
+    # there: a change on one side without the other fails here instead of
+    # giving a run different numbers than the form promised
     se = Sparlectra.state_estimation_config()
     @test SparlectraApp._webui_option_default("se_max_eliminations") == se.max_eliminations
     @test SparlectraApp._webui_option_default("se_k_suppress") == se.k_suppress
@@ -1189,70 +978,6 @@ function test_configuration_form_defaults()
     @test SparlectraApp._webui_option_default("se_max_iter") == se.max_iter
     # the system frequency select starts at the configuration default
     @test SparlectraApp._webui_option_default("model_nominal_frequency_hz") == Sparlectra.ModelConfig().nominal_frequency_hz == 50.0
-  end)() end
-  return nothing
-end
-
-function test_configuration_stored_survives_removed_keys()
-  @testset "Stored configurations survive removed keys" begin (function ()
-    # The startup warm-up is gone (0.10.0), but every stored user and Web UI
-    # configuration written before that still carries `webui.warmup`. Without
-    # the silent-removal entry each of them would fail to load with "Unknown
-    # Sparlectra configuration key" - the Web UI would not start at all.
-    cfg_path = test_scratch_path(".yaml")
-    write(cfg_path, "webui:\n  warmup: true\n  operation_log_retention_days: 7\n")
-    cfg = Sparlectra.load_sparlectra_config(cfg_path; reload = true)
-    @test cfg.webui.operation_log_retention_days == 7
-    @test !hasproperty(cfg.webui, :warmup)
-    # as an override it follows the normal unknown-key path: it is no longer
-    # a config key and not GUI-editable either
-    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("webui.warmup" => true))
-    # the PythonCall extension is gone (0.20.0) and with it
-    # powsybl_import.python_exe, which the 0.19.0 Web UI wrote into every
-    # saved configuration and case sidecar; those files keep loading
-    write(cfg_path, "powsybl_import:\n  python_exe: \"\"\n  remote_regulation: remote\n")
-    cfg = Sparlectra.load_sparlectra_config(cfg_path; reload = true)
-    @test cfg.powsybl.remote_regulation == :remote
-    @test !hasproperty(cfg.powsybl, :python_exe)
-    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("powsybl_import.python_exe" => ""))
-    # power_flow.islands.mode, 0.30.2: islands run in parallel by size; an
-    # existing value loads, is ignored, and one warning names the
-    # replacement; the new threshold key is read
-    write(cfg_path, "config_version: 1\npower_flow:\n  islands:\n    mode: solve_parallel\n    parallel_min_buses: 50\n")
-    cfg = @test_logs (:warn, r"power_flow.islands.mode is ignored") Sparlectra.load_sparlectra_config(cfg_path; reload = true)
-    @test cfg.powerflow.islands_parallel_min_buses == 50
-    @test cfg.powerflow.islands.parallel_min_buses == 50
-    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.islands.mode" => "solve_parallel"))
-    # the Settings page wrote islands.mode into case files before 0.30.2:
-    # such a file keeps loading, the key is dropped with a warning
-    case_dir = mktempdir()
-    case_m = joinpath(case_dir, "c.m")
-    write(case_m, "")
-    write(joinpath(case_dir, "c.config.yaml"), "config_version: 1\nscope: case\ncase: c.m\npower_flow:\n  islands:\n    mode: solve_independent\n    enabled: true\n")
-    case_level = @test_logs (:warn, r"power_flow.islands.mode in c.config.yaml is ignored") Sparlectra.load_case_config(case_m)
-    @test case_level == Dict{String,Any}("power_flow.islands.enabled" => true)
-    @test Sparlectra.ignored_removed_config_keys(cfg_path, case_m) == [
-      "Configuration key power_flow.islands.mode in $(basename(cfg_path)) is ignored: $(Sparlectra._REMOVED_NOTED_CONFIG_KEYS["power_flow.islands.mode"])",
-      "Configuration key power_flow.islands.mode in c.config.yaml is ignored: $(Sparlectra._REMOVED_NOTED_CONFIG_KEYS["power_flow.islands.mode"])",
-    ]
-    # power_flow.apslf.use_pade, 0.31.0 (AnalyticLoadFlow 0.10.0 is Padé
-    # only): the Settings page wrote it into case files, which must keep
-    # loading; the key is dropped with a warning, its neighbours stay
-    write(joinpath(case_dir, "c.config.yaml"), "config_version: 1\nscope: case\ncase: c.m\npower_flow:\n  apslf:\n    use_pade: true\n    order: 30\n")
-    case_pade = @test_logs (:warn, r"power_flow.apslf.use_pade in c.config.yaml is ignored") Sparlectra.load_case_config(case_m)
-    @test case_pade == Dict{String,Any}("power_flow.apslf.order" => 30)
-  end)() end
-  return nothing
-end
-
-function test_configuration_qlimit_start_mode_values()
-  @testset "Q-limit start mode public values" begin (function ()
-    for mode in ("iteration", "auto", "iteration_or_auto")
-      cfg = Sparlectra.SparlectraConfig(Dict(
-        "power_flow" => Dict("qlimits" => Dict("start_mode" => mode)),
-      ))
-      @test cfg.powerflow.qlimits.start_mode === Symbol(mode)
-    end
   end)() end
   return nothing
 end
@@ -1300,18 +1025,30 @@ function test_configuration_network_parameters_reach_paths()
       @test sc.nominal_frequency_hz == 60.0
     end
 
-    # DTF: the importer takes the model into its constructor, the switching
-    # parameters are stamped afterwards, exactly as the service does it
-    dtf = large_case_path("FOR001.DAT")
-    dtf === nothing && println("      configuration coverage: DTF stamping leg SKIPPED (FOR001.DAT not in the large-case directory)")
-    if dtf !== nothing
-      dnet = Sparlectra.DTFImporter.build_net(Sparlectra.DTFImporter.read_dtf(dtf); bus_shunt_model = cfg.model.bus_shunt_model)
-      @test dnet.bus_shunt_model === :voltage_dependent_injection
-      Sparlectra._apply_config_net_parameters!(dnet, cfg)
-      @test dnet.cooldown_iters == 3
-      @test dnet.q_hyst_pu == 0.05
-      @test dnet.nominal_frequency_hz == 60.0
-    end
+    # CGMES: the importer stamps the same parameters (checked-in sp_casePST
+    # delivery); a config of its own keeps the shunt model and frequency
+    # of `cfg` away from the CGMES import
+    cg_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("qlimits" => Dict("cooldown_iters" => 3, "hysteresis_pu" => 0.05))))
+    cg = Sparlectra.import_case(cgmes_fixture_dir("sp_casePST"), cg_cfg; requested_format = :cgmes).net
+    @test (cg.cooldown_iters, cg.q_hyst_pu) == (3, 0.05)
+
+    # without a configuration the MATPOWER importer takes the template
+    # defaults of DEFAULT_QLIMIT_CONFIG
+    mpc_plain = (
+      name = "case2_defaults",
+      baseMVA = 100.0,
+      bus = [
+        1 3 0.0 0.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+        2 1 20.0 10.0 0.0 0.0 1 1.0 0.0 110.0 1 1.1 0.9
+      ],
+      gen = [1 30.0 0.0 999.0 -999.0 1.0 100.0 1 999.0 0.0 0 0 0 0 0 0 0 0 0 0 0],
+      branch = [1 2 0.01 0.05 0.0 9999.0 0.0 0.0 0.0 0.0 1 -60.0 60.0],
+      gencost = nothing,
+      bus_name = nothing,
+    )
+    plain = Sparlectra.createNetFromMatPowerCase(mpc = mpc_plain, log = false, flatstart = false)
+    @test plain.cooldown_iters == Sparlectra.DEFAULT_QLIMIT_CONFIG.cooldown_iters
+    @test plain.q_hyst_pu == Sparlectra.DEFAULT_QLIMIT_CONFIG.hysteresis_pu
   end)() end
   return nothing
 end
@@ -1374,19 +1111,9 @@ function test_configuration_console_live_capture()
   return nothing
 end
 
-function test_configuration_deprecated_diagnostics_warn()
-  @testset "Deprecated diagnostics.* keys load with a warning, not an error" begin (function ()
-    # Regression: stored user/webui configs still carry the old
-    # diagnostics.console_* duplicates of output.*; after their removal from
-    # the default file the unknown-key validation rejected every such config
-    # ("Unknown Sparlectra configuration key: diagnostics.console_diagnostics")
-    # and bricked the Web UI start. Deprecated keys must warn and be ignored.
-    p = test_scratch_path(".yaml")
-    write(p, "diagnostics:\n  console_diagnostics: full\n  console_max_rows: 50\n  log_effective_config: true\n")
-    cfg = @test_logs (:warn, r"diagnostics\.console_diagnostics is deprecated") (:warn, r"diagnostics\.console_max_rows is deprecated") match_mode = :any Sparlectra.load_sparlectra_config(p; reload = true)
-    @test cfg isa Sparlectra.SparlectraConfig
-    @test cfg.diagnostics.log_effective_config
-    # a genuinely unknown key in a stored file is a warning naming the key,
+function test_configuration_unknown_keys()
+  @testset "Unknown keys warn in a stored file and fail in an override" begin (function ()
+    # an unknown key in a stored file is a warning naming the key,
     # never a failure; the file's other values
     # load, the unknown key is dropped
     bad = test_scratch_path(".yaml")
@@ -1398,16 +1125,426 @@ function test_configuration_deprecated_diagnostics_warn()
     clean = test_scratch_path(".yaml")
     write(clean, "diagnostics:\n  log_effective_config: true\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("diagnostics" => Dict{String,Any}("no_such_key" => 1)))
-    # the config-refresh path migrates stored files by dropping the dead keys
-    # (scoped to the diagnostics block — output.console_diagnostics is the
-    # legitimate owner and stays in the refreshed text)
-    refreshed = Sparlectra.refresh_sparlectra_config_file(p)
-    @test "diagnostics.console_diagnostics" in refreshed.normalized_keys
-    @test "diagnostics.console_max_rows" in refreshed.normalized_keys
-    diag_block = match(r"(?m)^diagnostics:\n((?:^  .*\n?)*)", refreshed.refreshed_text)
-    @test diag_block !== nothing
-    @test !occursin("console_diagnostics", diag_block.captures[1])
-    @test occursin("log_effective_config", diag_block.captures[1])
+    # a case configuration follows the same rule (the Settings page wrote
+    # keys into case files that a later release removed): the unknown key is
+    # dropped with a warning, a known key outside the case scope is refused
+    case_dir = mktempdir()
+    case_m = joinpath(case_dir, "c.m")
+    write(case_m, "")
+    write(joinpath(case_dir, "c.config.yaml"), "config_version: 1\nscope: case\ncase: c.m\npower_flow:\n  islands:\n    mode: solve_independent\n    enabled: true\n")
+    case_level = @test_logs (:warn, r"Unknown Sparlectra configuration key power_flow\.islands\.mode in c\.config\.yaml is ignored") Sparlectra.load_case_config(case_m)
+    @test case_level == Dict{String,Any}("power_flow.islands.enabled" => true)
+    write(joinpath(case_dir, "c.config.yaml"), "config_version: 1\nscope: case\ncase: c.m\noutput:\n  console_live: true\n")
+    @test_throws ArgumentError Sparlectra.load_case_config(case_m)
+  end)() end
+  return nothing
+end
+
+function test_configuration_qlimit_enforcement_keys()
+  @testset "Q-limit enforcement mode user YAML keys" begin (function ()
+    for mode in (:active_set, :classic_simultaneous, :classic_one_at_a_time)
+      cfgfile = test_scratch_path(".yaml")
+      write(cfgfile, """
+power_flow:
+  qlimits:
+    enforcement_mode: $(mode)
+""")
+      cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
+      @test cfg.powerflow.qlimits.enforcement_mode === mode
+    end
+    # any other value is refused, naming the key and the allowed modes
+    refused = @test_throws ArgumentError Sparlectra.QLimitConfig(Dict("enforcement_mode" => "classic"))
+    @test occursin("power_flow.qlimits.enforcement_mode", sprint(showerror, refused.value))
+    @test occursin("classic_simultaneous", sprint(showerror, refused.value))
+    # The Q-limit switching parameters of the run configuration reach the net
+    # in run_sparlectra. The importer stamps the defaults (hysteresis 0.01 pu,
+    # final bound 0.02 pu); the run used to keep them, so the classic outer
+    # loop and the final check accepted bus 6 at 24.678 MVAr over its Qmax of
+    # 24 MVAr whatever hysteresis_pu said. With hysteresis_pu 0 the bus is
+    # clamped: PQ at Qmax, voltage below its set point 1.07 pu. Reference
+    # values: the same run with the four net fields set by hand to the
+    # configured values. The activeSet_A file is byte-identical to the C file.
+    # cooldown_iters and reenable_v_hyst_pu are not read by the classic modes;
+    # the third row shows they reach the net as well.
+    quiet = Sparlectra.OutputConfig(logfile_results = :off, console_summary = false, startup_latency_hint = false)
+    zeng_a = joinpath(dirname(@__DIR__), "data", "scf", "case14_zeng_p306_activeSet_A.scf.json")
+    for (extra, type6, q6, vm6) in (("", "PV", 24.678, 1.07), ("    hysteresis_pu: 0.0\n", "PQ", 24.0, 1.0687),
+                                    ("    hysteresis_pu: 0.0\n    cooldown_iters: 4\n    reenable_v_hyst_pu: 0.002\n", "PQ", 24.0, 1.0687))
+      cfgfile = test_scratch_path(".yaml")
+      write(cfgfile, "config_version: 1\npower_flow:\n  rescue: false\n  qlimits:\n    enforcement_mode: classic_one_at_a_time\n" * extra)
+      cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
+      run_cfg = Sparlectra.SparlectraConfig(powerflow = cfg.powerflow, output = quiet)
+      # the default run leaves bus 6 outside its band (warning captured), the
+      # clamped runs satisfy the stability conditions and warn about nothing
+      r = type6 == "PV" ? (@test_logs (:warn, r"Q-limit stability check") match_mode = :any run_sparlectra(net = Sparlectra.importSCF(zeng_a), config = run_cfg)) :
+          (@test_logs min_level = Logging.Warn run_sparlectra(net = Sparlectra.importSCF(zeng_a), config = run_cfg))
+      ql = cfg.powerflow.qlimits
+      @test (r.net.q_hyst_pu, r.net.final_q_accept_pu, r.net.cooldown_iters, r.net.reenable_v_hyst_pu) == (ql.hysteresis_pu, ql.final_q_accept_pu, ql.cooldown_iters, ql.reenable_v_hyst_pu)
+      @test r.final_converged
+      Sparlectra.calcNetLosses!(r.net)
+      b6 = only(row for row in Sparlectra.buildACPFlowReport(r.net).nodes if row.bus == 6)
+      @test (b6.type, round(b6.q_gen_MVar; digits = 3), round(b6.vm_pu; digits = 4)) == (type6, q6, vm6)
+    end
+    # one default per key: the packaged template, the struct (a library run
+    # without a configuration file) and the loader fallback (a user file
+    # that omits the key) agree field by field; guard.max_switches was 3 in
+    # the template and 10 in the struct up to 0.20.2
+    tmpl = Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH)).powerflow.qlimits
+    from_struct = Sparlectra.QLimitConfig()
+    from_empty = Sparlectra.QLimitConfig(Dict{String,Any}())
+    for f in fieldnames(Sparlectra.QLimitConfig)
+      @test (f, getfield(from_struct, f)) == (f, getfield(tmpl, f))
+      @test (f, getfield(from_empty, f)) == (f, getfield(tmpl, f))
+    end
+    # 0.30.0 agreement for the ten release keys: template = struct = loader
+    # fallback = the keyword defaults the solver entry points resolve to
+    # (read back from the performance profile of a config-less library run
+    # on the shipped sp_case118) = the effective configuration of a service
+    # run. The keyword defaults read DEFAULT_QLIMIT_CONFIG and
+    # DEFAULT_NEWTON_UPDATE; the net and the MATPOWER importer read the
+    # hysteresis and cooldown from the same constant, so final_q_accept_pu
+    # ("auto" = 2 * hysteresis) agrees too.
+    tmpl_cfg = Sparlectra.SparlectraConfig(Sparlectra.load_yaml_dict(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH))
+    empty_cfg = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1))
+    expected = (newton_update = :polar, start_iter = 3, start_mode = :iteration_or_auto, guard = true, guard_min_q_range_pu = 0.02,
+      guard_narrow_range_mode = :lock_pq, guard_violation_mode = :lock_pq, guard_max_switches = 3, final_q_accept_pu = 0.02, auto_profile = :off)
+    for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
+      q = cfg.powerflow.qlimits
+      @test (cfg.powerflow.newton_update, q.start_iter, q.start_mode, q.guard, q.guard_min_q_range_pu, q.guard_narrow_range_mode, q.guard_violation_mode, q.guard_max_switches, q.final_q_accept_pu, cfg.model.auto_profile) == values(expected)
+    end
+    @test Sparlectra.DEFAULT_NEWTON_UPDATE === expected.newton_update
+    # the batch path (N-1 and scenarios through the contingency service)
+    # takes its Q-limit keywords from the same mapping as the single run
+    # (_qlimit_solver_kwargs); before 0.30.2 it forwarded none of them. The
+    # template and an empty configuration map to the release defaults here,
+    # and the service test "scenario service sources (step 5)" shows that a
+    # configured lock list changes an N-1 result.
+    for cfg in (tmpl_cfg, empty_cfg)
+      qk = Sparlectra._qlimit_solver_kwargs(cfg.powerflow.qlimits)
+      @test (qk.qlimit_start_iter, qk.qlimit_start_mode, qk.qlimit_guard, qk.qlimit_guard_min_q_range_pu, qk.qlimit_guard_narrow_range_mode, qk.qlimit_guard_violation_mode, qk.qlimit_guard_max_switches) ==
+            (expected.start_iter, expected.start_mode, expected.guard, expected.guard_min_q_range_pu, expected.guard_narrow_range_mode, expected.guard_violation_mode, expected.guard_max_switches)
+    end
+    lib_net = Sparlectra.createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"))
+    prof = Dict{Symbol,Any}()
+    redirect_stdout(devnull) do
+      runpf!(lib_net, 30, 1e-8, 0; performance_profile = prof)
+    end
+    @test (prof[:newton_update], prof[:qlimit_start_iter], prof[:qlimit_start_mode], prof[:qlimit_guard], prof[:qlimit_guard_min_q_range_pu], prof[:qlimit_guard_narrow_range_mode], prof[:qlimit_guard_violation_mode], prof[:qlimit_guard_max_switches], prof[:final_q_accept_pu]) ==
+          (expected.newton_update, expected.start_iter, expected.start_mode, expected.guard, expected.guard_min_q_range_pu, expected.guard_narrow_range_mode, expected.guard_violation_mode, expected.guard_max_switches, expected.final_q_accept_pu)
+    # 0.30.2: the three dishonest-Newton keys agree the same way (template,
+    # struct, loader fallback, solver keyword defaults)
+    jr_expected = (false, 10.0, 3)
+    for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
+      pf = cfg.powerflow
+      @test (pf.jacobian_reuse, pf.jacobian_reuse_min_reduction, pf.jacobian_reuse_max_steps) == jr_expected
+    end
+    @test (Sparlectra.DEFAULT_JACOBIAN_REUSE, Sparlectra.DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, Sparlectra.DEFAULT_JACOBIAN_REUSE_MAX_STEPS) == jr_expected
+    @test (prof[:jacobian_reuse], prof[:jacobian_reuse_min_reduction], prof[:jacobian_reuse_max_steps]) == jr_expected
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_min_reduction" => 1.0)))
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_max_steps" => 0)))
+    # Deliberate exception to the one-default rule above, which covers the
+    # solver behaviour: output.logfile_results is log verbosity. A library run
+    # without a configuration file stays quiet (off), the packaged template
+    # that the Web UI and the services start from logs the full result table.
+    # Pinned here so the difference cannot drift unnoticed.
+    @test Sparlectra.OutputConfig().logfile_results === :off
+    @test empty_cfg.output.logfile_results === :off
+    @test tmpl_cfg.output.logfile_results === :full
+    # power_flow.power_mode_lu (0.30.2) the same way, and an unknown value is
+    # refused by the loader and the override validation
+    for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
+      @test cfg.powerflow.power_mode_lu === :auto
+    end
+    @test Sparlectra.DEFAULT_POWER_MODE_LU === :auto
+    @test prof[:power_mode_lu] === :auto
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("power_mode_lu" => "pardiso")))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.power_mode_lu" => "pardiso"))
+  end)() end
+  return nothing
+end
+
+function test_configuration_value_domain_validation()
+  @testset "Configuration value-domain validation" begin (function ()
+    tol_bad = test_scratch_path(".yaml")
+    write(tol_bad, "power_flow:\n  tol: 0\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(tol_bad; reload = true)
+
+    damping_bad = test_scratch_path(".yaml")
+    write(damping_bad, "power_flow:\n  autodamp_min: 0\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(damping_bad; reload = true)
+
+    fit_bad = test_scratch_path(".yaml")
+    write(fit_bad, "model:\n  auto_profile_max_fit_pu: -0.1\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(fit_bad; reload = true)
+
+    angle_limit_bad = test_scratch_path(".yaml")
+    write(angle_limit_bad, "power_flow:\n  start_mode:\n    dc_angle_limit_deg: 0\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(angle_limit_bad; reload = true)
+
+    bool_ok_true = test_scratch_path(".yaml")
+    write(bool_ok_true, "power_flow:\n  autodamp: true\n")
+    @test Sparlectra.load_sparlectra_config(bool_ok_true; reload = true).powerflow.autodamp === true
+
+    bool_ok_false = test_scratch_path(".yaml")
+    write(bool_ok_false, "power_flow:\n  autodamp: false\n")
+    @test Sparlectra.load_sparlectra_config(bool_ok_false; reload = true).powerflow.autodamp === false
+
+    enum_bad = test_scratch_path(".yaml")
+    write(enum_bad, "power_flow:\n  start_mode:\n    angle_mode: invalid_angle\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(enum_bad; reload = true)
+    wrong_branch_bad = test_scratch_path(".yaml")
+    write(wrong_branch_bad, "power_flow:\n  wrong_branch_detection: maybe\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(wrong_branch_bad; reload = true)
+
+    # _copy_sparlectra_with_powerflow must carry EVERY field (regression: the
+    # former hand-written keyword list silently reset cgmes and webui to
+    # defaults on every copy).
+    cgmes_cfg = Sparlectra.SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(start_values = :sv, base_mva = 50.0))
+    cgmes_copied = Sparlectra._copy_sparlectra_with_powerflow(cgmes_cfg, cgmes_cfg.powerflow)
+    @test cgmes_copied.cgmes.start_values === :sv
+    @test cgmes_copied.cgmes.base_mva == 50.0
+    @test all(getfield(cgmes_copied, f) == getfield(cgmes_cfg, f) for f in fieldnames(Sparlectra.SparlectraConfig))
+
+    # cgmes_import.start_values: default flat, sv accepted, invalid rejected
+    # with the key name in the message.
+    # auto is the shipped default: deliveries with an SvVoltage state are
+    # solved from it, others fall back to the flat start (resolved per run).
+    @test Sparlectra.CGMESImportConfig().start_values === :auto
+    flat_forced = test_scratch_path(".yaml")
+    write(flat_forced, "cgmes_import:\n  start_values: flat\n")
+    @test Sparlectra.load_sparlectra_config(flat_forced; reload = true).cgmes.start_values === :flat
+    sv_ok = test_scratch_path(".yaml")
+    write(sv_ok, "cgmes_import:\n  start_values: sv\n")
+    @test Sparlectra.load_sparlectra_config(sv_ok; reload = true).cgmes.start_values === :sv
+    sv_bad = test_scratch_path(".yaml")
+    write(sv_bad, "cgmes_import:\n  start_values: warm\n")
+    err = try
+      Sparlectra.load_sparlectra_config(sv_bad; reload = true)
+      nothing
+    catch e
+      e
+    end
+    @test err isa ArgumentError
+    @test occursin("cgmes_import.start_values", sprint(showerror, err))
+
+    # cgmes_import.placeholder_guards: default warn_skip, strict accepted,
+    # invalid rejected with the key name in the message.
+    @test Sparlectra.CGMESImportConfig().placeholder_guards === :warn_skip
+    pg_ok = test_scratch_path(".yaml")
+    write(pg_ok, "cgmes_import:\n  placeholder_guards: strict\n")
+    @test Sparlectra.load_sparlectra_config(pg_ok; reload = true).cgmes.placeholder_guards === :strict
+    pg_bad = test_scratch_path(".yaml")
+    write(pg_bad, "cgmes_import:\n  placeholder_guards: ignore\n")
+    pg_err = try
+      Sparlectra.load_sparlectra_config(pg_bad; reload = true)
+      nothing
+    catch e
+      e
+    end
+    @test pg_err isa ArgumentError
+    @test occursin("cgmes_import.placeholder_guards", sprint(showerror, pg_err))
+
+    # power_flow.plausibility.vmin_warn: 0 switches the check off and is
+    # valid, a negative threshold is refused in a file and as an override
+    @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.plausibility.vmin_warn" => 0.0))["power_flow"]["plausibility"]["vmin_warn"] == 0.0
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.plausibility.vmin_warn" => -0.1))
+    vw_bad = test_scratch_path(".yaml")
+    write(vw_bad, "power_flow:\n  plausibility:\n    vmin_warn: -0.1\n")
+    @test_throws ArgumentError Sparlectra.load_sparlectra_config(vw_bad; reload = true)
+    # GUI overrides of the start current iteration, merit and trust region:
+    # accepted values arrive, out-of-range values and unknown keys are refused
+    @test Sparlectra.validate_gui_config_overrides(Dict("power_flow.qlimits.enabled" => false))["power_flow"]["qlimits"]["enabled"] === false
+    current_iteration_overrides = Sparlectra.validate_gui_config_overrides(
+      Dict(
+        "power_flow.start_current_iteration.enabled" => true,
+        "power_flow.start_current_iteration.max_iter" => 3,
+        "power_flow.start_current_iteration.tol" => 1.0e-4,
+        "power_flow.start_current_iteration.damping" => 0.5,
+        "power_flow.start_current_iteration.accept_only_if_improved" => true,
+        "power_flow.start_current_iteration.min_improvement_factor" => 0.95,
+        "power_flow.start_current_iteration.vm_min_pu" => 0.6,
+        "power_flow.start_current_iteration.vm_max_pu" => 1.4,
+        "power_flow.start_current_iteration.max_angle_step_deg" => 25.0,
+        "power_flow.start_current_iteration.only_for_large_cases" => false,
+      ),
+    )
+    @test current_iteration_overrides["power_flow"]["start_current_iteration"]["enabled"] === true
+    @test current_iteration_overrides["power_flow"]["start_current_iteration"]["max_iter"] == 3
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.start_current_iteration.damping" => 1.5))
+
+    merit_overrides = Sparlectra.validate_gui_config_overrides(
+      Dict("power_flow.merit.enabled" => true, "power_flow.merit.armijo_c1" => 1.0e-3, "power_flow.merit.fallback_max_mismatch" => false),
+    )
+    @test merit_overrides["power_flow"]["merit"]["enabled"] === true
+    @test merit_overrides["power_flow"]["merit"]["armijo_c1"] == 1.0e-3
+    @test merit_overrides["power_flow"]["merit"]["fallback_max_mismatch"] === false
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.merit.armijo_c1" => 0.5))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.merit.scale_p" => 2.0))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.merit.unknown_key" => true))
+
+    trust_region_overrides = Sparlectra.validate_gui_config_overrides(
+      Dict("power_flow.trust_region.enabled" => true, "power_flow.trust_region.initial_radius" => 2.0, "power_flow.trust_region.eta_accept" => 0.2, "power_flow.trust_region.step_mode" => "dogleg"),
+    )
+    @test trust_region_overrides["power_flow"]["trust_region"]["enabled"] === true
+    @test trust_region_overrides["power_flow"]["trust_region"]["initial_radius"] == 2.0
+    @test trust_region_overrides["power_flow"]["trust_region"]["eta_accept"] == 0.2
+    @test trust_region_overrides["power_flow"]["trust_region"]["step_mode"] == "dogleg"
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.trust_region.initial_radius" => 20.0))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.trust_region.eta_accept" => 1.0))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.trust_region.min_radius" => 1.0e-3))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.trust_region.step_mode" => "bogus"))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict("power_flow.trust_region.unknown_key" => true))
+
+  end)() end
+  return nothing
+end
+
+function test_configuration_webui_keys_both_directions()
+  @testset "Web UI keys are reachable in both directions" begin (function ()
+    # tol_MW failed the first direction (a key the UI was allowed to set,
+    # with no field to set it in) and stale fields fail the second. Both are
+    # asserted, because each direction hides a different defect.
+    # collect FIRST, filter second. WEBUI_OPTION_SPECS is an NTuple of 97
+    # elements: Julia unrolls tuple iteration, and filtering makes the result
+    # length unknown, so a comprehension straight off the tuple ends in
+    # Base.grow_to! over a 97-way unrolled generator. Measured,
+    # that single line cost 5.61 s of the 5.93 s this group spent inferring
+    # generator machinery, and it was the largest item in the whole group.
+    # collect() on a tuple with a concrete eltype knows both length and type,
+    # and filter() on the resulting Vector is one specialization.
+    specs = filter(s -> s.config_key !== nothing, collect(SparlectraApp.WEBUI_OPTION_SPECS))
+    have = Set(String(s.config_key) for s in specs)
+    @test length(specs) >= 60
+
+    # A: every form field maps to a key that exists AND may be set from the
+    # GUI. A typo or a renamed key fails here instead of at run time.
+    for spec in specs
+      key = String(spec.config_key)
+      @test key in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
+      probe = try
+        Sparlectra.validate_gui_config_overrides(Dict{String,Any}(key => spec.default))
+        true
+      catch err
+        # a value-domain complaint proves the KEY was accepted; only an
+        # unknown-key or not-editable complaint is a finding here. Both
+        # rejections and every value check throw ArgumentError; anything
+        # else is a bug in the validator and must surface.
+        err isa ArgumentError || rethrow()
+        msg = sprint(showerror, err)
+        !occursin("Unknown", msg) && !occursin("not allowed for GUI editing", msg)
+      end
+      @test probe
+    end
+
+    # B: every GUI-editable key either has a field or says why it has none.
+    # Without this rule a key can be declared editable and never surface,
+    # which is exactly what happened to power_flow.tol_MW.
+    fieldless_reasons = Dict(
+      "matpower_import.apply_branch_kind" => "import detail, set per case in the case configuration file",
+      "matpower_import.apply_branch_names" => "import detail, set per case in the case configuration file",
+      "matpower_import.import_for001_contingencies" => "DTF import detail, chosen by the FOR002 selection on the Case page",
+      "power_flow.islands.diagnostic_continue_after_failure" => "island diagnostics detail, YAML and API only",
+      "power_flow.islands.enabled" => "island solving follows the network, not a form choice",
+      "power_flow.islands.reference_policy" => "island solving follows the network, not a form choice",
+      "power_flow.method" => "the form offers the solver choice as power_flow.solver; method has one supported value",
+      "short_circuit.sweep_method" => "short-circuit performance switch, YAML and API only",
+      "short_circuit.converter_current_factor" => "converter fault current without maxIFault, a modelling choice per case; set via configuration.yaml, the case sidecar or the API",
+      # the benchmark mode belongs to run_matpower_case in a script (with
+      # `using BenchmarkTools`); the Web UI has no benchmark option since 0.20.2
+      "benchmark.enabled" => "benchmark mode of run_matpower_case, scripts only; no Web UI option",
+      "benchmark.samples" => "benchmark mode of run_matpower_case, scripts only; no Web UI option",
+      "benchmark.seconds" => "benchmark mode of run_matpower_case, scripts only; no Web UI option",
+      "power_flow.tol_MW" => "set through the tolerance VALUE field plus its unit selector (pu or MW), so one number cannot claim two units",
+      "state_estimation.robust" => "issue #377: case scope like the other estimator options, but no dedicated UI control (the form exposes robust_mode instead); set via configuration.yaml or the case sidecar",
+      "state_estimation.topology_precheck" => "issue #377: case scope, no dedicated UI control; set via configuration.yaml or the case sidecar",
+      "state_estimation.linear_solver" => "estimator linear-algebra backend, a performance switch; set via configuration.yaml or the case sidecar",
+      "state_estimation.symmetric_gain" => "estimator linear-algebra switch (Cholesky route for the gain matrix), a performance choice; set via configuration.yaml or the case sidecar",
+      "qsts.mode" => "the Web UI QSTS button sets the mode for its own run only; the key itself is set via configuration.yaml or the case sidecar",
+      "qsts.base_step" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.snapshot_controls" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.sequential_start" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.resync_every" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.dead_time_steps" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.hunting_window" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.vm_min_pu" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.vm_max_pu" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.loading_max_pct" => "QSTS setting, read by the library and the Web UI QSTS run; set via configuration.yaml or the case sidecar",
+      "qsts.series.min_structural_overlap" => "series check of CGMES snapshots, a library function without a Web UI control; set via configuration.yaml or the case sidecar",
+      "qsts.series.max_injection_churn" => "series check of CGMES snapshots, a library function without a Web UI control; set via configuration.yaml or the case sidecar",
+      "qsts.series.max_gap" => "series check of CGMES snapshots, a library function without a Web UI control; set via configuration.yaml or the case sidecar",
+      "cgmes_import.map_energy_source" => "CGMES import switch for deliveries that carry generation as EnergySource; set via configuration.yaml or the case sidecar",
+      "cgmes_import.map_power_electronics" => "CGMES import switch for CGMES 3.0 deliveries with PowerElectronicsConnection; set via configuration.yaml or the case sidecar",
+      "cgmes_import.shunt_control" => "CGMES import switch for the bank regulators of a delivery; set via configuration.yaml or the case sidecar",
+      "power_flow.plausibility.vmin_warn" => "threshold of the plausibility warning after a converged run; set via configuration.yaml or the case sidecar",
+      "state_estimation.sigma_by_voltage_level" => "a table, not a scalar field: the sigma table of the State Estimation section posts it (se_sigma_lvl_* fields), the run takes it as an override and Save settings writes it into the case configuration",
+    )
+    for key in sort(collect(Sparlectra.GUI_EDITABLE_CONFIG_KEYS))
+      key in have && continue
+      # the output.* group is console and CSV fine tuning: deliberately not
+      # on the run form, otherwise every run would carry twenty display
+      # switches. One reason for the whole group.
+      startswith(key, "output.") && continue
+      @test haskey(fieldless_reasons, key)
+      haskey(fieldless_reasons, key) && @test !isempty(strip(fieldless_reasons[key]))
+    end
+    # and no stale reason: every named key must still be GUI-editable and
+    # still have no field, otherwise the list rots
+    for key in keys(fieldless_reasons)
+      @test key in Sparlectra.GUI_EDITABLE_CONFIG_KEYS
+      @test !(key in have)
+    end
+  end)() end
+  return nothing
+end
+
+function test_configuration_refresh()
+  @testset "Configuration refresh" begin (function ()
+    stale = test_scratch_path(".yaml")
+    write(stale, "power_flow:\n  tol: 1.0e-6\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
+    dry = Sparlectra.refresh_sparlectra_config_file(stale)
+    @test dry.success
+    @test dry.changed
+    @test !dry.written
+    @test "power_flow.qlimits.enforcement_mode" in dry.missing_keys
+    @test "power_flow.start_mode.voltage_mode" in dry.normalized_keys
+    @test occursin("tol: 1.0e-6", dry.refreshed_text)
+    @test occursin("voltage_mode: profile_blend", dry.refreshed_text)
+    @test occursin("profile_source: matpower_reference", dry.refreshed_text)
+
+    written = Sparlectra.refresh_sparlectra_config_file(stale; write = true)
+    @test written.success
+    @test written.written
+    @test written.backup_path !== nothing
+    @test isfile(written.backup_path)
+    cfg = Sparlectra.load_sparlectra_config(stale; reload = true)
+    @test cfg.powerflow.tol == 1.0e-6
+    @test cfg.powerflow.start_mode.voltage_mode === :profile_blend
+    @test cfg.powerflow.start_mode.profile_source === :matpower_reference
+    @test cfg.powerflow.qlimits.enforcement_mode === :active_set
+
+    # keys no loader reads are deleted by a refresh and named (two keys of
+    # earlier versions, one this version never knew, and the form block);
+    # the refreshed text loads without an ignored-key warning
+    superfluous = test_scratch_path(".yaml")
+    write(superfluous, "config_version: 1\nscope: general\npower_flow:\n  tol: 1.0e-7\n  islands:\n    mode: solve_parallel\n  no_such_key: 3\nwebui:\n  warmup: true\nform:\n  gen_seed: 4\n")
+    superfluous_result = Sparlectra.refresh_sparlectra_config_file(superfluous)
+    @test superfluous_result.success
+    @test sort(superfluous_result.removed_keys) == ["form", "power_flow.islands.mode", "power_flow.no_such_key", "webui.warmup"]
+    @test count(w -> startswith(w, "Removed power_flow.islands.mode:"), superfluous_result.warnings) == 1
+    @test !occursin("solve_parallel", superfluous_result.refreshed_text) && !occursin("no_such_key", superfluous_result.refreshed_text) && !occursin("warmup: true", superfluous_result.refreshed_text)
+    @test occursin("tol: 1.0e-7", superfluous_result.refreshed_text) && !occursin("gen_seed", superfluous_result.refreshed_text)
+    reloaded = test_scratch_path(".yaml")
+    write(reloaded, superfluous_result.refreshed_text)
+    reloaded_cfg = @test_logs min_level = Logging.Warn Sparlectra.load_sparlectra_config(reloaded; reload = true)
+    @test reloaded_cfg.powerflow.tol == 1.0e-7
+
+    dup = test_scratch_path(".yaml")
+    write(dup, "output:\n  detailed_result_csv_exporter: auto\n  detailed_result_csv_exporter: direct\n")
+    dup_result = Sparlectra.refresh_sparlectra_config_file(dup; write = true)
+    @test !dup_result.success
+    @test !dup_result.written
+    @test "output.detailed_result_csv_exporter" in dup_result.duplicate_keys
+    @test occursin("direct", read(dup, String))
   end)() end
   return nothing
 end
@@ -1422,25 +1559,24 @@ const CONFIG_EXPECTED_WARNINGS = (
   r"legacy key name",
   r"sparlectra\.config inside .* is deprecated",
   r"is a very coarse convergence bound",
-  r"reject_active is deprecated",
 )
 
 function run_configuration_coverage_tests()
   for testfn in (
-    test_configuration_yaml_key_coverage,
     test_configuration_version_scope_and_case_precedence,
     test_configuration_yaml_scalar_round_trip,
     test_configuration_runner_output_modes,
-    test_configuration_sentinel_forwarding,
     test_configuration_matpower_auto_profile_rules,
     test_configuration_tolerance_in_mw,
     test_configuration_every_key_arrives,
     test_configuration_form_defaults,
-    test_configuration_stored_survives_removed_keys,
-    test_configuration_qlimit_start_mode_values,
     test_configuration_network_parameters_reach_paths,
     test_configuration_console_live_capture,
-    test_configuration_deprecated_diagnostics_warn,
+    test_configuration_unknown_keys,
+    test_configuration_qlimit_enforcement_keys,
+    test_configuration_value_domain_validation,
+    test_configuration_webui_keys_both_directions,
+    test_configuration_refresh,
   )
     run_with_expected_warnings(testfn, CONFIG_EXPECTED_WARNINGS)
   end

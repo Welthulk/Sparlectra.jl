@@ -149,7 +149,6 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.apply_branch_kind",
   "matpower_import.import_for001_contingencies",
   "matpower_import.matpower_dcline_mode",
-  "model.net_cache_enabled",
   "cgmes_import.hvdc_mode",
   "powsybl_import.base_mva",
   "powsybl_import.hvdc_mode",
@@ -213,6 +212,8 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   # matrix), performance choices; editable so a case sidecar can pin them
   "state_estimation.linear_solver",
   "state_estimation.symmetric_gain",
+  # the impedance rule of the tap estimation, a modelling choice per case
+  "state_estimation.tap_estimation.impedance_correction",
 ])
 
 function _flatten_config_keys!(keys_out::Set{String}, raw::AbstractDict, prefix::String = "")
@@ -230,7 +231,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "model.net_cache_enabled", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "contingency.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -392,6 +393,8 @@ function _validate_gui_override_value(key::String, value)
     _parse_sigma_by_voltage_level(value)
   elseif key == "state_estimation.linear_solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_LINEAR_SOLVER_VALUES)
+  elseif key == "state_estimation.tap_estimation.impedance_correction"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "cgmes_import.hvdc_mode"
@@ -518,6 +521,38 @@ function _case_config_shared_stem(a::AbstractString, b::AbstractString)::Bool
   return stem(a) == stem(b)
 end
 
+# a dotted key that names a value of the packaged template, or sits below one
+# of its free-form mappings (distributed slack weights, controllers)
+function _config_key_in_defaults(defaults::AbstractDict, key::AbstractString)::Bool
+  any(p -> key == p || startswith(key, p * "."), _FREEFORM_MAPPING_CONFIG_KEYS) && return true
+  current = defaults
+  for part in _dotted_path_parts(key)
+    (current isa AbstractDict && haskey(current, part)) || return false
+    current = current[part]
+  end
+  return true
+end
+
+# Of the keys a case configuration or an SCF `sparlectra.config` carries
+# outside the case scope, a key this Sparlectra version does not know at all
+# (removed or misspelled) is dropped with a warning, like in the configuration
+# file: a stored file keeps loading. Returns the
+# known keys outside the case scope, which the caller refuses.
+function _drop_unknown_case_config_keys!(out::Dict{String,Any}, bad::Vector{String}, where::AbstractString)::Vector{String}
+  isempty(bad) && return bad
+  defaults = load_yaml_dict(DEFAULT_SPARLECTRA_CONFIG_PATH)
+  known = String[]
+  for key in bad
+    if _config_key_in_defaults(defaults, key)
+      push!(known, key)
+    else
+      @warn "Unknown Sparlectra configuration key $(key) in $(where) is ignored (not a key of this Sparlectra version; remove it from the file)." maxlog = 1 _id = Symbol("unknown_case_config_key_", key, "_", where)
+      delete!(out, key)
+    end
+  end
+  return known
+end
+
 """
     load_case_config(case_path) -> Dict{String,Any}
 
@@ -527,7 +562,8 @@ must open with the header keys `config_version`, `scope: case`, and
 `case: <case file basename>`; a `case` value naming a different file is the
 hard error `case_config_mismatch`, so a copied config cannot silently steer
 the wrong case. Keys outside the case scope are refused with the same
-wording as the in-file `sparlectra.config` check.
+wording as the in-file `sparlectra.config` check; a key this Sparlectra
+version does not know is dropped with a warning.
 """
 function load_case_config(case_path::AbstractString)::Dict{String,Any}
   path = case_config_path(case_path)
@@ -558,39 +594,10 @@ function load_case_config(case_path::AbstractString)::Dict{String,Any}
   # output.csv_format now and the form block entry is ignored)
   delete!(raw, "form")
   out = _flatten_config_values!(Dict{String,Any}(), raw)
-  # a key removed from the configuration (0.30.2: power_flow.islands.mode,
-  # which the Settings page wrote into case files before) is dropped with
-  # the warning the configuration file gets, never refused: an old case
-  # file must keep loading
-  for key in sort!(String[k for k in keys(out) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
-    @warn "Configuration key $(key) in $(basename(path)) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])" maxlog = 1 _id = Symbol("removed_case_key_", key, "_", path)
-    delete!(out, key)
-  end
   bad = sort!(String[k for k in keys(out) if !scf_is_case_config_key(k)])
+  bad = _drop_unknown_case_config_keys!(out, bad, basename(path))
   isempty(bad) || throw(ArgumentError("Case configuration $(path): config key(s) $(join(bad, ", ")) are not case scope (logging, benchmarking, parallelism, Web UI and export settings belong in the configuration file). Remove them from the case configuration."))
   return out
-end
-
-"""
-    ignored_removed_config_keys(config_file, case_path) -> Vector{String}
-
-One line per configuration key that is no longer read (`_REMOVED_NOTED_CONFIG_KEYS`,
-0.30.2: `power_flow.islands.mode`) and still sits in the configuration file
-`config_file` or in the case configuration of `case_path`, naming the file
-and what replaced the key. The loaders drop such a key with a warning that
-is printed before a service run starts; the service writes these lines into
-its run.log so the archived run says it too. Empty when nothing is found.
-"""
-function ignored_removed_config_keys(config_file::AbstractString, case_path::AbstractString)::Vector{String}
-  lines = String[]
-  for path in (String(config_file), case_config_path(case_path))
-    isfile(path) || continue
-    flat = _flatten_config_values!(Dict{String,Any}(), load_yaml_dict(path))
-    for key in sort!(String[k for k in keys(flat) if haskey(_REMOVED_NOTED_CONFIG_KEYS, k)])
-      push!(lines, "Configuration key $(key) in $(basename(path)) is ignored: $(_REMOVED_NOTED_CONFIG_KEYS[key])")
-    end
-  end
-  return lines
 end
 
 """

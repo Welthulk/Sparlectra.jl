@@ -15,7 +15,7 @@
 # file: test/test_legacy_external_grid.jl
 # purpose: legacy profile: the testsets of test/test_external_grid.jl that pin an earlier
 #          change (an issue, a bug, a bit-identity or off-path guarantee).
-#          They moved here unchanged from test_external_grid.jl; the helpers they use
+#          They moved here from test_external_grid.jl; the helpers they use
 #          are defined in that file, which the legacy group includes first.
 using Sparlectra
 using Test
@@ -64,17 +64,6 @@ function run_legacy_external_grid_tests()
       @test eni.maxR0ToX0Ratio === nothing && eni.governorSCD === nothing
     end)() end
 
-    @testset "copy regression: sc_sources survives net copying" begin (function ()
-      net = _eg_fixture()
-      addExternalGrid!(net = net, busName = "B2", sk_max_MVA = 2000.0, rx_max = 0.15)
-      copy_net = deepcopy(net)
-      @test length(copy_net.sc_sources.external_network_injections) == 1
-      res = runShortCircuit!(copy_net; case = :max)
-      row = first(r for r in res.rows if r.bus == "B2")
-      @test row.status === :ok
-      @test row.ik_kA ≈ first(r for r in runShortCircuit!(net; case = :max).rows if r.bus == "B2").ik_kA
-    end)() end
-
     @testset "internal impedance: non-ideal source (stage 2)" begin (function ()
       build = (; internal, sk) -> begin
         net = Net(name = "extgrid_int", baseMVA = 100.0)
@@ -103,7 +92,7 @@ function run_legacy_external_grid_tests()
       @test erg_s == 0
       @test abs(getNodeVm(stiff.nodeVec[1]) - vm_ideal) < 1e-8
 
-      # Realistic Sk: terminal voltage droops and the angle shifts — the
+      # Realistic Sk: terminal voltage droops and the angle shifts; the
       # terminal bus is now an ordinary solved bus.
       weak = build(internal = true, sk = 500.0)
       _, erg_w = runpf!(weak, 30, 1e-8, 0)

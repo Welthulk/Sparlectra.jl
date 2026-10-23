@@ -9,6 +9,7 @@ Pages = [
   "src/stateestimation/measurement_table.jl",
   "src/stateestimation/measurement_convert.jl",
   "src/stateestimation/state_estimation.jl",
+  "src/stateestimation/tap_changer_data.jl",
   "src/stateestimation/tap_estimation.jl",
   "src/stateestimation/topology_validation.jl",
 ]
@@ -25,6 +26,7 @@ Pages = [
   "src/stateestimation/measurement_table.jl",
   "src/stateestimation/measurement_convert.jl",
   "src/stateestimation/state_estimation.jl",
+  "src/stateestimation/tap_changer_data.jl",
   "src/stateestimation/tap_estimation.jl",
   "src/stateestimation/topology_validation.jl",
 ]

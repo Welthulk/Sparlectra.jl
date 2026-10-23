@@ -159,9 +159,10 @@ makedocs(
     canonical = "https://welthulk.github.io/Sparlectra.jl",
     repolink = "https://github.com/Welthulk/Sparlectra.jl",
     # Raised size limits: the single-page changelog and the autodocs network
-    # reference legitimately exceed Documenter's 100 KiB default.
+    # reference legitimately exceed Documenter's 100 KiB default. 300 KiB
+    # became too small in 0.60.0 (reference_core at 304 KiB).
     size_threshold_warn = 150 * 1024,
-    size_threshold = 300 * 1024,
+    size_threshold = 400 * 1024,
     # 700 KiB left only ~0.5 KiB headroom; the Literate-generated workshop
     # page pushed the index to ~706 KiB.
     search_size_threshold_warn = 800 * 1024,

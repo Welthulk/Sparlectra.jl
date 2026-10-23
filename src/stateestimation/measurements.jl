@@ -642,7 +642,8 @@ function _end_current_A(net::Net, br, direction::Symbol, V::Vector{ComplexF64}):
 end
 
 ## resolve the branch a row evaluates against: the tap overlay's scratch
-## branch (released trafo at the cascade position) or the model branch
+## branch (released trafo at the step positions of the state) or the model
+## branch
 @inline function _prediction_branch(net::Net, bridx::Int, tapOverlay)
   tapOverlay !== nothing && haskey(tapOverlay, bridx) && return tapOverlay[bridx].branch
   return net.branchVec[bridx]

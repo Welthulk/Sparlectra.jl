@@ -526,8 +526,8 @@ function _setRatioTapRange!(br, rng)
   br.tap_max = rng.tap_max
   br.tap_step = rng.tap_step
   # the step ratios of a CGMES changer are linear in the step (or table
-  # points), not the cascade grid of nameplate data; the tap estimation
-  # fixes its estimate on this grid
+  # points), not the fraction grid of nameplate data; the tap controller
+  # steps on this grid
   br.tap_ratio_grid = :linear
   # a linear changer steps on the uniform grid, also where another changer
   # of the branch gave it table points before
@@ -559,16 +559,21 @@ function _setPhaseTapRange!(br, rng)
   return br
 end
 
+# (ratio, shift in degrees) of tap changer `tc` at its import step, the
+# correction _applyEndTaps folds into the branch (a RatioTapChanger has no
+# shift); ratio 1 and shift 0 for a PhaseTapChangerTabular whose table does
+# not resolve.
+function _tapCorrectionAt(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject)::Tuple{Float64,Float64}
+  tc.class == :RatioTapChanger && return (first(_ratioTapCorrectionAt(tc, _ratioTapTable(store, tc), _tapStep(tc, svsteps))), 0.0)
+  return _phaseTapRatioShift(store, tc, svsteps)
+end
+
 # Whether _applyEndTaps folds the correction of `tc` into the branch: not
 # for a correction outside the plausibility band, nor for a
 # PhaseTapChangerTabular whose table does not resolve.
 function _tapCorrectionApplied(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject)::Bool
-  if tc.class == :RatioTapChanger
-    corr = first(_ratioTapCorrectionAt(tc, _ratioTapTable(store, tc), _tapStep(tc, svsteps)))
-  else
-    tc.class == :PhaseTapChangerTabular && _phaseTapTableModel(store, tc, Int(round(_tapStep(tc, svsteps)))) === nothing && return false
-    corr = first(_phaseTapRatioShift(store, tc, svsteps))
-  end
+  tc.class == :PhaseTapChangerTabular && _phaseTapTableModel(store, tc, Int(round(_tapStep(tc, svsteps)))) === nothing && return false
+  corr = first(_tapCorrectionAt(store, svsteps, tc))
   return CGMES_TAP_CORR_MIN <= corr <= CGMES_TAP_CORR_MAX
 end
 
@@ -667,6 +672,164 @@ function _attachTapStepImpedance!(net, store::CGMESStore, svsteps::Dict{String,F
   (isempty(ratio_values) && isempty(phase_values)) && return nothing
   br.tap_step_impedance = Sparlectra.TapStepImpedance(br.r_pu / f0[1], br.x_pu / f0[2], br.g_from_pu / f0[3], br.b_from_pu / f0[4], br.g_to_pu / f0[3], br.b_to_pu / f0[4], ratio_values, ratio_factors, phase_values, phase_factors)
   return nothing
+end
+
+# --- tap changer sets of the tap estimation ----------------------------------
+#
+# The import stores on every transformer branch the tap changers the state
+# estimation releases (`se_tap_changers`, a Sparlectra.SETapChangerSet with
+# origin :cgmes). Power flow, controllers and export do not read it; the
+# branch ratio, shift, ranges and impedance stay as the mapping above sets
+# them.
+
+# The single-step PhaseTapChangerLinear that the own CGMES export writes to
+# carry a fixed branch shift (cgmes_export.jl, _writeLinearPtc): lowStep 0,
+# highStep 1, neutralStep 0, normalStep 1, step 1, and a name ending in
+# "_PTC". All five values and the suffix must match. Such a changer is the
+# shift of the branch, not a regulator: a re-import of an exported nameplate
+# Delta-u changer would otherwise release a one-step angle changer.
+function _isExportShiftPtc(tc::CIMObject)::Bool
+  tc.class == :PhaseTapChangerLinear || return false
+  endswith(something(str(tc, :name), ""), "_PTC") || return false
+  return (num(tc, :lowStep), num(tc, :highStep), num(tc, :neutralStep), num(tc, :normalStep), num(tc, :step)) == (0.0, 1.0, 0.0, 1.0, 1.0)
+end
+
+# Points of the RatioTapChangerTable or PhaseTapChangerTable of `tc`, sorted
+# by step: the ratio (and angle) of the point and its r, x, g, b percent
+# deviations as factors 1 + p/100. A ratio point needs a ratio (as
+# _ratioTapTable reads it), a phase point takes ratio 1 and angle 0 where it
+# leaves them out (as _phaseTapTableModel reads it). `nothing` without a
+# usable point, or when a step is not a whole number or two points share a
+# step (the estimation needs whole, strictly ascending steps).
+function _seTapTablePoints(store::CGMESStore, tc::CIMObject)::Union{Nothing,Vector{Sparlectra.SETapPoint}}
+  ratio_tc = tc.class == :RatioTapChanger
+  tabkey, pointcls = ratio_tc ? (:RatioTapChangerTable, :RatioTapChangerTablePoint) : (:PhaseTapChangerTable, :PhaseTapChangerTablePoint)
+  tmrid = get(tc.refs, tabkey, nothing)
+  tmrid === nothing && return nothing
+  pts = Sparlectra.SETapPoint[]
+  for pt in objectsOf(store, pointcls)
+    get(pt.refs, tabkey, "") == tmrid || continue
+    s = num(pt, :step)
+    r = ratio_tc ? num(pt, :ratio) : num(pt, :ratio, 1.0)
+    (s === nothing || r === nothing) && continue
+    isinteger(s) || return nothing
+    push!(pts, Sparlectra.SETapPoint(step = Int(s), ratio = r, angle_deg = ratio_tc ? 0.0 : num(pt, :angle, 0.0), r = 1.0 + num(pt, :r, 0.0) / 100.0, x = 1.0 + num(pt, :x, 0.0) / 100.0, g = 1.0 + num(pt, :g, 0.0) / 100.0, b = 1.0 + num(pt, :b, 0.0) / 100.0))
+  end
+  isempty(pts) && return nothing
+  sort!(pts; by = p -> p.step)
+  all(k -> pts[k].step < pts[k + 1].step, 1:length(pts) - 1) || return nothing
+  all(p -> p.ratio > 0.0, pts) || return nothing
+  return pts
+end
+
+_seTapTableHasImpedance(pts::Vector{Sparlectra.SETapPoint})::Bool = any(p -> (p.r, p.x, p.g, p.b) != (1.0, 1.0, 1.0, 1.0), pts)
+
+# Tap changer `tc` (at the branch from side when `on_from_side`) for the tap
+# estimation, or the reason why it cannot be one. The numbers are those the
+# import computes the branch ratio and shift from:
+# - RatioTapChanger: _ratioTapCorrectionAt with the unrounded step; with a
+#   RatioTapChangerTable kind :tabular, continued outside the table by the
+#   linear formula (outside_du = stepVoltageIncrement);
+# - asymmetrical and symmetrical: _phaseTapRatioShift (rounded step, band
+#   defaults around step and neutral);
+# - PhaseTapChangerLinear: _phaseTapLinearModel (band widened to neutral,
+#   step clamped into it);
+# - PhaseTapChangerTabular: _phaseTapTableModel (its neutral and the step
+#   snapped onto a table row).
+# Impedance data only where the import applies it: table points with a
+# factor other than 1, and the accepted xMin/xMax curve (_phaseTapXCurve).
+function _seTapChanger(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject, on_from_side::Bool)::Union{Sparlectra.SETapChanger,String}
+  name = something(str(tc, :name), tc.mrid)
+  side = on_from_side ? :from : :to
+  if tc.class == :RatioTapChanger
+    neutral = Int(round(num(tc, :neutralStep, 0.0)))
+    lo, hi = minmax(Int(round(num(tc, :lowStep, 0.0))), Int(round(num(tc, :highStep, 0.0))))
+    du = num(tc, :stepVoltageIncrement, 0.0) / 100.0
+    step = _tapStep(tc, svsteps)
+    table = _ratioTapTable(store, tc)
+    (table === nothing || isempty(table)) && return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :ratio, role = :ratio, side = side, du = du, neutral = neutral, low = lo, high = hi, step = step)
+    pts = _seTapTablePoints(store, tc)
+    pts === nothing && return "its RatioTapChangerTable has steps that are not whole and strictly ascending"
+    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :tabular, role = :ratio, side = side, neutral = neutral, low = lo, high = hi, step = step, table = pts, outside_du = du, impedance = _seTapTableHasImpedance(pts) ? :table : :none)
+  end
+  step = Int(round(_tapStep(tc, svsteps)))
+  neutral = Int(round(num(tc, :neutralStep, 0.0)))
+  lo = Int(round(num(tc, :lowStep, Float64(min(step, neutral)))))
+  hi = Int(round(num(tc, :highStep, Float64(max(step, neutral)))))
+  if tc.class == :PhaseTapChangerTabular
+    # resolves: _attachSETapChangers! passes only changers the import
+    # applied (_tapCorrectionApplied), and an unresolved table is not one
+    built = something(_phaseTapTableModel(store, tc, step))
+    pts = _seTapTablePoints(store, tc)
+    pts === nothing && return "its PhaseTapChangerTable has steps that are not whole and strictly ascending"
+    m = built.model
+    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :tabular, role = :phase, side = side, neutral = m.neutralStep, low = pts[1].step, high = pts[end].step, step = m.step, table = pts, impedance = _seTapTableHasImpedance(pts) ? :table : :none)
+  end
+  xc = _phaseTapXCurve(store, tc)
+  xcurve = xc === nothing ? nothing : (xc.xmin, xc.xmax, xc.amax)
+  ximp = xc === nothing ? :none : :x_curve
+  if tc.class == :PhaseTapChangerLinear
+    lo <= neutral <= hi || (lo = min(lo, neutral); hi = max(hi, neutral))
+    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :linear, role = :phase, side = side, dphi_deg = num(tc, :stepPhaseShiftIncrement, 0.0), neutral = neutral, low = lo, high = hi, step = clamp(step, lo, hi), x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
+  end
+  lo, hi = minmax(lo, hi)
+  # both values are present: the import computed the correction of this
+  # changer from them (_phaseTapRatioShift), which throws without them
+  # (calcPhaseTapFraction, PhaseTapChangerModel for :asymmetrical), so a
+  # delivery without them never reaches this point
+  vinc = something(num(tc, :voltageStepIncrement))
+  tc.class == :PhaseTapChangerSymmetrical && return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :symmetrical, role = :phase, side = side, du = vinc / 100.0, neutral = neutral, low = lo, high = hi, step = step, x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
+  alpha = something(num(tc, :windingConnectionAngle))
+  return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :asymmetrical, role = :phase, side = side, du = vinc / 100.0, alpha_deg = alpha, neutral = neutral, low = lo, high = hi, step = step, x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
+end
+
+# Store the tap changer set of transformer branch `branch_idx`: the changers
+# of `ends` (end, whether it sits at the branch from side) in
+# _tapChangersOfEnd order, on the branch ratio `ratio_n` before the end taps
+# (the structural ratio _applyEndTaps starts from). Left out, each with a
+# notice: a changer the import ignored (_tapCorrectionApplied), a changer
+# whose table the estimation cannot use, and the single-step phase changer
+# of the own export (_isExportShiftPtc). The import applied the last two,
+# so their ratio and shift at the import step go into ratio_n and
+# shift_n_deg as a fixed part: the set then gives the branch ratio and
+# shift at the import steps, and the released changers do not absorb the
+# left-out factor. A transformer without changers gets an empty set and is
+# never released.
+function _attachSETapChangers!(net, store::CGMESStore, svsteps::Dict{String,Float64}, ctx::_MapCtx, branch_idx::Int, ends::Vector{Tuple{CIMObject,Bool}}, ratio_n::Float64, trafo_name::AbstractString)
+  br_pos = findfirst(b -> b.branchIdx == branch_idx, net.branchVec)
+  br_pos === nothing && return nothing
+  chs = Sparlectra.SETapChanger[]
+  shift_n = 0.0
+  for (e, on_from_side) in ends, tc in _tapChangersOfEnd(store, e.mrid)
+    name = something(str(tc, :name), tc.mrid)
+    if !_tapCorrectionApplied(store, svsteps, tc)
+      push!(ctx.messages, "notice: tap changer $(trafo_name)/$(name) is not estimable, the import ignored it")
+      continue
+    end
+    shift_ptc = _isExportShiftPtc(tc)
+    ch = shift_ptc ? nothing : _seTapChanger(store, svsteps, tc, on_from_side)
+    if ch isa Sparlectra.SETapChanger
+      push!(chs, ch)
+      continue
+    end
+    # fixed part, with the sides of _applyEndTaps: from multiplies and adds
+    pr, ps = _tapCorrectionAt(store, svsteps, tc)
+    ratio_n = on_from_side ? ratio_n * pr : ratio_n / pr
+    shift_n += on_from_side ? ps : -ps
+    push!(ctx.messages, shift_ptc ? "notice: tap changer $(trafo_name)/$(name) is the single-step phase changer of a CGMES export: its shift of $(round(ps; digits = 6)) deg stays fixed, the tap estimation does not release it" : "notice: tap changer $(trafo_name)/$(name) is not estimable, $(ch): its ratio $(round(pr; digits = 6)) and shift $(round(ps; digits = 6)) deg at step $(_tapStep(tc, svsteps)) stay fixed")
+  end
+  net.branchVec[br_pos].se_tap_changers = Sparlectra.SETapChangerSet(ratio_n = ratio_n, shift_n_deg = shift_n, changers = chs, origin = :cgmes)
+  return nothing
+end
+
+# A transformer-type branch the import builds for a line or an
+# EquivalentBranch across voltage levels, or for a phase-stamped
+# EquivalentBranch, has no tap changer: an empty set keeps it out of the tap
+# estimation (the constructor marks every transformer branch with a default
+# ratio grid, which the mass release would otherwise take).
+function _attachNoSETapChangers!(br)
+  br.se_tap_changers = Sparlectra.SETapChangerSet(ratio_n = br.ratio, shift_n_deg = br.angle, changers = Sparlectra.SETapChanger[], origin = :cgmes)
+  return br
 end
 
 """
@@ -1384,6 +1547,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         from = Sparlectra.geNetBusIdx(net = net, busName = b1)
         to = Sparlectra.geNetBusIdx(net = net, busName = b2)
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
+        _attachNoSETapChangers!(net.branchVec[end])
         # still a line in CGMES terms, so a branch, not a transformer
         ctx.element_by_mrid[line.mrid] = (:branch, length(net.branchVec))
         _recordBranchTerminals!(ctx, net, topo, line)
@@ -1547,6 +1711,7 @@ function _mapEquivalentBranches!(net, store, topo, created, svmap, baseMVA, ctx:
       else
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, g_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0)
       end
+      _attachNoSETapChangers!(net.branchVec[end])
       k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
       eqbKey = cgmesKeyEquivalentBranchTransformer(b1, b2, k)
     end
@@ -1640,6 +1805,8 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   g_from_pu = g_to_pu = 0.5 * g_pu
   b_from_pu = b_to_pu = 0.5 * b_pu
   ratio = (Uf / Ut) / (i_f.vn_kV / i_t.vn_kV)
+  # the structural ratio, the neutral point of the tap estimation's set
+  ratio_struct = ratio
   shift = 0.0
   ratio, shift = _applyEndTaps(store, svsteps, ef, ratio, shift, true, ctx.messages; strict = ctx.strict_guards)
   ratio, shift = _applyEndTaps(store, svsteps, et, ratio, shift, false, ctx.messages; strict = ctx.strict_guards)
@@ -1681,6 +1848,7 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   ptc === nothing || (net.cgmes_ids[string(ptKey, "|PTC")] = cgmesCanonicalMrid(ptc))
   controlled = ctx.tap_control ? vcat(_attachTapControl!(net, store, topo, ctx, svsteps, ef, idx, true, name), _attachTapControl!(net, store, topo, ctx, svsteps, et, idx, false, name)) : Tuple{CIMObject,Bool}[]
   _attachTapRanges!(net, store, svsteps, ctx, idx, [(ef, true), (et, false)], controlled, name)
+  _attachSETapChangers!(net, store, svsteps, ctx, idx, [(ef, true), (et, false)], ratio_struct, name)
 end
 
 function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, ends, ctx::_MapCtx)
@@ -1779,6 +1947,9 @@ function _map3WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
     legidx = net.branchVec[end].branchIdx
     controlled = ctx.tap_control ? _attachTapControl!(net, store, topo, ctx, svsteps, e, legidx, true, legname) : Tuple{CIMObject,Bool}[]
     _attachTapRanges!(net, store, svsteps, ctx, legidx, [(e, true)], controlled, legname)
+    # a tapped leg runs side -> star from the structural ratio 1/t_struct
+    # (the start of _applyEndTaps above), an untapped leg has no changer
+    _attachSETapChangers!(net, store, svsteps, ctx, legidx, turned ? [(e, true)] : Tuple{CIMObject,Bool}[], turned ? 1.0 / t_struct : t_struct, legname)
   end
   # identity capture under the three-winding key (sorted side buses): the
   # exporter reassembles the star as one PowerTransformer with three ends

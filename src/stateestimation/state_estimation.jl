@@ -64,13 +64,17 @@ struct SEResult
   # `vaRefOffsetDeg` is set only when exactly one island estimated it (the
   # per-island values live in these rows).
   islands::Union{Nothing,Vector{NamedTuple}}
-  # tap estimation: one row per released transformer with the
-  # continuous (electrical) and rounded (fixed/mechanical) step per
-  # regulator; `nothing` without releases. After the estimation the taps
-  # are FIXED to the mechanical step and one more run is solved in which
-  # the tap is no state any more: `objectiveJ`/`dof`/`voltages` above are
-  # that FIXED final run, `tapFixation` carries J and dof before versus
-  # after the fixation.
+  # tap estimation: one row per released regulator (tap changer) with its
+  # continuous step estimate s, the fixed physical step, the model step and
+  # the deviation, freeze reason, note and notice; `nothing` without
+  # releases. After the estimation the regulators are FIXED to their
+  # physical step and one more run is solved in which they are no states any
+  # more: `objectiveJ`/`dof`/`voltages` above are that FIXED final run,
+  # `tapFixation` carries J and dof before versus after the fixation, the
+  # Delta-J notice and the flags of a rise above the 95 % quantile of
+  # chi2(k) (`j_rise_exceeds_quantile`, then `sequential` when the steps
+  # fixed one at a time gave the smaller J, `j_simultaneous`). A regulator
+  # only relative to a frozen phase regulator stays a state in the fixed run.
   tapEstimates::Union{Nothing,Vector{NamedTuple}}
   tapFixation::Union{Nothing,NamedTuple}
   # topology validation: the ADVISORY stage-1 precheck findings
@@ -332,11 +336,11 @@ end
 ## (always the model values, never flat). withVaOffset=true appends the PMU
 ## reference-offset state α (radians, initialized to 0) as the LAST entry,
 ## so _va_offset_from_state stays x[end].
-function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true, withVaOffset::Bool = false, shuntBInit::Vector{Float64} = Float64[], tapRInit::Vector{Float64} = Float64[])
+function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true, withVaOffset::Bool = false, shuntBInit::Vector{Float64} = Float64[], tapSInit::Vector{Float64} = Float64[])
   nbus = length(net.nodeVec)
   nθ = nbus - 1
   k = length(shuntBInit)
-  nt = length(tapRInit)
+  nt = length(tapSInit)
   x = zeros(Float64, nθ + nbus + k + nt + (withVaOffset ? 1 : 0))
 
   p = 0
@@ -360,10 +364,10 @@ function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true, 
     x[nθ+nbus+j] = shuntBInit[j]
   end
 
-  # released transformer tap states: after the shunt B states,
+  # released tap regulator states (steps): after the shunt B states,
   # before the trailing PMU offset
   for j = 1:nt
-    x[nθ+nbus+k+j] = tapRInit[j]
+    x[nθ+nbus+k+j] = tapSInit[j]
   end
 
   return x
@@ -1014,8 +1018,9 @@ end
 ## Released transformer taps work the same way: the four stamped
 ## admittance terms of a released trafo are removed from the Ybus once
 ## (`_tap_unstamp!`), and `tapOverlay` re-adds its terminal injections
-## analytically at the CASCADE tap position of the current state; branch
-## rows on such a trafo evaluate against its scratch branch.
+## analytically at the step positions of the current state (the changer set
+## of the branch, tap_changer_data.jl); branch rows on such a trafo evaluate
+## against its scratch branch.
 function _predict_measurements(measurements::Vector{Measurement}, net::Net, V::Vector{ComplexF64}, Ybus::AbstractMatrix{ComplexF64}; vaOffsetRad::Float64 = 0.0, shuntB::Union{Nothing,Dict{Int,Float64}} = nothing, tapOverlay = nothing)
   Sbus_MVA = _predicted_injections_MVA(net, V, Ybus, shuntB, tapOverlay)
   h = Vector{Float64}(undef, length(measurements))
@@ -1120,11 +1125,9 @@ function _fd_structural_coloring(measurements::Vector{Measurement}, x_len::Int, 
   tap_cols_of_branch = Dict{Int,Vector{Int}}()
   tap_branches_at_bus = Dict{Int,Vector{Int}}()
   if tapMap !== nothing
-    for j in eachindex(tapMap.branch_idxs)
-      k = tapMap.branch_idxs[j]
-      cols = Int[]
-      tapMap.r1cols[j] == 0 || push!(cols, tapMap.r1cols[j])
-      tapMap.r2cols[j] == 0 || push!(cols, tapMap.r2cols[j])
+    for ts in tapMap.trafos
+      k = ts.branch
+      cols = Int[c for c in ts.cols if c != 0]
       tap_cols_of_branch[k] = cols
       br = net.branchVec[k]
       for b in (Int(br.fromBus), Int(br.toBus))
@@ -1278,10 +1281,20 @@ end
 ## tolerance), so dropping them structurally changes no number downstream.
 function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x::Vector{Float64}, slackIdx::Int, nbus::Int, Ybus::AbstractMatrix{ComplexF64}; eps::Float64 = 1e-6, withVaOffset::Bool = false, shuntMap::Union{Nothing,ShuntStateMap} = nothing, tapMap::Union{Nothing,TapStateMap} = nothing, coloring::Union{Nothing,_FdColoring} = nothing, check_pattern::Bool = true)
   _sb(xv) = shuntMap === nothing ? nothing : _shunt_b_override(xv, shuntMap)
-  _tov(xv) = tapMap === nothing ? nothing : _tap_overlay(xv, tapMap, net)
+  # tap columns: forward difference along the analytic tangent dt/ds at the
+  # base point x (_tap_overlay_tangent), with the per-column step
+  # eps / sigma, so the tap ratio moves by about eps in pu like the other
+  # states; every other column keeps eps and is bitwise as before
+  _tov(xv) = tapMap === nothing ? nothing : _tap_overlay_tangent(xv, x, tapMap, net)
   h0 = _predict_measurements(measurements, net, _state_to_voltage(x, slackIdx, nbus), Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset), shuntB = _sb(x), tapOverlay = _tov(x))
   m = length(measurements)
   n = length(x)
+  epsv = fill(eps, n)
+  if tapMap !== nothing
+    for ts in tapMap.trafos, c in eachindex(ts.cols)
+      ts.cols[c] == 0 || (epsv[ts.cols[c]] = eps / ts.sigma[c])
+    end
+  end
   predict_at = xk -> _predict_measurements(measurements, net, _state_to_voltage(xk, slackIdx, nbus), Ybus; vaOffsetRad = _va_offset_from_state(xk, withVaOffset), shuntB = _sb(xk), tapOverlay = _tov(xk))
 
   # Every caller gets the coloring, not just the WLS loop: the diagnostics
@@ -1308,7 +1321,7 @@ function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x
       sparlectra_check_abort()
       xk = copy(x)
       for k in coloring.groups[c]
-        xk[k] += eps
+        xk[k] += epsv[k]
       end
       if check_pattern
         hk = predict_at(xk)
@@ -1345,7 +1358,7 @@ function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x
           d == 0.0 && continue
           push!(rowIdx, i)
           push!(colIdx, k)
-          push!(vals, d / eps)
+          push!(vals, d / epsv[k])
         end
       end
       return sparse(rowIdx, colIdx, vals, m, n), h0, true
@@ -1367,14 +1380,14 @@ function _measurement_jacobian_fd(measurements::Vector{Measurement}, net::Net, x
     # sweeps, so an abort must be able to land inside it
     k % 64 == 0 && sparlectra_check_abort()
     xk = copy(x)
-    xk[k] += eps
+    xk[k] += epsv[k]
     hk = predict_at(xk)
     @inbounds for i = 1:m
       d = hk[i] - h0[i]
       d == 0.0 && continue
       push!(rowIdx, i)
       push!(colIdx, k)
-      push!(vals, d / eps)
+      push!(vals, d / epsv[k])
     end
   end
 
@@ -2503,6 +2516,15 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   tapDofAfter = 0
   tapAllFixed = true
   tapAnyOffgrid = false
+  tapIteEst = 0
+  tapIteFix = 0
+  tapK = 0
+  tapAnyExceeds = false
+  tapAnySequential = false
+  tapJSimSum = 0.0
+  tapNotices = String[]
+  # set when an island mirrored written-back tap positions onto the parent
+  tapWritten = false
   αdeg = nothing
   nα = 0
   estimated = 0
@@ -2594,24 +2616,33 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
         # subnet branch position k maps back through the island's ordered
         # branch list (row.branches[k] is the parent-net index)
         pb = 1 <= tr.branch <= length(row.branches) ? row.branches[tr.branch] : tr.branch
-        push!(tapRows, (branch = pb, name = tr.name, mrid = tr.mrid, mode = tr.mode, alpha_deg = tr.alpha_deg, r1_est = tr.r1_est, r2_est = tr.r2_est, electrical_step_1 = tr.electrical_step_1, fixed_step_1 = tr.fixed_step_1, electrical_step_2 = tr.electrical_step_2, fixed_step_2 = tr.fixed_step_2, out_of_range = tr.out_of_range, fixed = tr.fixed, frozen_reason = tr.frozen_reason, island = iid))
+        # every field of the row travels (the report fields of the
+        # regulator), only the branch index is remapped
+        push!(tapRows, merge(tr, (branch = pb, island = iid)))
       end
       if res.tapFixation !== nothing
-        tapJBefore += res.tapFixation.j_before
-        tapDofBefore += res.tapFixation.dof_before
-        tapJAfter += res.tapFixation.j_after
-        tapDofAfter += res.tapFixation.dof_after
-        tapAllFixed &= res.tapFixation.fixed
-        tapAnyOffgrid |= res.tapFixation.offgrid_residual
+        tf = res.tapFixation
+        tapJBefore += tf.j_before
+        tapDofBefore += tf.dof_before
+        tapJAfter += tf.j_after
+        tapDofAfter += tf.dof_after
+        tapAllFixed &= tf.fixed
+        tapAnyOffgrid |= tf.offgrid_residual
+        tapIteEst = max(tapIteEst, tf.iterations_estimation)
+        tapIteFix = max(tapIteFix, tf.iterations_fixation)
+        tapK += tf.k_removed
+        tapAnyExceeds |= tf.j_rise_exceeds_quantile
+        tapAnySequential |= tf.sequential
+        tapJSimSum += tf.j_simultaneous
+        isempty(tf.delta_j_notice) || push!(tapNotices, string("island ", iid, ": ", tf.delta_j_notice))
       end
       if cfg.update_taps
         # the island solve wrote the fixed positions into its subnet branch
         # copies; mirror them back onto the parent net (like update_shunts)
-        for tr in res.tapEstimates
-          (1 <= tr.branch <= length(row.branches)) || continue
-          pb = row.branches[tr.branch]
-          net.branchVec[pb].tap_ratio = sub.inet.branchVec[tr.branch].tap_ratio
-          net.branchVec[pb].phase_shift_deg = sub.inet.branchVec[tr.branch].phase_shift_deg
+        for b in unique(tr.branch for tr in res.tapEstimates)
+          (1 <= b <= length(row.branches)) || continue
+          _copy_tap_position!(net.branchVec[row.branches[b]], sub.inet.branchVec[b])
+          tapWritten = true
         end
       end
     end
@@ -2631,12 +2662,17 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
         nd._va_deg = rad2deg(angle(mergedV[b]))
       end
     end
+    # the island runs compute flows and losses on their subnet copies only,
+    # the parent net keeps the flows of its last power flow; with
+    # written-back taps those belong to the old taps, so they are recomputed
+    # on the merged voltages and the new taps
+    tapWritten && calcNetLosses!(net, mergedV)
     # merged chain start registration (runpf_from_se!/writeSEStateCSV read
     # it from the parent net); unestimated islands keep their start voltages
     # and a zero balance
     _register_se_start!(net, seVm, seVa, sePinj, seQinj, conv)
   end
-  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTap ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, offgrid_residual = tapAnyOffgrid) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing)
+  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTap ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing)
 end
 
 function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
@@ -2741,20 +2777,6 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
     result = nothing,
     islands = islandReports,
   )
-end
-
-# Model tap position of a released transformer in STEPS of the grid the
-# estimate is fixed on (ratio grid for regulator 1; Delta-u steps or the
-# phase grid for regulator 2, exactly as `_fixate_taps` counts them), so
-# the report can put model, estimate and fixed step side by side.
-function _tap_model_steps(br::Branch)
-  r10, r20 = _tap_r0_split(br, br.tap_est_mode, br.tap_est_alpha_deg)
-  m1 = _tap_r1_position(br, r10)
-  if br.phase_du_step > 0.0
-    return m1, r20 / br.phase_du_step
-  end
-  step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
-  return m1, calcSkewAngleTap(tap_fraction = r20, skew_angle_deg = br.tap_est_alpha_deg).effective_shift_deg / step2
 end
 
 # _se_gain_matrix(H, w, symmetric) -> SparseMatrixCSC: the WLS gain matrix
@@ -2923,6 +2945,54 @@ function _se_solve_constrained!(ctx::_SENormalEquationsSolver, G::SparseMatrixCS
   fallbacks = ctx.lu_ctx.fallback_count
   sol = solve_newton_factorized!(ctx.lu_ctx, K, rhs)
   return sol[1:n], ctx.lu_ctx.fallback_count > fallbacks
+end
+
+# _se_pin_steps(G, g, pins) -> (G2, g2): the normal equations with the steps
+# of some states held (`pins`, pairs column => step). Row and column of a
+# held state are cleared except the diagonal, its right-hand side becomes
+# diagonal * step, and its coupling moves to the right-hand side of the
+# other states, so the solve gives the held steps exactly and the best
+# steps of the others given them. Cleared entries stay stored: the pattern
+# is that of G and the solver context keeps its analysis. A zero diagonal
+# (a dead column) is replaced by 1.
+function _se_pin_steps(G::SparseMatrixCSC{Float64,Int64}, g::AbstractVector{Float64}, pins::Vector{Tuple{Int,Float64}})
+  G2 = copy(G)
+  g2 = collect(Float64, g)
+  held = Set{Int}(first.(pins))
+  for (c, d) in pins
+    g2 .-= Vector(G[:, c]) .* d
+  end
+  rows = rowvals(G2)
+  vals = nonzeros(G2)
+  for j in axes(G2, 2), p in nzrange(G2, j)
+    i = rows[p]
+    (i != j && (i in held || j in held)) && (vals[p] = 0.0)
+  end
+  for (c, d) in pins
+    dc = G[c, c]
+    if dc == 0.0
+      dc = 1.0
+      G2[c, c] = 1.0
+    end
+    g2[c] = dc * d
+  end
+  return G2, g2
+end
+
+# _se_pin_constraint(C, rc, pins) -> (C2, rc2): the constraint rows of the
+# KKT step with the same held steps: their columns are cleared (stored
+# zeros) and their contribution moves to the residual.
+function _se_pin_constraint(C::SparseMatrixCSC{Float64,Int64}, rc::AbstractVector{Float64}, pins::Vector{Tuple{Int,Float64}})
+  C2 = copy(C)
+  rc2 = collect(Float64, rc)
+  vals = nonzeros(C2)
+  for (c, d) in pins
+    rc2 .-= Vector(C[:, c]) .* d
+    for p in nzrange(C2, c)
+      vals[p] = 0.0
+    end
+  end
+  return C2, rc2
 end
 
 # Why the KKT matrix of the constrained step was singular: the constraint
@@ -3115,57 +3185,49 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     end
   end
 
-  # Released transformer taps: state columns after the shunt B
-  # states, before the trailing PMU offset. The stamped admittance terms
-  # leave the Ybus once; the predictions re-add them at the cascade
-  # position of the current state (see _predict_measurements).
-  tapMap = _build_tap_state_map(net, (nbus - 1) + nbus + length(released) + 1)
-  # frozen-regulator bookkeeping for the report: snet branch idx => reason
-  # (:radial_no_voltage_pin structural, :not_observable numerical); fully
-  # frozen transformers leave the map and get their model stamp back
-  tapFrozen = Dict{Int,Symbol}()
+  # Released tap regulators: one step state per released tap changer,
+  # after the shunt B states and before the trailing PMU offset. The stamped
+  # admittance terms leave the Ybus once; the predictions re-add them at the
+  # step positions of the current state (see _predict_measurements).
+  tapImpedance = cfg.tap_estimation.impedance_correction
+  tapMap, tapOut, tapNoChanger = _build_tap_state_map(net, (nbus - 1) + nbus + length(released) + 1, tapImpedance)
+  # transformers whose released regulators all froze: they leave the map,
+  # get their model stamp back and are reported at their start position
+  tapFrozenStates = copy(tapOut)
+  tapPriorCols = Int[]
   if tapMap !== nothing
     _tap_unstamp!(Ybus, net, tapMap)
-    # structural guard: a bridge transformer whose cut-off side carries no
-    # active voltage measurement makes the tap and the downstream voltage
-    # indistinguishable; both regulators freeze at the current position
-    gf1, gf2, greasons = _tap_guard_freezes(net, tapMap, activeMeas)
-    for j in eachindex(greasons)
-      greasons[j] == :ok && continue
-      tapFrozen[tapMap.branch_idxs[j]] = greasons[j]
-      @warn "runse!: released tap on transformer branch $(tapMap.branch_idxs[j]) ($(getCompName(net.branchVec[tapMap.branch_idxs[j]].comp))) is frozen: bridge transformer without a voltage measurement on its cut-off side (the tap would absorb the downstream voltage)"
-    end
-    (any(gf1) || any(gf2)) && (tapMap = _tap_apply_freezes(tapMap, gf1, gf2, net, Ybus))
+    # determinability guard, structural part: bridge rule,
+    # separability, angle anchors with the symmetric start
+    _tap_guard_freezes!(net, tapMap, activeMeas, slackIdx, withVaOffset)
+    tapMap, moved = _tap_repack(tapMap, net, Ybus)
+    append!(tapFrozenStates, moved)
   end
   if tapMap !== nothing
-    # numerical observability guard on the remaining r columns, the same
-    # per-column test the released shunt B states pass; a :both pair can
-    # freeze partially (one regulator stays a state, the other at its r0)
-    rinitG = _tap_r_init(tapMap)
-    xg = withVaOffset ? vcat(x[1:(end-1)], rinitG, x[end]) : vcat(x, rinitG)
+    # column part: a tap column the measurements do not see (rank test on
+    # the column scaled to norm 1, or zero within the rounding noise of its
+    # forward difference) freezes at the start point; a weak column far
+    # below the strongest voltage column only gets a hint
+    xg = withVaOffset ? vcat(x[1:(end-1)], _tap_s_init(tapMap), x[end]) : vcat(x, _tap_s_init(tapMap))
     Htest, _ = _measurement_jacobian_fd(activeMeas, net, xg, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset, shuntMap = shuntMap, tapMap = tapMap)
-    nf1 = falses(length(tapMap.branch_idxs))
-    nf2 = falses(length(tapMap.branch_idxs))
-    _tap_col_dead = function (col::Int)
-      # see the shunt guard above: an unmeasured column returns
-      # numerical_observable = false, so no catch is needed; a wrong column
-      # index must NOT be absorbed into "tap frozen"
-      return !evaluate_local_observability_matrix(Htest, [col]).numerical_observable
+    for (k, c, factor, b) in _tap_column_freezes!(tapMap, Htest, _weight_vector(activeMeas), _measurement_vector(activeMeas), xg, nbus, jacEps)
+      chname = only(ts for ts in tapMap.trafos if ts.branch == k).set.changers[c].name
+      @info "runse!: tap regulator $(getCompName(net.branchVec[k].comp))$(isempty(chname) ? "" : "/" * chname): $(_tap_weak_text(factor)) (Vm column of bus $(getCompName(net.nodeVec[b].comp))), kept released"
     end
-    for j in eachindex(tapMap.branch_idxs)
-      tapMap.r1cols[j] != 0 && _tap_col_dead(tapMap.r1cols[j]) && (nf1[j] = true)
-      tapMap.r2cols[j] != 0 && _tap_col_dead(tapMap.r2cols[j]) && (nf2[j] = true)
-      if nf1[j] || nf2[j]
-        tapFrozen[tapMap.branch_idxs[j]] = :not_observable
-        @warn "runse!: tap state on transformer branch $(tapMap.branch_idxs[j]) ($(getCompName(net.branchVec[tapMap.branch_idxs[j]].comp))) is not observable from the active measurements; regulator frozen at the current position"
-      end
-    end
-    (any(nf1) || any(nf2)) && (tapMap = _tap_apply_freezes(tapMap, nf1, nf2, net, Ybus))
+    tapMap, moved = _tap_repack(tapMap, net, Ybus)
+    append!(tapFrozenStates, moved)
   end
   if tapMap !== nothing
-    rinit = _tap_r_init(tapMap)
-    x = withVaOffset ? vcat(x[1:(end-1)], rinit, x[end]) : vcat(x, rinit)
+    # after every freeze: a phase regulator whose angle is tied only over a
+    # frozen phase regulator stays a state and is not fixed (6.5)
+    _tap_relative_to_frozen!(net, tapMap, tapFrozenStates, activeMeas, slackIdx, withVaOffset)
+    tapPriorCols = _tap_prior_columns!(tapMap, net, activeMeas)
+    sinit = _tap_s_init(tapMap)
+    x = withVaOffset ? vcat(x[1:(end-1)], sinit, x[end]) : vcat(x, sinit)
   end
+  # the freezes are reported per row (notice); one line per run here
+  nTapFrozen = sum((count(c -> ts.released[c] && ts.frozen[c] !== :none, eachindex(ts.cols)) for ts in vcat(tapFrozenStates, tapMap === nothing ? TapBranchState[] : tapMap.trafos)); init = 0)
+  nTapFrozen > 0 && @info "runse!: $(nTapFrozen) tap regulator(s) frozen, see tapEstimates[].notice"
   _tap_ov(xv) = tapMap === nothing ? nothing : _tap_overlay(xv, tapMap, net)
 
   z = _measurement_vector(activeMeas)
@@ -3232,18 +3294,6 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # replacement-mode weights: decided OUTSIDE the WLS loop on a converged
   # state (see the suppression rounds below the first solve) and constant
   # during one solve. The closure reassigns this enclosing local on purpose.
-  # Released regulator states are bounded by the changer's DECLARED
-  # mechanical band. Without it the Gauss-Newton step can drive r1 toward
-  # -1, where the cascade t = t_base/((1+r1)(1+r2 e^{j alpha})) is singular:
-  # measured on a CGMES delivery, one weakly determined
-  # transformer ran to -329 electrical steps on a band of about -14 to +18
-  # and took the whole estimation with it. The clamp is not a tuning knob,
-  # a position outside the band does not exist on the mechanical grid.
-  # Hits are counted per column: a regulator that keeps pressing against its
-  # bound is a finding (the measurements want a position the changer cannot
-  # reach), not something to hide.
-  tapStepLimits = tapMap === nothing ? Dict{Int,Float64}() : _tap_step_limits(tapMap, net)
-  tapClampHits = Dict{Int,Int}()
   local replacementFrozenW = nothing
   # The Jacobian of the LAST iteration, kept for the suppression rounds:
   # they judge on the normalized residual and therefore need the residual
@@ -3284,6 +3334,15 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     # inside each color's pattern.
     local fdPatternHeld = false
     local fdColoring = length(x) >= _SE_FD_COLORING_MIN_STATES ? _fd_structural_coloring(activeMeas, length(x), slackIdx, nbus, Ybus, withVaOffset, shuntMap, tapMap, net) : nothing
+    # tap states of THIS solve (none in the fixation run): the per-iteration
+    # step limit in steps, the step size per column for the stop test, and
+    # the columns of the parallel-pair prior
+    local tapStepLimits = tapMap === nothing ? Dict{Int,Float64}() : _tap_step_limits(tapMap)
+    local tapSide = _tap_side_vertices(tapMap)
+    local sideHeld = Dict{Int,Float64}()
+    local stepScale = _tap_step_scale(tapMap, length(x))
+    local priorCols = (tapMap === nothing || tapMap.ncols == 0) ? Int[] : tapPriorCols
+    local priorInit = (tapMap === nothing || tapMap.ncols == 0) ? Float64[] : _tap_s_init(tapMap)
     for ite = 1:maxIte
       # one abort check per iteration: a Web UI run that the user gave up
       # on stops here instead of finishing its 20 iterations (the Jacobian
@@ -3354,7 +3413,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       end
 
       # svd_max_n raised for the WLS normal equations: released extra
-      # states (shunt B, tap r) can turn out COLLECTIVELY dependent even
+      # states (shunt B, tap steps) can turn out COLLECTIVELY dependent even
       # when each column passes its individual observability test (e.g.
       # parallel released taps between the same stations); a singular G
       # then degrades to a least-squares step instead of aborting the run
@@ -3365,47 +3424,47 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       # iteration-varying robust weights (reproduced on a 17-trafo case) or
       # creeps forever when damped on the matrix alone. The prior "stay
       # near the initial position" gives it a real fixed point. It is
-      # applied ONLY where the degeneracy exists: a solitary released tap
-      # stays prior-free, so the exact-recovery roundtrips are untouched.
-      if tapMap !== nothing && tapMap.ncols > 0
-        pairCount = Dict{Tuple{Int,Int},Int}()
-        for k in tapMap.branch_idxs
-          br = net.branchVec[k]
-          key = minmax(Int(br.fromBus), Int(br.toBus))
-          pairCount[key] = get(pairCount, key, 0) + 1
-        end
-        # a pair member with its own active flow/current row is individually
-        # identifiable (branch flows follow the LIVE tap since the
-        # branchFlow_pu fix), and the prior would swamp that small
-        # difference-direction information with a penalty scaled by the
-        # large sum-direction diagonal, biasing the split away from the
-        # measurement optimum (seen as J stuck at 0.6 instead of 0). Keep
-        # the prior ONLY for pairs no flow/current measurement can tell
-        # apart.
-        measuredPairs = Set{Tuple{Int,Int}}()
-        for k in tapMap.branch_idxs
-          any(m -> m.branchIdx == k && m.typ in (PflowMeas, QflowMeas, ImagMeas), activeMeas) || continue
-          br = net.branchVec[k]
-          push!(measuredPairs, minmax(Int(br.fromBus), Int(br.toBus)))
-        end
-        for j in eachindex(tapMap.branch_idxs)
-          br = net.branchVec[tapMap.branch_idxs[j]]
-          key = minmax(Int(br.fromBus), Int(br.toBus))
-          pairCount[key] > 1 || continue
-          key in measuredPairs && continue
-          for c0 in (tapMap.r1cols[j], tapMap.r2cols[j])
-            c0 == 0 && continue
-            λ = 1e-3 * abs(G[c0, c0])
-            G[c0, c0] += λ
-            g[c0] += λ * (rinit[c0 - tapMap.col0 + 1] - x[c0])
-          end
-        end
+      # applied ONLY where the degeneracy exists (_tap_prior_columns!: a
+      # pair no Pflow, Qflow, Imag or Ia row on a member tells apart; with
+      # such a row the member is identifiable and the prior would bias the
+      # split away from the measurement optimum, seen as J stuck at 0.6
+      # instead of 0): a solitary released tap stays prior-free, so the
+      # exact-recovery roundtrips are untouched.
+      for c0 in priorCols
+        λ = 1e-3 * abs(G[c0, c0])
+        G[c0, c0] += λ
+        g[c0] += λ * (priorInit[c0 - tapMap.col0 + 1] - x[c0])
       end
       if isempty(conIdx)
         Δx = _se_solve_normal_equations!(seSolver, G, g)
       else
         Δx, kktFell = _se_solve_constrained!(seSolver, G, g, H[conIdx, :], r[conIdx])
         kktFell && kktSingular === nothing && (kktSingular = _kkt_singular_reason(H[conIdx, :]))
+      end
+      # A state with note :sign_from_start keeps the side of its start: a
+      # step that reaches or crosses a turning point of |t| goes half the
+      # way to it, or onto it and is held there for the rest of this solve
+      # once the remaining magnitude effect is below the FD tolerance, and
+      # the other states are solved again with that step
+      # (_tap_keep_side_pins!). A side state whose step reaches a turning
+      # point in the new solve is added; at most one pass per side column.
+      if !isempty(tapSide)
+        local sidePins = _tap_keep_side_pins!(sideHeld, tapSide, x, Δx, jacEps)
+        local sidePass = 0
+        while !isempty(sidePins) && sidePass < length(tapSide)
+          sidePass += 1
+          local Gp, gp = _se_pin_steps(G, g, sidePins)
+          if isempty(conIdx)
+            Δx = _se_solve_normal_equations!(seSolver, Gp, gp)
+          else
+            local Cp, rcp = _se_pin_constraint(H[conIdx, :], r[conIdx], sidePins)
+            Δx, kktFell = _se_solve_constrained!(seSolver, Gp, gp, Cp, rcp)
+            kktFell && kktSingular === nothing && (kktSingular = _kkt_singular_reason(H[conIdx, :]))
+          end
+          local morePins = [p for p in _tap_keep_side_pins!(sideHeld, tapSide, x, Δx, jacEps) if !(p[1] in first.(sidePins))]
+          isempty(morePins) && break
+          append!(sidePins, morePins)
+        end
       end
       # Released regulator states get a STEP LIMIT, not a hard band.
       # Measured on a CGMES delivery with 11 transformers off by
@@ -3414,27 +3473,26 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       # runaway transformer but made five that had converged stick to the
       # lower bound and diverge. The transient excursion is part of how the
       # tap state finds its position; blocking it breaks the path. What has
-      # to be bounded is how far one iteration may move, so a weakly
-      # determined regulator cannot reach the singularity of
-      # t = t_base/((1+r1)(1+r2 e^{j alpha})) in a single step.
-      # The whole step is scaled by one factor, so voltage and tap states
-      # keep moving along one consistent direction.
+      # to be bounded is how far one iteration may move (_tap_step_limits),
+      # so a weakly determined regulator cannot run off its curves in a
+      # single step. The whole step is scaled by one factor, so voltage and
+      # tap states keep moving along one consistent direction.
       if !isempty(tapStepLimits)
         α = 1.0
         for (col, lim) in tapStepLimits
-          col <= length(Δx) || continue
           d = abs(Δx[col])
           d <= lim && continue
           f = lim / d
           f < α && (α = f)
-          tapClampHits[col] = get(tapClampHits, col, 0) + 1
         end
         α < 1.0 && (Δx .*= α)
       end
       x .+= Δx
 
       iteDone = ite
-      lastStep = norm(Δx, Inf)
+      # a tap step counts with its step size (du, or the step angle), so tol
+      # keeps its pu meaning for the step states
+      lastStep = maximum(abs(Δx[k]) * stepScale[k] for k in eachindex(Δx); init = 0.0)
       if lastStep < tol
         converged = true
         break
@@ -3515,39 +3573,109 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   end
 
   # --- tap fixation run (always follows the released estimate) --------------
-  # After the estimation the released taps are FIXED to the nearest
-  # MECHANICAL step and one more run is solved in which the tap is no state
-  # any more (it leaves J and the dof). J before versus after the fixation
-  # is reported in `tapFixation`; the SEResult voltages/objectiveJ/dof are
-  # those of the FIXED final run.
-  tapRows = nothing
+  # After the estimation every estimated regulator is FIXED to its nearest
+  # physical step (up or down, no release threshold) and one more run is
+  # solved in which it is no state any more (it leaves J and the dof). J
+  # before versus after the fixation is reported in `tapFixation`; the
+  # SEResult voltages/objectiveJ/dof are those of the FIXED final run.
+  # A regulator with note :relative_to_frozen is not fixed and stays a
+  # state. When the J rise of the fixation exceeds the 95 % quantile of
+  # chi2(k), the steps are fixed one at a time as well (the one closest to
+  # its physical step first, the rest estimated again) and the result with
+  # the smaller J is kept.
+  tapMapEst = tapMap
+  tapXEst = Float64[]
+  tapPositions = nothing
+  tapGatedBefore = Set{Int}()
   tapJBefore = NaN
   tapDofBefore = 0
   tapIteEst = 0
   tapConvEst = false
   tapFixed = false
-  if tapMap !== nothing
-    # J of the CONTINUOUS solution, same statistics discipline as the final
-    # block below (Ia rows gated at this state leave J and dof)
+  tapKRemoved = 0
+  tapIteFix = 0
+  tapExceeds = false
+  tapSequential = false
+  tapJSim = NaN
+  tapJSeq = NaN
+  tapQuantile = 0.0
+  # J and the gated Ia rows at the current state (Ia rows gated at this
+  # state leave J, the same discipline as the final block below)
+  tapJNow = function ()
+    local Vc, hC, rC, gatedC, jC
     Vc = _state_to_voltage(x, slackIdx, nbus)
     hC = _predict_measurements(activeMeas, net, Vc, Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset), shuntB = shuntMap === nothing ? nothing : _shunt_b_override(x, shuntMap), tapOverlay = _tap_ov(x))
     rC = z - hC
     _wrap_angle_residuals!(rC, activeMeas)
     gatedC = isempty(iaRows) ? Set{Int}() : copy(_ia_gated!(Vc))
-    tapJBefore = isempty(gatedC) ? _wls_objective(rC, wJ) : _wls_objective(rC[[i for i in eachindex(rC) if !(i in gatedC)]], wJ[[i for i in eachindex(wJ) if !(i in gatedC)]])
-    tapDofBefore = length(activeMeas) - length(gatedC) - length(x)
+    jC = isempty(gatedC) ? _wls_objective(rC, wJ) : _wls_objective(rC[[i for i in eachindex(rC) if !(i in gatedC)]], wJ[[i for i in eachindex(wJ) if !(i in gatedC)]])
+    return jC, gatedC
+  end
+  # fix the columns `cols` of the current tap map and re-solve; the prior
+  # columns follow the renumbering of the kept states. The closure
+  # reassigns the enclosing x, tapMap and tapPriorCols on purpose.
+  tapFixAndSolve! = function (cols)
+    local colmap
+    tapMap, x, colmap = _tap_fix_columns(x, tapMap, Set{Int}(cols))
+    tapPriorCols = Int[colmap[c] for c in tapPriorCols if haskey(colmap, c)]
+    _wls_solve!(false)
+    return converged
+  end
+  if tapMap !== nothing
+    # J of the CONTINUOUS solution
+    tapJBefore, tapGatedBefore = tapJNow()
+    tapDofBefore = length(activeMeas) - length(tapGatedBefore) - length(x)
     tapIteEst = iteDone
     tapConvEst = converged
-    tapRows, tapMapFixed, xFixed = _fixate_taps(x, tapMap, net)
+    tapXEst = copy(x)
     if converged
       # the fixed positions replace the tap states; re-solve from the
       # converged voltages (never from a diverged state: the rounded steps
       # would be meaningless, so a diverged run keeps the continuous result)
-      x = xFixed
-      tapMap = tapMapFixed
+      fixCols = _tap_fixable_columns(tapMapEst)
+      tapKRemoved = length(fixCols)
+      priorEst = copy(tapPriorCols)
       tapFixed = true
-      _wls_solve!(false)
+      tapFixAndSolve!(fixCols)
+      tapIteFix = iteDone
+      tapJSim, gatedSim = tapJNow()
+      # the quantile holds only when both runs gate the same Ia rows (the
+      # Delta-J notice below); then a rise above it is the warning case
+      tapQuantile = _chi2_quantile95(tapKRemoved)
+      tapExceeds = converged && tapKRemoved >= 1 && gatedSim == tapGatedBefore && tapJSim - tapJBefore > tapQuantile
+      if tapExceeds && tapKRemoved >= 2
+        # sequential fixation from the continuous estimate; with one
+        # column it would repeat the simultaneous run
+        simState = (x = copy(x), map = tapMap, prior = copy(tapPriorCols), ite = iteDone, conv = converged)
+        x = copy(tapXEst)
+        tapMap = tapMapEst
+        tapPriorCols = priorEst
+        seqOk = true
+        seqIte = 0
+        while true
+          seqCol = _tap_next_fix(x, tapMap)
+          seqCol == 0 && break
+          seqOk = tapFixAndSolve!([seqCol])
+          seqIte += iteDone
+          seqOk || break
+        end
+        jSeq, gatedSeq = seqOk ? tapJNow() : (Inf, Set{Int}())
+        tapJSeq = jSeq
+        if seqOk && gatedSeq == gatedSim && jSeq < tapJSim
+          tapSequential = true
+          tapIteFix = seqIte
+        else
+          x = simState.x
+          tapMap = simState.map
+          tapPriorCols = simState.prior
+          iteDone = simState.ite
+          converged = simState.conv
+        end
+      end
+      tapPositions = _tap_positions(tapXEst, tapMapEst, x, tapMap)
       converged = converged && tapConvEst
+    else
+      tapPositions = _tap_positions(tapXEst, tapMapEst, tapXEst, tapMapEst)
     end
   end
   # a singular KKT step was solved by the least-squares fallback: say so
@@ -3578,6 +3706,27 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     if !isempty(supIdx)
       keep = [i for i in eachindex(r) if !(i in supIdx) && !(i in finalGated)]
       activeObjective = (j = _wls_objective(r[keep], wJ[keep]), dof = ν - length(supIdx), suppressed = length(supIdx))
+    end
+  end
+
+  # write-back of the FIXED physical tap positions: only on explicit request
+  # (update_taps, default false), only from a converged fixed run; a frozen
+  # regulator keeps its exact start position (the same
+  # never-silently-overwrite protection as update_shunts). It runs BEFORE
+  # calcNetLosses! below: before 0.60.0 the losses
+  # used the old taps with the voltages of the fixed-tap solve. Branch
+  # indices map to the original net by component identity (cID survives
+  # the contraction copies). The prediction overlays below stamp scratch
+  # branches, so writing the live branch here does not change SbusEst.
+  if cfg.update_taps && tapFixed && tapMap !== nothing
+    cidToOrigWb = Dict{String,Int}(br.comp.cID => k for (k, br) in enumerate(onet.branchVec))
+    for ts in tapMap.trafos
+      ob = get(cidToOrigWb, net.branchVec[ts.branch].comp.cID, 0)
+      ob == 0 && continue
+      # a regulator that stayed a state (:relative_to_frozen) is no fixed
+      # step: it keeps its start position like a frozen one
+      s_wb = Float64[ts.cols[c] != 0 ? ts.s0[c] : ts.spos[c] for c in eachindex(ts.cols)]
+      _tap_apply_position!(onet.branchVec[ob], ts.set, s_wb; s_from = ts.s0, impedance = tapMap.impedance)
     end
   end
 
@@ -3616,7 +3765,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     end
     if tapMap !== nothing
       # released trafos are unstamped from the Ybus; re-add their terminal
-      # injections at the estimated cascade position (same as the prediction)
+      # injections at the estimated step positions (same as the prediction)
       for (k, ov) in _tap_ov(x)
         brk = net.branchVec[k]
         fb = Int(brk.fromBus)
@@ -3710,63 +3859,72 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # addressed by branch index and bus numbers.
   tapEstimates = nothing
   tapFixation = nothing
-  if tapRows !== nothing || !isempty(tapFrozen)
+  if tapMapEst !== nothing || !isempty(tapFrozenStates) || !isempty(tapNoChanger)
     mrids = _transformer_mrids(onet)
     cidToOrig = Dict{String,Int}(br.comp.cID => k for (k, br) in enumerate(onet.branchVec))
+    origOf(k) = get(cidToOrig, net.branchVec[k].comp.cID, k)
     rows = NamedTuple[]
-    liveIdxs = Set{Int}()
-    if tapRows !== nothing
-      for tr in tapRows
-        push!(liveIdxs, tr.branch)
-        ob = get(cidToOrig, net.branchVec[tr.branch].comp.cID, tr.branch)
-        # the model position the estimate started from, in steps of the
-        # same grid as the estimate: the result page and the run artifact
-        # show model, estimate and fixed step side by side, so a corrected
-        # tap is visible as such
-        m1, m2 = _tap_model_steps(net.branchVec[tr.branch])
-        push!(rows, (branch = ob, name = tr.name, mrid = get(mrids, ob, ""), mode = tr.mode, alpha_deg = tr.alpha_deg, r1_est = tr.r1_est, r2_est = tr.r2_est, model_step_1 = m1, model_step_2 = m2, electrical_step_1 = tr.electrical_step_1, fixed_step_1 = tr.fixed_step_1, electrical_step_2 = tr.electrical_step_2, fixed_step_2 = tr.fixed_step_2, out_of_range = tr.out_of_range, fixed = tapFixed, frozen_reason = get(tapFrozen, tr.branch, :none)))
+    # one row per released regulator: the estimated ones at their estimate
+    # and fixed step, the frozen ones (also of transformers that left the
+    # map) at their start position, so a released-but-guarded regulator
+    # never vanishes silently from the result
+    if tapMapEst !== nothing
+      for (j, ts) in enumerate(tapMapEst.trafos)
+        s_est, s_fix, oor = tapPositions[j]
+        ob = origOf(ts.branch)
+        append!(rows, _tap_regulator_rows(ts, net.branchVec[ts.branch], ob, get(mrids, ob, ""), s_est, tapFixed ? s_fix : s_est, oor, tapFixed, tapConvEst))
       end
     end
-    # transformers whose regulators are ALL frozen left the map; report them
-    # at their current position so a released-but-guarded tap never vanishes
-    # silently from the result
-    for (k, reason) in sort(collect(tapFrozen); by = first)
-      k in liveIdxs && continue
-      br = net.branchVec[k]
-      r10, r20 = _tap_r0_split(br, br.tap_est_mode, br.tap_est_alpha_deg)
-      p10 = _tap_r1_position(br, r10)
-      s2 = calcSkewAngleTap(tap_fraction = r20, skew_angle_deg = br.tap_est_alpha_deg)
-      step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
-      ob = get(cidToOrig, br.comp.cID, k)
-      push!(rows, (branch = ob, name = getCompName(br.comp), mrid = get(mrids, ob, ""), mode = br.tap_est_mode, alpha_deg = br.tap_est_alpha_deg, r1_est = r10, r2_est = r20, model_step_1 = p10, model_step_2 = _tap_model_steps(br)[2], electrical_step_1 = p10, fixed_step_1 = Int(round(p10, RoundNearestTiesAway)), electrical_step_2 = s2.effective_shift_deg / step2, fixed_step_2 = Int(round(s2.effective_shift_deg / step2, RoundNearestTiesAway)), out_of_range = false, fixed = false, frozen_reason = reason))
+    for ts in tapFrozenStates
+      ob = origOf(ts.branch)
+      append!(rows, _tap_regulator_rows(ts, net.branchVec[ts.branch], ob, get(mrids, ob, ""), ts.s0, ts.s0, falses(length(ts.s0)), false, false))
     end
+    for k in tapNoChanger
+      ob = origOf(k)
+      push!(rows, _tap_no_changer_row(net.branchVec[k], ob, get(mrids, ob, "")))
+    end
+    sort!(rows; by = r -> (r.branch, r.regulator))
     tapEstimates = rows
-    # write-back of the FIXED mechanical positions: only on explicit request
-    # (update_taps, default false), only from a converged fixed run, and a
-    # frozen regulator keeps its exact model value inside the cascade (the
-    # same never-silently-overwrite protection as update_shunts)
-    if cfg.update_taps && tapFixed && tapMap !== nothing
-      for j in eachindex(tapMap.branch_idxs)
-        br = net.branchVec[tapMap.branch_idxs[j]]
-        ct = _cascade_tap(br, tapMap.r1_0[j], tapMap.r2_0[j], tapMap.alphas[j])
-        ob = get(cidToOrig, br.comp.cID, 0)
-        ob == 0 && continue
-        onet.branchVec[ob].tap_ratio = ct.tap_ratio
-        onet.branchVec[ob].phase_shift_deg = ct.phase_shift_deg
-      end
-    end
-    if tapRows !== nothing
+    # (the update_taps write-back runs before calcNetLosses!, above)
+    if tapMapEst !== nothing
       # :offgrid_tap_residual: a band failure that only
       # APPEARS through the fixation is not bad data. The continuous fit
       # (taps still states) passed or undershot the chi-square band, the
-      # fixed run fails it :high, so the J jump comes from the mechanical
-      # rounding: the true position sits between steps, or the step table
-      # (tap_step/neutral position) is wrong.
+      # fixed run fails it :high, so the J jump comes from the rounding to
+      # the physical steps: the true position sits between steps, or the
+      # step data (increment, neutral position) is wrong.
       offgrid = tapFixed && _band_test_verdict(tapJBefore, tapDofBefore).reason in (:ok, :low) && _band_test_verdict(jval, ν).reason == :high
-      tapFixation = (fixed = tapFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = jval, dof_after = ν, iterations_estimation = tapIteEst, iterations_fixation = tapFixed ? iteDone : 0, offgrid_residual = offgrid)
+      # Delta-J notice: J after minus J
+      # before with k = the step states the fixed run removed (a regulator
+      # whose estimate was already a whole step counts too) and the 95 %
+      # quantile of chi2(k). The quantile holds only when both runs gated
+      # the same Ia rows (dof_after - dof_before = k); otherwise the notice
+      # names both dof. The notice is no acceptance rule; a rise above the
+      # quantile started the sequential fixation above and gives a warning.
+      # k counts the removed states only: a :relative_to_frozen regulator
+      # stays a state in the fixed run
+      kRemoved = tapKRemoved
+      deltaNotice = ""
       if tapFixed
-        @info "runse!: tap fixation J $(round(tapJBefore; sigdigits = 4)) (dof $(tapDofBefore)) -> J $(round(jval; sigdigits = 4)) (dof $(ν))"
-        offgrid && @info "runse!: :offgrid_tap_residual, the J jump comes from the fixation, not from bad data (true position between mechanical steps, or a wrong step table)"
+        dJ = jval - tapJBefore
+        ndiff = length(symdiff(tapGatedBefore, Set{Int}(finalGated)))
+        deltaNotice = kRemoved == 0 ? string("tap fixation changed J by ", round(dJ; sigdigits = 4), " (no step state removed, every estimated regulator stays a state)") : ndiff == 0 ? string("tap fixation changed J by ", round(dJ; sigdigits = 4), " (k = ", kRemoved, " step state(s) removed, 95 % quantile of chi2(", kRemoved, ") = ", round(_chi2_quantile95(kRemoved); sigdigits = 4), ")") : string("tap fixation changed J by ", round(dJ; sigdigits = 4), " (dof ", tapDofBefore, " before, ", ν, " after, ", ndiff, " Ia row(s) gated differently, no quantile)")
+        # defect 3 of the cross check: the rise of the simultaneous
+        # fixation above the quantile is named, with the sequential result
+        if tapExceeds
+          seqText = isnan(tapJSeq) ? "one step state, no sequential fixation" : string("sequential fixation J ", round(tapJSeq; sigdigits = 4), " against simultaneous J ", round(tapJSim; sigdigits = 4), ", kept the ", tapSequential ? "sequential" : "simultaneous", " result")
+          deltaNotice = string(deltaNotice, "; the simultaneous fixation raised J by ", round(tapJSim - tapJBefore; sigdigits = 4), ", above the 95 % quantile ", round(tapQuantile; sigdigits = 4), "; ", seqText)
+        end
+      end
+      # j_rise_exceeds_quantile: the simultaneous fixation raised J above
+      # the 95 % quantile of chi2(k); sequential: the sequential result was
+      # kept; j_simultaneous: J of the simultaneous fixation
+      tapFixation = (fixed = tapFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = jval, dof_after = ν, iterations_estimation = tapIteEst, iterations_fixation = tapFixed ? tapIteFix : 0, offgrid_residual = offgrid, k_removed = kRemoved, delta_j_notice = deltaNotice, j_rise_exceeds_quantile = tapExceeds, sequential = tapSequential, j_simultaneous = tapFixed ? tapJSim : NaN)
+      if tapFixed
+        fixLine = "runse!: tap fixation J $(round(tapJBefore; sigdigits = 4)) (dof $(tapDofBefore)) -> J $(round(jval; sigdigits = 4)) (dof $(ν)); notice: $(deltaNotice)"
+        # a rise above the quantile is the warning case (defect 3)
+        tapExceeds ? (@warn fixLine) : (@info fixLine)
+        offgrid && @info "runse!: :offgrid_tap_residual, the J jump comes from the fixation, not from bad data (true position between physical steps, or wrong step data)"
       else
         @warn "runse!: tap estimation did not converge; the taps were NOT fixed and the continuous result is returned"
       end
@@ -3906,6 +4064,35 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
   # step, and the caller (or the service) runs the precheck exactly once
   result = _runse_configured!(netLocal, activeMeas, _se_config_with(base; update_net = false, topology_precheck = false))
 
+  # tap unification: the estimator's final voltages belong to the FIXED tap
+  # positions, but write-back is usually off, so the diagnostics copy still
+  # carries the model taps; stamping the fixed positions here keeps the
+  # residuals (and the Ia gate below) free of a fake tap discrepancy at the
+  # released transformers. Per regulator: an estimated one at its fixed
+  # step, a frozen one at its start position (s_fixed of its row), the other
+  # changers of the set at their start, one that stayed a state at its
+  # continuous value; an unfixed run stays at the model.
+  if result.tapEstimates !== nothing && result.tapFixation !== nothing && result.tapFixation.fixed
+    for b in unique(tr.branch for tr in result.tapEstimates)
+      (1 <= b <= length(netLocal.branchVec)) || continue
+      br = netLocal.branchVec[b]
+      set = _effective_tap_changers(br)
+      set === nothing && continue
+      sstart = _tap_s_from_branch(set, br)
+      sstart === nothing && continue
+      s_w = copy(sstart)
+      # a regulator that stayed a state (:relative_to_frozen) carries its
+      # continuous value in s_fixed; it is stamped without rounding
+      cont = false
+      for tr in result.tapEstimates
+        (tr.branch == b && 1 <= tr.regulator <= length(s_w)) || continue
+        s_w[tr.regulator] = tr.s_fixed
+        cont |= tr.note === :relative_to_frozen
+      end
+      s_w == sstart || _tap_apply_position!(br, set, s_w; s_from = sstart, impedance = base.tap_estimation.impedance_correction, continuous = cont)
+    end
+  end
+
   # dynamic part of the IaMeas gate: rows below the predicted-current
   # threshold at the ESTIMATED state leave the diagnostic set too
   if any(m -> m.typ == IaMeas, activeMeas)
@@ -3954,38 +4141,6 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
     x[end] = deg2rad(result.vaRefOffsetDeg)
   end
 
-  # tap unification: the estimator's final voltages belong to the
-  # FIXED tap positions, but write-back is usually off, so the diagnostics
-  # copy still carries the model taps; stamping the fixed cascade here keeps
-  # the residuals free of a fake tap discrepancy at the released trafos.
-  # Frozen regulators (and unfixed runs) stay at the model position; a
-  # partially frozen :both pair conservatively stays at the model position
-  # too (the row cannot say which regulator froze).
-  if result.tapEstimates !== nothing
-    for tr in result.tapEstimates
-      (1 <= tr.branch <= length(netLocal.branchVec)) || continue
-      (tr.fixed && tr.frozen_reason == :none) || continue
-      br = netLocal.branchVec[tr.branch]
-      br.ratio == 0.0 && continue
-      step2 = br.phase_step_deg > 0.0 ? br.phase_step_deg : 1.25
-      r1 = tr.mode in (:ratio, :both) ? _tap_r1_at(br, tr.fixed_step_1) : 0.0
-      r2 = 0.0
-      if tr.mode in (:pst, :both)
-        if br.phase_du_step > 0.0
-          # Delta-u PST: the fixed step counts additional-voltage steps,
-          # r2 is linear on that grid (the degree formula below would stamp
-          # a wrong angle and fake an 800-MW discrepancy in the ranking)
-          r2 = tr.fixed_step_2 * br.phase_du_step
-        else
-          ϕ = -deg2rad(tr.fixed_step_2 * step2)
-          r2 = abs(sin(deg2rad(tr.alpha_deg) - ϕ)) < 1e-12 ? 0.0 : sin(ϕ) / sin(deg2rad(tr.alpha_deg) - ϕ)
-        end
-      end
-      ct = _cascade_tap(br, r1, r2, tr.alpha_deg)
-      br.tap_ratio = ct.tap_ratio
-      br.phase_shift_deg = ct.phase_shift_deg
-    end
-  end
 
   Ybus = createYBUS(net = netLocal)
   shuntMap = nothing
@@ -4634,15 +4789,41 @@ function se_view(net::Net)
   # excluded / transformed measurements: exactly what the estimator will do
   prep = _se_prepare(net, Measurement[m for m in net.measurements])
 
-  # released transformer taps: mode and fixed direction alpha per
-  # released trafo, for the same at-a-glance transparency as the shunts
+  # released transformer taps: mode and the released regulators (tap
+  # changers of the branch's changer set) per released trafo, for the same
+  # at-a-glance transparency as the shunts
   taps = NamedTuple[]
   for (k, br) in enumerate(net.branchVec)
     br.tap_est_mode == :none && continue
-    push!(taps, (branch = k, name = getCompName(br.comp), mode = br.tap_est_mode, alpha_deg = br.tap_est_alpha_deg, closed = _branch_terminal_state(br) == :closed))
+    set = _effective_tap_changers(br)
+    regs = NamedTuple[]
+    if set !== nothing
+      for ch in set.changers
+        _tap_role_released(ch.role, br.tap_est_mode) || continue
+        push!(regs, (changer = ch.name, kind = ch.kind, role = ch.role, side = ch.side, alpha_deg = ch.alpha_deg, du = ch.du, dphi_deg = ch.dphi_deg, neutral = ch.neutral, low = ch.low, high = ch.high))
+      end
+    end
+    push!(taps, (branch = k, name = getCompName(br.comp), mode = br.tap_est_mode, regulators = regs, closed = _branch_terminal_state(br) == :closed))
   end
 
   return (controllers = controllers, shunts = shunts, taps = taps, links = (closed_clusters = closed_clusters, open_links = open_links), excluded_measurements = prep.notes)
+end
+
+# one regulator of an se_view release: kind with the letter of the changer
+# type (a ratio, b asymmetrical, c quadrature, d symmetrical, e table,
+# f linear), its step data and side
+function _se_view_regulator_text(g)::String
+  k = g.kind
+  if k === :ratio
+    return "ratio (a) du $(g.du) side $(g.side)"
+  elseif k === :asymmetrical
+    return "asymmetrical ($(abs(g.alpha_deg - 90.0) <= 1e-9 ? "c" : "b")) alpha $(g.alpha_deg) du $(g.du) side $(g.side)"
+  elseif k === :symmetrical
+    return "symmetrical (d) du $(g.du) side $(g.side)"
+  elseif k === :linear
+    return "linear (f) dphi $(g.dphi_deg) deg side $(g.side)"
+  end
+  return "table (e) steps $(g.low)..$(g.high) side $(g.side)"
 end
 
 """
@@ -4665,7 +4846,9 @@ function print_se_view(view; io = stdout, format::Symbol = :plain)
   ntaps = hasproperty(view, :taps) ? length(view.taps) : 0
   println(io, md ? "- **Tap estimation releases:** $(ntaps)" : "Tap estimation releases: $(ntaps)")
   for t in (ntaps > 0 ? view.taps : NamedTuple[])
-    println(io, md ? "  - branch $(t.branch) ($(t.name)): mode $(t.mode)$(t.mode in (:pst, :both) ? ", alpha $(t.alpha_deg) deg" : "")$(t.closed ? "" : " (open, ignored)")" : "  branch $(t.branch) ($(t.name)): mode $(t.mode)$(t.mode in (:pst, :both) ? ", alpha $(t.alpha_deg) deg" : "")$(t.closed ? "" : " (open, ignored)")")
+    regs = hasproperty(t, :regulators) ? join((_se_view_regulator_text(g) for g in t.regulators), "; ") : ""
+    line = string("branch $(t.branch) ($(t.name)): mode $(t.mode)", isempty(regs) ? "" : "; " * regs, t.closed ? "" : " (open, ignored)")
+    println(io, md ? "  - " * line : "  " * line)
   end
   ncl = length(view.links.closed_clusters)
   nol = length(view.links.open_links)

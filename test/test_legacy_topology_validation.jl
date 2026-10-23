@@ -298,9 +298,8 @@ function test_topology_singular_normal_equations()::Bool
     end
     tnet = _par_net()
     br = tnet.branchVec[3]
-    ct = Sparlectra._cascade_tap(br, 2 * 0.00625, 0.0, 0.0)
-    br.tap_ratio = ct.tap_ratio
-    br.phase_shift_deg = ct.phase_shift_deg
+    # 2 steps on the fraction grid: ratio / (1 + 2 step)
+    br.tap_ratio = br.ratio / (1.0 + 2 * 0.00625)
     ite, erg = runpf!(tnet, 40, 1e-12, 0; method = :rectangular)
     @test erg == 0
     meas = generateMeasurementsFromPF(tnet; includeImag = true, noise = false)
@@ -316,9 +315,9 @@ function test_topology_singular_normal_equations()::Bool
     # parallel split is IDENTIFIED, not a least-squares choice: trafo 3
     # carries the full deviation, its partner stays at neutral, and the
     # difference-direction prior stays out of measured pairs
-    s = sum(t.electrical_step_1 for t in res.tapEstimates)
+    s = sum(t.s_est for t in res.tapEstimates)
     @test abs(s - 2.0) < 0.05
-    fixedByBranch = Dict(t.branch => t.fixed_step_1 for t in res.tapEstimates)
+    fixedByBranch = Dict(t.branch => t.step_fixed for t in res.tapEstimates)
     @test fixedByBranch[3] == 2
     @test fixedByBranch[4] == 0
     # regression: robust weighting on parallel

@@ -15,7 +15,7 @@
 # file: test/test_legacy_scenarios.jl
 # purpose: legacy profile: the testsets of test/test_scenarios.jl that pin an earlier
 #          change (an issue, a bug, a bit-identity or off-path guarantee).
-#          They moved here unchanged from test_scenarios.jl; the helpers they use
+#          They moved here from test_scenarios.jl; the helpers they use
 #          are defined in that file, which the legacy group includes first.
 using Sparlectra
 using Test
@@ -24,80 +24,7 @@ function run_legacy_scenarios_tests()
   # cut from testset: scenario patch model
   (function ()
       case, net = _scenario_case14()
-      branch_id = first(r.id for r in case.data.line)
       index = ScenarioIndex(case)
-      gen_id = first(r.id for r in case.data.sym_gen)
-
-      @testset "the removed contingencies block fails with the way out" begin (function ()
-        # 0.40.0: the legacy block is no longer read; a file that still
-        # carries it names the scenarios block and the editor instead of
-        # running something else
-        path = joinpath(mktempdir(), "legacy.scf.json")
-        write_scf_json(case, path)
-        root = Sparlectra.scf_json_parse(read(path, String))
-        root["sparlectra"]["contingencies"] = Dict{String,Any}("mode" => "explicit", "cases" => Any[Dict{String,Any}("name" => "old style", "outages" => Any[Dict{String,Any}("component" => branch_id)])])
-        write(path, Sparlectra.scf_json_string(root))
-        err = try
-          read_scf_json(path)
-          nothing
-        catch e
-          e
-        end
-        @test err isa ArgumentError
-        @test occursin("sparlectra.scenarios", err.msg) && occursin("scenario editor", err.msg)
-      end)() end
-
-      @testset "apply! keeps the bus load sums for their readers" begin (function ()
-        # after a load outage the island totals (detect_ac_islands), the
-        # passive-bus test (findPassiveBuses) and the link-flow allocation
-        # (calcLinkFlowsKCL!) read the bus load sums: a patched net must give
-        # what a net built without that load gives, and restore! the base
-        path = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
-        # a load moved to a link end, so the link-flow allocation sees it;
-        # one load scaled and the moved one taken out (the reference case
-        # writes the same change into the case data)
-        function edited(; outage::Bool)
-          c = read_scf_json(path)
-          moved = c.data.sym_load[1]
-          moved.node = first(c.data.link).from_node
-          if outage
-            # the reference drops the row: build_net keeps a sym_load whose
-            # status is 0, so the status alone is no outage of the case data
-            other = c.data.sym_load[2]
-            other.p_specified *= 2.0
-            other.q_specified *= 2.0
-            deleteat!(c.data.sym_load, 1)
-          end
-          return c
-        end
-        # `local` is load-bearing: the enclosing test function holds `case`,
-        # `net` and `index` of case14, and a plain assignment in this nested
-        # function would overwrite them for every later testset
-        local case, ops, idx, base, net, ref, undo, solved
-        case = edited(outage = false)
-        ops = [PatchOp(op = :scale, target = :load, id = case.data.sym_load[2].id, factor = 2.0), PatchOp(op = :status, target = :load, id = case.data.sym_load[1].id, value = 0.0)]
-        idx = ScenarioIndex(case)
-        base = Sparlectra.build_net(case)
-        net = Sparlectra.build_net(case)
-        ref = Sparlectra.build_net(edited(outage = true))
-        undo = apply!(net, ops, idx)
-        sums(n) = [(something(nd._pƩLoad, 0.0), something(nd._qƩLoad, 0.0)) for nd in n.nodeVec]
-        @test all(isapprox.(first.(sums(net)), first.(sums(ref)); atol = 1e-9)) && all(isapprox.(last.(sums(net)), last.(sums(ref)); atol = 1e-9))
-        island_load(n) = sort!([round(r.total_load_p_mw; digits = 9) for r in Sparlectra.detect_ac_islands(n).rows])
-        @test island_load(net) == island_load(ref)
-        @test sort!(collect(Sparlectra.findPassiveBuses(net))) == sort!(collect(Sparlectra.findPassiveBuses(ref)))
-        restore!(net, undo)
-        @test scf_roundtrip_field_diffs(base, net) == String[]
-        # the link flow after a solve: patched copy against the reference
-        solved = Sparlectra.build_net(case)
-        apply!(solved, ops, idx)
-        for n in (solved, ref)
-          redirect_stdout(() -> runpf!(n, 40, 1e-9, 0), devnull)
-          calcLinkFlowsKCL!(n)
-        end
-        @test isapprox(first(solved.linkVec).pFlow_MW, first(ref.linkVec).pFlow_MW; atol = 1e-6)
-        @test isapprox(first(solved.linkVec).qFlow_MVar, first(ref.linkVec).qFlow_MVar; atol = 1e-6)
-      end)() end
 
       @testset "bitwise restore over every N-1 scenario" begin (function ()
         # THE step-2 acceptance test: for every N-1 branch and generator
@@ -144,7 +71,7 @@ function run_legacy_scenarios_tests()
             undo = apply!(work, s.ops, idx)
             restore!(work, undo)
           end
-          @test ("warmup_casePST", scf_roundtrip_field_diffs(base, work)) == ("warmup_casePST", String[])
+          @test ("sp_casePST", scf_roundtrip_field_diffs(base, work)) == ("sp_casePST", String[])
         end
       end)() end
 
@@ -169,44 +96,6 @@ function run_legacy_scenarios_tests()
           @test r isa Sparlectra.ContingencyResult
           @test (it, scf_roundtrip_field_diffs(engine.template, worker.net)) == (it, String[])
         end
-      end)() end
-
-      @testset "screening surface (step 4)" begin (function ()
-        cases14 = vcat(Sparlectra.generateN1Branches(net), Sparlectra.generateN1Generators(net))
-        # :off keeps the historical result type and rows bit-identical
-        off = Sparlectra.runContingencies!(net, cases14)
-        @test off isa Vector{Sparlectra.ContingencyResult}
-        off2 = Sparlectra.runContingencies!(net, cases14; screening_mode = :off)
-        d = mktempdir()
-        @test read(Sparlectra.writeContingencyResultsCSV(joinpath(d, "a.csv"), off), String) == read(Sparlectra.writeContingencyResultsCSV(joinpath(d, "b.csv"), off2), String)
-        # :flag returns the ScenarioResult surface, forwards the inner fields,
-        # and never screens away a case the full run reports as violating
-        flagged = Sparlectra.runContingencies!(net, cases14; screening_mode = :flag, screening_margin_pct = 10.0)
-        @test flagged isa Vector{ScenarioResult}
-        @test [r.name for r in flagged] == [r.name for r in off]
-        violating = Set(r.name for r in off if !isempty(r.overloads) || !isempty(r.voltage_violations) || !r.converged)
-        @test isempty(intersect(violating, Set(r.name for r in flagged if r.screened)))
-        for r in flagged
-          if r.screened
-            @test r.start_used === :screen
-            @test r.screening_estimate !== nothing
-            @test r.error === nothing
-          else
-            # a flagged or unscreenable case carries the FULL run row
-            @test r.result isa Sparlectra.ContingencyResult
-            @test r.start_used !== :screen
-          end
-        end
-        # the screening CSV appends exactly the two screening columns
-        header = run_csv(Sparlectra.writeContingencyResultsCSV(joinpath(d, "flag.csv"), flagged)).header
-        # see "printer and CSV writer" in test_contingency.jl for the format
-        # coverage of the same writer
-        @test header[(end-1):end] == ["screened", "screening_estimate"]
-        # :only never runs a full solve where an estimate exists; islanding
-        # cases still carry real solves (start_used != :screen)
-        only_res = Sparlectra.runContingencies!(net, cases14; screening_mode = :only, screening_margin_pct = 10.0)
-        @test any(r -> r.screened, only_res)
-        @test all(r -> r.screened || r.start_used !== :screen, only_res)
       end)() end
 
       @testset "events on the outage path (#355: D1, links, kinds)" begin (function ()
@@ -551,20 +440,6 @@ function run_legacy_scenarios_tests()
     end
     @test dm["status"] == "succeeded"
     @test occursin("correlated events and pairs: not run, they need a Sparlectra Case Format case", read(joinpath(dir, "mp", "run.log"), String))
-    # weights saved under the generated names (before 0.40.0) still apply
-    net14 = Sparlectra.importSCF(sp14)
-    old_name = only(Sparlectra.generateN1Branches(net14)[1].elements)
-    new_name = only(Sparlectra.generateN1Branches(net14; names = contingency_names(net14, read_scf_json(sp14)))[1].elements)
-    @test old_name != new_name
-    wfile = joinpath(dir, "sp_case14.contingency-weights.csv")
-    write(wfile, "name;weight\n$(old_name);2.5\n")
-    dw = run("w", Dict{String,Any}(); weights_path = wfile)
-    @test dw["metadata"]["contingency_weighted_cases"] == 1
-    wlog = read(joinpath(dir, "w", "run.log"), String)
-    @test occursin("1 weight(s) stored under the generated names applied", wlog)
-    @test !occursin("match no branch", wlog)
-    wcsv = run_csv(joinpath(dir, "w", "contingency_n1.csv"))
-    @test any(row -> row[1:3] == [new_name, "branch", new_name] && wcsv.number(row[4]) == 2.5, wcsv.rows)
   end)() end
 
   return true

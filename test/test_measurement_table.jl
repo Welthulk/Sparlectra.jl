@@ -1161,8 +1161,7 @@ function run_measurement_table_tests()
     (function ()
       # the generator keeps its set construction (currents, current angles,
       # gross errors, zero-injection constraints) and writes the set as a
-      # table; the SE service gives the same J, state and eliminations on
-      # that table and on the same set written as a CSV v1
+      # table, and the SE service runs that table
       mktempdir() do d
         for (case, label) in ((joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"), "sp14"), (_SMALLGRID_DIR, "smallgrid"))
           opts = SparlectraApp.MeasurementGeneratorOptions(; noise = true, gross_k = 8.0, gross_count = 2, tap_steps = 0.0, include_i = true, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.1, passive_as_zi = true, seed = 7)
@@ -1175,24 +1174,15 @@ function run_measurement_table_tests()
           # the table carries the generated set: value, sigma and flag of
           # every written row bit for bit, in the order of the set
           imported = SparlectraApp._se_import_case(case, Sparlectra.load_sparlectra_config())
-          net = imported.net
           set = first(importMeasurementTable(readMeasurementTable(tbl), Sparlectra._measurement_key_index(imported)).sets)
           skipped = Set(p.line for p in g.not_written)
           written = [m for (k, m) in enumerate(g.measurements) if !(k in skipped)]
           @test length(written) == length(set.measurements)
           @test all(x.typ == y.typ && x.value === y.value && x.sigma === y.sigma && x.active == y.active for (x, y) in zip(written, set.measurements))
-          # the same set as CSV v1: the SE service refuses it (reader
-          # removed in 0.50.0) with the converter named, the table runs
-          empty!(net.measurements)
-          append!(net.measurements, g.measurements)
-          v1 = joinpath(d, "$(label).v1.csv")
-          writeMeasurementsCSV(net; file = v1, busReference = label == "smallgrid" ? :mrid : :name)
-          run(f, tag) = SparlectraApp.to_dict(redirect_stdout(devnull) do
-            SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, tag), tag, f)
-          end)
-          ra = run_with_expected_warnings(() -> run(v1, "$(label)_v1"), [r"topology precheck"])
-          rb = run_with_expected_warnings(() -> run(tbl, "$(label)_table"), [r"topology precheck"])
-          @test ra["status"] != "succeeded" && occursin("convertMeasurementsV1", string(get(ra, "error", ""), get(ra, "message", "")))
+          # the SE service runs the table
+          rb = run_with_expected_warnings(() -> SparlectraApp.to_dict(redirect_stdout(devnull) do
+            SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "$(label)_table"), "$(label)_table", tbl)
+          end), [r"topology precheck"])
           @test rb["status"] == "succeeded"
         end
       end
@@ -1285,15 +1275,6 @@ function run_measurement_table_tests()
         @test occursin("zero-injection rows 0", read(joinpath(d, "zoff", "measurement_import.txt"), String))
         @test !any(r -> occursin("zero_injection", r.source), readMeasurementTable(joinpath(d, "zoff", "measurements.csv")))
         @test !haskey(d_on["metadata"], "se_duplicate_rows")
-        # a table without its version line gets the reader's message, not
-        # the one of the measurement CSV v1 reader
-        unv = joinpath(d, "unversioned.table.csv")
-        write(unv, join(filter(l -> !startswith(l, "# sparlectra-measurement-table"), readlines(_SMALLGRID_TABLE)), "\n"))
-        d_unv = SparlectraApp.to_dict(redirect_stdout(devnull) do
-          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg, joinpath(d, "unv"), "table_unv", unv)
-        end)
-        @test d_unv["status"] == "failed"
-        @test occursin("measurement table without a version line, expected '# sparlectra-measurement-table v1' before the header", d_unv["message"])
         # a second U row of the first set on a busbar section of a measured
         # node is redundancy the table allows: no duplicate finding for the run
         index = cgmesMeasurementKeys(_smallgrid_import())

@@ -160,7 +160,7 @@ function _print_rectangular_qlimit_summary(
     pv_violations = pv_violations,
     ref_violations = ref_violations,
     violating_hyst = count(r -> !r.in_return_band, rows),
-    switches = length(net.qLimitLog),
+    switches = qlimit_pv_to_pq_event_count(net),
     status = Symbol(lowercase(status_text)),
   )
 end
@@ -323,11 +323,6 @@ function runpf_rectangular!(
   trust_region_expand_threshold::Float64 = 0.75,
   trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
-  # Same pattern as opt_flatstart: a configured run passes both values from
-  # its run configuration, so an auto-mode rewrite of the switching keys
-  # reaches the attempt; a config-less call keeps the network's stamp.
-  opt_cooldown_iters::Union{Nothing,Int} = nothing,
-  opt_q_hyst_pu::Union{Nothing,Float64} = nothing,
   pv_table_rows::Int = 30,
   lock_pv_to_pq_buses::AbstractVector{Int} = Int[],
   qlimit_mode::Symbol = :switch_to_pq,
@@ -442,8 +437,6 @@ function runpf_rectangular!(
       trust_region_expand_threshold = trust_region_expand_threshold,
       trust_region_step_mode = trust_region_step_mode,
       opt_flatstart = opt_flatstart,
-    opt_cooldown_iters = opt_cooldown_iters,
-    opt_q_hyst_pu = opt_q_hyst_pu,
       pv_table_rows = pv_table_rows,
       qlimit_max_outer = qlimit_max_outer,
       start_projection = start_projection,
@@ -831,14 +824,17 @@ function runpf_rectangular!(
     end
   end
 
-  cooldown_iters = opt_cooldown_iters !== nothing ? opt_cooldown_iters : (hasfield(typeof(net), :cooldown_iters) ? net.cooldown_iters : 0)
-  q_hyst_pu      = opt_q_hyst_pu !== nothing ? opt_q_hyst_pu : (hasfield(typeof(net), :q_hyst_pu) ? net.q_hyst_pu : 0.0)
-  # voltage margin of the PQ->PV release (#375), stamped on the net from
-  # power_flow.qlimits.reenable_v_hyst_pu like the two settings above
-  reenable_v_hyst_pu = hasfield(typeof(net), :reenable_v_hyst_pu) ? net.reenable_v_hyst_pu : 1e-4
-  # size bound of the final Q-limit check, stamped from
-  # power_flow.qlimits.final_q_accept_pu; never below the hysteresis in use
-  final_q_accept_pu = max(hasfield(typeof(net), :final_q_accept_pu) ? net.final_q_accept_pu : 2 * q_hyst_pu, q_hyst_pu)
+  # The four Q-limit switching parameters come from the network only. A
+  # configured solve stamps them from its run configuration first
+  # (_apply_qlimit_net_parameters! in _runpf_config_once!), so an auto-mode
+  # rewrite of the keys reaches the attempt, and the classic outer loop and
+  # the final Q-limit check read the same values as the active set here.
+  cooldown_iters = net.cooldown_iters
+  q_hyst_pu = net.q_hyst_pu
+  # voltage margin of the PQ->PV release (#375)
+  reenable_v_hyst_pu = net.reenable_v_hyst_pu
+  # size bound of the final Q-limit check; never below the hysteresis in use
+  final_q_accept_pu = max(net.final_q_accept_pu, q_hyst_pu)
   allow_reenable = (cooldown_iters > 0) || (q_hyst_pu > 0.0)
   qlimit_mode in (:switch_to_pq, :adjust_vset) || error("Unsupported qlimit_mode=$(qlimit_mode). Supported: :switch_to_pq, :adjust_vset.")
   qlimit_max_outer > 0 || error("qlimit_max_outer must be > 0 (got $(qlimit_max_outer)).")
@@ -863,6 +859,12 @@ function runpf_rectangular!(
   # 5) NR-Loop
   V = copy(V0)
   history = Float64[]
+  # per iteration: the largest mismatch before the Q-limit handling switched
+  # a bus (history[end] is overwritten with the value after the switch) and
+  # whether it switched one; the reason of a run at max_iter is read from
+  # both (_max_iter_stop_reason)
+  pre_switch_history = Float64[]
+  type_switched = Bool[]
   step_diagnostics = NamedTuple[]
   merit_step_diagnostics = merit_enabled ? NamedTuple[] : nothing
   tr_radius_ref = trust_region_enabled ? Ref(trust_region_initial_radius) : nothing
@@ -1062,6 +1064,8 @@ function runpf_rectangular!(
     sparlectra_check_abort()
     max_mis = maximum(abs.(F))
     push!(history, max_mis)
+    push!(pre_switch_history, max_mis)
+    push!(type_switched, false)
     if isfinite(max_mis)
       # Keep the best and the most recent finite state. A diverging run can
       # still be reported usefully ("best iterate was X at iteration k"), and
@@ -1142,7 +1146,7 @@ function runpf_rectangular!(
     converged_this_iter = qlimit_iter.converged_this_iter
     changed && (qlimit_active_set_changes += 1)
     reenabled && (qlimit_reenable_events += 1)
-    (changed || reenabled) && (qlimit_switch_iterations += 1)
+    (changed || reenabled) && (qlimit_switch_iterations += 1; type_switched[end] = true)
     # Converged only counts when the active set stayed put in the same
     # iteration: a small mismatch right after a PV<->PQ switch describes the
     # OLD equation system, not the one now in force.
@@ -1309,6 +1313,12 @@ function runpf_rectangular!(
   if verbose > 0 && jr_enabled
     println("Jacobian reuse: ", jr_reused_steps, " reused steps, ", jr_newton_steps - jr_reused_steps, " refactorisations, ", jr_discarded_steps, " reused steps discarded")
   end
+  # the loop used up max_iter (every other exit sets its own reason): the
+  # last iterations decide between iteration limit, type identification
+  # divergence and numerical divergence
+  if !converged && rejection_reason === :nr_mismatch_not_converged
+    rejection_reason = _max_iter_stop_reason(pre_switch_history, type_switched, tol)
+  end
 
   # The loop above can exit (converged break, non-converged break, or normal
   # exhaustion) while "q_limit_processing" or "newton_iteration" is still the
@@ -1466,6 +1476,8 @@ function runpf_rectangular!(
       (numerical_converged && !qlimits_enabled) ? :qlimits_disabled : :no_converged_solution;
       switch_counts = switch_counts_,
       max_switches = qlimit_guard_max_switches,
+      pre_switch_history = pre_switch_history,
+      type_switched = type_switched,
     )
     status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
@@ -1501,6 +1513,11 @@ function runpf_rectangular!(
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
     (switch_counts_, oscillating_buses_, max_switching_exceeded_, q_limit_active_set_ok_, converged_, rejection_reason_, final_reason_, final_status_, status_)
   end
+  # P(U)/Q(U) generation at the solved voltage onto the nodes, only when the
+  # solve converged and every final check accepted it. It runs after the
+  # Q-limit summary and the wrong-branch check, which read the injections,
+  # not these node values.
+  converged && _write_controlled_generation!(net)
   if verbose > 0
     qlimits_enabled && _print_qlimit_active_set_summary(stdout, status)
   end
@@ -1577,8 +1594,6 @@ function runpf_rectangular!(
   trust_region_expand_threshold::Float64 = 0.75,
   trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
-  opt_cooldown_iters::Union{Nothing,Int} = nothing,
-  opt_q_hyst_pu::Union{Nothing,Float64} = nothing,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.0,
@@ -1684,8 +1699,6 @@ function runpf_rectangular!(
     trust_region_step_mode,
     verbose,
     opt_flatstart,
-    opt_cooldown_iters,
-    opt_q_hyst_pu,
     pv_table_rows,
     lock_pv_to_pq_buses,
     qlimit_mode,
@@ -1769,17 +1782,16 @@ end
 ## class of #456: configuration lost on the way to the solver).
 ## `qlimit_lock_reason` is the caller's (the auto mode passes its own); with
 ## Q limits ignored it is always :ignore_q_limits, as before.
+## The four switching parameters (cooldown, hysteresis, release voltage
+## margin, final-check bound) are NOT keywords: the solver reads them off the
+## network, which _runpf_config_once! stamps from its configuration and the
+## importer stamps from the configuration of the import (the contingency
+## service imports with its run configuration, so the batch engines see the
+## same values).
 function _qlimit_solver_kwargs(qlim::QLimitConfig; qlimit_lock_reason::Symbol = :manual)
   qlimit_disabled = qlim.ignore_q_limits
   qlimits_enabled = !qlimit_disabled
   return (;
-    # the run configuration decides the switching parameters here, exactly
-    # like the flat start: an auto-mode attempt that rewrites
-    # power_flow.qlimits.hysteresis_pu / cooldown_iters reaches the solver
-    # through its config, while the values stamped on the network at import
-    # stay the default for config-less calls
-    opt_cooldown_iters = qlim.cooldown_iters,
-    opt_q_hyst_pu = qlim.hysteresis_pu,
     # pass limit of the classic outer loop; only the classic modes read it
     # on this path (qlimit_mode stays :switch_to_pq, so the adjust_vset
     # step budget that shares the keyword is not reached from a config)
@@ -1811,6 +1823,11 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
   start_ci = config.start_current_iteration
   start_apslf = config.apslf_start
   qlim = config.qlimits
+  # the run configuration owns the Q-limit switching parameters: stamp them
+  # before every solve (rescue variants and auto-mode attempts included), so
+  # a network imported with other values, or built by hand, runs with the
+  # configured ones on every enforcement mode
+  _apply_qlimit_net_parameters!(net, qlim)
   return runpf!(
     net,
     config.max_iter,
@@ -2119,9 +2136,13 @@ function _runpf_with_config!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     if dc_ok
       println("dc fallback: AC did not converge. The net now carries the standalone DC solution (angles and branch P only, vm = 1 pu, no reactive results). The AC status stays non-converged.")
       performance_profile isa AbstractDict && (performance_profile[:dc_fallback_applied] = true)
-      status = rectangular_pf_status(net)
-      status !== nothing && _set_rectangular_pf_status!(net, merge(status, (; dc_fallback_applied = true)))
     end
+    # The field is set whether the DC solve worked or not: the start voltages
+    # were restored above, so the net no longer holds the last Newton iterate
+    # and the Q-limit stability check must not read it as one
+    # (_qlimit_stability_diagnostics).
+    status = rectangular_pf_status(net)
+    status !== nothing && _set_rectangular_pf_status!(net, merge(status, (; dc_fallback_applied = dc_ok)))
     # Honest return: erg = 1 keeps every `erg == 0` reader truthful about the
     # AC solve; the DC state and the profile flag carry the fallback result.
     return (ite, 1)
@@ -2460,8 +2481,17 @@ end
 #    or empty;
 #  - a Q-limit event of the representative goes to its voltage-controlled
 #    members, its log entries to the first of them, so result tables see the
-#    clamp as on a bus without link.
-function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
+#    clamp as on a bus without link;
+#  - after a converged solve (`converged`), a member with a P(U) or Q(U)
+#    unit takes its generation at the solved voltage
+#    (_controlled_bus_generation) instead of the schedule: P at a member
+#    outside the references, Q at a member that does not hold the voltage.
+#    The solve ran these units on their characteristic, so the reference
+#    and the voltage-holding members get the cluster value minus that.
+#    Without it the original node kept the schedule while the report
+#    evaluated the characteristic (a Q(U) unit at a PQ member of a cluster
+#    in an island-wise solve).
+function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int}; converged::Bool = false)
   n = length(net.nodeVec)
   nodes = net.nodeVec
   members = [Int[] for _ = 1:n]
@@ -2489,6 +2519,9 @@ function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
   bands = length(net.qmin_pu) == n && length(net.qmax_pu) == n
   # bus that carries the Q-limit log entries of a representative
   log_bus = collect(1:n)
+  # members' generation at the solved voltage; `net` holds the solved
+  # voltages already (_sync_merged_results_to_original! copies them first)
+  pc, qc, has_pc, has_qc = converged ? _controlled_bus_generation(net) : (Float64[], Float64[], falses(n), falses(n))
   resetQLimitLog!(net)
   for r = 1:n
     M = members[r]
@@ -2505,6 +2538,10 @@ function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
     end
     # an isolated cluster was not solved, its members keep their values
     r in wnet.isoNodes && continue
+    for b in M
+      has_pc[b] && !is_ref[b] && (nodes[b]._pƩGen = pc[b])
+      has_qc[b] && !held[b] && (nodes[b]._qƩGen = qc[b])
+    end
     if getNodeType(w) == Slack && w._pƩGen !== nothing
       refs = filter(b -> is_ref[b], M)
       isempty(refs) && (refs = [r])
@@ -2540,6 +2577,64 @@ function _split_merged_bus_powers!(net::Net, wnet::Net, reps::Vector{Int})
     push!(net.qLimitLog, QLimitEvent(iter = ev.iter, bus = log_bus[ev.bus], side = ev.side, kind = ev.kind))
   end
   isempty(wnet.totalBusPower) || setTotalBusPower!(net = net, p = last(wnet.totalBusPower)[1], q = last(wnet.totalBusPower)[2])
+  return nothing
+end
+
+# The Q-limit outcome of a solve on the merged copy `wnet`, handed to the
+# buses and units of `net`. The solve changes bus types (PV to PQ at a
+# reached limit, back to PV on a release, a new reference under the classic
+# modes) and, under the classic modes, the scheduled Q of a clamped unit
+# (rectangular_qlimit_outer_loop.jl). Both happened on the copy only: the
+# net kept the clamped bus as PV, and the result report took the Q of a PV
+# bus from the node, which the classic modes leave at the value of the
+# base solve. Every bus of a net with a closed link was affected, also one
+# outside every link cluster: sp_case60 (one coupler, at Neubach_110) with
+# a 4.0 .. 5.5 MVAr band at Birkkamp_110 ended PV with 7.258 MVAr in the
+# report under classic_simultaneous, where the voltages give 5.500 MVAr at
+# Qmax. The types start from the units, as runpf! types a net without
+# links, then take the type the solve gave the representative: a bus
+# outside every cluster takes it as it is, in a cluster the members that
+# hold the voltage turn PQ when the cluster ended PQ, and the first of them
+# becomes the reference when the cluster became one.
+function _sync_merged_qlimit_outcome!(net::Net, wnet::Net, reps::Vector{Int})
+  # _merged_pf_net moves the units of the copy onto the representatives
+  # and keeps their order, so the unit k of the copy is the unit k of the net
+  for (ps, wps) in zip(net.prosumpsVec, wnet.prosumpsVec)
+    ps.qVal == wps.qVal || (ps.qVal = wps.qVal)
+  end
+  refreshBusTypesFromProsumers!(net)
+  n = length(net.nodeVec)
+  nodes = net.nodeVec
+  held = falses(n)
+  for ps in net.prosumpsVec
+    isGenerator(ps) || continue
+    b = getPosumerBusIndex(ps)
+    1 <= b <= n || continue
+    (isSlack(ps) || isRegulating(ps)) && (held[b] = true)
+  end
+  members = [Int[] for _ = 1:n]
+  for b = 1:n
+    push!(members[reps[b]], b)
+  end
+  for r = 1:n
+    M = members[r]
+    isempty(M) && continue
+    wt = getNodeType(wnet.nodeVec[r])
+    # an isolated bus or cluster was not solved and keeps its type
+    wt in (Slack, PV, PQ) || continue
+    if length(M) == 1
+      nodes[r]._nodeType = wt
+      continue
+    end
+    regs = filter(b -> held[b], M)
+    if wt == PQ
+      for b in regs
+        getNodeType(nodes[b]) in (Slack, PV) && (nodes[b]._nodeType = PQ)
+      end
+    elseif wt == Slack && !any(b -> getNodeType(nodes[b]) == Slack, M)
+      nodes[isempty(regs) ? r : first(regs)]._nodeType = Slack
+    end
+  end
   return nothing
 end
 
@@ -2608,8 +2703,6 @@ function runpf!(
   trust_region_expand_threshold::Float64 = 0.75,
   trust_region_step_mode::Symbol = :scaled,
   opt_flatstart::Bool = net.flatstart,
-  opt_cooldown_iters::Union{Nothing,Int} = nothing,
-  opt_q_hyst_pu::Union{Nothing,Float64} = nothing,
   pv_table_rows::Int = 30,
   validate_limits_after_pf::Bool = false,
   q_limit_violation_headroom::Float64 = 0.0,
@@ -2713,7 +2806,7 @@ function runpf!(
   # the island branch, next to the non-island call site) therefore made every
   # island-wise run with an active link merge die with an UndefVarError, after
   # all islands had already converged.
-  function _sync_merged_results_to_original!()
+  function _sync_merged_results_to_original!(converged::Bool)
     # wnet holds the contracted topology, so every original bus reads its
     # voltage from the representative of its link cluster. All buses of a
     # cluster are electrically the same node, hence they legitimately share
@@ -2725,14 +2818,15 @@ function runpf!(
     end
     # the bus powers go back split over the members (slack P, PV/slack Q,
     # Q-limit events, total bus power)
-    _split_merged_bus_powers!(net, wnet, reps)
+    _split_merged_bus_powers!(net, wnet, reps; converged = converged)
+    # bus types and the clamped Q schedules of the classic modes
+    _sync_merged_qlimit_outcome!(net, wnet, reps)
     # Shunt powers depend on the bus voltage and were computed on the merged net,
     # where they sit on the representative. Recompute them on the original net so
     # reporting attributes them to the bus the user actually modelled.
     updateShuntPowers!(net = net)
   end
 
-  has_vdep_control = has_voltage_dependent_control(wnet)
   # An island always finds itself a reference:
   # one that lost its slack borrows a PV bus, and one without any
   # voltage-controlled unit takes its strongest generating unit, whatever
@@ -2791,8 +2885,6 @@ function runpf!(
     wrong_branch_max_reference_branch_angle_deg,
     wrong_branch_rescue_max_attempts,
     opt_flatstart,
-    opt_cooldown_iters,
-    opt_q_hyst_pu,
     pv_table_rows,
     lock_pv_to_pq_buses,
     qlimit_mode,
@@ -2977,6 +3069,7 @@ function runpf!(
       success_status = merge(island_rect_status === nothing ? NamedTuple() : island_rect_status, (; island_id = row.island_id, iterations = res.it, status = :converged, reason = :none, stage = :post_solve_validation, exception_type = "", exception_message = "", stacktrace_top = ""))
       island_statuses[Int(row.island_id)] = success_status
       _sync_island_solution!(wnet, res.inet, row)
+      _sync_island_qlimit_outcome!(wnet, res.inet, row)
       return nothing
     end
 
@@ -3151,7 +3244,8 @@ function runpf!(
       performance_profile[:post_merge_mismatch_status] = :not_applicable
     end
     if has_merges
-      _sync_merged_results_to_original!()
+      # every island converged here
+      _sync_merged_results_to_original!(true)
     elseif wnet !== net
       for i in eachindex(net.nodeVec)
         net.nodeVec[i]._vm_pu = wnet.nodeVec[i]._vm_pu
@@ -3163,7 +3257,15 @@ function runpf!(
 
   if method === :rectangular
     if has_merges
-      has_vdep_control && error("runpf!: voltage-dependent injections, including P(U)/Q(U) controllers and bus_shunt_model=voltage_dependent_injection, are not supported with active-link merge handling in rectangular mode. Disable merges or use a topology without internal isolated buses.")
+      # P(U)/Q(U) units and voltage-dependent shunts solve on the merged
+      # copy like on any net: the merge moves them onto the representative,
+      # whose voltage they read (buildControlledSVec, the bus of a unit and
+      # sh.busIdx). The refusal that stood here came with the P(U)/Q(U)
+      # controllers (00fd7d9a), when a merged net fell back to the polar
+      # full solver, which had no voltage-dependent terms. 890aa2ce moved
+      # merged nets onto the rectangular solver, which builds those terms,
+      # and kept the refusal; the island-wise solve of a merged net already
+      # ran them.
       # the merged working copy is fresh in every solve: it takes the LU memo
       # of the caller's network (see the island path)
       power_mode && _share_power_mode_lu_memo!(wnet, _power_cache!(net).lu_memo, 0)
@@ -3181,8 +3283,12 @@ function runpf!(
       end
       _set_rectangular_pf_status!(net, rect_status)
     end
-    if erg == 0 && has_merges
-      _sync_merged_results_to_original!()
+    # also after a failed solve: the unmerged path leaves the last iterate
+    # on the net, and the merged one has to do the same, or the net keeps
+    # its start voltages and an empty Q-limit log (sp_case60 with a closed
+    # coupler: the log of a run stopped at max_iter was empty)
+    if has_merges && (erg == 0 || rect_status !== nothing)
+      _sync_merged_results_to_original!(erg == 0)
     end
     if validate_limits_after_pf && (verbose > 0)
       printFinalLimitValidation(has_merges ? net : wnet; q_headroom = q_limit_violation_headroom)

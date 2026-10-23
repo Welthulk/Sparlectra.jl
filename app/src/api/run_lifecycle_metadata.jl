@@ -131,6 +131,24 @@ function _qv_characteristic_summary(net::Union{Nothing,Net}, converged::Bool; ba
 end
 
 """
+    _qlimit_stability_summary(raw_result) -> NamedTuple
+
+The Q-limit stability check of a run (`qlimitStabilityReport`, the
+conditions (6) and (7) of Zhao et al. at every voltage-regulated bus) as the
+service reports it: `status`, `violations`, `buses` (the failing ones,
+`;`-joined) and the one `line` (`qlimit_stability_line`) that goes into
+`run.log`, the metadata and the result page. Read from the result
+diagnostics; a result without them (a DC solve) is not checked.
+"""
+function _qlimit_stability_summary(raw_result::SparlectraRunResult)
+  d = raw_result.diagnostics
+  hasproperty(d, :qlimit_stability_status) || return (status = "not_checked", violations = 0, buses = "", line = qlimit_stability_line(:not_checked, NamedTuple[]))
+  rows = d.qlimit_stability_report
+  bad = [r.bus_name for r in rows if !r.ok]
+  return (status = String(d.qlimit_stability_status), violations = Int(d.qlimit_stability_violations), buses = join(bad, ";"), line = qlimit_stability_line(d.qlimit_stability_status, rows))
+end
+
+"""
     _final_q_check_summary(raw_result) -> NamedTuple
 
 The final Q-limit check of a run as the service reports it: `status`,
@@ -240,6 +258,7 @@ end
 function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, config::SparlectraConfig; numerical_success::Bool, final_outcome::Dict{String,Any}, csv_export_status::AbstractString, csv_export_skip_reason, csv_export_error, csv_artifacts::Vector{String}, detailed_result_csv::Bool, config_overrides, config_override_source::AbstractString, casefile, config_file, performance_timing, run_diagnostics::Bool, csv_format_name::AbstractString, qlimit_metadata::AbstractDict, csv_timing_metadata::AbstractDict)::Dict{String,Any}
   qv = _qv_characteristic_summary(raw_result.net, raw_result.numerical_converged)
   fq = _final_q_check_summary(raw_result)
+  qs = _qlimit_stability_summary(raw_result)
   rect_status = raw_result.net === nothing ? nothing : rectangular_pf_status(raw_result.net)
   current_iteration_metadata = _current_iteration_lifecycle_metadata(rect_status)
   merit_linesearch_metadata = _merit_linesearch_lifecycle_metadata(rect_status)
@@ -252,7 +271,8 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   # no_reference_bus_remaining, base_pf_not_converged); nothing when no
   # classic mode ran
   classic_outer_loop_stop = _classic_outer_loop_stop(rect_status)
-  pv_to_pq_events = raw_result.net === nothing ? 0 : length(raw_result.net.qLimitLog)
+  # the log holds the releases as well (kind :release); these are the PV->PQ switches
+  pv_to_pq_events = raw_result.net === nothing ? 0 : qlimit_pv_to_pq_event_count(raw_result.net)
   active_set_events = config.powerflow.qlimits.enforcement_mode === :active_set ? pv_to_pq_events : 0
   # Jacobian conditioning of the exact system the rectangular solver
   # factored (lazy thunk in the solver status, evaluated once here). Non-NR
@@ -265,10 +285,6 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
   apslf_field(name::Symbol) = rect_status !== nothing && hasproperty(rect_status, name) ? getproperty(rect_status, name) : nothing
   metadata = merge(Dict{String,Any}(
     "apslf_pade_margin" => apslf_field(:apslf_convergence_radius),
-    # DEPRECATED (0.30.2): the former name of apslf_pade_margin, same value.
-    # Still written so readers of 0.30.1 metadata keep working within the
-    # patch series; new readers use apslf_pade_margin.
-    "apslf_convergence_radius" => apslf_field(:apslf_convergence_radius),
     "apslf_pade_margin_bus" => apslf_field(:apslf_convergence_bus),
     "apslf_series_radius" => apslf_field(:apslf_series_radius),
     "apslf_series_radius_bus" => apslf_field(:apslf_series_radius_bus),
@@ -283,6 +299,10 @@ function _build_success_lifecycle_metadata(raw_result::SparlectraRunResult, conf
     "final_q_check_buses" => fq.buses,
     "final_q_check_max_dev_pu" => fq.max_dev_pu,
     "final_q_check_line" => fq.line,
+    "qlimit_stability_status" => qs.status,
+    "qlimit_stability_violations" => qs.violations,
+    "qlimit_stability_buses" => qs.buses,
+    "qlimit_stability_line" => qs.line,
     "solver_status" => "completed",
     "service_status" => "completed",
     "numerical_status" => numerical_success ? "converged" : "not_converged",
