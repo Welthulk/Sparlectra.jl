@@ -50,8 +50,10 @@ bias the fused balance). `ShuntQMeas` and bus-referenced `ImagMeas` follow
 their device to the representative; branch measurements keep their branch,
 and a branch shorted inside a cluster loses its flow measurements with a
 warning. `calcLinkFlowsSE!` is a weighted least-squares split per link
-component (nodal balance rows at weight 1, each link measurement at
-`1/sigma^2`; without measurements it equals `calcLinkFlowsKCL!`) and runs
+component (the nodal balance rows as equations, each link measurement at
+`1/sigma^2`, so a measurement moves only the circulations of a ring and a
+flow the balance fixes keeps its value; without measurements it equals
+`calcLinkFlowsKCL!`) and runs
 after the write-back because it consumes the estimated branch flows and
 shunt powers.
 
@@ -98,7 +100,7 @@ reported result is that of the fixed run.
 | Release | `setTapEstimation!(net; trafo, mode = :ratio \| :pst \| :both, alpha_deg = nothing, enabled = true)`; `trafo` is a branch index or component name. `mode` selects the tap changers of the transformer by role: `:ratio` the ratio changers, `:pst` the phase changers, `:both` all. `:pst` and `:both` need a declared phase changer, `:ratio` a ratio changer (`ArgumentError` otherwise). `alpha_deg` is optional and, when given, has to equal the direction of the asymmetrical changer from the import. Returns the start steps `s0` |
 | Write back to the model | `state_estimation.update_taps = true` (keyword `updateTaps`), off by default: ratio, shift and the stored steps of the fixed run, and r, x, g, b when an impedance source applied (see Impedance per step) |
 | Machine transformers | `calcMachineTrafoTapFromSE(net; trafo, v_machine_pu, p_mw, q_mvar)`: back-calculation of the step of the first ratio changer after the run (`s_est`, the electrical and the nearest physical step, the reactive-power residual), writes nothing |
-| Result | `SEResult.tapEstimates`, one row per released tap changer: branch, `regulator` (index in the changer set), transformer name and mRID, `changer` and `changer_mrid`, `kind`, `role`, `side`, `alpha_deg`, `du`, `neutral_step`, the estimate `s_est` with `du_est`, `ratio_est`, `angle_est_deg`, `s_fixed` (the position of the fixed run), `step_model`, `step_fixed`, `deviation_steps`, `out_of_range`, `fixed`, `frozen_reason`, `note`, `notice`, and `island` on multi-island nets. `SEResult.tapFixation`: `j_before`/`dof_before` with the steps as states, `j_after`/`dof_after` with the steps fixed, the iterations of both runs, `offgrid_residual`, `k_removed`, `delta_j_notice`, and `j_rise_exceeds_quantile`, `sequential` and `j_simultaneous` for the sequential fixation (see Fixation) |
+| Result | `SEResult.tapEstimates`, one row per released tap changer: branch, `regulator` (index in the changer set), transformer name and mRID, `changer` and `changer_mrid`, `kind`, `role`, `side`, `alpha_deg`, `du`, `neutral_step`, the estimate `s_est` with `du_est`, `ratio_est`, `angle_est_deg`, `s_fixed` (the position of the fixed run), `step_model`, `step_fixed`, `deviation_steps`, `out_of_range`, `fixed`, `frozen_reason`, `note`, `notice`, and `island` on multi-island nets. `SEResult.tapFixation`: `fixed` (false when the steps were not fixed), `not_converged_released` (the released run did not converge and the taps were frozen again, see Fixation), `j_before`/`dof_before` with the steps as states, `j_after`/`dof_after` with the steps fixed, the iterations of both runs, `offgrid_residual`, `k_removed`, `delta_j_notice`, and `j_rise_exceeds_quantile`, `sequential` and `j_simultaneous` for the sequential fixation (see Fixation) |
 | Artifact | `se_tap_estimates.csv`, one row per regulator: changer, kind, side, `alpha_deg`, `du`, the estimate `s_est` with `du_est`, `ratio_est`, `angle_est_deg`, the model step next to the fixed step and the deviation between them in steps, freeze reason and note |
 | Web UI | "estimate taps" (on by default when the case has tap changers) releases every tap changer of every in-service transformer except machine transformers, in the mode its changers give. Result table: [Web UI](webui_reference.md#State-estimation) |
 
@@ -192,6 +194,13 @@ carries both flags in the result metadata (`se_tap_j_rise_exceeds_quantile`,
   that sees only noise freezes a regulator that another row sees.
 - `model_mismatch`: the branch ratio and angle do not lie on the curves of
   its changer data. The release is recorded, the regulator is frozen.
+- `not_converged_released`: the estimate with the released taps did not
+  converge (a set too thin for them, or a gross error that a regulator
+  pinned only by its magnitude effect tries to absorb). Every regulator
+  that was still a state is frozen again at its start position and the
+  estimate is solved once more with the taps frozen, from the same start;
+  `tapFixation.not_converged_released` is set, the run warns once, and the
+  result is that frozen-tap estimate, never the diverged iterate.
 - `no_changer`: a released transformer without a changer of the released
   role gets one report row (regulator 0), which the counts of the SE
   service leave out.
@@ -226,9 +235,10 @@ once with the taps frozen and then estimates them from that state (from a
 flat start many tap states crawl to the solution). The estimate is kept
 only if its fixed positions fit the measurements at least as well as the
 model positions of that first solve. If it is rejected, or the run does not
-converge with released taps (a set collectively too thin for them), every
-released tap is frozen back to its model position and the estimation
-repeats once; the run log says so and the result metadata carries
+converge with released taps (`runse!` then already froze them again,
+reason `not_converged_released`), every released tap is frozen back to its
+model position and the estimation repeats once; the run log says so and the
+result metadata carries
 `se_tap_estimation_fallback = true` with
 `se_tap_estimation_fallback_reason` `not_converged` or `worse_fit`: the tap
 positions in such a result are model values, not estimates.

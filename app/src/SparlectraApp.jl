@@ -80,6 +80,7 @@ import Sparlectra:
   _se_start_state,
   FetchMatpowerCase,
   _set_measurement_active,
+  _se_report_tap_refrozen,
   ACTIVE_SPARLECTRA_CONFIG,
   BusPowerComponents,
   CGMES_HVDC_MODE_VALUES,

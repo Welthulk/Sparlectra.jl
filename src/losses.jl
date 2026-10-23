@@ -216,8 +216,12 @@ W2 link-flow allocation with measurements (SE phase 3): the KCL allocation of
 component. Active link flow measurements on `net.measurements` (`PflowMeas`/
 `QflowMeas` with a `linkIdx`) enter as extra rows `f_j = z_j` with weight
 `1/sigma^2` (P rows into the P solve, Q rows into the Q solve); the nodal
-balance rows keep weight 1. With no link measurements the result equals
-`calcLinkFlowsKCL!` exactly (shared core, identical code path).
+balance rows are treated as equations (weight 1e12 times the largest
+measurement weight of the component), so a measurement only moves flows the
+balance leaves free (the circulations of a ring) and a flow the balance fixes
+keeps its KCL value, the error shows in the residual. With no link
+measurements the result equals `calcLinkFlowsKCL!` exactly (shared core,
+identical code path).
 
 Link measurements constrain only the flow split, never the system state: the
 estimator excludes them from the WLS (the link is not in the Ybus).
@@ -377,8 +381,9 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
     #    (e.g., rings) by returning the minimum-norm solution. With link
     #    measurements in this component (W2, SE phase 3) one weighted row
     #    `f_j = z_j` per measurement is appended AFTER the sum-zero
-    #    correction; the balance rows keep weight 1 and the minimum-norm
-    #    property survives through the pinv of the row-scaled system.
+    #    correction; the balance rows are scaled far above the measurement
+    #    rows (`_LINK_BALANCE_ROW_SCALE`) and the minimum-norm property
+    #    survives through the pinv of the row-scaled system.
     compP = [(k, pByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(pByCol, gj)]
     compQ = [(k, qByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(qByCol, gj)]
     fp = if isempty(compP)
@@ -437,20 +442,32 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
   return rows
 end
 
-# Weighted least-squares split for one component: balance rows (weight 1) plus
-# one row per measured link, scaled by sqrt(1/sigma^2). pinv keeps minimum
-# norm in the directions no row constrains.
+# Row scale of the nodal balance rows in the weighted link split, relative
+# to the largest measurement row scale 1/sigma of the component (weight
+# ratio 1e12). The balance rows are equations, not measurements: a flow the
+# balance fixes (a single link between two buses, every tree link) must not
+# move with a link measurement, only the circulations of a ring are free
+# for it. At scale 1 a measurement at sigma 2 MW would pull a single link
+# flow by a ninth of its error. With 1e6 the pull is below
+# 1e-12 of the error; the singular values of the scaled system stay far
+# above the pinv cut-off (eps times the row count times the largest one).
+const _LINK_BALANCE_ROW_SCALE = 1.0e6
+
+# Weighted least-squares split for one component: balance rows at
+# `_LINK_BALANCE_ROW_SCALE` times the largest measurement row scale, plus one
+# row per measured link, scaled by sqrt(1/sigma^2). pinv keeps minimum norm
+# in the directions no row constrains.
 function _weighted_link_solve(Ab::Matrix{Float64}, bb::Vector{Float64}, meas::Vector{<:Tuple{Int,Tuple{Float64,Float64}}})
   nrow, ncol = size(Ab)
   M = zeros(Float64, nrow + length(meas), ncol)
   rhs = zeros(Float64, nrow + length(meas))
-  M[1:nrow, :] .= Ab
-  rhs[1:nrow] .= bb
+  sws = Float64[vz[2] > 0.0 ? 1.0 / vz[2] : 1.0 for (_, vz) in meas]
+  sb = _LINK_BALANCE_ROW_SCALE * maximum(sws)
+  M[1:nrow, :] .= sb .* Ab
+  rhs[1:nrow] .= sb .* bb
   for (r, (col, vz)) in enumerate(meas)
-    z, σ = vz
-    sw = σ > 0.0 ? 1.0 / σ : 1.0
-    M[nrow+r, col] = sw
-    rhs[nrow+r] = sw * z
+    M[nrow+r, col] = sws[r]
+    rhs[nrow+r] = sws[r] * vz[1]
   end
   return pinv(M) * rhs
 end

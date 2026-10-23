@@ -1370,6 +1370,7 @@ const _TAP_NOTICE_TEXTS = Dict{Symbol,String}(
   :not_separable => "frozen: its effect on the branch ratio equals that of another regulator of the same transformer",
   :not_observable => "frozen: the measurements do not see this regulator (Jacobian column zero within its finite-difference noise)",
   :model_mismatch => "frozen: the branch ratio and angle do not lie on the curves of its tap changer data",
+  :not_converged_released => "frozen again: the estimate with the released taps did not converge, the regulator stays at its start position",
   :no_changer => "not released: the transformer has no tap changer of the released kind",
   :relative_only => "parallel member: estimated only relative to the other member",
   :relative_to_frozen => "not fixed: estimated only relative to the frozen phase regulator of",

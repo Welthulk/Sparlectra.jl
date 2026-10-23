@@ -75,6 +75,9 @@ struct SEResult
   # chi2(k) (`j_rise_exceeds_quantile`, then `sequential` when the steps
   # fixed one at a time gave the smaller J, `j_simultaneous`). A regulator
   # only relative to a frozen phase regulator stays a state in the fixed run.
+  # A released run that does not converge is solved again with its
+  # regulators frozen at the start (reason `:not_converged_released`), no
+  # fixation; `tapFixation.not_converged_released` marks that result.
   tapEstimates::Union{Nothing,Vector{NamedTuple}}
   tapFixation::Union{Nothing,NamedTuple}
   # topology validation: the ADVISORY stage-1 precheck findings
@@ -2521,6 +2524,7 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   tapK = 0
   tapAnyExceeds = false
   tapAnySequential = false
+  tapAnyRefrozen = false
   tapJSimSum = 0.0
   tapNotices = String[]
   # set when an island mirrored written-back tap positions onto the parent
@@ -2634,6 +2638,7 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
         tapAnyExceeds |= tf.j_rise_exceeds_quantile
         tapAnySequential |= tf.sequential
         tapJSimSum += tf.j_simultaneous
+        tapAnyRefrozen |= tf.not_converged_released
         isempty(tf.delta_j_notice) || push!(tapNotices, string("island ", iid, ": ", tf.delta_j_notice))
       end
       if cfg.update_taps
@@ -2672,7 +2677,7 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
     # and a zero balance
     _register_se_start!(net, seVm, seVa, sePinj, seQinj, conv)
   end
-  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTap ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing)
+  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTap ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum, not_converged_released = tapAnyRefrozen) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing)
 end
 
 function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
@@ -3499,7 +3504,6 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       end
     end
   end
-  _wls_solve!(true)
 
   # --- replacement suppression rounds (robust_mode :replacement) -----------
   # Judged on the CONVERGED residuals, never on flat-start transients: solve
@@ -3525,8 +3529,13 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # Omega_ii sits at the numerical floor is not localizable, gets rn = 0
   # there, and can therefore never be suppressed on the strength of a large
   # raw residual.
-  if robustMode === :replacement && converged
-    prevSet = Set{Int}()
+  # The rounds run as a callable so the re-solve with the taps frozen
+  # again (below) gets them too. The closure reassigns replacementFrozenW
+  # on purpose; every other name in it is local to it.
+  function _replacement_rounds!()
+    local Vr, hr, rr, supDiag, rnSup, wiiSup, supSet, worst, wRepl
+    (robustMode === :replacement && converged) || return
+    local prevSet = Set{Int}()
     for _ = 1:3
       Vr = _state_to_voltage(x, slackIdx, nbus)
       hr = _predict_measurements(activeMeas, net, Vr, Ybus; vaOffsetRad = _va_offset_from_state(x, withVaOffset), shuntB = shuntMap === nothing ? nothing : _shunt_b_override(x, shuntMap), tapOverlay = _tap_ov(x))
@@ -3570,6 +3579,46 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       _wls_solve!(false)
       converged || break
     end
+    return
+  end
+
+  # start state of the released run, restored when it does not converge
+  xStart = copy(x)
+  _wls_solve!(true)
+  _replacement_rounds!()
+
+  # --- released run that did not converge ---------------------------------
+  # A set that carries the voltages can still be too thin for the released
+  # regulators: the estimate then does not settle (a phase regulator on a
+  # tree edge without angle anchor, pinned by its magnitude effect only,
+  # runs against the turning point of |t| when a gross error asks for a
+  # magnitude it cannot reach). Instead of returning that diverged iterate,
+  # every released regulator that was still a state is frozen again at its
+  # start position (reason :not_converged_released), the start state is
+  # restored and the estimate is solved with the taps frozen. The release
+  # rule is unchanged; the rows, tapFixation and one warning say so.
+  tapRefrozen = 0
+  tapIteReleased = 0
+  if tapMap !== nothing && !converged
+    tapIteReleased = iteDone
+    for ts in tapMap.trafos, c in eachindex(ts.cols)
+      (ts.cols[c] != 0 && ts.frozen[c] === :none) || continue
+      ts.frozen[c] = :not_converged_released
+      # its notes described the estimate (relative, conditional, side of
+      # the start), which no longer exists
+      ts.notes[c] = :none
+      tapRefrozen += 1
+    end
+    tapCol0 = tapMap.col0
+    tapNCols = tapMap.ncols
+    tapMap, moved = _tap_repack(tapMap, net, Ybus)
+    append!(tapFrozenStates, moved)
+    x = xStart[[k for k in eachindex(xStart) if !(tapCol0 <= k < tapCol0 + tapNCols)]]
+    tapPriorCols = Int[]
+    replacementFrozenW = nothing
+    @warn "runse!: tap estimation did not converge in $(tapIteReleased) iteration(s) with $(tapRefrozen) released tap regulator(s); they are frozen again at their start position (:not_converged_released) and the estimate is solved with the taps frozen"
+    _wls_solve!(true)
+    _replacement_rounds!()
   end
 
   # --- tap fixation run (always follows the released estimate) --------------
@@ -3628,55 +3677,52 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     tapIteEst = iteDone
     tapConvEst = converged
     tapXEst = copy(x)
-    if converged
-      # the fixed positions replace the tap states; re-solve from the
-      # converged voltages (never from a diverged state: the rounded steps
-      # would be meaningless, so a diverged run keeps the continuous result)
-      fixCols = _tap_fixable_columns(tapMapEst)
-      tapKRemoved = length(fixCols)
-      priorEst = copy(tapPriorCols)
-      tapFixed = true
-      tapFixAndSolve!(fixCols)
-      tapIteFix = iteDone
-      tapJSim, gatedSim = tapJNow()
-      # the quantile holds only when both runs gate the same Ia rows (the
-      # Delta-J notice below); then a rise above it is the warning case
-      tapQuantile = _chi2_quantile95(tapKRemoved)
-      tapExceeds = converged && tapKRemoved >= 1 && gatedSim == tapGatedBefore && tapJSim - tapJBefore > tapQuantile
-      if tapExceeds && tapKRemoved >= 2
-        # sequential fixation from the continuous estimate; with one
-        # column it would repeat the simultaneous run
-        simState = (x = copy(x), map = tapMap, prior = copy(tapPriorCols), ite = iteDone, conv = converged)
-        x = copy(tapXEst)
-        tapMap = tapMapEst
-        tapPriorCols = priorEst
-        seqOk = true
-        seqIte = 0
-        while true
-          seqCol = _tap_next_fix(x, tapMap)
-          seqCol == 0 && break
-          seqOk = tapFixAndSolve!([seqCol])
-          seqIte += iteDone
-          seqOk || break
-        end
-        jSeq, gatedSeq = seqOk ? tapJNow() : (Inf, Set{Int}())
-        tapJSeq = jSeq
-        if seqOk && gatedSeq == gatedSim && jSeq < tapJSim
-          tapSequential = true
-          tapIteFix = seqIte
-        else
-          x = simState.x
-          tapMap = simState.map
-          tapPriorCols = simState.prior
-          iteDone = simState.ite
-          converged = simState.conv
-        end
+    # the fixed positions replace the tap states; re-solve from the
+    # converged voltages (the released run converged here: one that did not
+    # was frozen again above, so the rounding never starts from a diverged
+    # state)
+    fixCols = _tap_fixable_columns(tapMapEst)
+    tapKRemoved = length(fixCols)
+    priorEst = copy(tapPriorCols)
+    tapFixed = true
+    tapFixAndSolve!(fixCols)
+    tapIteFix = iteDone
+    tapJSim, gatedSim = tapJNow()
+    # the quantile holds only when both runs gate the same Ia rows (the
+    # Delta-J notice below); then a rise above it is the warning case
+    tapQuantile = _chi2_quantile95(tapKRemoved)
+    tapExceeds = converged && tapKRemoved >= 1 && gatedSim == tapGatedBefore && tapJSim - tapJBefore > tapQuantile
+    if tapExceeds && tapKRemoved >= 2
+      # sequential fixation from the continuous estimate; with one
+      # column it would repeat the simultaneous run
+      simState = (x = copy(x), map = tapMap, prior = copy(tapPriorCols), ite = iteDone, conv = converged)
+      x = copy(tapXEst)
+      tapMap = tapMapEst
+      tapPriorCols = priorEst
+      seqOk = true
+      seqIte = 0
+      while true
+        seqCol = _tap_next_fix(x, tapMap)
+        seqCol == 0 && break
+        seqOk = tapFixAndSolve!([seqCol])
+        seqIte += iteDone
+        seqOk || break
       end
-      tapPositions = _tap_positions(tapXEst, tapMapEst, x, tapMap)
-      converged = converged && tapConvEst
-    else
-      tapPositions = _tap_positions(tapXEst, tapMapEst, tapXEst, tapMapEst)
+      jSeq, gatedSeq = seqOk ? tapJNow() : (Inf, Set{Int}())
+      tapJSeq = jSeq
+      if seqOk && gatedSeq == gatedSim && jSeq < tapJSim
+        tapSequential = true
+        tapIteFix = seqIte
+      else
+        x = simState.x
+        tapMap = simState.map
+        tapPriorCols = simState.prior
+        iteDone = simState.ite
+        converged = simState.conv
+      end
     end
+    tapPositions = _tap_positions(tapXEst, tapMapEst, x, tapMap)
+    converged = converged && tapConvEst
   end
   # a singular KKT step was solved by the least-squares fallback: say so
   # with the reason, the constrained estimate is then not exact
@@ -3919,15 +3965,18 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       # j_rise_exceeds_quantile: the simultaneous fixation raised J above
       # the 95 % quantile of chi2(k); sequential: the sequential result was
       # kept; j_simultaneous: J of the simultaneous fixation
-      tapFixation = (fixed = tapFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = jval, dof_after = ν, iterations_estimation = tapIteEst, iterations_fixation = tapFixed ? tapIteFix : 0, offgrid_residual = offgrid, k_removed = kRemoved, delta_j_notice = deltaNotice, j_rise_exceeds_quantile = tapExceeds, sequential = tapSequential, j_simultaneous = tapFixed ? tapJSim : NaN)
-      if tapFixed
-        fixLine = "runse!: tap fixation J $(round(tapJBefore; sigdigits = 4)) (dof $(tapDofBefore)) -> J $(round(jval; sigdigits = 4)) (dof $(ν)); notice: $(deltaNotice)"
-        # a rise above the quantile is the warning case (defect 3)
-        tapExceeds ? (@warn fixLine) : (@info fixLine)
-        offgrid && @info "runse!: :offgrid_tap_residual, the J jump comes from the fixation, not from bad data (true position between physical steps, or wrong step data)"
-      else
-        @warn "runse!: tap estimation did not converge; the taps were NOT fixed and the continuous result is returned"
-      end
+      tapFixation = (fixed = tapFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = jval, dof_after = ν, iterations_estimation = tapIteEst, iterations_fixation = tapFixed ? tapIteFix : 0, offgrid_residual = offgrid, k_removed = kRemoved, delta_j_notice = deltaNotice, j_rise_exceeds_quantile = tapExceeds, sequential = tapSequential, j_simultaneous = tapFixed ? tapJSim : NaN, not_converged_released = false)
+      fixLine = "runse!: tap fixation J $(round(tapJBefore; sigdigits = 4)) (dof $(tapDofBefore)) -> J $(round(jval; sigdigits = 4)) (dof $(ν)); notice: $(deltaNotice)"
+      # a rise above the quantile is the warning case (defect 3)
+      tapExceeds ? (@warn fixLine) : (@info fixLine)
+      offgrid && @info "runse!: :offgrid_tap_residual, the J jump comes from the fixation, not from bad data (true position between physical steps, or wrong step data)"
+    elseif tapRefrozen > 0
+      # the released run did not converge and its regulators were frozen
+      # again: no fixation, J before and after are those of the run
+      # with the taps frozen, iterations_estimation those of the released
+      # run that gave up
+      refreezeNotice = string("tap estimation did not converge in ", tapIteReleased, " iteration(s); ", tapRefrozen, " released regulator(s) frozen again at their start position (:not_converged_released), the estimate is solved with the taps frozen")
+      tapFixation = (fixed = false, j_before = jval, dof_before = ν, j_after = jval, dof_after = ν, iterations_estimation = tapIteReleased, iterations_fixation = 0, offgrid_residual = false, k_removed = 0, delta_j_notice = refreezeNotice, j_rise_exceeds_quantile = false, sequential = false, j_simultaneous = NaN, not_converged_released = true)
     end
   end
 
@@ -4162,7 +4211,35 @@ function validate_measurements(net::Net, measurements::Vector{Measurement})
     shuntMap = ShuntStateMap(sidxs, sbuses, nθ + nbus + 1)
   end
 
-  H, h = _measurement_jacobian_fd(activeMeas, netLocal, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset, shuntMap = shuntMap)
+  # A regulator that stayed a state in the fixed run (note
+  # :relative_to_frozen, not fixed) is a state of the diagnostics Jacobian
+  # too, at its continuous value (stamped above), after the B states and
+  # before the offset, as in the run. Without its column rn, wii and Omega
+  # would describe a state one column short of the run's (sum of wii =
+  # dof + 1 per regulator). The
+  # map releases every changer of the stamped branches, the others are
+  # taken out again at their stamped positions (`_tap_repack`).
+  tapMap = nothing
+  relRows = result.tapEstimates === nothing || result.tapFixation === nothing || !result.tapFixation.fixed ? NamedTuple[] : NamedTuple[tr for tr in result.tapEstimates if tr.note === :relative_to_frozen && !tr.fixed && tr.frozen_reason === :none]
+  if !isempty(relRows)
+    keepCols = Set{Tuple{Int,Int}}((tr.branch, tr.regulator) for tr in relRows)
+    tapMap, _, _ = _build_tap_state_map(netLocal, nθ + nbus + length(releasedRows) + 1, base.tap_estimation.impedance_correction)
+    if tapMap !== nothing
+      _tap_unstamp!(Ybus, netLocal, tapMap)
+      for ts in tapMap.trafos, c in eachindex(ts.cols)
+        # any reason but :none takes the column out; this local map is used
+        # for the Jacobian only and never reported
+        (ts.cols[c] != 0 && !((ts.branch, c) in keepCols)) && (ts.frozen[c] = :fixed_in_run)
+      end
+      tapMap, _ = _tap_repack(tapMap, netLocal, Ybus)
+    end
+    if tapMap !== nothing
+      sinit = _tap_s_init(tapMap)
+      x = withVaOffset ? vcat(x[1:(end-1)], sinit, x[end]) : vcat(x, sinit)
+    end
+  end
+
+  H, h = _measurement_jacobian_fd(activeMeas, netLocal, x, slackIdx, nbus, Ybus; eps = jacEps, withVaOffset = withVaOffset, shuntMap = shuntMap, tapMap = tapMap)
   z = _measurement_vector(activeMeas)
   # constraint rows (state_estimation.zero_injection = constraint) enter
   # the residual covariance at the zero-injection weight, the limit they
@@ -4228,6 +4305,20 @@ validate_measurements(net::Net) = validate_measurements(net, Measurement[m for m
   return m.zero_injection || startswith(m.id, "SHDERIV") || m.sigma <= 1e-6
 end
 
+## _se_report_tap_refrozen(report) -> Vector{Int}: the islands of a
+## `validate_measurements` report whose run did not converge with the
+## released taps and was solved with them frozen again
+## (`tapFixation.not_converged_released`); a single-island report gives [1]
+## or []. runse_diagnostics compares a control solve with its base run by
+## this list, the SE service reads it on the base run.
+function _se_report_tap_refrozen(report)::Vector{Int}
+  _refrozen(r) = r !== nothing && r.tapFixation !== nothing && r.tapFixation.not_converged_released
+  if hasproperty(report, :islands)
+    return [ir.island for ir in report.islands if ir.report !== nothing && _refrozen(ir.report.result)]
+  end
+  return _refrozen(report.result) ? [1] : Int[]
+end
+
 """
     runse_diagnostics(net, measurements) -> NamedTuple
 
@@ -4241,7 +4332,7 @@ deactivated and the diagnostics rerun. Zero-injection pseudo-measurements
 (id prefix `ZI`) and near-exact measurements (`sigma <= 1e-6`) are never
 eliminated.
 
-Returns `(diagnostics, rerun, eliminations, stop_reason, final_diagnostics)`:
+Returns `(diagnostics, rerun, eliminations, reverted, stop_reason, final_diagnostics, topology_findings)`:
 - `diagnostics`: the initial `validate_measurements` report
 - `eliminations`: one trace row per elimination
   `(elimination, measurement_index, id, typ, normalized_residual_before,
@@ -4258,12 +4349,21 @@ Returns `(diagnostics, rerun, eliminations, stop_reason, final_diagnostics)`:
   `:no_localizable_suspect` (suspects remain, but none of them is
   localizable: the data cannot say which row is wrong, which points at a
   measurement gap around those rows rather than at bad data),
-  `:max_eliminations`, or `:not_converged`
+  `:max_eliminations`, or `:not_converged` (the base run or a control
+  solve did not converge; a control solve that converged only after
+  `runse!` froze its released taps again, where the base run kept them
+  released, counts as not converged: the row goes back to active and is
+  reported in `reverted`)
+- `reverted`: the elimination attempt that was taken back because its
+  control solve did not converge, `nothing` otherwise
 - `final_diagnostics`: the report after the last elimination (equal to
   `diagnostics` when nothing was eliminated)
 - `rerun`: backward-compatible view of the FIRST elimination
   (`deactivated_measurement_index`, `deactivated_measurement_id`,
   `diagnostics`), `nothing` when no elimination happened
+- `topology_findings`: the station clusters of the topology classification,
+  `nothing` unless the loop stopped at `:max_eliminations` with J still
+  above the band
 
 Backward compatibility: `deactivate_and_rerun = true` is kept as an alias for
 `max_eliminations = 1` (exactly one elimination pass, result also in `rerun`).
@@ -4281,6 +4381,7 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
   effMax >= 0 || error("runse_diagnostics: state_estimation.max_eliminations must be >= 0")
 
   base = validate_measurements(net, measurements)
+  baseRefrozen = _se_report_tap_refrozen(base)
 
   meas2 = copy(measurements)
   current = base
@@ -4342,13 +4443,18 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
     previous = current
     meas2[idx] = _set_measurement_active(meas2[idx], false)
     current = validate_measurements(net, meas2)
-    if !current.converged
+    if !current.converged || !issubset(_se_report_tap_refrozen(current), baseRefrozen)
       # An elimination is confirmed by its control solve. When that solve
       # does not converge, the removal is only claimed, not shown (seen
       # on the MiniGrid: J 870 to 758897 after the third
       # elimination): the row goes back to active, the diagnostics stand at
       # the state before the attempt, the attempt is reported by name, and
       # the loop stops with not_converged.
+      # The same holds when the control solve did not converge with the
+      # released taps in an island where the base run did, and runse!
+      # solved it with those taps frozen again: it then converges on a
+      # different state model than the base run, and the removal is not
+      # shown for the released model the pass started on.
       meas2[idx] = _set_measurement_active(meas2[idx], true)
       revertedAttempt = (elimination = length(trace) + 1, measurement_index = idx, id = target.id, typ = target.typ,
                          normalized_residual_before = target.normalized_residual, wii = target.wii, objective_before = objBefore)

@@ -74,6 +74,34 @@ function test_state_estimation_link_allocation_w2()::Bool
     @test isapprox(d[1], d[2]; atol = 1e-8)
     @test isapprox(d[2], d[3]; atol = 1e-8)
     @test abs(d[1]) > 1.0   # the measurement really moved the circulation
+
+    # a single link between two buses: the nodal balance fixes its flow, so
+    # a gross measurement on it (100 MW off, sigma 2 MW) must not move it,
+    # the error shows in the residual. With the two balance rows at weight 1
+    # against 1/sigma^2 = 0.25 the measurement would pull the flow by
+    # 100 * 0.25 / 2.25 = 11.1 MW.
+    net1 = Net(name = "w2_single", baseMVA = 100.0)
+    for b in ("S", "A", "B", "L")
+      addBus!(net = net1, busName = b, vn_kV = 110.0)
+    end
+    addPIModelACLine!(net = net1, fromBus = "S", toBus = "A", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net1, fromBus = "B", toBus = "L", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+    addProsumer!(net = net1, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "S")
+    addProsumer!(net = net1, busName = "L", type = "ENERGYCONSUMER", p = 50.0, q = 10.0)
+    addLink!(net = net1, fromBus = "A", toBus = "B", status = 1)
+    ok1, _ = validate!(net = net1)
+    @test ok1
+    _, erg1 = runpf!(net1, 40, 1e-10, 0; method = :rectangular)
+    @test erg1 == 0
+    calcNetLosses!(net1)
+    calcLinkFlowsKCL!(net1)
+    fK1 = net1.linkVec[1].pFlow_MW
+    @test abs(fK1 - 50.0) < 1.0   # the load flow through the link
+    addPflowMeasurement!(net1; value = fK1 - 100.0, sigma = 2.0, linkNr = 1)
+    rep = calcLinkFlowsSE!(net1)
+    @test rep[1].source == :measured_ls
+    @test abs(net1.linkVec[1].pFlow_MW - fK1) < 1e-6
+    @test abs(rep[1].p_meas_residual - 100.0) < 1e-6
   end)() end
 
   return true
@@ -608,6 +636,54 @@ function test_state_estimation_tap_determinability()::Bool
     @test res.converged && rowof(res, :tabular).frozen_reason === :no_angle_anchor
     @test rowof(res, :ratio).note === :none && rowof(res, :ratio).step_fixed == 3
 
+    # A released run that does not converge is refrozen: on the shipped
+    # sp_case5 the bridge transformer br5 gets a Delta-u changer of 5 % at
+    # psi 60 (truth step -6, start 0), no Va, and the Vm row of its far bus
+    # a gross error of -0.05 pu. Pinned only by its magnitude effect, the
+    # released step runs into the turning point of |t| at s du = -0.5 and
+    # the released run does not converge (40 iterations, s -9.5). The
+    # regulator is then frozen again (:not_converged_released) and the
+    # estimate is solved with the tap at its start: converged, the run
+    # without the release, one warning and the mark in tapFixation
+    case5 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")
+    m5 = redirect_stdout(() -> S.import_case(case5, S.resolve_config(S.DEFAULT_SPARLECTRA_CONFIG_PATH, case5).config; run_kind = :state_estimation), devnull)
+    empty!(m5.net.measurements)
+    du5(n) = (tn = deepcopy(m5.net); applyTapNameplate!(tn.branchVec[5]; phase_du_step = 0.05, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(n), psi_deg = 60.0); tn)
+    tn = du5(-6)
+    _, erg = redirect_stdout(() -> runpf!(tn; config = S._copy_powerflow_with(m5.config.powerflow; tol = 1e-10, max_iter = 40)), devnull)
+    @test erg == 0
+    lv = Int(tn.branchVec[5].toBus)
+    meas = [m.typ == S.VmMeas && m.busIdx == lv ? Measurement(typ = S.VmMeas, value = m.value - 0.05, sigma = m.sigma, busIdx = lv, id = m.id * "_gross") : m for m in generateMeasurementsFromPF(tn; includeImag = true, noise = true, rng = Random.MersenneTwister(1))]
+    run5(n) = S.with_sparlectra_config(m5.config) do
+      with_state_estimation_config(() -> runse!(n, meas); max_iter = 40, tol = 1e-6, update_net = false)
+    end
+    net = du5(0)
+    setTapEstimation!(net; trafo = 5, mode = :pst)
+    res = @test_logs (:warn, r"tap estimation did not converge in 40 iteration\(s\) with 1 released tap regulator\(s\); they are frozen again") match_mode = :any run5(net)
+    ref = run5(du5(0))
+    row = only(t for t in res.tapEstimates if t.role === :phase)
+    @test res.converged && row.frozen_reason === :not_converged_released && !row.fixed && abs(row.s_est) < 1e-9 && occursin("did not converge", row.notice)
+    @test res.tapFixation.not_converged_released && !res.tapFixation.fixed && res.tapFixation.iterations_estimation == 40
+    @test res.dof == ref.dof && abs(res.objectiveJ - ref.objectiveJ) <= 1e-6 * ref.objectiveJ && maximum(abs.(res.voltages .- ref.voltages)) < 1e-6
+    # the same case reached through an elimination: a second Vm meter at that
+    # bus reads 0.07 pu above the truth. The base run converges with the tap
+    # released, the top suspect is that meter, and the control solve without
+    # it converges only because runse! froze the tap again. Such a solve does not confirm the elimination:
+    # the row goes back to active and the loop stops with not_converged.
+    lvm = only(m for m in meas if m.typ == S.VmMeas && m.busIdx == lv)
+    measc = [meas; Measurement(typ = S.VmMeas, value = lvm.value + 0.05 + 0.07, sigma = lvm.sigma, busIdx = lv, id = "Vm_counter")]
+    diag5(n, ms, f) = S.with_sparlectra_config(m5.config) do
+      with_state_estimation_config(() -> f(n, ms); max_iter = 40, tol = 1e-6, update_net = false)
+    end
+    net = du5(0)
+    setTapEstimation!(net; trafo = 5, mode = :pst)
+    dc5 = @test_logs (:warn, r"they are frozen again") match_mode = :any diag5(net, measc, runse_diagnostics)
+    @test dc5.diagnostics.converged && isempty(S._se_report_tap_refrozen(dc5.diagnostics))
+    @test dc5.reverted !== nothing && dc5.reverted.id == "Vm_counter" && isempty(dc5.eliminations) && dc5.stop_reason === :not_converged
+    measc[end] = S._set_measurement_active(measc[end], false)
+    ctl = @test_logs (:warn, r"they are frozen again") match_mode = :any diag5(net, measc, validate_measurements)
+    @test ctl.converged && S._se_report_tap_refrozen(ctl) == [1]
+
     # b) a symmetrical changer alone on the radial edge without Va: frozen at
     # its symmetric start, and the run is bitwise the run without a release
     sym_net() = (n = _tap_radial_net(); n.branchVec[5].se_tap_changers = S.SETapChangerSet(ratio_n = 1.0, changers = [S.SETapChanger(name = "PS", kind = :symmetrical, role = :phase, side = :from, du = 0.02, neutral = 0, low = -8, high = 8, step = 0)], origin = :cgmes); n)
@@ -908,6 +984,40 @@ function test_state_estimation_tap_determinability()::Bool
     @test all(t -> t.fixed && t.step_fixed == t.neutral_step + 2, (t for t in res.tapEstimates if t.role === :ratio))
     tf = res.tapFixation
     @test tf.k_removed == 5 && tf.dof_after == tf.dof_before + 5 && tf.j_after < 1e-9 && !tf.j_rise_exceeds_quantile && !tf.sequential
+    # the diagnostics Jacobian carries the same extended state as the run,
+    # br71 and br72 stay states there too: the trace of the residual
+    # sensitivity matrix is m - n (wii = w_i Omega_ii), so sum(wii) is the
+    # dof of the run. Without the two columns the sum would be dof + 2.
+    d60 = S.with_sparlectra_config(m60.config) do
+      with_state_estimation_config(() -> validate_measurements(deepcopy(net), meas); max_iter = 50, tol = 1e-6, update_net = false)
+    end
+    @test d60.result.dof == res.dof && length(d60.residuals) == length(res.residuals)
+    @test abs(sum(d60.residual_sensitivities) - res.dof) < 1e-3
+    @test maximum(abs.(d60.residuals .- res.residuals)) < 1e-6
+    # rn and wii of one row against the run itself: a gross error e of 10
+    # sigma on the active flow of br71 or br72 moves the run residual by
+    # wii * e (wii = dr/dz), so wii = r/e and rn = r/(sigma sqrt(wii)) come
+    # from the run alone. The diagnostics match to wii 7e-6 and rn 4e-5;
+    # without the tap columns wii was 0.729 against 0.670 and rn 7.84
+    # against 8.18 on br71.
+    for id in ("Pflow_branch_71_from", "Pflow_branch_72_from")
+      i = only(k for k in eachindex(meas) if meas[k].id == id)
+      mg = meas[i]
+      e = 10.0 * mg.sigma
+      measg = copy(meas)
+      measg[i] = Measurement(typ = mg.typ, value = mg.value + e, sigma = mg.sigma, branchIdx = mg.branchIdx, direction = mg.direction, id = mg.id)
+      resg, dg = S.with_sparlectra_config(m60.config) do
+        with_state_estimation_config(max_iter = 50, tol = 1e-6, update_net = false) do
+          (runse!(deepcopy(net), measg), validate_measurements(deepcopy(net), measg))
+        end
+      end
+      @test resg.converged && all(t -> t.step_fixed == t.neutral_step + 2, (t for t in resg.tapEstimates if t.role === :ratio))
+      rk = only(x for x in dg.measurement_ranking if x.measurement_index == i)
+      rr = resg.residuals[rk.local_index]
+      @test abs(rk.residual - rr) < 1e-9
+      @test abs(rk.wii - rr / e) < 1e-3
+      @test abs(rk.normalized_residual - rr / (mg.sigma * sqrt(rr / e))) < 1e-2
+    end
 
     # i) the frozen one is frozen outside the angle graph: branch 4, parallel
     # to branch 3, carries a stored phase table, its live shift lies on no
@@ -941,6 +1051,29 @@ function test_state_estimation_tap_determinability()::Bool
     @test r3.note === :relative_to_frozen && !r3.fixed && occursin(getCompName(net.branchVec[4].comp), r3.notice)
     @test abs(r3.s_est - 1.1272) < 1e-3 && abs(r3.s_fixed - r3.s_est) < 1e-6 && res.tapFixation.k_removed == 0
     @test length(d.residuals) == length(meas) && isapprox(sum(abs2, d.residuals ./ [m.sigma for m in meas]), res.objectiveJ; rtol = 1e-6)
+    # branch 3 stays a state in the diagnostics Jacobian as in the run:
+    # sum(wii) = m - n = the dof of the run (dof + 1 without the column),
+    # and the normalized residuals are the run's
+    # residuals over sqrt(Omega_ii) = sigma_i sqrt(wii)
+    @test d.result.dof == res.dof && abs(sum(d.residual_sensitivities) - res.dof) < 1e-3
+    @test maximum(abs.(d.residuals .- res.residuals)) < 1e-6
+    sig = [m.sigma for m in meas]
+    loc = [i for i in eachindex(meas) if d.residual_sensitivities[i] > 1e-6]
+    @test !isempty(loc) && maximum(abs.(d.normalized_residuals[loc] .- res.residuals[loc] ./ (sig[loc] .* sqrt.(d.residual_sensitivities[loc])))) < 1e-6
+    # wii of one row against the run itself, as on sp_case60: a gross error
+    # e of 10 sigma on the active flow of branch 3 moves the run residual by
+    # wii * e, so wii = (r_e - r_0) / e comes from the run alone
+    i3 = only(k for k in eachindex(meas) if meas[k].id == "Pflow_branch_3_from")
+    m3 = meas[i3]
+    e3 = 10.0 * m3.sigma
+    measg = copy(meas)
+    measg[i3] = Measurement(typ = m3.typ, value = m3.value + e3, sigma = m3.sigma, branchIdx = m3.branchIdx, direction = m3.direction, id = m3.id)
+    resg, dg = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
+      (runse!(deepcopy(net), measg), validate_measurements(deepcopy(net), measg))
+    end
+    rk = only(x for x in dg.measurement_ranking if x.measurement_index == i3)
+    wrun = (resg.residuals[rk.local_index] - res.residuals[rk.local_index]) / e3
+    @test resg.converged && abs(rk.wii - wrun) < 1e-3
   end)() end
   return true
 end

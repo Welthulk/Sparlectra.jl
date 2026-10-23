@@ -85,7 +85,8 @@ of a run are in `se_tap_estimates.csv`. Eliminated rows are inactive in
 the reported run (its `J` is the `J` without them); `se_diagnostics.md` names the run, the case, the set and
 the reported numbers, then the pass that found them ("Diagnostics pass").
 An elimination counts only when the control solve without the row
-converges; otherwise the row stays active, the attempt is named
+converges, with released taps also without `runse!` freezing them again
+where the run before kept them released; otherwise the row stays active, the attempt is named
 ("Reverted") and the sequence stops with `not_converged`. After a
 tap-estimation fallback the diagnostics run again on the frozen taps,
 without the rows the first pass removed; the rows of both passes are

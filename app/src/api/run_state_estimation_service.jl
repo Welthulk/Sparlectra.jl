@@ -185,6 +185,11 @@ function _se_apply_pf_voltage_csv!(net::Net, file::AbstractString)
   return nothing
 end
 
+## whether the first pass of `runse_diagnostics` solved its base run with
+## the released taps frozen again (`tapFixation.not_converged_released`,
+## per island on a multi-island net)
+_se_diag_tap_refrozen(diag)::Bool = !isempty(_se_report_tap_refrozen(diag.diagnostics))
+
 ## True when at least one transformer of `net` has its tap released as an
 ## estimation state.
 ## The one statement the tap fallback makes, shared by all three surfaces
@@ -1260,6 +1265,20 @@ function _run_state_estimation_service_body(
     end
   end
   diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
+  # When the released taps do not converge on the full set, runse! freezes
+  # them again itself, so this pass
+  # ran its eliminations on taps frozen per control solve, one by one. The
+  # service decides that case on the final run below and repeats the
+  # diagnostics on every tap frozen; the eliminations of this pass are then
+  # void, as when the pass stopped at the non-converged released run before
+  # the library froze the taps (the MiniGrid fixture
+  # cgmes_minigrid_tap_fallback would otherwise lose its three rows twice)
+  if _se_diag_tap_refrozen(diag)
+    open(logfile, "a") do io
+      println(io, "tap estimation: the diagnostics pass did not converge with the released taps on the full set; its eliminations are not used, the pass is repeated with every tap frozen")
+    end
+    diag = (diagnostics = diag.diagnostics, rerun = nothing, eliminations = NamedTuple[], reverted = nothing, stop_reason = :not_converged, final_diagnostics = diag.diagnostics, topology_findings = nothing)
+  end
   # eliminated rows leave the FINAL run: the diagnostics identified them on
   # its own copy, so deactivate them here or the headline J would keep
   # carrying rows the workflow already removed (seen: an injected 10-sigma
@@ -1306,8 +1325,14 @@ function _run_state_estimation_service_body(
   # tap fixed back onto its model step solves the same problem as the
   # pre-solve, and the two J then differ in the last digits only (seen:
   # 49.4686 against 49.4686 rejected without the margin).
-  tap_worse_fit = staged_pre !== nothing && res.converged && _any_tap_released(net) && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
-  if (!res.converged || tap_worse_fit) && _any_tap_released(net)
+  # runse! froze the released taps again itself when the released run did
+  # not converge (tapFixation.not_converged_released): its result is then
+  # the frozen-tap estimate, and the
+  # service handles it as the not_converged fallback below, so metadata,
+  # run.log and the diagnostics describe the run with every tap frozen
+  tap_refrozen = res.tapFixation !== nothing && res.tapFixation.not_converged_released
+  tap_worse_fit = !tap_refrozen && staged_pre !== nothing && res.converged && _any_tap_released(net) && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
+  if (!res.converged || tap_refrozen || tap_worse_fit) && _any_tap_released(net)
     frozen = _freeze_all_tap_estimation!(net)
     # The failed run wrote its state into the net (updateNet = true is not
     # gated on convergence), so without this the retry starts from the
@@ -1619,7 +1644,7 @@ function _run_state_estimation_service_body(
     if res.tapEstimates !== nothing
       if res.tapFixation !== nothing
         tf = res.tapFixation
-        println(io, "tap estimation: ", _se_tap_transformer_count(res.tapEstimates), " transformer(s), ", length(_se_tap_regulator_rows(res.tapEstimates)), " regulator(s); J before fixation = ", round(tf.j_before; sigdigits = 4), " (dof ", tf.dof_before, "), J after fixation = ", round(tf.j_after; sigdigits = 4), " (dof ", tf.dof_after, ")", tf.fixed ? "" : "; NOT fixed (estimation run did not converge)")
+        println(io, "tap estimation: ", _se_tap_transformer_count(res.tapEstimates), " transformer(s), ", length(_se_tap_regulator_rows(res.tapEstimates)), " regulator(s); J before fixation = ", round(tf.j_before; sigdigits = 4), " (dof ", tf.dof_before, "), J after fixation = ", round(tf.j_after; sigdigits = 4), " (dof ", tf.dof_after, ")", tf.fixed ? "" : "; NOT fixed (the released run did not converge, the taps were frozen again)")
         tf.offgrid_residual && println(io, "note :offgrid_tap_residual: the band failure appears only through the fixation; this is an off-grid true position or a wrong step table, NOT bad data")
         isempty(get(tf, :delta_j_notice, "")) || println(io, "notice: ", tf.delta_j_notice)
       else
