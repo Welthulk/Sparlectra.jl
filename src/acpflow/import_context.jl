@@ -138,9 +138,10 @@ function _cgmes_start_values_powerflow(pf_cfg::PowerFlowConfig, start_values::Sy
   pf_cfg.start_mode.flatstart && push!(overridden, "power_flow.flatstart=true")
   pf_cfg.start_mode.start_projection && push!(overridden, "power_flow.start_mode.start_projection=true")
   pf_cfg.start_mode.dc_seed_unconditional && push!(overridden, "power_flow.start_mode.dc_seed_unconditional=true")
+  pf_cfg.start_mode.rotate_behind_pst && push!(overridden, "power_flow.start_mode.rotate_behind_pst=true")
   pf_cfg.start_current_iteration.enabled && push!(overridden, "power_flow.start_current_iteration.enabled=true")
   pf_cfg.apslf_start.enabled && push!(overridden, "power_flow.apslf_start.enabled=true")
-  start_mode = _copy_start_mode_with(pf_cfg.start_mode; flatstart = false, start_projection = false, dc_seed_unconditional = false)
+  start_mode = _copy_start_mode_with(pf_cfg.start_mode; flatstart = false, start_projection = false, dc_seed_unconditional = false, rotate_behind_pst = false)
   return _copy_powerflow_with(pf_cfg; start_mode = start_mode, start_current_iteration = _copy_start_current_iteration_with(pf_cfg.start_current_iteration; enabled = false), apslf_start = ApslfStartConfig(enabled = false, order = pf_cfg.apslf_start.order)), overridden
 end
 
@@ -149,8 +150,11 @@ end
 
 The one place that decides what a flat start means for a run. With
 `power_flow.flatstart = true` the run really starts flat: every PQ bus at
-1.0 pu and 0 degrees, PV and slack buses at their setpoints, and the voltages
-stored in the case file (MATPOWER `VM`/`VA`, SCF start state) are ignored.
+1.0 pu and the slack angle (behind phase shifters plus their shifts when
+`power_flow.start_mode.rotate_behind_pst` is set, see `initialVrect`), PV
+and slack buses at their setpoints,
+and the voltages stored in the case file (MATPOWER `VM`/`VA`, SCF start
+state) are ignored.
 For this run the flat start switches off every machine that would replace
 the flat profile by another one:
 
@@ -486,6 +490,9 @@ function _self_check_forced_overrides()::Dict{String,Any}
         "voltage_mode" => "all_bus_vm",
         "start_projection" => false,
         "dc_seed_unconditional" => false,
+        # a stored start without angles would otherwise be turned behind
+        # phase shifters (initialVrect), not taken verbatim
+        "rotate_behind_pst" => false,
       ),
       "start_current_iteration" => Dict{String,Any}("enabled" => false),
       "apslf_start" => Dict{String,Any}("enabled" => false),

@@ -137,9 +137,9 @@ function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
          isapprox(abs(V0[1]), 1.04; atol = 1e-12) &&
          isapprox(angle(V0[1]), deg2rad(12.0); atol = 1e-12) &&
          isapprox(abs(V0[2]), 1.0; atol = 1e-12) &&
-         isapprox(angle(V0[2]), 0.0; atol = 1e-12) &&
+         isapprox(angle(V0[2]), deg2rad(12.0); atol = 1e-12) &&
          isapprox(abs(V0[3]), 1.02; atol = 1e-12) &&
-         isapprox(angle(V0[3]), 0.0; atol = 1e-12) &&
+         isapprox(angle(V0[3]), deg2rad(12.0); atol = 1e-12) &&
          isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) &&
          isapprox(busVec[1].va_rad, deg2rad(12.0); atol = 1e-12) &&
          isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) &&
@@ -229,7 +229,7 @@ end
 # The polar update applies the tangent step dV as magnitude times
 # 1 + Re(dV/V) and angle plus Im(dV/V): a rotation keeps the magnitude,
 # where the linear update V + dV inflates it by sqrt(1 + b^2) (the flat-start
-# divergence on case9241pegase, study section 11). A zero-voltage bus has no
+# divergence on case9241pegase). A zero-voltage bus has no
 # polar form and takes the linear step.
 function test_rectangular_polar_update_rotates_without_inflation()::Bool
   V = ComplexF64[1.0+0.0im, 1.0+0.0im, 0.0+0.0im]
@@ -724,7 +724,10 @@ end
 # start of the projection the configuration template switches on). With
 # power_flow.flatstart the run ignores the stored VM/VA and runs no
 # projection, no DC seed and no ratio-profile candidate; only auxiliary buses
-# (three-winding star points) start at their ratio. A start from stored voltages keeps the projection.
+# (three-winding star points) start at their ratio, every angle at the slack
+# angle; with power_flow.start_mode.rotate_behind_pst buses behind a phase
+# shifter at the slack angle plus the shift. A start from stored voltages
+# keeps the projection.
 function test_run_level_flat_start_is_flat()::Bool
   mp_dir = joinpath(dirname(@__DIR__), "data", "mpower")
   # the template's start settings: projection on, DC angle and blended
@@ -739,10 +742,13 @@ function test_run_level_flat_start_is_flat()::Bool
     return (r = r, rows = rows, summary = get(prof, :start_projection_summary, nothing), timings = get(prof, :timings, Dict{Symbol,Any}()))
   end
   # every non-auxiliary bus flat: PQ at 1.0 pu, PV and slack at their
-  # setpoints, every angle 0 except the slack's (its reference angle from
-  # the case, 0.99 deg on micro_grid_be)
-  flat_except_aux(x, net) = (vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net);
-                             all(k -> Sparlectra._is_aux_node(net.nodeVec[k]) || ((x.rows[k].bus_type === :Slack || x.rows[k].va_deg_start == 0.0) && x.rows[k].vm_pu_start == (x.rows[k].bus_type === :PQ ? 1.0 : vset[k])), eachindex(x.rows)))
+  # setpoints, every angle at the slack angle (the reference angle from the
+  # case, 0.99 deg on micro_grid_be); with `turned` (rotate_behind_pst) plus
+  # the phase shifts of the flat-start angles
+  shift_deg(net) = (th = Sparlectra._flat_start_shift_angles(net, findfirst(nd -> Sparlectra.getNodeType(nd) == Sparlectra.Slack, net.nodeVec)); th === nothing ? zeros(length(net.nodeVec)) : rad2deg.(th))
+  flat_except_aux(x, net; turned = false) = (vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net); sh = turned ? shift_deg(net) : zeros(length(net.nodeVec));
+                                             va_s = x.rows[findfirst(r -> r.bus_type === :Slack, x.rows)].va_deg_start;
+                                             all(k -> Sparlectra._is_aux_node(net.nodeVec[k]) || ((x.rows[k].bus_type === :Slack || isapprox(x.rows[k].va_deg_start, va_s + sh[k]; atol = 1e-12)) && x.rows[k].vm_pu_start == (x.rows[k].bus_type === :PQ ? 1.0 : vset[k])), eachindex(x.rows)))
 
   # sp_case118 from a flat start although the file carries a solved state:
   # no projection, no candidate, no projection phase in the timings
@@ -800,9 +806,213 @@ function test_run_level_flat_start_is_flat()::Bool
   be, _ = Sparlectra.build_net_from_powsybl(Sparlectra.read_powsybl_bundle(dir), Sparlectra.PowsyblAdapterOptions(remote_regulation = :remote))
   aux = [k for k in eachindex(be.nodeVec) if Sparlectra._is_aux_node(be.nodeVec[k])]
   be_flat = start_of(template_start(true); net = be)
-  aux_ratio = any(k -> isapprox(be_flat.rows[k].vm_pu_start, 0.95; atol = 1e-12), aux) && flat_except_aux(be_flat, be_flat.r.net) && be_flat.summary === nothing
+  # the slack angle of micro_grid_be (0.99 deg) is not 0, so the angle check
+  # is not only a check of zeros. Its one phase shifter (-2.15 deg) lies in a
+  # mesh, so rotate_behind_pst turns no bus: the start with the switch on is
+  # the start without it
+  be_slack_va = be_flat.rows[findfirst(r -> r.bus_type === :Slack, be_flat.rows)].va_deg_start
+  be2, _ = Sparlectra.build_net_from_powsybl(Sparlectra.read_powsybl_bundle(dir), Sparlectra.PowsyblAdapterOptions(remote_regulation = :remote))
+  be_turn = start_of(template_start(true; rotate_behind_pst = true); net = be2)
+  be_shifted = abs(be_slack_va) > 0.5 && any(br -> br.status == 1 && angle(Sparlectra.calcBranchRatio(br)) != 0.0, be2.branchVec) &&
+               flat_except_aux(be_turn, be_turn.r.net; turned = true) && [(x.vm_pu_start, x.va_deg_start) for x in be_turn.rows] == [(x.vm_pu_start, x.va_deg_start) for x in be_flat.rows]
+  aux_ratio = any(k -> isapprox(be_flat.rows[k].vm_pu_start, 0.95; atol = 1e-12), aux) && flat_except_aux(be_flat, be_flat.r.net) && be_shifted && be_flat.summary === nothing
 
   return no_projection && same_start && no_seed && projected && case14_flat && rescue_flat && aux_ratio
+end
+
+# The flat start behind phase shifters (power_flow.start_mode.rotate_behind_pst,
+# keyword start_rotate_behind_pst, default false; 0.60.0). Net: slack S
+# (110 kV, 1.02 pu) - line 0.01 + j0.08 - F (110 kV) - transformer F-T
+# (ratio 1.05, z 0.002 + j0.06, shift 30 or 90 deg) - T (20 kV, load 30 MW,
+# 10 Mvar). With every angle at 0 (switch off, the default) the polar Newton
+# converged at 30 and 90 deg to the low-voltage root (0.044 pu at T) and
+# reported erg 0.
+# Hand calculation of both roots: refer the line to the T side of the ideal
+# transformer, E = 1.02 / 1.05, Z = zl / 1.05^2 + zt = R + jX; a shifter
+# only turns the angle at T, so with P = 0.3, Q = 0.1 the magnitude solves
+# |U|^4 + (2(PR + QX) - E^2) |U|^2 + (P^2 + Q^2) |Z|^2 = 0,
+# roots 0.95319002 pu and 0.04413162 pu. With the switch on the flat start
+# must give T the angle -shift, and the solve the high root with the
+# iterations and the angle at T of the solve at shift 0 (the shift only turns
+# T). The same for the stored start of a hand-built net (addBus! defaults
+# 1 pu, 0 deg), which holds no angle; a stored start with an angle is left as
+# it is. With the switch off T starts at 0.
+# Mesh: S - line - F - line - T and a 30 deg shifter S-T parallel to that
+# path, plus a 20 deg shifter T-R. T is reached without crossing a shifter
+# and keeps 0 (in a mesh the parallel path fixes its angle, the turn would
+# put the whole shift across the lines); R is reached across one shifter
+# (T-R, -20) and not across two (S-T-R, -50), which a search for the fewest
+# branches would pick.
+# Slack angle 10 deg: every bus starts at 10 deg, T with the switch on at
+# 10 - shift, and the solution is the one at slack angle 0 turned by 10 deg.
+# A star point (three-winding) with a shift on its stiffest winding starts
+# at the turned value V_aux = t V_R with the switch on and passes the shift on
+# to the bus behind. The model-only MATPOWER export writes the default flat
+# start (star point at its ratio, no turn); read back without flat start,
+# that start holds no angle, so a reader with the switch on turns it
+# (PV bus G behind a second 90 deg shifter at F included) and reaches the
+# solution of the flat start. With slack angle 10 deg the file holds every
+# bus at 10 deg; the reader takes that as a start without angles as well and
+# starts T at 10 - 90 = -80 deg.
+# Wrong-branch hint (0.60.0): a voltage finding after a start without angles
+# on a net with a shifter and the switch off names
+# power_flow.start_mode.rotate_behind_pst = true in a warning and in the
+# result summary line; no hint with the switch on or without a shifter.
+function test_flat_start_carries_phase_shift()::Bool
+  function shifted_net(shift; va_slack = 0.0)
+    net = Net(name = "flat_shift", baseMVA = 100.0)
+    addBus!(net = net, busName = "S", vn_kV = 110.0)
+    addBus!(net = net, busName = "F", vn_kV = 110.0)
+    addBus!(net = net, busName = "T", vn_kV = 20.0)
+    addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.02, va_deg = va_slack)
+    addProsumer!(net = net, busName = "T", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
+    addPIModelACLine!(net = net, fromBus = "S", toBus = "F", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addPIModelTrafo!(net = net, fromBus = "F", toBus = "T", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.05, shift_deg = shift, status = 1)
+    # the reference angle as an imported state sets it (addProsumer! keeps
+    # the bus angle it finds)
+    va_slack == 0.0 || setVmVa!(node = net.nodeVec[net.busDict["S"]], vm_pu = 1.02, va_deg = va_slack)
+    return net
+  end
+  E = 1.02 / 1.05
+  Z = (0.01 + 0.08im) / 1.05^2 + (0.002 + 0.06im)
+  b = 2 * (0.3 * real(Z) + 0.1 * imag(Z)) - E^2
+  c = (0.3^2 + 0.1^2) * abs2(Z)
+  u_high = sqrt((-b + sqrt(b^2 - 4c)) / 2)
+  ref = shifted_net(0.0)
+  ite0, erg0 = runpf!(ref, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true)
+  va0 = ref.nodeVec[ref.busDict["T"]]._va_deg
+  ok = erg0 == 0 && Sparlectra.StartModeConfig().rotate_behind_pst === false
+  for shift in (30.0, 90.0)
+    net = shifted_net(shift)
+    t = net.busDict["T"]
+    # switch off: T starts at 0 like every other bus
+    Voff, _ = Sparlectra.initialVrect(net; flatstart = true)
+    ok &= angle(Voff[t]) == 0.0 && angle(Voff[net.busDict["F"]]) == 0.0
+    V0, _ = Sparlectra.initialVrect(net; flatstart = true, rotate_behind_pst = true)
+    ok &= isapprox(rad2deg(angle(V0[t])), -shift; atol = 1e-12) && angle(V0[net.busDict["F"]]) == 0.0 && abs(V0[t]) == 1.0
+    ite, erg = runpf!(net, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_rotate_behind_pst = true)
+    nd = net.nodeVec[t]
+    ok &= erg == 0 && ite == ite0 && isapprox(nd._vm_pu, u_high; atol = 1e-9) && isapprox(nd._va_deg, va0 - shift; atol = 1e-9) && Sparlectra.rectangular_pf_status(net).branch_quality_status === :ok
+    # stored start without angles: turned like the flat start, high root
+    sn3 = shifted_net(shift)
+    Vst, _ = Sparlectra.initialVrect(sn3; flatstart = false, rotate_behind_pst = true)
+    ok &= isapprox(rad2deg(angle(Vst[t])), -shift; atol = 1e-12)
+    _, erg_s = runpf!(sn3, 40, 1e-12, 0; method = :rectangular, start_rotate_behind_pst = true)
+    nds = sn3.nodeVec[t]
+    ok &= erg_s == 0 && isapprox(nds._vm_pu, u_high; atol = 1e-9) && isapprox(nds._va_deg, va0 - shift; atol = 1e-9) && Sparlectra.rectangular_pf_status(sn3).branch_quality_status === :ok
+    # model-only export: the default flat start, T not listed
+    fs = Sparlectra._matpower_flat_start(shifted_net(shift))
+    ok &= !haskey(fs, t) && !haskey(fs, net.busDict["F"])
+  end
+  # wrong-branch hint: with the switch off the flat start at 30 deg ends on
+  # the low root (voltage_collapse, erg 0), and the warning and the result
+  # summary line name the switch; with the switch on (high root) no hint.
+  # A net without shifter that ends on the low root from a stored start
+  # without angles (T at 0.05 pu, 0 deg) gets no hint either.
+  hn = shifted_net(30.0)
+  _, erg_h = @test_logs (:warn, r"power_flow\.start_mode\.rotate_behind_pst = true") match_mode = :any runpf!(hn, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true)
+  st_h = Sparlectra.rectangular_pf_status(hn)
+  ok &= erg_h == 0 && st_h.wrong_branch_reason === :voltage_collapse && occursin("rotate_behind_pst = true", sprint(io -> Sparlectra._print_wrong_branch_summary_line(io, hn)))
+  hint_logs, _ = Test.collect_test_logs() do
+    runpf!(shifted_net(30.0), 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_rotate_behind_pst = true)
+  end
+  ok &= !any(l -> occursin("rotate_behind_pst", string(l.message)), hint_logs)
+  # the no-angle test reads the vector Newton starts from: a flat start that
+  # the DC start projection replaces (T at -32.4 deg after the solve, high
+  # root) does not count as a start without angles
+  hd = shifted_net(30.0)
+  runpf!(hd, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_projection = true, start_projection_requested_angle_mode = :dc, start_projection_accept_unmeasured_dc_start = true)
+  ok &= st_h.start_without_angles_behind_pst === true && Sparlectra.rectangular_pf_status(hd).start_without_angles_behind_pst === false
+  ns = shifted_net(0.0)
+  setVmVa!(node = ns.nodeVec[ns.busDict["T"]], vm_pu = 0.05, va_deg = 0.0)
+  _, erg_ns = runpf!(ns, 40, 1e-12, 0; method = :rectangular, opt_flatstart = false)
+  st_ns = Sparlectra.rectangular_pf_status(ns)
+  ok &= erg_ns == 0 && st_ns.wrong_branch_reason === :voltage_collapse && isempty(Sparlectra._wrong_branch_pst_start_hint(st_ns))
+  # the configuration key reaches the solver (YAML-style dict, run_sparlectra)
+  cfg_rot = SparlectraConfig(Dict("power_flow" => Dict("max_iter" => 40, "tol" => 1e-12, "flatstart" => true, "start_mode" => Dict("rotate_behind_pst" => true)),
+                                  "output" => Dict("logfile_results" => "off", "console_summary" => false)))
+  r_rot = run_sparlectra(net = shifted_net(30.0), config = cfg_rot)
+  ok &= cfg_rot.powerflow.start_mode.rotate_behind_pst === true && r_rot.final_converged && isapprox(r_rot.net.nodeVec[r_rot.net.busDict["T"]]._vm_pu, u_high; atol = 1e-9)
+  # slack angle 10 deg: the profile counts from it
+  sa = shifted_net(30.0; va_slack = 10.0)
+  ta, fa = sa.busDict["T"], sa.busDict["F"]
+  Va_off, _ = Sparlectra.initialVrect(sa; flatstart = true)
+  Va_on, _ = Sparlectra.initialVrect(sa; flatstart = true, rotate_behind_pst = true)
+  ok &= isapprox(rad2deg(angle(Va_off[ta])), 10.0; atol = 1e-12) && isapprox(rad2deg(angle(Va_off[fa])), 10.0; atol = 1e-12) &&
+        isapprox(rad2deg(angle(Va_on[ta])), -20.0; atol = 1e-12) && isapprox(rad2deg(angle(Va_on[fa])), 10.0; atol = 1e-12)
+  _, erg_a = runpf!(sa, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_rotate_behind_pst = true)
+  ok &= erg_a == 0 && isapprox(sa.nodeVec[ta]._vm_pu, u_high; atol = 1e-9) && isapprox(sa.nodeVec[ta]._va_deg, va0 - 30.0 + 10.0; atol = 1e-9)
+  # a stored start with an angle is not touched
+  kept = shifted_net(30.0)
+  kept.nodeVec[kept.busDict["T"]]._va_deg = -5.0
+  Vk, _ = Sparlectra.initialVrect(kept; flatstart = false, rotate_behind_pst = true)
+  ok &= isapprox(rad2deg(angle(Vk[kept.busDict["T"]])), -5.0; atol = 1e-12) && angle(Vk[kept.busDict["F"]]) == 0.0
+  # mesh: the shifter S-T parallel to the lines S-F-T keeps T at 0, R behind
+  # the shifter T-R gets -20 (fewest shifters), not -50 (fewest branches)
+  mesh = Net(name = "flat_shift_mesh", baseMVA = 100.0)
+  foreach(bn -> addBus!(net = mesh, busName = bn, vn_kV = 110.0), ("S", "F", "T", "R"))
+  addProsumer!(net = mesh, busName = "S", type = "EXTERNALNETWORKINJECTION", referencePri = "S", vm_pu = 1.0, va_deg = 0.0)
+  addProsumer!(net = mesh, busName = "R", type = "ENERGYCONSUMER", p = 10.0, q = 2.0)
+  addPIModelACLine!(net = mesh, fromBus = "S", toBus = "F", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+  addPIModelACLine!(net = mesh, fromBus = "F", toBus = "T", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+  addPIModelTrafo!(net = mesh, fromBus = "S", toBus = "T", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 30.0, status = 1)
+  addPIModelTrafo!(net = mesh, fromBus = "T", toBus = "R", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 20.0, status = 1)
+  Vm_on, _ = Sparlectra.initialVrect(mesh; flatstart = true, rotate_behind_pst = true)
+  ok &= angle(Vm_on[mesh.busDict["T"]]) == 0.0 && angle(Vm_on[mesh.busDict["F"]]) == 0.0 && isapprox(rad2deg(angle(Vm_on[mesh.busDict["R"]])), -20.0; atol = 1e-12)
+  _, erg_m = runpf!(mesh, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_rotate_behind_pst = true)
+  ok &= erg_m == 0 && minimum(nd -> nd._vm_pu, mesh.nodeVec) > 0.9
+  # star point: R - (AUX-R, ratio 0.95, shift 30, stiff) - AUX - (AUX-L, ratio 1) - L
+  sn = Net(name = "aux_star_shift", baseMVA = 100.0)
+  addBus!(net = sn, busName = "R", vn_kV = 110.0)
+  addBus!(net = sn, busName = "AUX3WT_T", vn_kV = 110.0, isAux = true)
+  addBus!(net = sn, busName = "L", vn_kV = 110.0)
+  addProsumer!(net = sn, busName = "R", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "R")
+  addPIModelTrafo!(net = sn, fromBus = "AUX3WT_T", toBus = "R", r_pu = 0.0005, x_pu = 0.001, b_pu = 0.0, status = 1, ratio = 0.95, shift_deg = 30.0, ratedS = 100.0)
+  addPIModelTrafo!(net = sn, fromBus = "AUX3WT_T", toBus = "L", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1, ratio = 1.0, ratedS = 100.0)
+  addProsumer!(net = sn, busName = "L", type = "ENERGYCONSUMER", p = 5.0, q = 1.0)
+  Vs, slack = Sparlectra.initialVrect(sn; flatstart = true, rotate_behind_pst = true)
+  Sparlectra._aux_bus_flat_start!(Vs, sn, slack; rotate_behind_pst = true)
+  ka, kl = sn.busDict["AUX3WT_T"], sn.busDict["L"]
+  ok &= isapprox(Vs[ka], 0.95 * cis(deg2rad(30.0)); atol = 1e-14) && isapprox(Vs[kl], cis(deg2rad(30.0)); atol = 1e-14)
+  Vsd, _ = Sparlectra.initialVrect(sn; flatstart = true)
+  Sparlectra._aux_bus_flat_start!(Vsd, sn, slack)
+  ok &= isapprox(Vsd[ka], ComplexF64(0.95, 0.0); atol = 1e-14) && angle(Vsd[ka]) == 0.0 && Vsd[kl] == 1.0 + 0.0im
+  fsn = Sparlectra._matpower_flat_start(sn)
+  ok &= isapprox(fsn[ka][1], 0.95; atol = 1e-14) && fsn[ka][2] == 0.0 && !haskey(fsn, kl)
+  # PV bus G (1.0 pu, 10 MW) behind a second 90 degree shifter at F: the
+  # model-only export of the unsolved net, read back without flat start and
+  # solved with the switch on, gives the solution of the flat start
+  pv_net() = (n = shifted_net(90.0); addBus!(net = n, busName = "G", vn_kV = 20.0);
+              addProsumer!(net = n, busName = "G", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.0);
+              addPIModelTrafo!(net = n, fromBus = "F", toBus = "G", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 90.0, status = 1); n)
+  pv_ref = pv_net()
+  _, erg_pv = runpf!(pv_ref, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_rotate_behind_pst = true)
+  ok &= erg_pv == 0
+  mktempdir() do dir
+    f = joinpath(dir, "pv_shift.m")
+    Sparlectra.writeMatpowerCasefile(pv_net(), f; write_solution = false)
+    back = Sparlectra.createNetFromMatPowerFile(filename = f, flatstart = false)
+    kt, kg = (findfirst(nd -> nd.busIdx == pv_ref.busDict[b], back.nodeVec) for b in ("T", "G"))
+    Vb, _ = Sparlectra.initialVrect(back; rotate_behind_pst = true)
+    ok &= isapprox(rad2deg(angle(Vb[kt])), -90.0; atol = 1e-9) && isapprox(rad2deg(angle(Vb[kg])), -90.0; atol = 1e-9)
+    _, erg_b = runpf!(back, 40, 1e-12, 0; method = :rectangular, start_rotate_behind_pst = true)
+    for (k, name) in ((kt, "T"), (kg, "G"))
+      nr = pv_ref.nodeVec[pv_ref.busDict[name]]
+      ok &= erg_b == 0 && isapprox(back.nodeVec[k]._vm_pu, nr._vm_pu; atol = 1e-9) && isapprox(back.nodeVec[k]._va_deg, nr._va_deg; atol = 1e-7)
+    end
+    # slack angle 10 deg: the export writes every bus at 10 deg, which the
+    # reader with the switch on still takes as a start without angles
+    f10 = joinpath(dir, "shift_va10.m")
+    net10 = shifted_net(90.0; va_slack = 10.0)
+    Sparlectra.writeMatpowerCasefile(net10, f10; write_solution = false)
+    back10 = Sparlectra.createNetFromMatPowerFile(filename = f10, flatstart = false)
+    kt10, kf10 = (findfirst(nd -> nd.busIdx == net10.busDict[b], back10.nodeVec) for b in ("T", "F"))
+    V10, _ = Sparlectra.initialVrect(back10; rotate_behind_pst = true)
+    ok &= isapprox(rad2deg(angle(V10[kt10])), -80.0; atol = 1e-9) && isapprox(rad2deg(angle(V10[kf10])), 10.0; atol = 1e-9)
+    _, erg10 = runpf!(back10, 40, 1e-12, 0; method = :rectangular, start_rotate_behind_pst = true)
+    ok &= erg10 == 0 && isapprox(back10.nodeVec[kt10]._vm_pu, u_high; atol = 1e-9)
+  end
+  return ok
 end
 
 function test_matpower_vmva_selfcheck_ignores_slack_pq_spec()::Bool
@@ -1774,7 +1984,10 @@ end
 
 # A ring of three links: A f = b with the singular incidence matrix A of the
 # ring, the flows are the minimum-norm solution pinv(A) b. Second row: a
-# 6 MVar Y shunt at B2 (vm 1.0 pu) enters b as -6 MVar.
+# reactor at B2 (qShunt -6, MATPOWER sign: a positive value injects) draws
+# 6 MVar at vm 1.0 pu, so b_B2 = -4 - 6 = -10 and the ring balances
+# (12 - 10 - 2 = 0). Until 0.60.0 the allocation added the draw (b_B2 = +2
+# with this reactor, and a 6 MVar capacitor gave -10).
 function test_link_kcl_ring_allocation()
   A = [
     1.0 0.0 -1.0
@@ -1782,7 +1995,7 @@ function test_link_kcl_ring_allocation()
     0.0 -1.0 1.0
   ]
   ok = true
-  for (q1, shunt_q, bQ) in ((6.0, 0.0, [6.0, -4.0, -2.0]), (12.0, 6.0, [12.0, -10.0, -2.0]))
+  for (q1, shunt_q, bQ) in ((6.0, 0.0, [6.0, -4.0, -2.0]), (12.0, -6.0, [12.0, -10.0, -2.0]))
     net = Net(name = "link_kcl_ring", baseMVA = 100.0)
     addBus!(net = net, busName = "B1", vn_kV = 110.0)
     addBus!(net = net, busName = "B2", vn_kV = 110.0)
@@ -1859,7 +2072,7 @@ function test_link_ring_pf_stability()
   end
 
   # Rebuild the KCL right-hand side used by link allocation:
-  #   b = (gen - load + shunt) - branch_out
+  #   b = (gen - load - shunt draw) - branch_out
   P_inj = zeros(Float64, 3)
   Q_inj = zeros(Float64, 3)
   P_shunt = zeros(Float64, 3)
@@ -1893,8 +2106,8 @@ function test_link_ring_pf_stability()
     end
   end
 
-  bP = P_inj .+ P_shunt .- P_branch_out
-  bQ = Q_inj .+ Q_shunt .- Q_branch_out
+  bP = P_inj .- P_shunt .- P_branch_out
+  bQ = Q_inj .- Q_shunt .- Q_branch_out
   # Remove any tiny component residual to match solver behavior.
   bP .-= sum(bP) / 3
   bQ .-= sum(bQ) / 3
@@ -2982,6 +3195,7 @@ function run_grid_fast_tests()
     @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
     @test test_rectangular_start_projection_ratio_profile() == true
     @test test_run_level_flat_start_is_flat() == true
+    @test test_flat_start_carries_phase_shift() == true
     @test test_q_limit_adjust_vset_modes() == true
     @test test_q_limit_matpower_mode_base_failure_does_not_switch() == true
     @test test_q_limit_reenable_voltage_rule() == true

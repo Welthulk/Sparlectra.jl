@@ -190,8 +190,21 @@ function _map_powsybl_buses!(ctx::_PowsyblBuildContext)
   # other tap positions); a bundle carries no such note
   note = get(ctx.tables.manifest, "state_note", "")
   (note isa AbstractString && !isempty(note)) && _powsybl_notice!(ctx.report, String(note))
+  # tap changers the IIDM reader put on their middle position (no
+  # tapPosition in the file): one notice each, or one for all of them
+  items = Tuple{String,Int}[(string(d["id"], isempty(d["side"]) ? "" : "/" * d["side"], "/", d["role"]), Int(d["tap"])) for d in _powsybl_tap_assumed_list(ctx)]
+  for line in Sparlectra._tap_step_assumed_lines(items)
+    _powsybl_notice!(ctx.report, line)
+  end
   return nothing
 end
+
+# the tap changers without a tapPosition (manifest key tap_position_assumed
+# of the IIDM reader; a bundle written from such tables keeps it), each
+# with id, side, role and the middle position
+_powsybl_tap_assumed_list(ctx::_PowsyblBuildContext) = get(ctx.tables.manifest, "tap_position_assumed", Any[])
+
+_powsybl_tap_assumed(ctx::_PowsyblBuildContext, id::AbstractString, side::AbstractString, role::Symbol)::Bool = any(d -> d["id"] == id && d["side"] == side && d["role"] == String(role), _powsybl_tap_assumed_list(ctx))
 
 function _map_powsybl_links!(ctx::_PowsyblBuildContext)
   sw = ctx.tables.switches
@@ -455,7 +468,7 @@ function _powsybl_se_tap_changer(ctx::_PowsyblBuildContext, role::Symbol, i::Int
   end
   lo, hi = minmax(tc.low_tap[i], tc.high_tap[i])
   imp = any(p -> (p.r, p.x, p.g, p.b) != (1.0, 1.0, 1.0, 1.0), pts) ? :table : :none
-  return SETapChanger(name = name, mrid = tc.id[i], kind = :tabular, role = role, side = :to, neutral = neutral, low = lo, high = hi, step = tap, table = pts, impedance = imp)
+  return SETapChanger(name = name, mrid = tc.id[i], kind = :tabular, role = role, side = :to, neutral = neutral, low = lo, high = hi, step = tap, table = pts, impedance = imp, step_assumed = _powsybl_tap_assumed(ctx, tc.id[i], tc.side[i], role))
 end
 
 # Store the tap changer set of transformer branch `br` with the IIDM id

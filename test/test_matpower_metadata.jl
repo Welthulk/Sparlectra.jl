@@ -385,6 +385,24 @@ mpc.sparlectra.tap_changers = [
         # the band is stored RELATIVE to neutral (the fixation compares the
         # regulating-vector angle, which passes 0 at the neutral position)
         @test b2.phase_min_deg ≈ -5.0 && b2.phase_max_deg ≈ 5.0
+        @test !b1.ratio_step_assumed && !b2.phase_step_assumed
+
+        # a NaN current step is no step: the direct import
+        # and the adapter put the changer on its middle position, the
+        # neutral position 0 (TAP and SHIFT of the branch row), mark it and
+        # name it in one info line per transformer
+        pathn = joinpath(dir, "case_taps_nostep.m")
+        write(pathn, replace(read(path, String), "1 0.025 -2 2 1 0 0 0 0;" => "1 0.025 -2 2 NaN 0 0 0 0;", "2 0 0 0 0 0.5 -10 10 -2;" => "2 0 0 0 0 0.5 -10 10 NaN;"))
+        netn = @test_logs (:info, "MATPOWER: tap changer branch 1: step not transferred, middle position 0 assumed") (:info, "MATPOWER: tap changer branch 2: step not transferred, middle position 0 assumed") match_mode = :any Sparlectra.createNetFromMatPowerFile(filename = pathn)
+        cfgn = Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload = true)
+        line_n = r"^SCF: tap changer branch \d+: step not transferred, middle position 0 assumed$"
+        convn = @test_logs (:info, line_n) (:info, line_n) match_mode = :any Sparlectra.build_net(Sparlectra.convert_case(MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(pathn), Sparlectra.matpower_adapter_options(cfgn)); config = cfgn)
+        for back in (netn, convn)
+          n1 = only(b for b in back.branchVec if b.has_ratio_tap && b.ratio_tap_declared)
+          n2 = only(b for b in back.branchVec if b.has_phase_tap)
+          @test (n1.tap_ratio, n1.ratio_step_assumed, n1.phase_step_assumed) == (1.0, true, false)
+          @test (n2.phase_shift_deg, n2.phase_step_assumed, n2.ratio_step_assumed) == (-2.0, true, false)
+        end
 
         # the live positions enter the power flow and the generated flows
         # stay consistent with the injections (branchFlow_pu live-tap rule)

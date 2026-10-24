@@ -56,8 +56,9 @@ power_flow:
   apslf_start:
     enabled: false
     order: 40
-  # Flat start (true = every bus at 1.0 pu and 0 degrees, PV and slack at
-  # their setpoints; voltages stored in the case file are ignored). While it
+  # Flat start (true = every bus at 1.0 pu and the slack angle, PV and slack
+  # at their setpoints; voltages stored in the case file are ignored;
+  # start_mode.rotate_behind_pst turns buses behind phase shifters). While it
   # is on, the run switches start_mode.start_projection,
   # start_mode.dc_seed_unconditional, the two start modes and
   # start_mode.ratio_profile off, the last one also for the rescue and auto
@@ -272,6 +273,14 @@ power_flow:
     # angles, so the candidate never wins there) and in mode: auto.
     # No effect on a start from stored voltages.
     ratio_profile: true
+    # Flat start behind phase shifters: a bus the reference reaches only
+    # across phase-shifting transformers starts at the slack angle plus the
+    # shift sum of a path with the fewest shifters; a bus a path without
+    # shifter reaches keeps the slack angle (in a mesh the parallel path
+    # fixes its angle). Also turns a stored start that holds no angle.
+    # Default false: every bus starts at the slack angle, and a shifter
+    # starts with its whole shift across its series impedance.
+    rotate_behind_pst: false
     # Reuse imported MATPOWER reference values during start generation.
     reuse_import_data: true
     # Candidate blend factors used when try_blend_scan=true.
@@ -407,14 +416,24 @@ state_estimation:
   # 30 was too tight; the count a run reports afterwards is that of the LAST
   # solve and hides this.
   max_iter: 50
-  # Flat start for state-estimation initialization.
+  # Flat start for state-estimation initialization: every |V| 1 pu and every
+  # angle 0 with the slack at 0 inside the estimate; false starts from the
+  # stored state against the stored slack angle. Results and the write-back
+  # keep the stored slack angle.
   flatstart: true
+  start_mode:
+    # Flat start behind phase shifters: a bus the slack reaches only across
+    # phase-shifting transformers starts at their shift sum, the angles of
+    # the power flow flat start (power_flow.start_mode.rotate_behind_pst).
+    # Default false: every angle of the flat start is 0.
+    rotate_behind_pst: false
   jac_eps: 1.0e-6
   update_net: true
   # PMU voltage-angle (VaMeas) reference handling. auto estimates a common
-  # reference-angle offset between the PMU time base and the slack reference
+  # reference-angle offset between the PMU time base and the angle reference
+  # of the model (the stored slack angle)
   # as an additional state whenever Va measurements are present; off assumes
-  # PMU angles are already slack-referenced.
+  # PMU angles are in the angle reference of the model.
   # Allowed values: auto, off
   pmu_ref_offset: auto
   # First WLS iteration in which current-magnitude rows (ImagMeas) enter the
@@ -432,15 +451,19 @@ state_estimation:
   # keyed by CGMES mRID or by element name) in the SE service.
   # Off: such a file is refused with this key named.
   measurement_table: true
-  # Zero-injection rows (ZI, sigma ZERO_INJECTION_SIGMA) at passive buses
-  # (no generation, load or shunt) that carry no injection measurement:
-  # on adds them in every SE path (generator, measurement CSV, case file,
-  # measurement table) as weighted rows, constraint adds the same rows and
-  # solves every ZI row as an equality constraint (exact, no sigma), off
-  # adds none. The Web UI generator checkbox "passive as zero-injection
-  # constraint" sets this key for the case (on or off; a case on
-  # constraint stays on constraint while the box is checked).
+  # Zero-injection rows (ZI) at passive buses (no generation, load or
+  # shunt) that carry no injection measurement: on adds them in every SE
+  # path (generator, measurement CSV, case file, measurement table) as
+  # weighted rows, constraint adds the same rows and solves every ZI row as
+  # an equality constraint (Lagrange, KKT; exact, no sigma), off adds none.
+  # The Web UI generator checkbox "passive as zero-injection constraint"
+  # sets this key for the case (on or off; a case on constraint stays on
+  # constraint while the box is checked).
   zero_injection: on
+  # Sigma of one ZI row under zero_injection: on, in MVA, the unit of the
+  # injection rows (MW, Mvar; 0.001 MVA is 1 kW). Smaller binds the balance
+  # harder and makes the gain matrix worse conditioned. Finite, positive.
+  zero_injection_sigma_mva: 0.001
   # Measurement sigmas per voltage level in physical units, for rows that
   # carry no sigma of their own (an empty sigma cell of a measurement
   # table); the measurement table generators write them as well. Order:
@@ -493,8 +516,9 @@ state_estimation:
   # of the measurement. Statistics keep the original sigma.
   suppression_sigma: 2000.0
   # Budget of the sequential elimination: at most this many rows may be
-  # removed in one diagnostics run. 0 disables the elimination.
-  max_eliminations: 3
+  # removed in one diagnostics run, one per round, so also the round limit
+  # of the elimination loop. 0 disables the elimination.
+  max_eliminations: 5
   # FD-aware rank tolerance factor for the observability rank decision.
   rank_tol_factor: 10.0
   # Where the observability rank comes from: decomposition is the SVD of
@@ -532,15 +556,53 @@ state_estimation:
   topology_cluster_min: 3
   observability:
     enabled: true
-  # Transformer tap estimation. impedance_correction decides whether a
-  # released regulator moves the transformer impedance with its step: auto
-  # uses the per-step data of the model (tap table rows, the reactance curve
-  # of a phase tap changer with xMin/xMax, TapStepImpedance factors, the
-  # correction of typed models under model.tap_changer_model =
-  # impedance_correction); off keeps the impedance of the start position.
+  # Transformer tap estimation. enabled: false estimates no tap, every
+  # changer keeps its transferred step (SSH profile or measurement file) and
+  # se_tap_estimates.csv lists it with status not_estimated, reason disabled.
+  # fallback: when the run with tap estimation does not converge, a second
+  # run without tap estimation on the same measurements is the result
+  # (reason fallback_not_converged); the SE service also falls back when the
+  # fixed estimate fits worse than its staged pre-solve (worse_fit); false
+  # switches off both and returns the first run as it is.
+  # impedance_correction acts on the analytic impedance correction of a
+  # released regulator, per transformer. Per-step data (tap table rows, the
+  # reactance curve of a phase tap changer with xMin/xMax, TapStepImpedance
+  # factors) always follow the step; for an imported changer set (CGMES,
+  # PowSyBl) the analytic correction is then off under both values. A typed
+  # model follows the power flow: its x curve or x table follows the step,
+  # the correction factor on r under model.tap_changer_model =
+  # impedance_correction applies under auto only. Without per-step data auto
+  # applies the correction of typed models and off keeps the impedance of
+  # the start position. se_tap_estimates.csv names the source per row
+  # (reactance_source: table, analytic, nominal).
   # Allowed values: auto, off
+  # exclude lists transformers (names or CGMES mRIDs) that never become tap
+  # states: they keep their transferred step, reason excluded, and their
+  # step is not calculated; an entry without a transformer gives a warning.
+  # include_machine_transformers: false keeps machine (generator step-up)
+  # transformers out of the estimation, their step is calculated after it
+  # from the AVR setpoint and the machine telemetry (status calculated,
+  # reason machine_transformer); without a Q measurement on every bus of the
+  # machine node the row stays not_estimated with reason
+  # q_not_measured_in_group and the transferred step, without a P
+  # measurement the scheduled P is used (note p_from_schedule); true
+  # estimates them like the others.
+  # Both are case scope (Web UI: the tap estimation table of the Case page).
   tap_estimation:
+    enabled: true
+    fallback: true
     impedance_correction: auto
+    exclude: []
+    include_machine_transformers: false
+  # Range check of the voltage measurements before every WLS: a value outside
+  # 0.5 to 1.5 pu (0 kV and non-finite values included) on a bus the
+  # switching state does not energize is right, the bus and its branches stay
+  # out of the estimation (reason deenergized); on an energized bus it is a
+  # gross error, replaced by a pseudo measurement at the imported state of
+  # the bus (SvVoltage of a CGMES import, else 1.0 pu) with its sigma times
+  # substitute_sigma_factor (at least 1; reason range_check_substituted).
+  bad_data:
+    substitute_sigma_factor: 3.0
 
 # PowSyBl IIDM import (see docs/src/powsybl_import.md)
 powsybl_import:

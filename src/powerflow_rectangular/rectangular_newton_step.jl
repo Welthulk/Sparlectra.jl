@@ -49,8 +49,7 @@ end
     # Polar update: the same tangent step dV = ΔVr + jΔVi, applied as the
     # polar Newton step it corresponds to (dV/V = a + jb: magnitude times
     # 1 + a, angle plus b). With this update the rectangular Jacobian
-    # reproduces MATPOWER's newtonpf iterates to rounding (study section
-    # 11). The linear update V + dV inflates |V| by sqrt(1 + b^2) on a
+    # reproduces MATPOWER's newtonpf iterates to rounding. The linear update V + dV inflates |V| by sqrt(1 + b^2) on a
     # rotation, which is what diverged from the flat start on
     # case9241pegase (rotations of 60 to 70 deg in the first step).
     # A bus at exactly zero voltage has no polar form; it takes the linear

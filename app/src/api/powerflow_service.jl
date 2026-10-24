@@ -562,7 +562,6 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
         max_eliminations = _se_optional_int(request, "se_max_eliminations"),
         update_shunts = Bool(_service_request_value(request, "se_update_shunts", false)),
         report_correlation = _se_optional_bool(request, "se_report_correlation"),
-        tap_estimation = Bool(_service_request_value(request, "se_tap_estimation", false)),
         k_eliminate = _se_optional_float(request, "se_k_eliminate"),
         robust_mode = _se_optional_symbol(request, "se_robust_mode"),
         robust_k1 = _se_optional_float(request, "se_robust_k1"),

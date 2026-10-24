@@ -408,9 +408,10 @@ const SE_EXPECTED_WARNINGS = (
   r"measurement\(s\) excluded",
   r"released tap on transformer",
   # the tap fallback test forces a non-convergence on purpose: that is the
-  # situation it exists for, and both lines are the honest report of it
-  r"tap estimation did not converge",
-  r"tap estimation switched off after a non-converged run",
+  # situation it exists for, and the fallback lines are the honest report
+  # of it (run 2 warns only when it does not converge either)
+  r"tap estimation: run 1 not converged",
+  r"run 2 without tap estimation: not converged",
 )
 
 _se_run_quiet(testfn) = run_with_expected_warnings(testfn, SE_EXPECTED_WARNINGS)

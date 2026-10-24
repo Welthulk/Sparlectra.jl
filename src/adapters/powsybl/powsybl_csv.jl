@@ -20,8 +20,9 @@
 #          with embedded quotes doubled, floats in full precision with NaN,
 #          Inf and -Inf as literals, booleans true/false, integers plain.
 #          The reader also accepts True/False and an empty float cell (as
-#          NaN), so a hand-edited fixture still loads; the writer never
-#          produces either.
+#          NaN), so a hand-edited fixture still loads, and an empty tap
+#          cell (the changer at its middle position); the writer never
+#          produces any of these.
 
 const POWSYBL_BUNDLE_FORMAT = "powsybl_tables"
 const POWSYBL_BUNDLE_FORMAT_VERSION = 1
@@ -55,9 +56,22 @@ function _powsybl_parse_bool(text::AbstractString, dir, table, column, row)::Boo
   throw(_powsybl_bundle_error(dir, "table $(table) column $(column) row $(row): $(repr(strip(text))) is not a boolean"))
 end
 
+# Tap position cells that may be empty: the changer then sits at its
+# middle position (_powsybl_bundle_tap_middle!). An empty cell reads as
+# _POWSYBL_NO_TAP until that step replaces it.
+const _POWSYBL_NO_TAP = typemin(Int)
+const _POWSYBL_TAP_CELLS = Dict{String,Vector{Symbol}}(
+  "ratio_tap_changers" => [:tap],
+  "phase_tap_changers" => [:tap],
+  "3_windings_transformers" => [Symbol(p, "_tap_position", k) for p in ("ratio", "phase") for k in 1:3],
+)
+
 function _powsybl_convert_column(cells::AbstractVector{<:AbstractString}, T::DataType, dir, table, column)
   T === String && return String[String(c) for c in cells]
   T === Float64 && return Float64[_powsybl_parse_float(c, dir, table, column, i) for (i, c) in enumerate(cells)]
+  if T === Int && column in get(_POWSYBL_TAP_CELLS, String(table), Symbol[])
+    return Int[isempty(strip(c)) ? _POWSYBL_NO_TAP : _powsybl_parse_int(c, dir, table, column, i) for (i, c) in enumerate(cells)]
+  end
   T === Int && return Int[_powsybl_parse_int(c, dir, table, column, i) for (i, c) in enumerate(cells)]
   return Bool[_powsybl_parse_bool(c, dir, table, column, i) for (i, c) in enumerate(cells)]
 end
@@ -125,7 +139,11 @@ the data; a required column that is missing, a table that the manifest
 does not list or whose file is absent, and a row count that disagrees
 with the manifest each fail with an `ArgumentError` naming the bundle,
 the table and the column. Columns the schema does not know are kept as
-strings.
+strings. A tap changer row with an empty `tap` cell carries no step: the
+changer sits at the middle of `low_tap..high_tap`, the transformer columns
+at the current tap are recomputed from the step rows, and the manifest key
+`tap_position_assumed` lists the changer for the import notice and the
+tap estimation.
 """
 function read_powsybl_bundle(dir::AbstractString)::PowsyblTables
   isdir(dir) || throw(_powsybl_bundle_error(dir, "not a directory"))
@@ -138,7 +156,74 @@ function read_powsybl_bundle(dir::AbstractString)::PowsyblTables
     entry === nothing && throw(_powsybl_bundle_error(dir, "table $(name) is not listed in the manifest"))
     kwargs[POWSYBL_TABLE_FIELDS[name]] = _powsybl_read_table(dir, name, entry)
   end
+  _powsybl_bundle_tap_middle!(dir, kwargs, manifest)
   return PowsyblTables(; manifest = manifest, kwargs...)
+end
+
+# A tap changer row with an empty `tap` cell carries no step: the changer
+# sits at the middle of low_tap..high_tap (IIDM has no neutral step, the
+# rule of the IIDM reader). The transformer columns at the current tap
+# (rho, alpha, r/x/g/b at current tap, the 3W tap positions) describe a
+# position the file does not name, so they are recomputed from the step
+# rows at the taps now set, as the IIDM reader builds them. The changers
+# go into the manifest key tap_position_assumed, which the mapping reads
+# for the mark and the import notice. An empty 3W tap position without
+# such a changer stays an error.
+function _powsybl_bundle_tap_middle!(dir::AbstractString, kw::Dict{Symbol,Any}, manifest::Dict{String,Any})
+  assumed = Dict{String,Any}[]
+  for (field, role) in ((:ratio_tap_changers, "ratio"), (:phase_tap_changers, "phase"))
+    t = kw[field]
+    for i in eachindex(t.tap)
+      t.tap[i] == _POWSYBL_NO_TAP || continue
+      t.tap[i] = Sparlectra._tap_band_middle(minmax(t.low_tap[i], t.high_tap[i])...)
+      push!(assumed, Dict{String,Any}("id" => t.id[i], "side" => t.side[i], "role" => role, "tap" => t.tap[i]))
+    end
+  end
+  # the step row of the changer (id, side) in `role` at its tap, nothing
+  # without a changer
+  function step_row(role::String, id::String, side::String)
+    t = kw[role == "ratio" ? :ratio_tap_changers : :phase_tap_changers]
+    st = kw[role == "ratio" ? :ratio_tap_changer_steps : :phase_tap_changer_steps]
+    i = findfirst(k -> t.id[k] == id && t.side[k] == side, eachindex(t.id))
+    i === nothing && return nothing
+    j = findfirst(k -> st.id[k] == id && st.side[k] == side && st.position[k] == t.tap[i], eachindex(st.id))
+    j === nothing && throw(_powsybl_bundle_error(dir, "tap changer $(id)$(isempty(side) ? "" : "/" * side)/$(role): tap $(t.tap[i]) has no step row"))
+    return (st = st, j = j, tap = t.tap[i])
+  end
+  factor(sr, key::Symbol) = sr === nothing ? 1.0 : 1.0 + sr.st[key][sr.j] / 100.0
+  rho(sr) = sr === nothing ? 1.0 : sr.st.rho[sr.j]
+  tw = kw[:two_windings_transformers]
+  t3 = kw[:three_windings_transformers]
+  for (id, side) in unique([(d["id"], d["side"]) for d in assumed])
+    rr = step_row("ratio", id, side)
+    pr = step_row("phase", id, side)
+    alpha = pr === nothing ? 0.0 : pr.st.alpha[pr.j]
+    if isempty(side)
+      i = findfirst(==(id), tw.id)
+      i === nothing && throw(_powsybl_bundle_error(dir, "tap changer $(id) has no row in 2_windings_transformers"))
+      tw.rho[i] = tw.rated_u2[i] / tw.rated_u1[i] * rho(rr) * rho(pr)
+      tw.alpha[i] = alpha
+      for key in (:r, :x, :g, :b)
+        tw[Symbol(key, "_at_current_tap")][i] = tw[key][i] * factor(rr, key) * factor(pr, key)
+      end
+    else
+      i = findfirst(==(id), t3.id)
+      k = findfirst(==(side), ("ONE", "TWO", "THREE"))
+      (i === nothing || k === nothing) && throw(_powsybl_bundle_error(dir, "tap changer $(id)/$(side) has no leg in 3_windings_transformers"))
+      t3[Symbol("rho", k)][i] = t3.rated_u0[i] / t3[Symbol("rated_u", k)][i] * rho(rr) * rho(pr)
+      t3[Symbol("alpha", k)][i] = alpha
+      for key in (:r, :x, :g, :b)
+        t3[Symbol(key, k, "_at_current_tap")][i] = t3[Symbol(key, k)][i] * factor(rr, key) * factor(pr, key)
+      end
+      t3[Symbol("ratio_tap_position", k)][i] = rr === nothing ? t3[Symbol("ratio_tap_position", k)][i] : rr.tap
+      t3[Symbol("phase_tap_position", k)][i] = pr === nothing ? t3[Symbol("phase_tap_position", k)][i] : pr.tap
+    end
+  end
+  for c in _POWSYBL_TAP_CELLS["3_windings_transformers"], i in eachindex(t3.id)
+    t3[c][i] == _POWSYBL_NO_TAP && throw(_powsybl_bundle_error(dir, "table 3_windings_transformers column $(c) row $(i): \"\" is not an integer"))
+  end
+  isempty(assumed) || (manifest["tap_position_assumed"] = vcat(Any[get(manifest, "tap_position_assumed", Any[])...], assumed))
+  return nothing
 end
 
 # --- writer -----------------------------------------------------------------

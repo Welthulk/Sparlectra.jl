@@ -190,7 +190,8 @@ For each bus i:
 
 Algorithm overview:
 1. Build net nodal injections `P_inj/Q_inj` from static generation minus load.
-2. Add solved shunt injections (`node._pShunt/_qShunt`) to nodal injections.
+2. Subtract the solved shunt draw (`node._pShunt/_qShunt`, consumption
+   positive, `updateShuntPowers!`).
 3. Subtract outgoing terminal branch powers to get the link right-hand side `b`.
 4. Build oriented incidence matrix `A` for active links.
 5. Solve per connected link component (BFS) using `pinv(A_component) * b_component`.
@@ -211,42 +212,59 @@ end
 """
     calcLinkFlowsSE!(net; tol=1e-6) -> Union{Nothing,Vector{NamedTuple}}
 
-W2 link-flow allocation with measurements (SE phase 3): the KCL allocation of
-`calcLinkFlowsKCL!` extended to a weighted least-squares split per link
-component. Active link flow measurements on `net.measurements` (`PflowMeas`/
-`QflowMeas` with a `linkIdx`) enter as extra rows `f_j = z_j` with weight
-`1/sigma^2` (P rows into the P solve, Q rows into the Q solve); the nodal
-balance rows are treated as equations (weight 1e12 times the largest
-measurement weight of the component), so a measurement only moves flows the
-balance leaves free (the circulations of a ring) and a flow the balance fixes
-keeps its KCL value, the error shows in the residual. With no link
-measurements the result equals `calcLinkFlowsKCL!` exactly (shared core,
-identical code path).
+Link flows after a state estimation. The nodal balances of every link
+component fix its flows up to the circulations of its rings (the KCL
+allocation of `calcLinkFlowsKCL!`, minimum-norm on a ring).
 
-Link measurements constrain only the flow split, never the system state: the
-estimator excludes them from the WLS (the link is not in the Ybus).
+After `runse!` with `state_estimation.update_net = true` on this net, and
+as long as the node voltages are still exactly those that run wrote, the
+flows are that KCL split on the estimated state plus the ring circulations
+the estimator estimated. Link flow measurements are rows of the WLS there
+(see State Estimation, link measurements): a measured tree link has its
+flow from the balance of the estimated state, a measured ring adds the
+estimated circulation, and a link measurement the bad-data elimination
+removed does not enter. `source` is `:estimated` for a link with an active
+flow measurement or an estimated circulation, `:kcl` otherwise. A released
+shunt enters with the susceptance the net holds: the estimate with
+`state_estimation.update_shunts = true`, the model value otherwise.
+
+Without such a run, or once the state has changed since (a `runpf!` after
+the estimate), the active link flow measurements on `net.measurements`
+split the flow per link component by weighted least squares under the nodal
+balances as equality constraints: the measurements `f_j = z_j` with weight
+`1/sigma^2`, the balances `A f = b` exact, solved on the same KKT system as
+`state_estimation.zero_injection = constraint`. A measurement moves only the
+circulations of a ring, a flow the balance fixes keeps its KCL value, and a
+circulation no measurement sees stays at the minimum-norm split;
+`source = :measured_ls` for a measured link. Without link measurements the
+result equals `calcLinkFlowsKCL!` exactly (shared core).
 
 The balance construction reads solved branch flows (`fBranchFlow`/
 `tBranchFlow`, filled by `calcNetLosses!`, which `runse!(updateNet = true)`
-calls) and the shunt injections (`node._pShunt/_qShunt`, refreshed by the
-SE write-back). Run after `runse!` with `updateNet = true`.
+calls) and the shunt draw (`node._pShunt/_qShunt`, refreshed by the SE
+write-back).
 
 Returns one row per active link: `(linkIdx, name, pFlow_MW, qFlow_MVar,
-source, p_meas_residual, q_meas_residual)` with `source = :kcl` (no
-measurement on that link) or `:measured_ls`, and the measurement residuals
-`f_est - z` (NaN when unmeasured). `nothing` when the net has no active
-link.
+source, p_meas_residual, q_meas_residual)` with the residuals `f - z` of the
+active link measurements on `net.measurements` (NaN when unmeasured).
+`nothing` when the net has no active link.
 """
 function calcLinkFlowsSE!(net::Net; tol::Float64 = 1e-6)
   pMeas = [(linkIdx = m.linkIdx, value = m.value, sigma = m.sigma) for m in net.measurements if m.active && m.linkIdx !== nothing && m.typ == PflowMeas]
   qMeas = [(linkIdx = m.linkIdx, value = m.value, sigma = m.sigma) for m in net.measurements if m.active && m.linkIdx !== nothing && m.typ == QflowMeas]
-  return _link_flow_allocation!(net; tol = tol, pMeas = pMeas, qMeas = qMeas)
+  # the circulations of the last runse! with update_net on this net, only
+  # while the net still holds the state of that estimate
+  circ = _se_link_circulation_current(net)
+  return _link_flow_allocation!(net; tol = tol, pMeas = pMeas, qMeas = qMeas, circulation = circ)
 end
 
 # Shared allocation core. Without measurement rows this is EXACTLY the
 # original KCL algorithm (same operations, bitwise-identical results); the
 # measurement branches only run when a matching row exists in the component.
-function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, qMeas = nothing)
+# With `circulation` (linkIdx => (P, Q), from a state estimation) the
+# measurements do not split: the flows are the KCL split plus these
+# circulations, the measurements only give the residuals.
+function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, qMeas = nothing, circulation::Union{Nothing,AbstractDict} = nothing)
   isempty(net.linkVec) && return nothing
 
   active = [l for l in net.linkVec if l.status == 1]
@@ -303,8 +321,12 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
     end
   end
 
-  # 3) Include shunt bus injections (results from PF) if available.
-  #    node._pShunt/node._qShunt are signed injections at the bus.
+  # 3) Shunt draw at the bus (results from PF or SE) if available.
+  #    node._pShunt/node._qShunt are the power the shunts consume
+  #    (updateShuntPowers!: |V|^2 conj(y)), so they leave the balance.
+  #    Until 0.60.0 they were added: a reactor at a link bus moved its
+  #    Mvar to the wrong side (single link, reactor 8 Mvar at 1 pu on the to
+  #    bus: 16.20 Mvar instead of the 23.49 the feeding line delivers).
   P_shunt = zeros(Float64, nbus)
   Q_shunt = zeros(Float64, nbus)
   for (k, node) in enumerate(net.nodeVec)
@@ -313,8 +335,8 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
   end
 
   # 4) Remaining nodal balance that must be carried by links.
-  bP = P_inj .+ P_shunt .- P_branch_out
-  bQ = Q_inj .+ Q_shunt .- Q_branch_out
+  bP = P_inj .- P_shunt .- P_branch_out
+  bQ = Q_inj .- Q_shunt .- Q_branch_out
 
   m = length(active)
   A = zeros(Float64, nbus, m)
@@ -379,22 +401,23 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
 
     # 7) Least-squares solve. `pinv` also handles singular meshed components
     #    (e.g., rings) by returning the minimum-norm solution. With link
-    #    measurements in this component (W2, SE phase 3) one weighted row
-    #    `f_j = z_j` per measurement is appended AFTER the sum-zero
-    #    correction; the balance rows are scaled far above the measurement
-    #    rows (`_LINK_BALANCE_ROW_SCALE`) and the minimum-norm property
-    #    survives through the pinv of the row-scaled system.
-    compP = [(k, pByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(pByCol, gj)]
-    compQ = [(k, qByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(qByCol, gj)]
+    #    measurements in this component the split is the equality-constrained
+    #    least squares of `_constrained_link_solve`, on b AFTER the sum-zero
+    #    correction (the balances exact, minimum norm where no measurement
+    #    reaches).
+    # with circulations from a state estimation the split is that estimate,
+    # the measurements only give the residuals below
+    compP = circulation === nothing ? [(k, pByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(pByCol, gj)] : Tuple{Int,Tuple{Float64,Float64}}[]
+    compQ = circulation === nothing ? [(k, qByCol[gj]) for (k, gj) in enumerate(comp_links) if haskey(qByCol, gj)] : Tuple{Int,Tuple{Float64,Float64}}[]
     fp = if isempty(compP)
       pinv(Ab) * bbP
     else
-      _weighted_link_solve(Ab, bbP, compP)
+      _constrained_link_solve(Ab, bbP, compP)
     end
     fq = if isempty(compQ)
       pinv(Ab) * bbQ
     else
-      _weighted_link_solve(Ab, bbQ, compQ)
+      _constrained_link_solve(Ab, bbQ, compQ)
     end
 
     for (k, gj) in enumerate(comp_links)
@@ -410,8 +433,9 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
   end
   rows = NamedTuple[]
   for (j, l) in enumerate(active)
-    p = flowsP[j]
-    q = flowsQ[j]
+    cpq = circulation === nothing ? nothing : get(circulation, l.linkIdx, nothing)
+    p = cpq === nothing ? flowsP[j] : flowsP[j] + cpq[1]
+    q = cpq === nothing ? flowsQ[j] : flowsQ[j] + cpq[2]
     setLinkFlow!(l, p, q)
 
     # 9) Three-phase current magnitudes per terminal:
@@ -426,6 +450,7 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
 
     # report row: allocation source and, where measured, the residual f - z
     measured = haskey(pByCol, j) || haskey(qByCol, j)
+    source = circulation === nothing ? (measured ? :measured_ls : :kcl) : ((measured || cpq !== nothing) ? :estimated : :kcl)
     push!(
       rows,
       (
@@ -433,7 +458,7 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
         name = l.cName,
         pFlow_MW = p,
         qFlow_MVar = q,
-        source = measured ? :measured_ls : :kcl,
+        source = source,
         p_meas_residual = haskey(pByCol, j) ? p - pByCol[j][1] : NaN,
         q_meas_residual = haskey(qByCol, j) ? q - qByCol[j][1] : NaN,
       ),
@@ -442,32 +467,63 @@ function _link_flow_allocation!(net::Net; tol::Float64 = 1e-6, pMeas = nothing, 
   return rows
 end
 
-# Row scale of the nodal balance rows in the weighted link split, relative
-# to the largest measurement row scale 1/sigma of the component (weight
-# ratio 1e12). The balance rows are equations, not measurements: a flow the
-# balance fixes (a single link between two buses, every tree link) must not
-# move with a link measurement, only the circulations of a ring are free
-# for it. At scale 1 a measurement at sigma 2 MW would pull a single link
-# flow by a ninth of its error. With 1e6 the pull is below
-# 1e-12 of the error; the singular values of the scaled system stay far
-# above the pinv cut-off (eps times the row count times the largest one).
-const _LINK_BALANCE_ROW_SCALE = 1.0e6
+# Cut for the singular values in `_link_measured_cycles`. N has orthonormal
+# columns, so the singular values of N[measured, :] lie in [0, 1] and the
+# cut is absolute: a link outside every loop (a pendant coupler) has a zero
+# row in exact arithmetic, nullspace returns rounding instead (4.8e-18 on a
+# ring of three links with one pendant link), and a cut relative to the
+# largest singular value counted that as a loop.
+const _LINK_CYCLE_TOL = 1.0e-8
 
-# Weighted least-squares split for one component: balance rows at
-# `_LINK_BALANCE_ROW_SCALE` times the largest measurement row scale, plus one
-# row per measured link, scaled by sqrt(1/sigma^2). pinv keeps minimum norm
-# in the directions no row constrains.
-function _weighted_link_solve(Ab::Matrix{Float64}, bb::Vector{Float64}, meas::Vector{<:Tuple{Int,Tuple{Float64,Float64}}})
-  nrow, ncol = size(Ab)
-  M = zeros(Float64, nrow + length(meas), ncol)
-  rhs = zeros(Float64, nrow + length(meas))
-  sws = Float64[vz[2] > 0.0 ? 1.0 / vz[2] : 1.0 for (_, vz) in meas]
-  sb = _LINK_BALANCE_ROW_SCALE * maximum(sws)
-  M[1:nrow, :] .= sb .* Ab
-  rhs[1:nrow] .= sb .* bb
-  for (r, (col, vz)) in enumerate(meas)
-    M[nrow+r, col] = sws[r]
-    rhs[nrow+r] = sws[r] * vz[1]
+# The ring circulations a set of measured links sees. `N` is nullspace(A)
+# of a link component (one orthonormal column per independent loop),
+# `measured` the positions of the measured links in A. Returns (Nc, Nfree):
+# Nc spans the loop directions that move at least one measured flow, Nfree
+# those that move none. Entries at rounding level (|a| <= 1e-12) are set to
+# zero, so a link outside the loops gets no circulation term. Used by the
+# split below and by the link rows of the state estimation
+# (`_se_link_table`), one rank rule for both.
+function _link_measured_cycles(N::AbstractMatrix{Float64}, measured::Vector{Int})
+  n = size(N, 2)
+  (n == 0 || isempty(measured)) && return (zeros(Float64, size(N, 1), 0), Matrix{Float64}(N))
+  F = svd(N[measured, :]; full = true)
+  r = count(s -> s > _LINK_CYCLE_TOL, F.S)
+  Nc = N * F.V[:, 1:r]
+  Nfree = N * F.V[:, (r+1):n]
+  for M in (Nc, Nfree)
+    M[abs.(M).<=1e-12] .= 0.0
   end
-  return pinv(M) * rhs
+  return Nc, Nfree
+end
+
+# Link split of one component with measurements: the flows f minimize
+# sum_j w_j (f_j - z_j)^2 with w_j = 1/sigma_j^2 under the nodal balances
+# A f = b as equality constraints, on the KKT system of
+# state_estimation.zero_injection = constraint (`_se_solve_constrained!`;
+# the problem is linear, one step from f = 0 is the solution). Constraint
+# rows: the balances without the last bus, on b minus its mean (the part of
+# b outside the range of A, which pinv ignores as well; the caller removes
+# it only above `tol`). The component is connected, so the last row then
+# follows from the others and would make the KKT matrix singular. Plus
+# Nfree' f = 0 for the loop directions no measurement sees, so they keep
+# the minimum-norm split that pinv gives without measurements. A singular
+# KKT matrix can
+# only come from a construction error here; the solver then falls back to
+# least squares and the split warns.
+function _constrained_link_solve(Ab::Matrix{Float64}, bb::Vector{Float64}, meas::Vector{<:Tuple{Int,Tuple{Float64,Float64}}})
+  nrow, ncol = size(Ab)
+  G = zeros(Float64, ncol, ncol)
+  g = zeros(Float64, ncol)
+  for (col, vz) in meas
+    w = vz[2] > 0.0 ? inv(vz[2]^2) : 1.0
+    G[col, col] += w
+    g[col] += w * vz[1]
+  end
+  _, Nfree = _link_measured_cycles(nullspace(Ab), sort!(unique(Int[col for (col, _) in meas])))
+  C = vcat(Ab[1:(nrow-1), :], permutedims(Nfree))
+  bc = bb .- sum(bb) / nrow
+  rc = vcat(bc[1:(nrow-1)], zeros(Float64, size(Nfree, 2)))
+  f, _, fell = _se_solve_constrained!(_SENormalEquationsSolver(), sparse(G), g, sparse(C), rc)
+  fell && @warn "calcLinkFlowsSE!: the KKT matrix of a link split was singular (a bug in the split); it was solved by least squares"
+  return f
 end

@@ -338,8 +338,8 @@ line search.
 
 #### DC-angle flat-start background
 
-A flat start (magnitudes near $1.0\,\mathrm{pu}$, non-slack angles
-$0^\circ$) ignores the active-power pattern of topology, reactances, phase
+A flat start (magnitudes near $1.0\,\mathrm{pu}$, every angle at the
+slack angle) ignores the active-power pattern of topology, reactances, phase
 shifts and injections; on a large or heavily phase-shifted case the first
 Newton step can start far from the physical angle branch. The DC-angle seed
 takes the angles from the linearized active-power model (magnitudes

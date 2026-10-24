@@ -82,7 +82,7 @@ typed section.
 | `cgmes_import` | `CGMESImportConfig` | [CGMES Import](cgmes_import.md). |
 | `powsybl_import` | `PowsyblImportConfig` | [PowSyBl Import](powsybl_import.md). |
 | `short_circuit` | `ShortCircuitConfig` | IEC 60909 short circuit: `short_circuit.c_factor`, `short_circuit.sweep_method` (`auto`, `solves`, `takahashi`), `short_circuit.takahashi_min_buses`, `short_circuit.converter_current_factor` (converter fault current without `maxIFault` as a multiple of the rated current, default 0 = off; a manufacturer figure to be set per case, about 1.0 to 1.5 as orientation); [Short-Circuit Analysis](short_circuit.md). |
-| `model` | `ModelConfig` | Model construction for every importer: bus shunt model, tap-changer model (below), auto profile, net cache, preallocation, system frequency (below). |
+| `model` | `ModelConfig` | Model construction for every importer: bus shunt model, tap-changer model (below), auto profile, preallocation, system frequency (below). |
 | `state_estimation` | `StateEstimationConfig` | [State-Estimation Configuration](state_estimation_configuration.md). |
 | `output` | `OutputConfig` | Console and logfile output, result tables (keys below and in [Output configuration](@ref perf-output)); `output.startup_latency_hint: false` silences the one-per-process JIT warm-up note of runs without a sysimage or executable. |
 | `performance` | `PerformanceConfig` | Profiling and diagnostic volume: [Performance and Profiling](performance_profiling.md). |
@@ -108,9 +108,11 @@ Prefer the nested keys of the template.
 
 ### Transformer tap-changer model
 
-`model.tap_changer_model` decides for every transformer of an imported case
-whether a tap step changes the winding ratio alone or also the series
-impedance:
+`model.tap_changer_model` decides for every transformer of a MATPOWER or
+DTF case whether a tap step changes the winding ratio alone or also the
+series impedance. SCF keeps the setting stored per transformer, CGMES and
+PowSyBl take the impedance per step from their data
+([branch model](branchmodel.md)):
 
 ```yaml
 model:
@@ -126,7 +128,7 @@ model:
 The MATPOWER and DTF importers read the key. [`writeMatpowerCasefile`](@ref)
 writes the corrected `Branch.r_pu`/`Branch.x_pu` with a roundtrip marker,
 so a reimport does not correct twice; see
-[Tap-impedance correction and reimport](matpower.md#tap-impedance-correction-and-reimport).
+[Tap-impedance correction and reimport](matpower.md#Tap-impedance-correction-and-reimport).
 
 ### [System frequency](@id system_frequency)
 

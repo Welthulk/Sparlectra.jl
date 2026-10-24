@@ -59,7 +59,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.autodamp_min", "power_flow_autodamp_min", Float64, :number, 0.05, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.qlimits.enabled", "power_flow_qlimits_enabled", Bool, :checkbox, true, (), :basic, :case, true),
   WebUIOptionSpec("power_flow.qlimits.enforcement_mode", "power_flow_qlimits_enforcement_mode", String, :select, "active_set", _WEBUI_QLIMIT_ENFORCEMENT_MODE_VALUES, :expert, :case, true),
-  # the rest of the Q-limit block (task 0.20.2, PV/PQ switching studies);
+  # the rest of the Q-limit block (0.20.2, PV/PQ switching studies);
   # defaults are the template values, the floats as text in scientific
   # notation like the tolerance, the bus lists as comma-separated text
   WebUIOptionSpec("power_flow.qlimits.start_iter", "power_flow_qlimits_start_iter", Int, :number, 3, (), :expert, :case, true),
@@ -91,6 +91,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.apslf.convergence_radius", "power_flow_apslf_convergence_radius", Bool, :checkbox, true, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.flatstart", "power_flow_flatstart", Bool, :checkbox, false, (), :basic, :case, true),
   WebUIOptionSpec("power_flow.start_mode.ratio_profile", "power_flow_ratio_profile", Bool, :checkbox, true, (), :expert, :case, true),
+  WebUIOptionSpec("power_flow.start_mode.rotate_behind_pst", "power_flow_rotate_behind_pst", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf_start.enabled", "power_flow_apslf_start_enabled", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf_start.order", "power_flow_apslf_start_order", Int, :number, 40, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.wrong_branch_detection", "power_flow_wrong_branch_detection", String, :select, "warn", WRONG_BRANCH_DETECTION_VALUES, :expert, :case, true),
@@ -198,10 +199,15 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # the case sidecar instead of only ever showing the literal default below;
   # _webui_se_form_state merges that resolution into gen_values as its base
   # layer. The rest (se_tol, se_max_iter, se_robust_k1/k2,
-  # se_suppression_sigma, se_update_shunts, se_tap_estimation) stay
-  # config_key = nothing: issue #377 does not ask for them, and widening the
-  # case-scope surface beyond what was asked is its own review.
+  # se_suppression_sigma, se_update_shunts) stay config_key = nothing:
+  # issue #377 does not ask for them, and widening the case-scope surface
+  # beyond what was asked is its own review. "estimate taps" is the switch
+  # state_estimation.tap_estimation.enabled (0.60.0), its fallback the key
+  # next to it.
   WebUIOptionSpec("state_estimation.flatstart", "se_flatstart", Bool, :checkbox, true, (), :basic, :case, true),
+  # the SE flat start turned behind phase shifters (0.60.0), a config key
+  # like flatstart, so it rides in config_overrides
+  WebUIOptionSpec("state_estimation.start_mode.rotate_behind_pst", "se_rotate_behind_pst", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec(nothing, "se_tol", Float64, :number, 1.0e-6, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_max_iter", Int, :number, 50, (), :basic, :case, true),
   WebUIOptionSpec("state_estimation.robust_mode", "se_robust_mode", String, :select, "off", ("off", "staged", "replacement"), :basic, :case, true),
@@ -210,13 +216,18 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec(nothing, "se_robust_k2", Float64, :number, 6.0, (), :basic, :case, true),
   WebUIOptionSpec("state_estimation.k_suppress", "se_k_suppress", Float64, :number, 4.0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_suppression_sigma", Float64, :number, 2000.0, (), :basic, :case, true),
-  WebUIOptionSpec("state_estimation.max_eliminations", "se_max_eliminations", Int, :number, 3, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.max_eliminations", "se_max_eliminations", Int, :number, 5, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "se_update_shunts", Bool, :checkbox, true, (), :basic, :case, true),
-  WebUIOptionSpec(nothing, "se_tap_estimation", Bool, :checkbox, true, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.tap_estimation.enabled", "se_tap_estimation", Bool, :checkbox, true, (), :basic, :case, true),
+  WebUIOptionSpec("state_estimation.tap_estimation.fallback", "se_tap_fallback", Bool, :checkbox, true, (), :expert, :case, true),
   # the impedance rule of the released regulators; a config key (case
   # scope), so it rides in config_overrides like the other config fields
   WebUIOptionSpec("state_estimation.tap_estimation.impedance_correction", "se_tap_impedance_correction", String, :select, "auto", ("auto", "off"), :expert, :case, true),
   WebUIOptionSpec("state_estimation.report_residual_correlation", "se_report_correlation", Bool, :checkbox, true, (), :basic, :case, true),
+  # the sigma of a zero-injection row under zero_injection = on, case
+  # scope like the switch; rides in config_overrides like the other
+  # config fields
+  WebUIOptionSpec("state_estimation.zero_injection_sigma_mva", "se_zero_injection_sigma_mva", Float64, :number, ZERO_INJECTION_SIGMA, (), :expert, :case, true),
   # default ON: a noise-free set puts J near 0 instead of near dof, which
   # reads like a broken statistic (the low-band note explains it, but the
   # recommended demo profile is noisy)

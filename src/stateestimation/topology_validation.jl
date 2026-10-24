@@ -331,7 +331,10 @@ function test_topology_hypotheses(net::Net, measurements::Vector{Measurement} = 
   length(cands) > max_candidates && (cands = cands[1:max_candidates])
   # baseline on an untouched working copy (the caller's net stays pristine)
   base_net = deepcopy(net)
-  base = _runse_configured!(base_net, measurements, hyp_cfg)
+  # the range check of runse! on every working copy (no log: the
+  # hypotheses are what-if runs); a toggled element can de-energize the
+  # bus of a 0 kV measurement, so it runs per copy
+  base = _runse_configured!(base_net, first(_se_range_check(base_net, measurements)), hyp_cfg)
   base_verdict = _band_test_verdict(base.objectiveJ, base.dof)
   nby = _bus_name_by_idx(net)
   busname(b) = get(nby, Int(b), string(Int(b)))
@@ -356,7 +359,7 @@ function test_topology_hypotheses(net::Net, measurements::Vector{Measurement} = 
     end
     hypothesis = current == :closed ? "actually open" : "actually closed"
     res = try
-      _runse_configured!(work, measurements, hyp_cfg)
+      _runse_configured!(work, first(_se_range_check(work, measurements)), hyp_cfg)
     catch err
       push!(rows, (element = label, kind = c.kind, idx = c.idx, current_status = current, hypothesis = hypothesis, j_before = base.objectiveJ, j_after = NaN, z_before = base_verdict.z_wh, z_after = NaN, verdict = :inconclusive, note = sprint(showerror, err), elapsed_s = (time_ns() - t0) / 1e9))
       continue

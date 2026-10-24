@@ -514,6 +514,10 @@ function run_webui_state_estimation_tests()
       @test occursin("name=\"se_tap_estimation\"", pageInfo)
       @test !occursin("experimental", pageInfo)
       @test occursin("Machine and unobservable taps are skipped", pageInfo)
+      # the box is the config key: the posted false (hidden input before the
+      # box) becomes the override that switches the SE paths off
+      treq = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => case_path, "se_mode" => "true", "se_tap_estimation" => "false", "se_tap_fallback" => "false"))
+      @test treq["config_overrides"]["state_estimation.tap_estimation.enabled"] == false && treq["config_overrides"]["state_estimation.tap_estimation.fallback"] == false
       fake["metadata"]["se_tap_count"] = 2
       fake["metadata"]["se_tap_fixed"] = true
       fake["metadata"]["se_tap_j_before"] = 1211.0
@@ -544,8 +548,8 @@ function run_webui_state_estimation_tests()
       fake["metadata"]["se_tap_regulators"] = 3
       @test occursin("tap estimation: 2 transformer(s), 3 regulator(s)", SparlectraApp._webui_se_summary(fake))
       fake["metadata"]["se_tap_estimates"] = [
-          Dict{String,Any}("branch" => 3, "regulator" => 1, "name" => "T1", "changer" => "ratio", "mrid" => "", "kind" => "ratio", "alpha_deg" => nothing, "s_est" => 2.03, "du_est" => 0.0127, "ratio_est" => 0.975, "angle_est_deg" => 0.0, "step_model" => 0, "step_fixed" => 2, "deviation_steps" => 2, "out_of_range" => false, "fixed" => true, "frozen_reason" => "none", "note" => "none", "notice" => "", "source" => "estimated"),
-          Dict{String,Any}("branch" => 4, "regulator" => 2, "name" => "T2", "changer" => "phase", "mrid" => "", "kind" => "asymmetrical", "alpha_deg" => 90.0, "s_est" => -0.98, "du_est" => -0.0098, "ratio_est" => 1.0, "angle_est_deg" => -0.56, "step_model" => -1, "step_fixed" => -1, "deviation_steps" => 0, "out_of_range" => false, "fixed" => true, "frozen_reason" => "none", "note" => "relative_only", "notice" => "parallel member: estimated only relative to the other member", "source" => "estimated"),
+          Dict{String,Any}("branch" => 3, "regulator" => 1, "name" => "T1", "changer" => "ratio", "mrid" => "", "kind" => "ratio", "alpha_deg" => nothing, "s_est" => 2.03, "du_est" => 0.0127, "ratio_est" => 0.975, "angle_est_deg" => 0.0, "step_model" => 0, "step_fixed" => 2, "deviation_steps" => 2, "out_of_range" => false, "fixed" => true, "status" => "estimated", "reason" => "none", "note" => "none", "notice" => ""),
+          Dict{String,Any}("branch" => 4, "regulator" => 2, "name" => "T2", "changer" => "phase", "mrid" => "", "kind" => "asymmetrical", "alpha_deg" => 90.0, "s_est" => -0.98, "du_est" => -0.0098, "ratio_est" => 1.0, "angle_est_deg" => -0.56, "step_model" => -1, "step_fixed" => -1, "deviation_steps" => 0, "out_of_range" => false, "fixed" => true, "status" => "estimated", "reason" => "none", "note" => "relative_only", "notice" => "parallel member: estimated only relative to the other member"),
       ]
       tsec2 = SparlectraApp._webui_se_tap_section(fake)
       @test occursin("fixed (corrected)", tsec2)
@@ -672,7 +676,7 @@ function run_webui_state_estimation_tests()
       rm(mfile)
       mname = written_set(gentap2)
       mfile = joinpath(cases, mname)
-      rtap = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "se_tap_estimation" => true))
+      rtap = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
       @test rtap["status"] == "succeeded"
       idtap = rtap["run_id"]
       tapcsv = joinpath(root, idtap, "se_tap_estimates.csv")
@@ -686,7 +690,8 @@ function run_webui_state_estimation_tests()
       # estimated, the machine transformer calculated
       @test length(taps.rows) == 2
       @test length(unique(f[1] for f in taps.rows)) == 2
-      @test count(f -> f[end] == "calculated", taps.rows) == 1
+      status_col = findfirst(==("status"), taps.header)
+      @test count(f -> f[status_col] == "calculated", taps.rows) == 1
       md = rtap["metadata"]
       # only the PST is estimable, the machine transformer stays calculated
       @test md["se_tap_count"] == 1
@@ -712,17 +717,93 @@ function run_webui_state_estimation_tests()
       @test occursin("<th>Model step</th>", tapPage)
       @test occursin("tap estimation: 1 transformer(s)", tapPage)
 
-      # A set that DOCUMENTS its tap deviations releases exactly those
-      # transformers by itself, without the user asking for it. As a mere
-      # hint this produced a J nobody could explain, and the hint only
-      # appeared after a converged run (if transformers were changed, that option has to
-      # be on by itself).
-      rhint = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      # "estimate taps" off (the key state_estimation.tap_estimation.enabled,
+      # here as the override the form posts): every changer keeps its
+      # transferred step, the CSV says disabled, and a set that documents a
+      # tap deviation gets the hint in the status line and run.log
+      rhint = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "config_overrides" => Dict{String,Any}("state_estimation.tap_estimation.enabled" => false)))
       @test rhint["status"] == "succeeded"
-      @test rhint["metadata"]["se_set_tap_deviation"] == true
-      @test !isempty(rhint["metadata"]["se_auto_released_taps"])
-      @test occursin("released automatically", rhint["message"])
-      @test occursin("tap estimation released automatically", read(joinpath(root, rhint["run_id"], "run.log"), String))
+      @test rhint["metadata"]["se_set_tap_deviation"] == true && rhint["metadata"]["se_tap_estimation"] == false
+      @test occursin("tap estimation is switched off; enable 'estimate taps'", rhint["message"])
+      @test occursin("but tap estimation is switched off", read(joinpath(root, rhint["run_id"], "run.log"), String))
+      offcsv = run_csv(joinpath(root, rhint["run_id"], "se_tap_estimates.csv"))
+      @test length(offcsv.rows) == 2 && all(f -> f[status_col] == "not_estimated" && f[status_col + 1] == "disabled", offcsv.rows)
+
+      # tap estimation per transformer on the Case page: one "estimate" box
+      # per transformer with a tap changer, the machine transformer
+      # unchecked. The save writes the unchecked PST into
+      # state_estimation.tap_estimation.exclude of the case configuration,
+      # the reloaded page posts the same choice, and the next SE run keeps
+      # the PST out (reason excluded, one run.log line). A checked machine
+      # transformer sets include_machine_transformers; the defaults leave
+      # both keys out of the file again.
+      browser_form = function (page, prefix)
+        # what a browser posts: unchecked boxes and disabled fields are
+        # left out, the last value of a name wins
+        out = Dict{String,Any}()
+        for m in eachmatch(r"<input [^>]*>", page)
+          tag = m.match
+          nm = match(r"name=\"([^\"]+)\"", tag)
+          (nm === nothing || !startswith(nm.captures[1], prefix) || occursin(" disabled", tag)) && continue
+          (occursin("type=\"checkbox\"", tag) && !occursin(" checked", tag)) && continue
+          v = match(r"value=\"([^\"]*)\"", tag)
+          out[String(nm.captures[1])] = v === nothing ? "" : String(v.captures[1])
+        end
+        return out
+      end
+      case_page() = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case?casefile=warmup_casePST.m", Dict{String,String}(); output_root=root, runtime=rt).body)
+      excl_key = "state_estimation.tap_estimation.exclude"
+      mach_key = "state_estimation.tap_estimation.include_machine_transformers"
+      tf = browser_form(case_page(), "se_tap_")
+      @test tf["se_tap_trafo_n"] == "2"
+      i_pst = only(i for i in 1:2 if tf["se_tap_trafo_$(i)_machine"] == "false")
+      i_gsu = 3 - i_pst
+      @test tf["se_tap_trafo_$(i_pst)_estimate"] == "true" && tf["se_tap_trafo_$(i_gsu)_estimate"] == "false"
+      pst_name = tf["se_tap_trafo_$(i_pst)_key"]
+      save_base = Dict{String,Any}("casefile" => "warmup_casePST.m", "settings_target" => "this_case", "return_to" => "case")
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(save_base, tf, Dict{String,Any}("se_tap_trafo_$(i_pst)_estimate" => "false")); output_root=root, runtime=rt).status == 303
+      excl_cfg = Sparlectra.load_case_config(case_path)
+      @test excl_cfg[excl_key] == [pst_name] && !haskey(excl_cfg, mach_key)
+      tf2 = browser_form(case_page(), "se_tap_")
+      @test tf2["se_tap_trafo_$(i_pst)_estimate"] == "false"
+      @test SparlectraApp._webui_tap_exclusions_from_form(tf2) == (exclude = [pst_name], include_machine = false)
+      rex = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      @test rex["status"] == "succeeded"
+      pst_rows = [t for t in rex["metadata"]["se_tap_estimates"] if t["name"] == pst_name]
+      @test !isempty(pst_rows) && all(t -> t["status"] == "not_estimated" && t["reason"] == "excluded", pst_rows)
+      @test rex["metadata"]["se_tap_excluded"] == 1 && rex["metadata"]["se_tap_machine"] == 1 && rex["metadata"]["se_tap_count"] == 0
+      @test occursin("transformer $(pst_name) (branch 8) excluded (state_estimation.tap_estimation.exclude)", read(joinpath(root, rex["run_id"], "run.log"), String))
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(save_base, tf2, Dict{String,Any}("se_tap_trafo_1_estimate" => "true", "se_tap_trafo_2_estimate" => "true")); output_root=root, runtime=rt).status == 303
+      inc_cfg = Sparlectra.load_case_config(case_path)
+      @test inc_cfg[mach_key] == true && !haskey(inc_cfg, excl_key)
+      @test SparlectraApp._webui_tap_exclusions_from_form(browser_form(case_page(), "se_tap_")) == (exclude = String[], include_machine = true)
+      rinc = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      @test rinc["status"] == "succeeded"
+      @test all(t -> t["reason"] != "machine_transformer" && t["reason"] != "excluded", rinc["metadata"]["se_tap_estimates"])
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(save_base, tf); output_root=root, runtime=rt).status == 303
+      def_cfg = Sparlectra.load_case_config(case_path)
+      @test !haskey(def_cfg, excl_key) && !haskey(def_cfg, mach_key)
+      # a machine transformer the case configuration names in exclude: the
+      # page shows it unchecked, a save without touching the table keeps the
+      # entry, and the run keeps it out without calculating it (excluded)
+      gsu_name = tf["se_tap_trafo_$(i_gsu)_key"]
+      Sparlectra.write_case_config(case_path, merge(def_cfg, Dict{String,Any}(excl_key => [gsu_name])))
+      tf3 = browser_form(case_page(), "se_tap_")
+      @test tf3["se_tap_trafo_$(i_gsu)_estimate"] == "false" && tf3["se_tap_trafo_$(i_gsu)_excluded"] == "true"
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(save_base, tf3); output_root=root, runtime=rt).status == 303
+      @test Sparlectra.load_case_config(case_path)[excl_key] == [gsu_name]
+      rgx = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      @test rgx["status"] == "succeeded"
+      gsu_rows = [t for t in rgx["metadata"]["se_tap_estimates"] if t["name"] == gsu_name]
+      @test !isempty(gsu_rows) && all(t -> t["status"] == "not_estimated" && t["reason"] == "excluded", gsu_rows)
+      @test SparlectraApp.route_sparlectra_webui("POST", "/powerflow/settings/save", merge(save_base, tf); output_root=root, runtime=rt).status == 303
+      @test !haskey(Sparlectra.load_case_config(case_path), excl_key)
+      # an exclude entry that names no transformer: one warning in run.log,
+      # no effect on the rows
+      rnk = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile, "config_overrides" => Dict{String,Any}(excl_key => ["no_such_trafo"])))
+      @test rnk["status"] == "succeeded"
+      @test occursin("WARNING: state_estimation.tap_estimation.exclude names 'no_such_trafo', which is no transformer of this case", read(joinpath(root, rnk["run_id"], "run.log"), String))
+      @test !any(t -> t["reason"] == "excluded", rnk["metadata"]["se_tap_estimates"])
 
       # bad data lands findable: gross error in the set -> the verdict
       # file flags the corrupted row of measurements.csv as eliminated,
@@ -834,12 +915,47 @@ function run_webui_state_estimation_tests()
       rzi = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
       @test rzi["status"] == "succeeded"
       @test rzi["metadata"]["se_eliminations"] == 0
+      # the numerics of the run under on: the gain matrix with its
+      # condition number in the metadata and in the run.log summary line,
+      # no multipliers; the form field is the configuration key
+      @test (rzi["metadata"]["se_zero_injection"], rzi["metadata"]["se_condition_matrix"], rzi["metadata"]["se_zero_injection_multipliers"]) == ("on", "gain", 0)
+      @test rzi["metadata"]["se_condition_number"] > 1.0
+      @test occursin("numerics: zero_injection on, condition number of the gain matrix", read(joinpath(root, rzi["run_id"], "run.log"), String))
+      @test !isfile(joinpath(root, rzi["run_id"], "se_zero_injection_multipliers.csv"))
+      zreq = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => case_path, "se_mode" => "true", "se_zero_injection_sigma_mva" => "0.01"))
+      @test zreq["config_overrides"]["state_estimation.zero_injection_sigma_mva"] == 0.01
+      # the SE flat start behind phase shifters is a configuration key as well
+      rreq = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => case_path, "se_mode" => "true", "se_rotate_behind_pst" => "true"))
+      @test rreq["config_overrides"]["state_estimation.start_mode.rotate_behind_pst"] === true
+      # the run's zero-injection sigma reaches the rows the service adds
+      # (the process default stays 1e-3): the set without its ZI rows, run
+      # with the key at 0.01, gets them back at 0.01 in measurements.csv
+      nozi = joinpath(root, "warmup_nozi.measurements.csv")
+      write(nozi, join([l for l in split(zi1, "\n") if startswith(l, "#") || !occursin("zero_injection", l)], "\n"))
+      rzs = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => nozi, "config_overrides" => Dict{String,Any}("state_estimation.zero_injection_sigma_mva" => 0.01)))
+      @test rzs["status"] == "succeeded"
+      @test rzs["metadata"]["se_zero_injection_rows"] > 0
+      @test occursin(r"zero injection: \d+ row\(s\) added .*sigma 0\.01 MW/Mvar per row", read(joinpath(root, rzs["run_id"], "run.log"), String))
+      zsig = [parse(Float64, split(l, ",")[7]) for l in eachline(joinpath(root, rzs["run_id"], "measurements.csv")) if !startswith(l, "#") && occursin("zero_injection", l)]
+      @test length(zsig) == rzs["metadata"]["se_zero_injection_rows"] && all(==(0.01), zsig)
       # a case on constraint (equality-constrained zero injection): the
       # box shows checked, a generation with the box checked keeps
       # constraint, unchecked writes off; checked again it is on
       @test [SparlectraApp._webui_normalize_case_profile_form_value("gen_passive_as_zi", v) for v in ("constraint", "off", "on")] == [true, false, true]
       SparlectraApp._webui_merge_case_settings!(root, case_path, Dict{String,Any}("gen_passive_as_zi" => "constraint"); config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case_directory=cases)
       @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :constraint
+      # a run of the case on constraint: the KKT matrix, and the
+      # multipliers per bus in se_zero_injection_multipliers.csv (the
+      # passive bus of warmup_casePST sits in a closed-link cluster and
+      # enters as its LINKAGG pair)
+      rcon = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      @test rcon["status"] == "succeeded"
+      @test (rcon["metadata"]["se_zero_injection"], rcon["metadata"]["se_condition_matrix"]) == ("constraint", "kkt")
+      nzi = rcon["metadata"]["se_zero_injection_multipliers"]
+      @test nzi > 0
+      zcsv = run_csv(joinpath(root, rcon["run_id"], "se_zero_injection_multipliers.csv"))
+      @test length(zcsv.rows) == nzi
+      @test all(row -> row[2] in ("zero_injection", "link_aggregate") && isfinite(zcsv.number(row[3])) && isfinite(zcsv.number(row[4])), zcsv.rows)
       mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "true"))
       @test Sparlectra._as_symbol_cfg(Sparlectra.load_case_config(case_path)["state_estimation.zero_injection"]) === :constraint
       mfile, mname = regenerate(Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_passive_as_zi" => "false"))
@@ -989,7 +1105,7 @@ function run_webui_state_estimation_tests()
       # reads like a broken statistic); an explicit false stays unchecked
       @test occursin("name=\"noise\" value=\"true\" checked", SparlectraApp.render_se_form(; cases=["case14.m"], selected_case="case14.m"))
       @test !occursin("name=\"noise\" value=\"true\" checked", SparlectraApp.render_se_form(; cases=["case14.m"], selected_case="case14.m", gen_values=Dict{String,String}("noise" => "false")))
-      rpst = start_powerflow_run(Dict{String,Any}("casefile" => pstcase, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => pstout, "se_tap_estimation" => true))
+      rpst = start_powerflow_run(Dict{String,Any}("casefile" => pstcase, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => pstout))
       @test rpst["status"] == "succeeded"
       @test rpst["metadata"]["se_band_reason"] == "ok"
       # the phase regulator of the PST (a nameplate Delta-u changer,
@@ -999,7 +1115,7 @@ function run_webui_state_estimation_tests()
       @test pstrow["step_fixed"] == 2
       @test abs(pstrow["s_est"] - 2.0) < 0.3
       gsurow = only(t for t in rpst["metadata"]["se_tap_estimates"] if t["branch"] == 7)
-      @test gsurow["source"] == "calculated"
+      @test gsurow["status"] == "calculated" && gsurow["reason"] == "machine_transformer"
     end)() end
 
     @testset "SE chain to power flow and N-1" begin (function ()

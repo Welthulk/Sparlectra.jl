@@ -46,6 +46,11 @@ Base.@kwdef struct StartModeConfig
   # from the reference; a run-level flat start switches it off for the whole
   # run (_flatstart_profile_config). See _ratio_profile_factors
   ratio_profile::Bool = true
+  # flat start (and a stored start without angles): a bus the reference
+  # reaches only across phase-shifting transformers starts at the slack angle
+  # plus the shift sum of a path with the fewest shifters
+  # (_flat_start_shift_angles); off, every bus starts at the slack angle
+  rotate_behind_pst::Bool = false
   reuse_import_data::Bool = true
   blend_lambdas::Vector{Float64} = [0.25, 0.5, 0.75]
   dc_angle_limit_deg::Float64 = 60.0
@@ -609,20 +614,102 @@ Base.@kwdef struct ObservabilityConfig
 end
 
 """
-    TapEstimationConfig(; impedance_correction = :auto)
+    BadDataConfig(; substitute_sigma_factor = 3.0)
+
+Settings of the `state_estimation.bad_data` block.
+
+`substitute_sigma_factor` (default 3.0, at least 1): a voltage measurement
+outside 0.5 to 1.5 pu (0 kV and non-finite values included) on a bus the
+switching state energizes is a gross error. Before the WLS it is replaced
+by a pseudo measurement at the imported state of the bus (the `SvVoltage`
+of a CGMES import, else 1.0 pu) whose sigma is the sigma of the row times
+this factor (reason `range_check_substituted`).
+
+Library callers set it for one call with
+`with_state_estimation_config(bad_data = Sparlectra.BadDataConfig(substitute_sigma_factor = 5.0)) do ... end`.
+"""
+Base.@kwdef struct BadDataConfig
+  # the substitute is a model value, not a reading: three times the sigma
+  # of the meter keeps it from pulling the bus harder than the meter would
+  # have, and leaves it well inside the WLS (default 3)
+  substitute_sigma_factor::Float64 = 3.0
+end
+
+"""
+    SEStartModeConfig(; rotate_behind_pst = false)
+
+Settings of the `state_estimation.start_mode` block, the start value of the
+estimator next to `state_estimation.flatstart`.
+
+`rotate_behind_pst` (default `false`): on the flat start a bus that the
+slack reaches only across phase-shifting transformers starts at the sum of
+their shifts on a path with the fewest shifters, a bus that a path without
+shifter reaches keeps the slack angle. The angles come from the same
+function as the power flow flat start under
+`power_flow.start_mode.rotate_behind_pst`. Off, every angle of the flat
+start is 0. No effect on a start from the stored state.
+
+Library callers set it for one call with
+`with_state_estimation_config(start_mode = Sparlectra.SEStartModeConfig(rotate_behind_pst = true)) do ... end`.
+"""
+Base.@kwdef struct SEStartModeConfig
+  rotate_behind_pst::Bool = false
+end
+
+"""
+    TapEstimationConfig(; enabled = true, fallback = true, impedance_correction = :auto, exclude = String[], include_machine_transformers = false)
 
 Settings of the transformer tap estimation, the
 `state_estimation.tap_estimation` block of the configuration.
 
+`enabled` (default `true`) switches the tap estimation on. With `false` no
+regulator becomes a state, even one released with `setTapEstimation!`:
+every changer keeps its transferred step, nothing is written back, and each
+released changer is reported with `status = :not_estimated`,
+`reason = :disabled`.
+
+`fallback` (default `true`): when the run with tap estimation does not
+converge (the estimation run, the fixation run, or non-finite values),
+`runse!` solves once more without tap estimation on the same measurements
+and start values, and that second run is the result
+(`tapFixation.fallback_used`, every changer `reason = :fallback_not_converged`).
+The SE service also falls back when the fixed estimate fits worse than its
+staged pre-solve (acceptance rule `worse_fit`, `reason = :fallback_worse_fit`).
+With `false` neither runs and the first run is returned as it is.
+
 `impedance_correction` (`:auto` or `:off`, see
-`STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES`) decides whether a
-released regulator moves the transformer impedance with its step. `:auto`
-uses the per-step data the model has (tap table rows, the reactance curve of
-a phase tap changer with `xMin`/`xMax`, `TapStepImpedance` factors, and the
-impedance correction of typed models under
-`model.tap_changer_model = impedance_correction`); `:off` keeps the
-impedance of the start position. There is no `:on`: without per-step data
-there is no curve to force.
+`STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES`) acts on the analytic
+correction only. A transformer with per-step data (tap table rows with r
+and x, the reactance curve of a phase tap changer with `xMin`/`xMax`,
+`TapStepImpedance` factors) always moves its impedance with the step by
+these data, and the analytic correction is off for it under both values.
+A typed model follows the power flow (`resolve_winding_taps`): its
+`x_min`/`x_max` curve or x table follows the step under both values, and
+the correction factor on r next to the curve applies under `:auto` only.
+Without per-step data `:auto` applies the impedance correction of typed
+models under `model.tap_changer_model = impedance_correction`, and `:off`
+keeps the impedance of the start position. The rows of `tapEstimates` name
+the source per transformer (`reactance_source`: `:table`, `:analytic`,
+`:nominal`).
+
+`exclude` (default empty) lists transformers that never become tap states,
+by name or CGMES mRID. Such a changer keeps its transferred step and is
+reported with `status = :not_estimated`, `reason = :excluded`; its step is
+not calculated either. An entry that matches no transformer of the net gives
+a warning naming it (`runse!`, `runse_diagnostics`, the SE service).
+
+`include_machine_transformers` (default `false`): a machine (generator
+step-up) transformer is not estimated. Its step is calculated after the
+estimation from the AVR setpoint and the machine telemetry (the method of
+`calcMachineTrafoTapFromSE`, run by `runse!` with `update_net = true`),
+`status = :calculated`, `reason = :machine_transformer`; without a result it
+stays `:not_estimated` with that reason. Without a Q measurement on every
+bus of the machine node it stays `:not_estimated` with
+`reason = :q_not_measured_in_group` and its transferred step; without a P
+measurement the scheduled P is used (`note = :p_from_schedule`). `true` estimates machine
+transformers like the others. Both keys act on released changers, also on
+one released with `setTapEstimation!`, also in the run of the fallback; with
+`enabled = false` every changer says `:disabled` and nothing is calculated.
 
 Library callers set it for one call with
 `with_state_estimation_config(tap_estimation = TapEstimationConfig(impedance_correction = :off)) do ... end`.
@@ -630,7 +717,11 @@ The keyword constructor does not validate; the configuration parser and the
 override validation refuse other values with the key named.
 """
 Base.@kwdef struct TapEstimationConfig
+  enabled::Bool = true
+  fallback::Bool = true
   impedance_correction::Symbol = :auto
+  exclude::Vector{String} = String[]
+  include_machine_transformers::Bool = false
 end
 
 """
@@ -661,6 +752,29 @@ struct SESigmaLevel
 end
 
 SESigmaLevel(; vn_kv, p_mw = nothing, q_mvar = nothing, i_a = nothing, u_kv = nothing, rel_pct = 0.0) = _parse_sigma_level_row("row", _sigma_level_vn("row", vn_kv), Dict{String,Any}("p_mw" => p_mw, "q_mvar" => q_mvar, "i_a" => i_a, "u_kv" => u_kv, "rel_pct" => rel_pct))
+
+"""
+    ZERO_INJECTION_SIGMA
+
+Default sigma of a zero-injection pseudo-measurement in MVA (MW for the
+active, Mvar for the reactive row), the unit of the injection rows.
+
+A passive bus injects nothing, so the row is a CONSTRAINT rather than a
+reading, and the sigma only says how hard it is enforced. The former 1e-6
+means a weight of 1e12, and on a large network that is not "tight", it is
+crushing: on a 25000-bus case with 27268 such rows the estimation did not
+converge in 30 iterations, reported an objective of 3.8e15 per degree of
+freedom and losses 2069 percent above the reference. The same set with 1e-3
+converges in 7 iterations to J/dof 4.97 and losses within 0.02 percent.
+
+1e-3 still binds the bus far tighter than any real transducer (the tightest
+real rows in that set carry 0.01), while leaving the normal equations
+solvable.
+
+It is the default of `state_estimation.zero_injection_sigma_mva`, the sigma
+the code that adds zero-injection rows reads. Change the default here.
+"""
+const ZERO_INJECTION_SIGMA = 1.0e-3
 
 """
     StateEstimationConfig
@@ -701,6 +815,9 @@ Base.@kwdef struct StateEstimationConfig
   # the result, which is what made 30 look sufficient.
   max_iter::Int = 50
   flatstart::Bool = true
+  # start_mode.rotate_behind_pst: the flat start turned behind phase
+  # shifters like the power flow flat start (SEStartModeConfig)
+  start_mode::SEStartModeConfig = SEStartModeConfig()
   jac_eps::Float64 = 1.0e-6
   update_net::Bool = true
   pmu_ref_offset::Symbol = :auto
@@ -722,6 +839,13 @@ Base.@kwdef struct StateEstimationConfig
   # :constraint adds the same rows and solves every ZI row as an equality
   # constraint (Lagrange), :off adds none
   zero_injection::Symbol = :on
+  # sigma of one zero-injection row under zero_injection = on, in MVA (MW,
+  # Mvar), the unit of the injection rows. Default ZERO_INJECTION_SIGMA, the
+  # value every ZI row carried before the key existed. Read where ZI rows
+  # are made: addZeroInjectionMeasurements!, applyMeasurementSet!, the
+  # measurement generator (as its floor) and the sigma floor of a
+  # measurement table.
+  zero_injection_sigma_mva::Float64 = ZERO_INJECTION_SIGMA
   # measurement sigmas per voltage level in physical units, keyed by the
   # nominal voltage in the file (rows sorted by vn_kv, highest first); empty: every row without its own sigma takes the
   # global default, as before the key existed
@@ -759,10 +883,12 @@ Base.@kwdef struct StateEstimationConfig
   suppression_sigma::Float64 = 2000.0
   # budget of the sequential elimination: how many rows one diagnostics run
   # may remove at most. Not a threshold but a stop condition, so it is an
-  # Int and 0 disables the elimination entirely. 3 is the historical
-  # default; a set that needs more than three removals to become plausible
-  # is usually a model or topology problem, not bad telemetry.
-  max_eliminations::Int = 3
+  # Int and 0 disables the elimination entirely. One row per round, so this
+  # is also the round limit of the elimination loop: at most 5 rounds
+  # (since the range check of the voltage measurements; the default was 3
+  # before). A set that needs more removals to become plausible is usually a
+  # model or topology problem, not bad telemetry.
+  max_eliminations::Int = 5
   rank_tol_factor::Float64 = 10.0
   takahashi_min_states::Int = 200
   # sparse LU of the WLS normal equations when the gain matrix is not
@@ -803,6 +929,7 @@ Base.@kwdef struct StateEstimationConfig
   topology_cluster_min::Int = 3
   observability::ObservabilityConfig = ObservabilityConfig()
   tap_estimation::TapEstimationConfig = TapEstimationConfig()
+  bad_data::BadDataConfig = BadDataConfig()
 end
 
 """
@@ -1574,7 +1701,7 @@ matpower_export_config()::MatpowerExportConfig = active_sparlectra_config().matp
 
 The `model` section of the active configuration: how an imported case
 becomes a network (bus shunt model, tap changer model, auto profile,
-net cache, preallocation, nominal frequency).
+preallocation, nominal frequency).
 """
 model_config()::ModelConfig = active_sparlectra_config().model
 """
@@ -1735,6 +1862,11 @@ end
 function _validate_positive(name::AbstractString, value::Real)
   value > 0 || throw(ArgumentError("$(name) must be positive; got $(value)."))
   return value
+end
+
+function _validate_finite_positive(name::AbstractString, value::Real)
+  (isfinite(value) && value > 0) || throw(ArgumentError("$(name) must be finite and positive; got $(value)."))
+  return Float64(value)
 end
 
 ## state_estimation.sigma_by_voltage_level. One row per voltage level, keyed
@@ -1959,6 +2091,7 @@ function StartModeConfig(raw::AbstractDict)
     accept_unmeasured_dc_start = _as_bool_cfg(_raw_get(raw, "accept_unmeasured_dc_start", _raw_get(raw, "start_projection_accept_unmeasured_dc_start", false))),
     dc_seed_unconditional = _as_bool_cfg(_raw_get(raw, "dc_seed_unconditional", false)),
     ratio_profile = _as_bool_cfg(_raw_get(raw, "ratio_profile", true)),
+    rotate_behind_pst = _as_bool_cfg(_raw_get(raw, "rotate_behind_pst", false)),
     reuse_import_data = _as_bool_cfg(_raw_get(raw, "reuse_import_data", _raw_get(raw, "start_projection_reuse_import_data", true))),
     blend_lambdas = _as_float_vector_cfg(_raw_get(raw, "blend_lambdas", _raw_get(raw, "start_projection_blend_lambdas", [0.25, 0.5, 0.75]))),
     dc_angle_limit_deg = _validate_positive("start_projection_dc_angle_limit_deg", _as_float_cfg(_raw_get(raw, "dc_angle_limit_deg", _raw_get(raw, "start_projection_dc_angle_limit_deg", 60.0)))),
@@ -2299,15 +2432,42 @@ function ObservabilityConfig(raw::AbstractDict)
   return ObservabilityConfig(enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)))
 end
 
+# `raw` is the merged state_estimation section. A factor below 1 would make
+# the substitute of an implausible voltage more trusted than the meter.
+function BadDataConfig(raw::AbstractDict)
+  merged = _merged_section(raw, "bad_data")
+  key = "state_estimation.bad_data.substitute_sigma_factor"
+  f = Float64(_validate_positive(key, _as_float_cfg(_raw_get(merged, "substitute_sigma_factor", 3.0))))
+  (isfinite(f) && f >= 1.0) || throw(ArgumentError("$(key) must be a finite number >= 1; got $(f)."))
+  return BadDataConfig(substitute_sigma_factor = f)
+end
+
+# `raw` is the merged state_estimation section; a scalar where the block
+# belongs (`start_mode: true`) is refused with the full path
+function SEStartModeConfig(raw::AbstractDict)
+  section = _raw_get(raw, "start_mode", nothing)
+  section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.start_mode must be a block with the key rotate_behind_pst; got $(repr(section))."))
+  merged = _merged_section(raw, "start_mode")
+  return SEStartModeConfig(rotate_behind_pst = _as_bool_cfg(_raw_get(merged, "rotate_behind_pst", false)))
+end
+
 # `raw` is the merged state_estimation section. A scalar where the block
 # belongs (`tap_estimation: true`, the shape of the Web UI checkbox) is
 # refused with the full path; `_raw_section` would name only "tap_estimation".
 function TapEstimationConfig(raw::AbstractDict)
   section = _raw_get(raw, "tap_estimation", nothing)
-  section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.tap_estimation must be a block with the key impedance_correction; got $(repr(section))."))
+  section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.tap_estimation must be a block with the keys enabled, fallback, impedance_correction, exclude and include_machine_transformers; got $(repr(section))."))
   merged = _merged_section(raw, "tap_estimation")
   key = "state_estimation.tap_estimation.impedance_correction"
-  return TapEstimationConfig(impedance_correction = _validate_allowed_symbol(key, _as_symbol_cfg(_raw_get(merged, "impedance_correction", :auto)), STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES))
+  return TapEstimationConfig(
+    enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
+    fallback = _as_bool_cfg(_raw_get(merged, "fallback", true)),
+    impedance_correction = _validate_allowed_symbol(key, _as_symbol_cfg(_raw_get(merged, "impedance_correction", :auto)), STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES),
+    # a YAML list, or one string with ";" between the entries (a dotted
+    # override); the same reader as powsybl_import.slack_ids
+    exclude = _powsybl_id_list(_raw_get(merged, "exclude", nothing)),
+    include_machine_transformers = _as_bool_cfg(_raw_get(merged, "include_machine_transformers", false)),
+  )
 end
 
 function StateEstimationConfig(raw::AbstractDict)
@@ -2329,6 +2489,7 @@ function StateEstimationConfig(raw::AbstractDict)
     tol = _validate_positive("state_estimation.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-6))),
     max_iter = _as_int_cfg(_raw_get(merged, "max_iter", 50)),
     flatstart = _as_bool_cfg(_raw_get(merged, "flatstart", true)),
+    start_mode = SEStartModeConfig(merged),
     jac_eps = _validate_positive("state_estimation.jac_eps", _as_float_cfg(_raw_get(merged, "jac_eps", 1.0e-6))),
     update_net = _as_bool_cfg(_raw_get(merged, "update_net", true)),
     pmu_ref_offset = _validate_allowed_symbol("state_estimation.pmu_ref_offset", _as_symbol_cfg(_raw_get(merged, "pmu_ref_offset", :auto)), STATE_ESTIMATION_PMU_REF_OFFSET_VALUES),
@@ -2338,6 +2499,7 @@ function StateEstimationConfig(raw::AbstractDict)
     update_taps = _as_bool_cfg(_raw_get(merged, "update_taps", false)),
     measurement_table = _as_bool_cfg(_raw_get(merged, "measurement_table", true)),
     zero_injection = _validate_allowed_symbol("state_estimation.zero_injection", _as_symbol_cfg(_raw_get(merged, "zero_injection", :on)), STATE_ESTIMATION_ZERO_INJECTION_VALUES),
+    zero_injection_sigma_mva = _validate_finite_positive("state_estimation.zero_injection_sigma_mva", _as_float_cfg(_raw_get(merged, "zero_injection_sigma_mva", ZERO_INJECTION_SIGMA))),
     sigma_by_voltage_level = _parse_sigma_by_voltage_level(_raw_get(merged, "sigma_by_voltage_level", nothing)),
     robust = se_robust,
     robust_start_iteration = Int(_validate_positive("state_estimation.robust_start_iteration", _as_int_cfg(_raw_get(merged, "robust_start_iteration", 3)))),
@@ -2347,7 +2509,7 @@ function StateEstimationConfig(raw::AbstractDict)
     robust_k2 = se_robust_k2,
     k_suppress = Float64(_validate_positive("state_estimation.k_suppress", _as_float_cfg(_raw_get(merged, "k_suppress", 4.0)))),
     suppression_sigma = Float64(_validate_positive("state_estimation.suppression_sigma", _as_float_cfg(_raw_get(merged, "suppression_sigma", 2000.0)))),
-    max_eliminations = Int(_validate_nonnegative("state_estimation.max_eliminations", _as_int_cfg(_raw_get(merged, "max_eliminations", 3)))),
+    max_eliminations = Int(_validate_nonnegative("state_estimation.max_eliminations", _as_int_cfg(_raw_get(merged, "max_eliminations", 5)))),
     rank_tol_factor = Float64(_validate_positive("state_estimation.rank_tol_factor", _as_float_cfg(_raw_get(merged, "rank_tol_factor", 10.0)))),
     takahashi_min_states = Int(_validate_positive("state_estimation.takahashi_min_states", _as_int_cfg(_raw_get(merged, "takahashi_min_states", 200)))),
     linear_solver = _validate_allowed_symbol("state_estimation.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack)), STATE_ESTIMATION_LINEAR_SOLVER_VALUES),
@@ -2363,6 +2525,7 @@ function StateEstimationConfig(raw::AbstractDict)
     topology_cluster_min = Int(_validate_positive("state_estimation.topology_cluster_min", _as_int_cfg(_raw_get(merged, "topology_cluster_min", 3)))),
     observability = ObservabilityConfig(merged),
     tap_estimation = TapEstimationConfig(merged),
+    bad_data = BadDataConfig(merged),
   )
 end
 
@@ -3445,7 +3608,7 @@ function _print_config_section(io::IO, name::AbstractString, value; indent::Abst
   child_indent = string(indent, "  ")
   for field in fieldnames(typeof(value))
     field_value = getfield(value, field)
-    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig
+    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig || field_value isa BadDataConfig
       _print_config_section(io, String(field), field_value; indent = child_indent)
     else
       println(io, child_indent, field, ": ", field_value)

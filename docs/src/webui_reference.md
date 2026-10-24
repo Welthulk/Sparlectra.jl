@@ -449,8 +449,8 @@ for an import analysis.
 
 #### [Flat start](@id webui-flat-start)
 
-`power_flow.flatstart` starts the Newton-Raphson solve at 1.0 pu and 0
-degrees on every bus and ignores the imported start voltages (MATPOWER
+`power_flow.flatstart` starts the Newton-Raphson solve at 1.0 pu and the
+slack angle on every bus and ignores the imported start voltages (MATPOWER
 `VM`/`VA`, CGMES `SvVoltage`, SCF `start_state`). Off, the imported values
 seed the solve; a delivery is built around its own operating point, so
 that is the default.
@@ -463,6 +463,14 @@ and the APSLF start follow their own checkboxes.
 
 Three-winding star points start at the ratio of their stiffest winding on
 every flat start; all other buses stay flat.
+
+**Flat start turned behind phase shifters**
+(`power_flow.start_mode.rotate_behind_pst`, off by default) starts a bus
+that the slack reaches only across phase-shifting transformers at the slack
+angle plus the shifts of a path with the fewest shifters, on a flat start
+and on a stored start without angles. A bus that a path without shifter
+reaches keeps the slack angle. See
+[Start strategies by case](start_strategies.md).
 
 **Ratio profile as a start candidate** (`power_flow.start_mode.ratio_profile`,
 on by default) is a candidate of the start projection: the flat profile
@@ -629,22 +637,48 @@ version comment) and renders the
 `sparlectra-taps v1` tap table of a generated file. **Add noise to this
 set** perturbs each value with the sigma its own row declares. **Reset
 saved settings** under the generator deletes the per-case settings
-sidecar. **estimate taps** (on by default when the case has tap changers, that is
-a declared changer on a transformer that is no machine transformer)
+sidecar. **estimate taps** (`state_estimation.tap_estimation.enabled` of
+the case, on by default)
 releases every tap changer, ratio and phase, of every in-service
-transformer except machine transformers; the result page shows one row per
+transformer; off, every changer keeps its transferred step. A changer whose
+step the measurements do not determine is not estimated and keeps its
+transferred step (status `not_estimated` with the reason), see
+[Observability per changer](@ref se-tap-observability). Which
+transformers are estimated is set per transformer on the Case page
+(section **State estimation: tap estimation per transformer**): one
+"estimate" checkbox per transformer with a tap changer, machine
+transformers unchecked by default. **Save case options** writes the
+unchecked ones into `state_estimation.tap_estimation.exclude` of the case
+configuration and sets `include_machine_transformers` when a machine
+transformer is checked; every SE run of the case reads both. A machine
+transformer already named in `exclude` stays there on a save. An excluded
+transformer keeps its transferred step (reason `excluded`). A machine
+transformer is calculated after the estimation (status `calculated`) when
+Q is measured on every bus of its machine node; otherwise it keeps its
+step (reason `q_not_measured_in_group`), see
+[Tap estimation per transformer](@ref se-tap-exclude). The result page
+shows one row per
 tap changer (estimated step, Delta U, ratio, angle, model and fixed step,
-deviation) and the J change of the fixation.
+deviation, status with its reason) and the J change of the fixation.
+**tap fallback** (`state_estimation.tap_estimation.fallback`, on) runs once
+more without tap estimation when the run with it does not converge or its
+fixed steps fit worse than the staged pre-solve (`worse_fit`); the result
+page then shows one line above the tap table, see
+[Tap estimation switch and fallback](@ref se-tap-fallback).
 **tap impedance per step** (`auto`, `off`) is
 `state_estimation.tap_estimation.impedance_correction` of the case, see
-[Transformer tap estimation](@ref se-tap-estimation). The
+[Transformer tap estimation](@ref se-tap-estimation).
+**zero-injection sigma** is `state_estimation.zero_injection_sigma_mva` of
+the case, the sigma of one zero-injection row under `zero_injection = on`,
+see [Zero injections and coupler balances](@ref se_zero_injection). The
 form warns when `k_suppress < k_eliminate`, because suppressed rows then
 rarely reach the elimination.
 
 Artifacts (`measurements.csv`, `measurements_verdict.csv`,
 `se_diagnostics.md`, `se_view.md`, `se_state.csv`, `shunt_estimates.csv`,
-`se_tap_estimates.csv`, `se_deltas.csv`, `se_link_flows.csv`) land in the run history with kind
-`se`. `measurements.csv` is the estimated set as a measurement table and
+`se_tap_estimates.csv`, `se_deltas.csv`, `se_link_flows.csv`, and under
+`zero_injection = constraint` `se_zero_injection_multipliers.csv`) land in
+the run history with kind `se`. `measurements.csv` is the estimated set as a measurement table and
 can be picked as the measurement set of a new run; the verdict per row
 (residual, normalized residual, eliminated, reason) is in
 `measurements_verdict.csv`, one click away on the result page (see

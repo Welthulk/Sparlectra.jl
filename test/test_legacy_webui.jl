@@ -290,16 +290,17 @@ function run_legacy_webui_tests()
             @test get(run_solver, "success", false) === true
             @test occursin("power_flow.solver=apslf runs without controllers", read(joinpath(run_solver["output_dir"], "run.log"), String))
 
-            # "estimate taps" is checked by default when the case has tap
-            # changers (sp_case14: nameplate rows on two transformers) and
-            # unchecked for a case without any (feeder3_hardpv_A:
-            # lines only); a value saved for the case wins over that default
+            # "estimate taps" is the key state_estimation.tap_estimation.enabled,
+            # checked by its default true on a case with tap changers
+            # (sp_case14) and on one without (feeder3_hardpv_A, lines
+            # only, where it has nothing to release); a value saved for the
+            # case wins over that default
             f3 = "feeder3_hardpv_A.scf.json"
             cp(abspath(joinpath(dirname(@__DIR__), "data", "scf", f3)), joinpath(casedir, f3))
             SparlectraApp._se_generate_measurement_set(joinpath(casedir, f3), joinpath(casedir, "feeder3_hardpv_A.measurements.csv"), SparlectraApp.MeasurementGeneratorOptions(; noise=false, gross_k=0.0, tap_steps=0.0, include_i=false, sigma_u_pct=0.5, sigma_i_pct=1.0, sigma_p_pct=1.0, sigma_q_pct=1.0, sigma_ia_deg=0.0))
             tapbox(case) = match(r"name=\"se_tap_estimation\" value=\"true\"( checked)?>", String(copy(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=$(case)"; output_root=root, runtime=rt).body)))
             @test tapbox("sp_case14.scf.json") !== nothing && tapbox("sp_case14.scf.json")[1] !== nothing
-            @test tapbox(f3) !== nothing && tapbox(f3)[1] === nothing
+            @test tapbox(f3) !== nothing && tapbox(f3)[1] !== nothing
             SparlectraApp._webui_merge_case_settings!(root, joinpath(casedir, "sp_case14.scf.json"), Dict{String,Any}("se_tap_estimation" => false); config_file=Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, case_directory=casedir)
             @test tapbox("sp_case14.scf.json")[1] === nothing
         end)() end

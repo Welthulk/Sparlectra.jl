@@ -31,6 +31,7 @@ constructors.
 - `baseMVA::Float64`: Base MVA of the network.
 - `nominal_frequency_hz::Float64`: System frequency in Hz. Read where a value given per capacitance becomes a susceptance (`addACLinePerKm!`, the line `c1` of an SCF or PGM file). Set by an SCF file (`meta.f_nom`), otherwise by `model.nominal_frequency_hz` at import (default 50).
 - `_frequency_used::Bool`: `true` once a nonzero capacitance became a susceptance with `nominal_frequency_hz`; a network without capacitance in farad (pu values, or `c1 = 0`) leaves it `false`. Read by `nominal_frequency_line` for the run header.
+- `_sv_vm_pu::Dict{Int,Float64}`: bus voltage magnitudes of the imported state in pu by bus index (the `SvVoltage` of a CGMES import), empty for other sources; the substitute of the state-estimation range check.
 - `slackVec::Vector{Int}`: Vector containing indices of slack buses.
 - `vmin_pu::Float64`: Minimum voltage limit in per unit.
 - `vmax_pu::Float64`: Maximum voltage limit in per unit.
@@ -46,7 +47,7 @@ constructors.
 - `busOriginalNameDict::Dict{Int,String}`: Optional original source-file bus names keyed by current bus index.
 - `totalLosses::Vector{Tuple{Float64,Float64}}`: Vector containing tuples of total power losses.
 - `_locked::Bool`: Boolean indicating if the network is locked.
-- `flatstart::Bool`: start mode of the power flow (1 pu and 0 degrees instead of the stored bus voltages).
+- `flatstart::Bool`: start mode of the power flow (1 pu, and 0 degrees plus the transformer phase shifts on the path from the reference, instead of the stored bus voltages).
 - `bus_shunt_model::Symbol`: how bus shunts enter the power flow (`:admittance` or `:voltage_dependent_injection`).
 - `measurements::Vector`: State-estimation measurements stored on the network.
 - `matpower_branch_metadata::Dict{Int,NamedTuple}`: Optional MATPOWER branch metadata keyed by imported branch index.
@@ -186,6 +187,18 @@ mutable struct Net
   # with susceptances in pu never reads the frequency, and the run header
   # says so
   _frequency_used::Bool
+  # link measurement rows of a state-estimation working net (0.60.0): the
+  # row models `_se_prepare` builds when it contracts closed-link clusters,
+  # read by the prediction of the rows and by a nested `_se_prepare` on the
+  # same working net (diagnostics). `nothing` on every other net. Session
+  # state like `_power_cache`, not model data.
+  _se_link_rows::Any
+  # the bus voltage magnitudes of the imported state in pu, keyed by bus
+  # index: the SvVoltage of a CGMES import (_ensureBus!), empty for nets
+  # from other sources. Unlike _vm_pu of the nodes no solve overwrites it;
+  # the range check of the state estimation takes it as the substitute of
+  # an implausible voltage measurement (1.0 pu where it has no entry).
+  _sv_vm_pu::Dict{Int,Float64}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance, nominal_frequency_hz::Real = model_config().nominal_frequency_hz)
@@ -241,7 +254,9 @@ mutable struct Net
         nothing,                                   # _power_cache
         Int[],                                     # _marked_iso
         false,                                     # _frequency_from_case
-        false)                                     # _frequency_used
+        false,                                     # _frequency_used
+        nothing,                                   # _se_link_rows
+        Dict{Int,Float64}())                       # _sv_vm_pu
   end
   #! format: on
   function Base.show(io::IO, net::Net)
@@ -2840,22 +2855,132 @@ function ensureSlack!(net::Net; log::Bool = true)::Union{Nothing,Int}
   return bus
 end
 
+# Flat-start angle of every bus in radians: the transformer phase shifts on a
+# path from the reference bus `slack_idx` that crosses the FEWEST phase
+# shifters (0-1 breadth-first search over the in-service branches: a branch
+# without shift costs 0, a shifting branch 1). A bus reachable without
+# crossing a shifter keeps 0; a bus reachable only across shifters gets the
+# shift sum of the first such path the search finds. A branch with the
+# complex ratio t = |t| e^(j phi) (calcBranchRatio, the ratio the Ybus
+# stamps) carries no current at V_to = V_from / t, so the step from its from
+# bus to its to bus subtracts phi and the reverse step adds it. Buses the
+# search does not reach (another island) keep 0. Returns `nothing` when no
+# in-service branch has a phase shift, so such a net keeps its flat start
+# vector bit-identical. On a radial net the path is unique, so the rule
+# only matters in a mesh.
+# Why: with every angle at 0, a 110/20 kV transformer with a 30 degree shift
+# puts the whole shift across its series impedance, and Newton from there
+# converged to the low-voltage root of the load equations (0.044 pu instead
+# of 0.953 pu on the 3-bus net of the pf flat-start test). Why the fewest
+# shifters: in a mesh a parallel path without shifter fixes the angle, so a
+# bus turned by a shifter on that mesh starts the whole shift across the
+# parallel path; the stamped 90 degree equivalent branch B1-B3 next to the
+# lines B1-B2-B3 of the cgmes test "EquivalentBranch with negative
+# parameters" started B3 at 90 degrees and runpf! converged 0.87 pu off.
+function _flat_start_shift_angles(net::Net, slack_idx::Int)::Union{Nothing,Vector{Float64}}
+  n = length(net.nodeVec)
+  _has_in_service_phase_shift(net) || return nothing
+  # (neighbour, angle step, shifting)
+  adjacency = [Tuple{Int,Float64,Bool}[] for _ = 1:n]
+  for br in net.branchVec
+    br.status == 1 || continue
+    f = Int(br.fromBus)
+    t = Int(br.toBus)
+    (1 <= f <= n && 1 <= t <= n && f != t) || continue
+    phi = angle(calcBranchRatio(br))
+    # a non-finite ratio is no path (the bus keeps 0 unless another branch reaches it)
+    isfinite(phi) || continue
+    push!(adjacency[f], (t, -phi, phi != 0.0))
+    push!(adjacency[t], (f, phi, phi != 0.0))
+  end
+  theta = fill(NaN, n)
+  theta[slack_idx] = 0.0
+  # level c holds every bus whose best path crosses c shifters: first the
+  # closure over the branches without shift, then one shifting branch to the
+  # buses not yet reached, which form level c + 1
+  frontier = [slack_idx]
+  while !isempty(frontier)
+    level = frontier
+    head = 1
+    while head <= length(level)
+      k = level[head]
+      head += 1
+      for (j, _, shifting) in adjacency[k]
+        (shifting || !isnan(theta[j])) && continue
+        theta[j] = theta[k]
+        push!(level, j)
+      end
+    end
+    frontier = Int[]
+    for k in level, (j, step, shifting) in adjacency[k]
+      (shifting && isnan(theta[j])) || continue
+      theta[j] = theta[k] + step
+      push!(frontier, j)
+    end
+  end
+  @inbounds for k in eachindex(theta)
+    isnan(theta[k]) && (theta[k] = 0.0)
+  end
+  return theta
+end
+
+# true when an in-service branch carries a phase shift (the complex ratio
+# calcBranchRatio stamps into the Ybus has a nonzero angle)
+_has_in_service_phase_shift(net::Net)::Bool = any(br -> br.status == 1 && angle(calcBranchRatio(br)) != 0.0, net.branchVec)
+
+# true when a start vector holds no angle: every bus but the slack at
+# 0 degrees (the addBus! default, an unsolved case file) or at the slack
+# angle `va_slack` in radians (a flat start, the start a model-only MATPOWER
+# export writes when the slack angle is not 0). The second test has a
+# tolerance because the export writes the angle in degrees and the read-back
+# converts it again (a few ulp). Used by initialVrect and by the wrong-branch
+# hint of the rectangular solver (_wrong_branch_pst_start_hint).
+function _start_without_angles(V0::AbstractVector{ComplexF64}, slack_idx::Int, va_slack::Float64 = angle(V0[slack_idx]))::Bool
+  no_angle(k) = k == slack_idx || angle(V0[k]) == 0.0 || abs(angle(V0[k] * cis(-va_slack))) <= 1e-12
+  return all(no_angle, eachindex(V0))
+end
+
 """
-    initialVrect(net) -> (V0, slack_idx)
+    initialVrect(net; flatstart = net.flatstart, rotate_behind_pst = false) -> (V0, slack_idx)
 
 Build the initial complex voltage vector V0 from the network bus data
 (Vm, Va), and detect the slack bus index.
+
+With `flatstart = true` every PQ bus starts at 1.0 pu, PV buses at their
+stored magnitude, and the slack keeps its magnitude and angle. Every other
+bus starts at the slack angle. With `rotate_behind_pst = true`
+(`power_flow.start_mode.rotate_behind_pst`, default `false`) a bus that the reference reaches
+only across phase-shifting transformers gets the slack angle plus the sum
+of the shifts on a path with the fewest shifters
+(`_flat_start_shift_angles`); a bus that a path without shifter reaches
+keeps the slack angle, since in a mesh the parallel path fixes its angle.
+On a radial net no shifter then carries its shift across its series
+impedance at the start.
+
+With `flatstart = false` the stored Vm and Va are used. A stored start that
+holds no angle (every bus but the slack at 0 degrees, the `addBus!`
+default or an unsolved case file, or at the slack angle, the flat start of a
+model-only MATPOWER export) on a net with phase shifters gets the
+angles of the flat start when `rotate_behind_pst = true`, since it puts the
+whole shift across the transformer impedance in the same way. With
+`rotate_behind_pst = false` no bus is turned, and the whole shift of a
+phase shifter lies across its series impedance at the start.
 
 Returns:
 - V0::Vector{ComplexF64}
 - slack_idx::Int
 """
-function initialVrect(net::Net; flatstart::Bool = net.flatstart)
+function initialVrect(net::Net; flatstart::Bool = net.flatstart, rotate_behind_pst::Bool = false)
   nodes = net.nodeVec
   n = length(nodes)
 
   slack_idx = findfirst(n -> getNodeType(n) == Slack, nodes)
   slack_idx === nothing && error(_no_slack_message("initialVrect", net))
+  slack_node = nodes[slack_idx]
+  # the reference angle the flat profile counts from (radians)
+  va_slack = deg2rad(slack_node._va_deg === nothing ? 0.0 : Float64(slack_node._va_deg))
+  # nothing on a net without phase shift, so its start stays bit-identical
+  theta = rotate_behind_pst && flatstart ? _flat_start_shift_angles(net, slack_idx) : nothing
 
   V0 = Vector{ComplexF64}(undef, n)
 
@@ -2870,21 +2995,35 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart)
         # The slack/reference bus remains fixed during the solve. Even for a
         # flat start, keep its imported or explicitly configured reference
         # angle together with its voltage magnitude.
-        va_deg = (node._va_deg === nothing) ? 0.0 : Float64(node._va_deg)
-        va = deg2rad(va_deg)
-        V0[k] = ComplexF64(vm * cos(va), vm * sin(va))
-      elseif getNodeType(node) == PV
-        # Flat start resets non-reference angles, but keeps voltage magnitude
-        # setpoints for PV buses. PQ-bus magnitudes remain the flat 1.0 pu guess.
-        V0[k] = ComplexF64(vm, 0.0)
+        V0[k] = ComplexF64(vm * cos(va_slack), vm * sin(va_slack))
       else
-        V0[k] = ComplexF64(1.0, 0.0)
+        # Flat start resets non-reference angles to the profile, but keeps
+        # voltage magnitude setpoints for PV buses. PQ-bus magnitudes remain
+        # the flat 1.0 pu guess.
+        mag = getNodeType(node) == PV ? vm : 1.0
+        va = theta === nothing ? va_slack : va_slack + theta[k]
+        V0[k] = va == 0.0 ? ComplexF64(mag, 0.0) : ComplexF64(mag * cos(va), mag * sin(va))
       end
     else
       # Use stored angle if available, else 0
       va_deg = (node._va_deg === nothing) ? 0.0 : Float64(node._va_deg)
       va = deg2rad(va_deg)
       V0[k] = ComplexF64(vm * cos(va), vm * sin(va))
+    end
+  end
+
+  # a stored start without any angle (_start_without_angles) on a net with
+  # phase shifters gets the angles of the flat start; a solved or imported
+  # state with angles is left as it is
+  if !flatstart && rotate_behind_pst && _start_without_angles(V0, slack_idx, va_slack)
+    theta = _flat_start_shift_angles(net, slack_idx)
+    if theta !== nothing
+      @inbounds for k = 1:n
+        k == slack_idx && continue
+        va = va_slack + theta[k]
+        va == 0.0 && continue
+        V0[k] = abs(V0[k]) * cis(va)
+      end
     end
   end
 

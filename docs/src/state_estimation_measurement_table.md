@@ -52,7 +52,7 @@ The format is new and may change before 1.0.
 | `node_mrid` | one of three | key of a node. `type` is `U`, `P`, `Q` or `Va`. |
 | `type` | see above | `P`, `Q`, `I`, `Ia` (current angle), `U`, `Va` (voltage angle) |
 | `value` | yes | the reading in the unit of the type (see Units) |
-| `sigma` | no | standard deviation in the same unit, positive. Empty: the sigma of the voltage level of the measuring bus when `state_estimation.sigma_by_voltage_level` has one (see [Measurement sigma by voltage level](@ref se-sigma-by-level)), else the default of the measurement type (`measurementStdDevs`). Below `ZERO_INJECTION_SIGMA` (1e-3 in the unit of the estimator, pu for `U`) it is read at that value and counted as `sigma_lifted`, as in the measurement CSV v1. |
+| `sigma` | no | standard deviation in the same unit, positive. Empty: the sigma of the voltage level of the measuring bus when `state_estimation.sigma_by_voltage_level` has one (see [Measurement sigma by voltage level](@ref se-sigma-by-level)), else the default of the measurement type (`measurementStdDevs`). Below the floor, the smaller of 1e-3 (the default of `state_estimation.zero_injection_sigma_mva`, in the unit of the estimator, pu for `U`) and the value of that key, it is read at the floor and counted as `sigma_lifted`, as in the measurement CSV v1. |
 | `source` | no | free text. The generators write `synthetic` or `synthetic;bad_data`, the pseudo generator `pseudo;ssh`, the converter `converted;v1`; the `measurements.csv` artifact of an SE run adds `se_run`, `case_file`, `sigma_level` and `sigma_default` (see [run artifacts](@ref se-measurement-files)). One token is evaluated: `zero_injection` (tokens separated by `;`) on a bus balance row marks a zero-injection constraint (see Signs and mapping). |
 | `valid` | yes | `true` or `false`. A row with `false` becomes an inactive measurement (in a bus sum see Group sums). |
 
@@ -191,11 +191,11 @@ base.
 - A bus link (a closed switch or coupler joining two buses outside the
   Y-bus): `P` and `Q` on its terminals are link flow measurements, positive
   from the link's from bus to its to bus (a row at the to end changes
-  sign). The estimator leaves them out of the WLS; `calcLinkFlowsSE!`
-  uses them for the split of the flow among the links after the estimate,
-  which matters where links form a loop (two parallel couplers). The SE
+  sign). The estimator takes them as WLS rows (on a coupler ring they
+  decide the circulation, two parallel couplers for example);
+  `calcLinkFlowsSE!` gives the link flows after the estimate. The SE
   service runs it after every estimate on a case with a closed link and
-  writes the split to `se_link_flows.csv`. An open
+  writes them to `se_link_flows.csv`. An open
   link is `not_modelled`, `I` on a link `unsupported`. Name keys:
   `<link name>:from`, `<link name>:to`; in a CGMES case the terminals of
   the switch.
@@ -326,7 +326,7 @@ A real delivery is never complete. Two kinds of rows close the gaps:
 
 - Zero injection at passive buses: the run adds it where the set has no
   injection row, see
-  [Passive buses and zero injection](@ref se_zero_injection).
+  [Zero injections and coupler balances](@ref se_zero_injection).
 - Pseudo measurements from the schedule (the SSH setpoints, see above)
   carry a large sigma. They restore observability where the gaps are and
   lose against every real meter.
@@ -366,7 +366,7 @@ is named. The format of the case picks the index: mRIDs for a CGMES case,
 names for every other format. The run estimates the first set of the file
 and writes the import report of all sets to `measurement_import.txt`.
 The run adds the zero-injection rows of
-[Passive buses and zero injection](@ref se_zero_injection) to the set;
+[Zero injections and coupler balances](@ref se_zero_injection) to the set;
 `measurement_import.txt` and the run log give the count
 (`zero-injection rows N`). `applyMeasurementSet!` does the same for a
 table in a script and stores the count in `set.counts[:zero_injection]`;

@@ -682,6 +682,9 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
 
   # --- tap-changer nameplates (shared application path) -----------------
   comps = spar.components
+  # changers whose entry carries no step (no pos, no step key): they sit at
+  # the middle position, named once per import below
+  assumed_steps = Tuple{String,Int}[]
   for row in comps.tap_changer
     bidx = branch_index_by_id[row.branch]
     br = net.branchVec[bidx]
@@ -712,7 +715,9 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
         tstep = something(ctrl.step, 0.0)
         tmin = Float64(something(ctrl.pos_min, 0.0))
         tmax = Float64(something(ctrl.pos_max, 0.0))
-        tcur = Float64(something(ctrl.pos, 0.0))
+        # no pos: NaN, the nameplate application puts the changer on its
+        # neutral position 0 and marks the step as assumed
+        tcur = ctrl.pos === nothing ? NaN : Float64(ctrl.pos)
         # the grid the positions count on; absent is the fraction grid
         # every file before the key was written on
         g = something(ctrl.grid, "fraction")
@@ -728,7 +733,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
         ctrl.declared === false && (pdeclared = false)
         pmin = Float64(something(ctrl.pos_min, 0.0))
         pmax = Float64(something(ctrl.pos_max, 0.0))
-        pcur = Float64(something(ctrl.pos, 0.0))
+        pcur = ctrl.pos === nothing ? NaN : Float64(ctrl.pos)
         if ctrl.step_deg !== nothing
           pstep = ctrl.step_deg
         else
@@ -751,7 +756,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     # factor is 1 and the split is exact; the SCF writer gives such a file
     # for a pair stated at 0 or whose psi a caller set to 0, and it has to
     # read back. 180 is refused at every position, as applyTapNameplate! does.
-    (tstep > 0.0 && dustep > 0.0 && abs(sin(deg2rad(psi))) < 1e-9 && !(psi == 0.0 && pcur == 0.0)) && throw(ArgumentError("SCF: sparlectra.components.tap_changer for branch $(row.branch): a ratio changer and a Delta-u changer at position $(pcur) with alpha_deg = $(psi) act along the same real direction; their positions cannot be told apart."))
+    (tstep > 0.0 && dustep > 0.0 && abs(sin(deg2rad(psi))) < 1e-9 && !(psi == 0.0 && (isnan(pcur) || pcur == 0.0))) && throw(ArgumentError("SCF: sparlectra.components.tap_changer for branch $(row.branch): a ratio changer and a Delta-u changer at position $(pcur) with alpha_deg = $(psi) act along the same real direction; their positions cannot be told apart."))
     widened = tstep > 0.0 && !(tmin <= 0.0 <= tmax)
     if widened
       @warn "SCF: the neutral tap position lies outside the regulation band of this transformer; the band is restored as stated in the file" branch = row.branch pos_min = tmin pos_max = tmax
@@ -761,6 +766,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     _apply_tap_nameplate!(br, psi; tap_step = tstep, tap_min_step = widened ? min(tmin, 0.0) : tmin, tap_max_step = widened ? max(tmax, 0.0) : tmax, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pmin, phase_max_step = pmax, phase_current_step = pcur, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "sparlectra.components.tap_changer for branch $(row.branch)")
     pdeclared || (br.phase_tap_declared = false)
     rdeclared || (br.ratio_tap_declared = false)
+    (br.ratio_step_assumed || br.phase_step_assumed) && push!(assumed_steps, ("branch $(row.branch)", 0))
     if widened
       # the band ends on the grid of the file (_tap_r1_at gives the cascade
       # fraction of a position on either grid)
@@ -796,12 +802,36 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     d isa AbstractDict || throw(ArgumentError("SCF: tap_changer_models entry $(bid) must be an object."))
     if haskey(d, "ratio") || haskey(d, "phase") || !haskey(d, "estimation")
       w = trafo_by_branch_idx[bidx].side1
-      _scf_apply_tap_models!(w, d, bid)
+      ratio_assumed, phase_assumed = _scf_apply_tap_models!(w, d, bid)
       correction = Symbol(String(_scf_get(d, "tap_changer_model", "ideal")))
+      # calcTapImpedanceCorrectionFactor is defined for the reciprocal
+      # from-side convention; under the direct convention no physical chain
+      # gives |1 + f e^(j psi)|^2 (docs/src/branchmodel.md), the factor is
+      # applied as it stands and the file is told so once per transformer
+      pt = w.phase_taps
+      if correction === :impedance_correction && pt !== nothing && pt.kind === :asymmetrical && pt.convention === :direct_regulating_vector
+        @warn "SCF: tap_changer_models $(bid): the tap impedance correction is defined for the convention reciprocal_from_side; this asymmetrical changer uses direct_regulating_vector, R and X are scaled with abs(1 + f e^(j psi))^2 as for the reciprocal convention." branch = bid
+      end
       note = resolve_branch_taps!(net.branchVec[bidx], w; tap_changer_model = correction)
       note === nothing || push!(net.tapModelNotices, note)
+      # a model replaces the nameplate changer of its role, its flag as well
+      haskey(d, "ratio") && (net.branchVec[bidx].ratio_step_assumed = ratio_assumed)
+      haskey(d, "phase") && (net.branchVec[bidx].phase_step_assumed = phase_assumed)
+      if ratio_assumed || phase_assumed
+        filter!(x -> x[1] != "branch $(bid)", assumed_steps)
+        push!(assumed_steps, ("branch $(bid)", ratio_assumed ? w.taps.step : w.phase_taps.step))
+      end
     end
-    haskey(d, "estimation") && (net.branchVec[bidx].se_tap_changers = _scf_read_se_tap_changers(d["estimation"], bid))
+    if haskey(d, "estimation")
+      set = _scf_read_se_tap_changers(d["estimation"], bid)
+      net.branchVec[bidx].se_tap_changers = set
+      for ch in set.changers
+        ch.step_assumed && push!(assumed_steps, ("branch $(bid)/$(ch.name)", Int(ch.step)))
+      end
+    end
+  end
+  for line in _tap_step_assumed_lines(assumed_steps)
+    @info "SCF: " * line
   end
 
   # --- appliances -------------------------------------------------------
@@ -1975,6 +2005,9 @@ function _scf_read_se_tap_changers(e, bid::Int)::SETapChangerSet
         push!(table, SETapPoint(_scf_int(_scf_require(pt, "step", pc), "$(pc).step"), num("ratio"), num("angle_deg"), num("r"), num("x"), num("g"), num("b")))
       end
     end
+    # no step key: the changer sits at its middle position, the neutral step
+    neutral = _scf_int(req("neutral"), "$(cc).neutral")
+    assumed = !haskey(c, "step")
     kw = (
       name = _scf_str(req("name"), "$(cc).name"),
       mrid = _scf_str(req("mrid"), "$(cc).mrid"),
@@ -1986,10 +2019,11 @@ function _scf_read_se_tap_changers(e, bid::Int)::SETapChangerSet
       alpha_deg = opt("alpha_deg"),
       dphi_deg = opt("dphi_deg"),
       step_abs = opt("step_abs"),
-      neutral = _scf_int(req("neutral"), "$(cc).neutral"),
+      neutral = neutral,
       low = _scf_int(req("low"), "$(cc).low"),
       high = _scf_int(req("high"), "$(cc).high"),
-      step = _scf_num(req("step"), "$(cc).step"),
+      step = assumed ? Float64(neutral) : _scf_num(c["step"], "$(cc).step"),
+      step_assumed = assumed,
       table = table,
       outside_du = opt("outside_du"),
       x_curve = xc,
@@ -2027,14 +2061,16 @@ end
 # onto a winding: `ratio` (a PowerTransformerTaps from its constructor
 # inputs) and `phase` (a PhaseTapChangerModel with kind, steps, the formula
 # parameters and the table for :tabular); a key that is absent stays
-# absent on the winding.
+# absent on the winding. A model without `step` sits at its middle
+# position, its `neutral_step`. Returns whether the ratio
+# and the phase model had no step.
 function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid::Int)
   if haskey(d, "ratio")
     r = d["ratio"]
     r isa AbstractDict || throw(ArgumentError("SCF: tap_changer_models $(bid): ratio must be an object."))
     w.taps = PowerTransformerTaps(
       Vn_kV = _scf_num(_scf_require(r, "vn_kv", "tap_changer_models $(bid) ratio"), "vn_kv"),
-      step = _scf_int(_scf_require(r, "step", "tap_changer_models $(bid) ratio"), "step"),
+      step = haskey(r, "step") ? _scf_int(r["step"], "step") : _scf_int(_scf_require(r, "neutral_step", "tap_changer_models $(bid) ratio"), "neutral_step"),
       lowStep = _scf_int(_scf_require(r, "low_step", "tap_changer_models $(bid) ratio"), "low_step"),
       highStep = _scf_int(_scf_require(r, "high_step", "tap_changer_models $(bid) ratio"), "high_step"),
       neutralStep = _scf_int(_scf_require(r, "neutral_step", "tap_changer_models $(bid) ratio"), "neutral_step"),
@@ -2054,7 +2090,7 @@ function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid
     end
     w.phase_taps = PhaseTapChangerModel(
       kind = kind,
-      step = _scf_int(_scf_require(p, "step", "tap_changer_models $(bid) phase"), "step"),
+      step = haskey(p, "step") ? _scf_int(p["step"], "step") : _scf_int(_scf_require(p, "neutral_step", "tap_changer_models $(bid) phase"), "neutral_step"),
       lowStep = kind === :tabular ? nothing : _scf_int(_scf_require(p, "low_step", "tap_changer_models $(bid) phase"), "low_step"),
       highStep = kind === :tabular ? nothing : _scf_int(_scf_require(p, "high_step", "tap_changer_models $(bid) phase"), "high_step"),
       neutralStep = _scf_int(_scf_require(p, "neutral_step", "tap_changer_models $(bid) phase"), "neutral_step"),
@@ -2073,5 +2109,5 @@ function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid
   # the winding keeps k and theta as before.
   haskey(d, "base_ratio") && (w.ratio = _scf_num(d["base_ratio"], "tap_changer_models $(bid) base_ratio"))
   haskey(d, "base_shift_deg") && (w.shift_degree = _scf_num(d["base_shift_deg"], "tap_changer_models $(bid) base_shift_deg"))
-  return w
+  return (haskey(d, "ratio") && !haskey(d["ratio"], "step"), haskey(d, "phase") && !haskey(d["phase"], "step"))
 end

@@ -202,7 +202,12 @@ function test_topology_stage3_hypotheses()::Bool
     link0 = [l.status for l in net.linkVec]
     vm0 = [nd._vm_pu for nd in net.nodeVec]
 
-    rep = with_state_estimation_config(max_iter = 100, tol = 1e-8) do
+    # budget 3 stated, as in the stage-2 sets above: the candidates come
+    # from the stage-2 fingerprint (elimination exhausted, band :high), and
+    # with the default 5 (since the range check of the voltage measurements)
+    # the elimination on this 5-bus net no longer ends there, so branch 4 is
+    # no candidate (4 candidates with 3, 3 without branch 4 with 5)
+    rep = with_state_estimation_config(max_iter = 100, tol = 1e-8, max_eliminations = 3) do
       test_topology_hypotheses(net, meas; max_candidates = 8)
     end
     @test rep.base_verdict == :high

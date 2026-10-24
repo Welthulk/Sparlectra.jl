@@ -180,23 +180,29 @@ function _matpower_bus_setpoints(net::Net)::Dict{Int,Float64}
   return vset
 end
 
-# The flat state of a model-only export (write_solution = false) at the
-# auxiliary PQ buses (three-winding star points): the start the solver's flat
-# start gives them (_aux_bus_flat_start!, the ratio of the stiffest winding)
-# instead of 1.0 pu, keyed by busIdx as (vm_pu, va_deg). The file VM/VA is the
-# start of a reader that does not flat-start (Sparlectra's default, MATPOWER);
-# with 1.0 pu there the CGMES MiniGrid did not converge after the round trip.
-# Empty for a net without auxiliary buses or without a slack.
-function _matpower_aux_flat_start(net::Net)::Dict{Int,Tuple{Float64,Float64}}
+# The flat state of a model-only export (write_solution = false) at the PQ
+# buses that do not start at 1.0 pu and 0 degrees: the start the solver's
+# default flat start gives them, keyed by busIdx as (vm_pu, va_deg).
+# Auxiliary buses (three-winding star points) start at the ratio of their
+# stiffest winding (_aux_bus_flat_start!), every bus at the slack angle
+# (initialVrect). The turn behind phase shifters
+# (power_flow.start_mode.rotate_behind_pst) is not written: the export has no
+# run configuration. A reader with the switch on takes the re-read start
+# (every bus at 0 degrees or at the slack angle) as a start without angles
+# and turns it in the same way (initialVrect). The file VM/VA is the start of a
+# reader that does not flat-start (Sparlectra's default, MATPOWER); with
+# 1.0 pu at the star points the CGMES MiniGrid did not converge after the
+# round trip. At a PV bus of an unsolved net the writer takes only a nonzero
+# angle (the magnitude stays the setpoint); slack entries are not read. Empty
+# for a net without auxiliary buses at the slack angle 0, or without a slack.
+function _matpower_flat_start(net::Net)::Dict{Int,Tuple{Float64,Float64}}
   out = Dict{Int,Tuple{Float64,Float64}}()
-  any(_is_aux_node, net.nodeVec) || return out
   slack_idx = findfirst(n -> getNodeType(n) == Slack, net.nodeVec)
   slack_idx === nothing && return out
   V0, _ = initialVrect(net; flatstart = true)
-  flat = copy(V0)
   _aux_bus_flat_start!(V0, net, slack_idx)
   for k in eachindex(V0)
-    V0[k] == flat[k] && continue
+    V0[k] == ComplexF64(1.0, 0.0) && continue
     out[net.nodeVec[k].busIdx] = (abs(V0[k]), rad2deg(angle(V0[k])))
   end
   return out
@@ -218,7 +224,7 @@ function writeBusData(net::Net, file; write_solution::Bool = true, solved::Bool 
   hasPVBus = false
   slackIdx = 0
   vgSlack = 1.0
-  aux_start = write_solution ? Dict{Int,Tuple{Float64,Float64}}() : _matpower_aux_flat_start(net)
+  flat_start = write_solution ? Dict{Int,Tuple{Float64,Float64}}() : _matpower_flat_start(net)
   for node in NodeVec
     rows += 1
     bus_i = node.busIdx
@@ -253,15 +259,23 @@ function writeBusData(net::Net, file; write_solution::Bool = true, solved::Bool 
 
     # write_solution = false: the export is a pure model file, so non-slack/
     # non-PV buses do not carry a (possibly solved) voltage state. Slack and
-    # PV setpoints are meaningful pre-solve input and are preserved; an
-    # auxiliary bus gets its flat-start value (_matpower_aux_flat_start). An
+    # PV setpoints are meaningful pre-solve input and are preserved; the
+    # other buses get their flat-start value (_matpower_flat_start). An
     # unsolved net writes the generator setpoint there (vset is empty when
     # the net is solved, then the solved voltage is the setpoint).
     if write_solution || num in (2, 3)
       vm_pu = get(vset, bus_i, (node._vm_pu === nothing) ? 1.0 : node._vm_pu)
       va_deg = (node._va_deg === nothing) ? 0.0 : node._va_deg
+      # an unsolved PV bus: the flat-start angle (the slack angle), not its
+      # stored start angle (0 on a hand-built net), so the file start has no
+      # angle step between the PV bus and the PQ buses next to it. A PV bus
+      # with flat-start angle 0 keeps its stored angle.
+      if !write_solution && !solved && num == 2
+        fs = get(flat_start, bus_i, nothing)
+        (fs !== nothing && fs[2] != 0.0) && (va_deg = fs[2])
+      end
     else
-      vm_pu, va_deg = get(aux_start, node.busIdx, (1.0, 0.0))
+      vm_pu, va_deg = get(flat_start, node.busIdx, (1.0, 0.0))
     end
     if isnothing(node.comp.cVN)
       @warn "Base Voltage not defined for node $(node.comp.cID) -> set to 1.0"
@@ -805,10 +819,12 @@ which Sparlectra reads back; see the MATPOWER page of the documentation.
   non-slack/non-PV buses (slack and PV setpoints are preserved), except an
   auxiliary bus (three-winding star point), which gets the start the
   solver's flat start gives it: the voltage at which its stiffest winding
-  carries no current. The auxiliary buses are listed in
+  carries no current. With a slack angle other than 0 every bus is written
+  at the slack angle, the angle of the flat start. The auxiliary buses are listed in
   `mpc.sparlectra.aux_buses`, so the reader keeps them auxiliary. A
   network without solved branch flows writes the generator voltage setpoint
-  as `Vg` and as `VM` of its PV and slack bus.
+  as `Vg` and as `VM` of its PV and slack bus, and the flat-start angle at a
+  PV bus.
 
 # Example
 ```julia

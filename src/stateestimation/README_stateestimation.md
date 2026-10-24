@@ -32,7 +32,8 @@ include("stateestimation/topology_validation.jl")
   `measurementStdDevs`/`measurementSigmaFloors`; synthetic measurements
   generated from a power flow are marked as ideal.
 - PMU angle measurements may carry a time base that does not line up with the
-  slack reference; the estimator solves for the offset as an extra state
+  angle reference of the model (the stored slack angle); the estimator
+  solves for the offset as an extra state
   (`state_estimation.pmu_ref_offset`).
 - The J/dof statistic leads the diagnostics presentation; keep new
   diagnostics consistent with `runse_diagnostics` output.

@@ -27,7 +27,7 @@ degrees, with the rectangular one.
 
 ## Why the flat start is where it matters
 
-A flat start sets every angle to 0, so the first step is close to a DC
+A flat start sets every angle to the slack angle, so the first step is close to a DC
 power flow for the angles and turns whole regions by the solution angles at
 once (case9241pegase: -61 to +70 degrees). After that one step:
 

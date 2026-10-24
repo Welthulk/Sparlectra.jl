@@ -924,14 +924,15 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     m.zero_injection && (row["zero_injection"] = true)
     push!(rows, row)
   end
-  # Whatever is left has no slot in the file. A link flow is not_modelled as
-  # in the measurement table (a bus link is no branch of the model and the
-  # flow never enters the estimate); a row on a bus or branch the file does
-  # not write has no key. Name them instead of dropping them.
+  # Whatever is left has no slot in the file. A link flow is a WLS row of the
+  # estimate (0.60.0) and the measurement table carries it on the link
+  # terminals, but the case file has no sensor for a bus link; a row on a
+  # bus or branch the file does not write has no key. Name them instead of
+  # dropping them.
   written = Set{Int}(union(keys(sensor_of), keys(bay_node)))
   left = [m for (pos, m) in enumerate(meas) if !(pos in written)]
   links = [m for m in left if m.linkIdx !== nothing]
-  isempty(links) || @warn "SCF export: $(length(links)) link flow row(s) are not_modelled and not written: a bus link is no branch of the model, the measurement table has no place for its flow either" ids = first(String[m.id for m in links], 5)
+  isempty(links) || @warn "SCF export: $(length(links)) link flow row(s) are not written: the case file has no sensor for a bus link; write the set as a measurement table, which carries link rows" ids = first(String[m.id for m in links], 5)
   nokey = [m for m in left if m.linkIdx === nothing]
   isempty(nokey) || @warn "SCF export: $(length(nokey)) measurement row(s) have no key in the case file and are not written" types = sort!(unique(string.(getfield.(nokey, :typ)))) ids = first(String[m.id for m in nokey], 5)
   return volt, power, current, rows

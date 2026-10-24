@@ -444,8 +444,8 @@ function run_measurement_table_tests()
         @test occursin("unknown_key 2", read(joinpath(d, "on", "measurement_import.txt"), String))
         # a coupler ring: two closed links from a PQ bus to a new busbar
         # with a 4 MW load. The balance fixes only the sum, so the service
-        # splits it evenly without link rows (2/2) and by the link P rows
-        # with them (3/1, sigma 0.01 against weight-1 balance rows)
+        # splits it evenly without link rows (2/2); with the link P rows the
+        # estimated ring circulation gives 3/1 (consistent rows, sigma 0.01)
         rnet = deepcopy(net)
         rnet._locked = false
         pq = net.nodeVec[findfirst(n -> getNodeType(n) == Sparlectra.PQ, net.nodeVec)].comp.cName
@@ -529,6 +529,22 @@ function run_measurement_table_tests()
       @test set.counts[:sigma_lifted] == 2
       @test count(m -> m.sigma == Sparlectra.ZERO_INJECTION_SIGMA, set.measurements) == 2
       @test se.converged && isfinite(se.objectiveJ)
+      # the floor follows state_estimation.zero_injection_sigma_mva below
+      # ZERO_INJECTION_SIGMA (a zero-injection row written at 1e-7 keeps
+      # it) and never rises above it (30 would lift every real row)
+      tiny_file = test_scratch_path(".table.csv")
+      writeMeasurementTable(tiny_file, [i in (tiny_u, tiny_p) ? merge(r, (sigma = 1e-200,)) : r for (i, r) in enumerate(exact)])
+      for (zs, floor) in ((1e-7, 1e-7), (30.0, Sparlectra.ZERO_INJECTION_SIGMA))
+        tiny_set = with_state_estimation_config(zero_injection_sigma_mva = zs) do
+          only(importMeasurementTable(readMeasurementTable(tiny_file), index).sets)
+        end
+        @test tiny_set.counts[:sigma_lifted] == 2
+        @test count(m -> m.sigma == floor, tiny_set.measurements) == 2
+      end
+      # the keyword is the sigma of the caller's configuration (the SE
+      # service passes its case value) and wins over the active default
+      kw_set = only(importMeasurementTable(readMeasurementTable(tiny_file), index; zero_injection_sigma = 1e-7).sets)
+      @test count(m -> m.sigma == 1e-7, kw_set.measurements) == 2
       # coverage: the share of buses and branch ends, drawn by the seed
       full = generateMeasurementTableFromPF(net; noise = false)
       half = generateMeasurementTableFromPF(net; noise = false, coverage = 0.5, seed = 3)

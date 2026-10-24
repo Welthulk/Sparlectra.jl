@@ -528,7 +528,7 @@ function run_scf_tests()
     # silently
     @test !isempty(back.linkVec)
     Sparlectra.addMeasurement!(back.measurements; typ = Sparlectra.PflowMeas, value = 1.0, sigma = 0.1, linkIdx = 1)
-    nf = @test_logs (:warn, r"not_modelled") match_mode = :any exportSCF(back; file = joinpath(d, "noslot.scf.json"), kw...)
+    nf = @test_logs (:warn, r"link flow row\(s\) are not written") match_mode = :any exportSCF(back; file = joinpath(d, "noslot.scf.json"), kw...)
     @test length(importSCF(nf).measurements) == length(back.measurements) - 1
     # The shunt of a shunt voltage controller belongs to the controller: the
     # export leaves it out and the controller entry rebuilds it. Written as a
@@ -710,6 +710,24 @@ function run_scf_tests()
       end
       return ""
     end
+    # no step: a stored changer without `step` sits at its
+    # neutral step, typed models without `step` at their neutral_step, a
+    # nameplate controller without `pos` at its neutral position 0; each is
+    # marked and named in one info line, the rest of the file is unchanged
+    r0 = deepcopy(root)
+    tm = r0["sparlectra"]["tap_changer_models"]
+    delete!(tm[ids[3]]["estimation"]["changers"][1], "step")
+    delete!(tm[ids[8]]["ratio"], "step")
+    delete!(tm[ids[8]]["phase"], "step")
+    row4 = only(t for t in r0["sparlectra"]["components"]["tap_changer"] if t["branch"] == parse(Int, ids[4]))
+    foreach(c -> delete!(c, "pos"), row4["controllers"])
+    nb = @test_logs (:info, "SCF: tap changer branch $(ids[3])/asym: step not transferred, middle position 13 assumed") (:info, "SCF: tap changer branch $(ids[8]): step not transferred, middle position 0 assumed") (:info, "SCF: tap changer branch $(ids[4]): step not transferred, middle position 0 assumed") match_mode = :any S.scf_to_net(r0)
+    c3 = nb.branchVec[3].se_tap_changers.changers[1]
+    @test (c3.step, c3.step_assumed) == (13.0, true)
+    @test (nb.branchVec[8].tap_winding.taps.step, nb.branchVec[8].tap_winding.phase_taps.step) == (0, 0)
+    @test nb.branchVec[8].ratio_step_assumed && nb.branchVec[8].phase_step_assumed
+    @test nb.branchVec[4].ratio_step_assumed && nb.branchVec[4].tap_ratio == nb.branchVec[4].ratio
+    @test !any(br -> br.ratio_step_assumed || br.phase_step_assumed, back.branchVec) && !back.branchVec[3].se_tap_changers.changers[1].step_assumed
     e1 = ids[1]
     @test occursin("tap_changer_models $(e1) estimation.changers[1] has the unknown key \"dU\"", refused(t -> t[e1]["estimation"]["changers"][1]["dU"] = 0.01))
     @test occursin("tap_changer_models $(e1) estimation.changers[1]: SETapChanger rtc: kind must be one of", refused(t -> t[e1]["estimation"]["changers"][1]["kind"] = "rotary"))
@@ -717,6 +735,15 @@ function run_scf_tests()
     for o in ("typed", "fields", "scf")
       @test occursin("tap_changer_models $(e1) estimation.origin must be \"cgmes\" or \"powsybl\", got \"$(o)\"", refused(t -> t[e1]["estimation"]["origin"] = o))
     end
+    # the tap impedance correction is defined for the reciprocal convention:
+    # branch 9 (asymmetrical, impedance_correction) in the direct convention
+    # reads with exactly one warning naming its entry, the file as written
+    # (reciprocal) reads without a warning
+    e9 = ids[9]
+    direct = deepcopy(root)
+    direct["sparlectra"]["tap_changer_models"][e9]["phase"]["convention"] = "direct_regulating_vector"
+    @test_logs (:warn, Regex("SCF: tap_changer_models $(e9): the tap impedance correction is defined for the convention reciprocal_from_side")) min_level = Logging.Warn S.scf_to_net(direct)
+    @test_logs min_level = Logging.Warn S.scf_to_net(deepcopy(root))
     # a derived set put on a branch is no import record: the writer refuses it
     hand = deepcopy(net)
     hand.branchVec[8].se_tap_changers = S._effective_tap_changers(back.branchVec[8])
@@ -1633,8 +1660,12 @@ mpc.branch = [
     se_case = exportSCF(se_net; file = joinpath(d, "se_case.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
     @test !isempty(importSCF(se_case).measurements)
     # the service's SE run advises on the topology of these small sets by
-    # design; the advisory is captured, anything else that warns fails
-    se_quiet(f) = run_with_expected_warnings(() -> redirect_stdout(f, devnull), (r"topology precheck reported",))
+    # design; the advisory is captured, anything else that warns fails.
+    # Tap estimation is on by default (state_estimation.tap_estimation.enabled)
+    # and releases the PST of this case; its fixation notice warns when the
+    # rise exceeds the 95 % quantile (five runs of this testset, J 877 to
+    # 1066 before the fixation)
+    se_quiet(f) = run_with_expected_warnings(() -> redirect_stdout(f, devnull), (r"topology precheck reported", r"runse!: tap fixation J"))
     res_se = se_quiet() do
       SparlectraApp._run_state_estimation_service(se_case, cfg, joinpath(d, "run_se"), "scf_se", joinpath(d, "no_such_set.csv"))
     end

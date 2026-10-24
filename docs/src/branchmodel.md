@@ -381,7 +381,7 @@ addPIModelTrafo!(
   fromBus = "B1", toBus = "B2",
   r_pu = 0.01, x_pu = 0.08, b_pu = 0.0,
   ratio = 1.0, shift_deg = 0.0, status = 1,
-  phase_taps = pst_asym,           # the model drives the branch from here on
+  phase_taps = pst_skew,           # the model drives the branch from here on
 )
 ```
 
@@ -394,8 +394,12 @@ branch is built and whenever a tap controller moves a step: it takes
 ratio-tap correction and the phase model's effective ratio onto it, adds
 the phase model's shift, derives the branch's tap grid (`tap_min`,
 `tap_max`, `tap_step`, `phase_min_deg`, `phase_max_deg`, mean degree per
-step) from the model ranges, applies `model.tap_changer_model` to
-`r_pu`/`x_pu` from the equipment base, and takes the model's own `X(alpha)`
+step) from the model ranges, applies the tap-changer model the
+transformer was built with (the `tap_changer_model` keyword of
+`addPIModelTrafo!`, kept as `Branch.tap_correction`; DTF passes
+`model.tap_changer_model`, SCF the entry of the transformer) to
+`r_pu`/`x_pu` from the equipment base, for an asymmetrical phase model
+only, and takes the model's own `X(alpha)`
 when it carries `x_min`/`x_max` or a table. The branch is then
 `taps_derived`.
 
@@ -443,12 +447,62 @@ the regulating vector from the stored degrees.
 
 ### Tap-impedance correction
 
-Independent of the typed PST models, `model.tap_changer_model` selects
-whether the tap changer of an imported case (MATPOWER and DTF) is ideal
-(default) or re-refers the transformer R/X through the tapped winding
-(`impedance_correction`, implemented centrally in `calcTapCorrectedRX` /
-`calcTapImpedanceCorrectionFactor`); see
+`model.tap_changer_model` selects whether a tap step changes the winding
+ratio alone (`ideal`, default) or also re-refers the transformer R/X through
+the tapped winding (`impedance_correction`, implemented centrally in
+`calcTapCorrectedRX` / `calcTapImpedanceCorrectionFactor`); see
 [Transformer tap-changer model](configuration.md#Transformer-tap-changer-model).
+The switch per path:
+
+| Path | Switch |
+|---|---|
+| MATPOWER | `model.tap_changer_model`, ratio form, applied once at import; a file with the `mpc.sparlectra.tap_changer_model` marker is not corrected again |
+| DTF | `model.tap_changer_model`; applied once at import, or through the typed model when the transformer has a phase model |
+| typed models (`addPIModelTrafo!`) | the keyword `tap_changer_model`; it acts on an asymmetrical (or quadrature) phase model only. A ratio model, a symmetrical or a tabular phase model gets no correction factor. |
+| SCF | per transformer, the key `tap_changer_model` of its `tap_changer_models` entry, written by the export; `model.tap_changer_model` does not change it |
+| CGMES | not applied; the impedance per step comes from the data (tap tables, `xMin`/`xMax`, `TapStepImpedance`) |
+| PowSyBl | not applied; the impedance at the import step comes from the r, x, g, b of that tap changer step, and the state estimation takes the step rows as its table |
+
+In the state estimation,
+`state_estimation.tap_estimation.impedance_correction` (`auto`, `off`)
+acts on the analytic correction only, decided per transformer. Per-step
+data of an imported changer set (CGMES, PowSyBl; tap table rows with r and x, the
+reactance curve from `xMin`/`xMax`, `TapStepImpedance` factors) always
+follow the step, and the analytic correction is off for that transformer
+under both values. A typed model follows the power flow: its `x_min`/`x_max`
+curve or x table follows the step under both values, and the correction
+factor on R that the power flow applies next to the curve under
+`impedance_correction` is taken under `auto` only. A typed x curve or x
+table (SCF `tap_changer_models`, `addPIModelTrafo!`) counts as a step
+table like the CGMES tables. Without per-step data `auto` applies the correction of a typed
+asymmetrical model built with `impedance_correction`
+(`Branch.tap_correction`), and `off` keeps the impedance of the start
+position (see
+[State estimation extensions](state_estimation_extensions.md)).
+
+The factor $|1 + f e^{j\psi}|^2$ is defined for the convention
+`reciprocal_from_side` of a typed asymmetrical or quadrature changer. A
+typed model in the convention `direct_regulating_vector` under
+`impedance_correction` gets the same factor, but no physical chain matches
+it (next section). The SCF reader warns once per such transformer.
+
+### One branch or an explicit chain
+
+A transformer with its tap changers is one branch with the complex ratio
+$t(s)$. An explicit chain (ideal transformer, PI section of the ratio
+part, auxiliary bus, PI section of the phase part) has the same terminal
+admittance and gives the same power flow for the cases below.
+
+| Changer kind | Series impedance of the chain | Impedance of the one branch |
+|---|---|---|
+| ratio changer, ratio table | behind the ratio part | constant |
+| symmetrical, linear | before or behind the phase part | constant, or the reactance curve |
+| asymmetrical and quadrature (CGMES, nameplate), phase table | behind the additional voltage | constant, the reactance curve, or the table r and x |
+| asymmetrical and quadrature, typed, reciprocal convention, `impedance_correction` | before the additional voltage | R and X scaled with abs(1 + f e^{j psi})^2 |
+
+No chain matches the typed direct convention under
+`impedance_correction`, or a ratio and an asymmetrical changer on one
+winding with constant impedance.
 
 ### Three-winding transformers
 
@@ -499,8 +553,12 @@ controller's continuous angle to a reactance:
 
 The coupling is opt-in per device: a winding without a typed model, a
 formula model without `x_min`/`x_max`, or a tabular model without `x_pu`
-values keeps its static reactance (MATPOWER general-case PSTs,
-CGMES-flattened PSTs). The probe that estimates the tap direction perturbs
+values keeps its static reactance (MATPOWER general-case PSTs). A CGMES
+transformer has no typed model. When its tap table points carry r and x,
+or its phase tap changer has an `xMin`/`xMax` curve, the branch stores the
+impedance per step (`TapStepImpedance`), and a tap controller that moves
+the step sets the impedance of the new step. A CGMES PST without such
+data keeps its static reactance. The probe that estimates the tap direction perturbs
 the reactance consistently with the apply step, restores both, and refreshes
 the branch flows around each probe solve.
 

@@ -333,7 +333,7 @@ end
 #
 # ## Where to go next
 #
-# - [Transformer Control](https://welthulk.github.io/Sparlectra.jl/transformer_control/):
+# - [Transformer Control](https://welthulk.github.io/Sparlectra.jl/control_framework/):
 #   the OLTC and phase-tap controllers, targets, deadbands, and limits.
 # - [Branch Model](https://welthulk.github.io/Sparlectra.jl/branchmodel/):
 #   how tau and phi enter the admittance stamp.

@@ -453,5 +453,46 @@ function run_powsybl_importer_tests()
     @test any(m -> occursin("TWT/phaseTapChanger is not estimable", m), rep.messages)
     R, P = S._tap_set_ratio_shift(bset, [0.0])
     @test isapprox(R, bb.tap_ratio; rtol = 1e-12) && abs(P - bb.phase_shift_deg) <= 1e-12 && bset.shift_n_deg != 0.0
+    # a changer without tapPosition: IIDM has no neutral
+    # step, so the middle of the step list (four_substations phase changer,
+    # steps 0 to 32: 16); the branch equals the re-import at tapPosition 16,
+    # the changer is marked and named in the import report
+    pt = findfirst("<iidm:phaseTapChanger ", text)
+    pe = findnext(">", text, last(pt))
+    nopos = text[1:first(pt)-1] * replace(text[first(pt):first(pe)], r" tapPosition=\"-?\d+\"" => "") * text[first(pe)+1:end]
+    @test count("tapPosition=", nopos) == count("tapPosition=", text) - 1
+    ntables = mktempdir() do dir
+      f = joinpath(dir, "nopos.xiidm")
+      write(f, nopos)
+      S.read_iidm_tables(f)
+    end
+    nnet, nrep = build_net_from_powsybl(ntables, PowsyblAdapterOptions())
+    kn = only(trafo_idx(nnet))
+    ref = build(at_step(text, "TWT", "phaseTapChanger", 16)).branchVec[kn]
+    nb = nnet.branchVec[kn]
+    @test (nb.tap_ratio, nb.phase_shift_deg, nb.x_pu) == (ref.tap_ratio, ref.phase_shift_deg, ref.x_pu)
+    @test [(c.step, c.step_assumed) for c in nb.se_tap_changers.changers] == [(1.0, false), (16.0, true)]
+    @test "notice: tap changer TWT/phase: step not transferred, middle position 16 assumed" in nrep.messages
+    @test !any(c -> c.step_assumed, net.branchVec[k].se_tap_changers.changers)
+    # the same in the bundle: an empty tap cell puts the changer at the
+    # middle of low_tap..high_tap, and the transformer columns at the
+    # current tap follow the step rows; branch and set equal the re-import
+    # at tapPosition 16
+    bnet_a, brep_a = mktempdir() do dir
+      b = joinpath(dir, "nopos.powsybl")
+      cp(_powsybl_fixture("four_substations"), b)
+      f = joinpath(b, "phase_tap_changers.csv")
+      lines = readlines(f)
+      k_row = only(i for i in eachindex(lines) if startswith(lines[i], "\"TWT\","))
+      cells = split(lines[k_row], ",")
+      cells[3] = ""
+      lines[k_row] = join(cells, ",")
+      write(f, join(lines, "\n") * "\n")
+      build_net_from_powsybl(read_powsybl_bundle(b), PowsyblAdapterOptions())
+    end
+    bb_a = bnet_a.branchVec[kn]
+    @test isapprox(bb_a.tap_ratio, ref.tap_ratio; rtol = 1e-12) && abs(bb_a.phase_shift_deg - ref.phase_shift_deg) <= 1e-12 && isapprox(bb_a.x_pu, ref.x_pu; rtol = 1e-12)
+    @test [(c.step, c.step_assumed) for c in bb_a.se_tap_changers.changers] == [(1.0, false), (16.0, true)]
+    @test "notice: tap changer TWT/phase: step not transferred, middle position 16 assumed" in brep_a.messages
   end)() end
 end

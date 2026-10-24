@@ -27,7 +27,9 @@ network from them. It resolves:
 - the connected and synchronous components, numbered by size;
 - the current step of every ratio and phase tap changer: `rho`, `alpha`
   and the step corrections of `r`, `x`, `g`, `b`, on two- and
-  three-winding transformers;
+  three-winding transformers; a changer without `tapPosition` sits at its
+  middle position, the middle of its step list (IIDM has no neutral step),
+  and the import report names it;
 - the reactive limits of a generator or VSC station at its active
   setpoint, interpolated on a capability curve as powsybl interpolates;
 - the operational limits per side and limits group, permanent and
@@ -103,7 +105,10 @@ Settled against the OpenLoadFlow voltages of the example files:
   only as the tap changer sets of the state estimation (one table changer
   per ratio or phase tap changer, see
   [State Estimation Extensions](state_estimation_extensions.md)); power
-  flow does not read them.
+  flow does not read them. In a table bundle an empty `tap` cell is
+  treated like a missing `tapPosition`: the changer sits at the middle of
+  `low_tap..high_tap`, the transformer columns at the current tap are
+  recomputed from the step rows, and the import report names it.
 - **Magnetizing admittance.** The whole `g`, `b` of a transformer sits on
   side 1, behind the ideal transformer, as OpenLoadFlow places it; the
   branch carries it as its from-terminal arm, a line keeps `g1`, `b1` and

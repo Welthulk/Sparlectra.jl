@@ -123,6 +123,10 @@ _mpsi_watt(v::Float64) = _scf_stable(v, x -> x * 1.0e6, x -> x / 1.0e6)
 _mpsi_volt(vn_kv::Float64) = _scf_stable(vn_kv, x -> x * 1.0e3, x -> x / 1.0e3)
 _mpsi_deg_as_rad(deg::Float64) = _scf_stable(deg, deg2rad, rad2deg)
 
+# a NaN current step of mpc.sparlectra.tap_changers is no step: the SCF row
+# leaves pos out and the SCF import puts the changer on its middle position
+_matpower_tap_pos(x::Real) = isnan(x) ? nothing : Float64(x)
+
 function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCFCase
   busDict, genDict, branchDict = _createDict()
   BUS_I = busDict["bus"]; BUS_TYPE = busDict["type"]; PD = busDict["Pd"]; QD = busDict["Qd"]; GS = busDict["Gs"]; BS = busDict["Bs"]
@@ -521,7 +525,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
       controllers = SCFTapControllerRow[]
       # ratio_grid 1 (column 12) is the SCF grid "linear" of a CGMES changer
       rgrid = (size(sp_taps, 2) >= 12 && row[12] == 1.0) ? "linear" : nothing
-      Float64(row[2]) > 0.0 && push!(controllers, SCFTapControllerRow(index = 1, alpha_deg = 0.0, step = Float64(row[2]), pos = Float64(row[5]), pos_min = Float64(row[3]), pos_max = Float64(row[4]), grid = rgrid))
+      Float64(row[2]) > 0.0 && push!(controllers, SCFTapControllerRow(index = 1, alpha_deg = 0.0, step = Float64(row[2]), pos = _matpower_tap_pos(row[5]), pos_min = Float64(row[3]), pos_max = Float64(row[4]), grid = rgrid))
       psi = size(sp_taps, 2) >= 10 ? Float64(row[10]) : 0.0
       dustep = size(sp_taps, 2) >= 11 ? Float64(row[11]) : 0.0
       # same nameplate contradiction check as applyTapNameplate! on the
@@ -529,7 +533,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
       # silently preferred phase_du_step when both grids were declared)
       (Float64(row[6]) > 0.0 && dustep > 0.0) && throw(ArgumentError("mpc.sparlectra.tap_changers branch $(k): phase_step_deg and phase_du_step are exclusive (a changer has ONE mechanical grid)."))
       if Float64(row[6]) > 0.0 || dustep > 0.0
-        ctrl = SCFTapControllerRow(index = 2, alpha_deg = psi, pos = Float64(row[9]), pos_min = Float64(row[7]), pos_max = Float64(row[8]))
+        ctrl = SCFTapControllerRow(index = 2, alpha_deg = psi, pos = _matpower_tap_pos(row[9]), pos_min = Float64(row[7]), pos_max = Float64(row[8]))
         if dustep > 0.0
           ctrl.step = dustep
         else

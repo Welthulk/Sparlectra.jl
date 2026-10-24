@@ -1,28 +1,26 @@
-# Version 0.60.0 - 2026-10-20
+# Version 0.60.0 - 2026-10-24
 
-Quasi-stationary time series (QSTS), dynamic unit data.
+Quasi-stationary time series (QSTS), tap estimation per tap changer.
 
 ## Breaking
 - SCF 1.3: files written by 0.60.0, including the shipped cases, cannot be read by 0.50.0. 0.60.0 still reads 1.0 to 1.2.
+- Tap estimation is on by default (`state_estimation.tap_estimation.enabled`): SE results change on cases with tap changers. A run that fails falls back to the run without it.
+- Tap estimation results have one row per tap changer with `status` and `reason`; the old step columns and `frozen_reason` are gone.
 ## Added
-- QSTS on SCF time series (one zip: base case plus step deltas) and on a series of CGMES snapshots: snapshot mode (independent steps, parallel) and sequential mode (tap and bank states carried over), event lists, switching counts and limit violations, a time-series chart per element in the Web UI. See [QSTS](qsts.md).
-- Dynamic unit data `DynamicData` (inertia, droop, reserves, unit type) on generators, carried in SCF and read from the CGMES DY profile (`cgmes_import.read_dynamics`, default off). No calculation reads it yet. See [Dynamic Data](dynamic_data.md).
-- Measurement tables are bound to CGMES cases by the EQ model id instead of the file name; an assign switch at the Web UI upload binds a table to the selected case.
-- run.log and the result page name the system frequency and its source, or "not used" when no capacitance in farad entered the model. The Case page greys the frequency field for such cases.
-- Link flow measurements: P and Q on bus couplers split the flow over coupler rings; the SE service writes `se_link_flows.csv`.
+- QSTS on SCF time series and on CGMES snapshot series, with event lists and a chart per element in the Web UI. See [QSTS](qsts.md).
+- Tap estimation per tap changer from the CGMES, PowSyBl, SCF or DTF changer data; a changer the measurements cannot see keeps its step and names the reason.
+- Link flow measurements as WLS rows: a wrong coupler meter is found and eliminated like a branch flow.
+- Range check of voltage measurements: 0 kV at a dead bus takes the bus out, an implausible value at a live bus is replaced by the imported voltage with a wider sigma.
+- Zero injections: sigma `state_estimation.zero_injection_sigma_mva` (default 1e-3), condition number in the report and multipliers per bus under `constraint`.
 ## Changed
-- CGMES import: the slack follows the SV angle reference also when an EquivalentInjection holds that node (MicroGrid BE: the X-node instead of the largest machine). `cgmes_import.equivalent_injection_as_source` (default off) imports boundary EquivalentInjections as sources at their SV voltage.
-- Requires AnalyticLoadFlow 0.10.3: the APSLF solver handles phase shifting transformers.
-- CGMES import: a unit whose `DynamicData` says grid-following is no island slack; an island with only such units is switched off with a warning.
-- The Web UI window opens on the main monitor when the saved position is on a monitor that is no longer connected.
-- Q-limit guard: a machine with a narrow Q band stays PV inside its band and is locked only at the limit it reaches (`narrow_range_mode: prefer_pq` keeps the old behaviour).
+- Elimination budget `state_estimation.max_eliminations` is 5 instead of 3.
+- CGMES slack follows the SV angle reference also at an EquivalentInjection; a grid-following unit is not chosen as island slack.
+- Q-limit guard: a machine with a narrow Q band stays PV inside its band (`narrow_range_mode: prefer_pq` gives the old behaviour).
 ## Fixed
-- The Web UI sysimage rebuild did not find its build script since the package split.
-- Bus powers of coupler clusters and distributed slack shares in reports and bus CSVs.
-- CGMES: P limits of EquivalentInjection and ExternalNetworkInjection read as delivered; 2W transformer magnetizing split over both terminal arms.
-- CGMES: with several boundary sets next to a case the import takes the one that resolves it.
-- CGMES: phase tap changers with `xMin`/`xMax` change their reactance with the step.
-- Web UI and installers find the latest release without the GitHub API, so the update check no longer runs into its rate limit; a failed update stops with its reason and the Web UI shows it.
+- CGMES import: P limits of injections, transformer magnetizing split, phase tap changer reactance with `xMin`/`xMax`, choice among boundary sets.
+- Reports: bus powers of coupler clusters, distributed slack shares, coupler flows next to a bus shunt.
+- State estimation: warm start, write-back and reported angles keep the model slack angle (CGMES SV angle reference); the estimate is unchanged.
+- Web UI: update check without the GitHub API, sysimage rebuild, window position on a missing monitor.
 
 # Version 0.50.0 - 2026-10-18
 

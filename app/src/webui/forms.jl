@@ -1162,42 +1162,67 @@ end
 const _WEBUI_SIGMA_LEVEL_KEY = "state_estimation.sigma_by_voltage_level"
 const _WEBUI_SIGMA_LEVEL_SIGMA_COLUMNS = ["p_mw", "q_mvar", "i_a", "u_kv", "rel_pct"]
 
-# Nominal voltages per case and whether it has tap changers, cached by path
-# and mtime: both need the imported net, and the section renders on every
-# Runs page load. The import runs outside the lock so a slow case does not
-# block other pages.
-const _WEBUI_CASE_VN_CACHE = Dict{String,Tuple{Float64,Vector{Float64},String,Bool}}()
+# Nominal voltages per case, whether it has tap changers and its
+# transformers with tap changers, cached by path and mtime: all need the
+# imported net, and the sections render on every Runs and Case page load.
+# The import runs outside the lock so a slow case does not block other pages.
+const _WEBUI_CASE_VN_CACHE = Dict{String,Tuple{Float64,Vector{Float64},String,Bool,Vector{NamedTuple}}}()
 const _WEBUI_CASE_VN_CACHE_LOCK = ReentrantLock()
 
 """
-    _webui_case_import_facts(case_path, config_file) -> (levels, error, has_taps)
+    _webui_case_import_facts(case_path, config_file) -> (levels, error, has_taps, trafos)
 
-What the SE section needs from the imported case, from one cached import:
+What the SE sections need from the imported case, from one cached import:
 the distinct bus nominal voltages in kV, highest first, an error text
-(empty on success), and `has_taps`, whether the case has a transformer with
-a declared tap changer (`_case_has_tap_changers`, the default of "estimate
-taps"). A case that does not import gives no levels, the import error and
-`has_taps = false`.
+(empty on success), `has_taps`, whether the case has a transformer with
+a declared tap changer (`_case_has_tap_changers`), and `trafos`, the
+transformers the SE service releases for the tap estimation
+(`_webui_case_tap_transformers`). A case that does not import gives no
+levels, the import error, `has_taps = false` and no transformers.
 """
 function _webui_case_import_facts(case_path::AbstractString, config_file::AbstractString)
   path = String(case_path)
-  (isfile(path) || isdir(path)) || return (Float64[], "case file not found", false)
+  (isfile(path) || isdir(path)) || return (Float64[], "case file not found", false, NamedTuple[])
   stamp = mtime(path)
   hit = lock(() -> get(_WEBUI_CASE_VN_CACHE, path, nothing), _WEBUI_CASE_VN_CACHE_LOCK)
-  (hit !== nothing && hit[1] == stamp) && return (hit[2], hit[3], hit[4])
-  levels, err, has_taps = try
+  (hit !== nothing && hit[1] == stamp) && return (hit[2], hit[3], hit[4], hit[5])
+  levels, err, has_taps, trafos = try
     # the effective configuration the SE run imports the case with
     cfg = resolve_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file), path).config
     net = import_case(path, cfg; run_kind = :state_estimation).net
-    (sort!(unique(Float64[nd.comp.cVN for nd in net.nodeVec]); rev = true), "", _case_has_tap_changers(net))
+    (sort!(unique(Float64[nd.comp.cVN for nd in net.nodeVec]); rev = true), "", _case_has_tap_changers(net), _webui_case_tap_transformers(net))
   catch err
     # the expected failure: the case does not import (format, content);
     # the section shows the reason instead of the levels
     err isa InterruptException && rethrow()
-    (Float64[], first(split(sprint(showerror, err), '\n')), false)
+    (Float64[], first(split(sprint(showerror, err), '\n')), false, NamedTuple[])
   end
-  lock(() -> (_WEBUI_CASE_VN_CACHE[path] = (stamp, levels, err, has_taps)), _WEBUI_CASE_VN_CACHE_LOCK)
-  return (levels, err, has_taps)
+  lock(() -> (_WEBUI_CASE_VN_CACHE[path] = (stamp, levels, err, has_taps, trafos)), _WEBUI_CASE_VN_CACHE_LOCK)
+  return (levels, err, has_taps, trafos)
+end
+
+## The transformers of a net the SE service releases for the tap estimation
+## (in service, a changer of a release mode), one row each: `name`, `mrid`
+## (empty outside CGMES), `machine` (a machine transformer by the rule of the
+## estimator), `kinds` (the changer kinds, comma separated) and `key`, the
+## entry of state_estimation.tap_estimation.exclude that names it: the name
+## when no other transformer has it, else the mRID.
+function _webui_case_tap_transformers(net)::Vector{NamedTuple}
+  ks = Int[k for (k, br) in enumerate(net.branchVec) if br.ratio != 0.0 && _branch_terminal_state(br) == :closed && _tap_release_mode(br) !== nothing]
+  mrids = _transformer_mrids(net)
+  machine = _tap_exclusions(net, TapEstimationConfig(); ks = ks).reasons
+  names = [getCompName(br.comp) for br in net.branchVec if br.ratio != 0.0]
+  rows = NamedTuple[]
+  for k in ks
+    br = net.branchVec[k]
+    name = getCompName(br.comp)
+    mrid = get(mrids, k, "")
+    set = _effective_tap_changers(br)
+    kinds = set === nothing ? "" : join(unique(String(ch.kind) for ch in set.changers), ", ")
+    key = (count(==(name), names) > 1 && !isempty(mrid)) ? mrid : name
+    push!(rows, (branch = k, name = name, mrid = mrid, machine = haskey(machine, k), kinds = kinds, key = key))
+  end
+  return rows
 end
 
 """
@@ -1208,7 +1233,7 @@ error text (empty on success). A case that does not import gives no levels
 and the import error, which the SE section shows next to the table.
 """
 function _webui_case_voltage_levels(case_path::AbstractString, config_file::AbstractString)
-  levels, err, _ = _webui_case_import_facts(case_path, config_file)
+  levels, err, _, _ = _webui_case_import_facts(case_path, config_file)
   return (levels, err)
 end
 
@@ -1296,6 +1321,97 @@ function _webui_sigma_levels_from_form(form::AbstractDict)::Union{Nothing,Dict{S
   isempty(out) && strip(String(something(_webui_form_value(form, "se_sigma_lvl_stored", ""), ""))) != "1" && return nothing
   _parse_sigma_by_voltage_level(out)
   return out
+end
+
+# --- tap estimation per transformer (Case page) ------------------------------
+#
+# The table of the transformers with tap changers on the Case page, one
+# "estimate" checkbox per transformer, saved into the case configuration as
+# state_estimation.tap_estimation.exclude (the unchecked transformers) and
+# include_machine_transformers (true when a machine transformer is checked;
+# then every unchecked transformer is listed, an unchecked machine
+# transformer too). The form posts se_tap_trafo_n, per row i
+# se_tap_trafo_<i>_key (the exclude entry), se_tap_trafo_<i>_machine and the
+# checkbox se_tap_trafo_<i>_estimate, se_tap_trafo_<i>_excluded (named in the
+# configured exclude list), and se_tap_keep_<j> for each configured entry
+# without a transformer in this case (kept, so a save does not drop it).
+const _WEBUI_TAP_EXCLUDE_KEY = "state_estimation.tap_estimation.exclude"
+const _WEBUI_TAP_MACHINE_KEY = "state_estimation.tap_estimation.include_machine_transformers"
+
+"""
+    _webui_tap_exclusion_table(case_path, case_directory, config_file) -> NamedTuple
+
+The rows of the tap estimation table of the Case page: `(rows, keep,
+include_machine, error, editable)`. `rows` has one entry per transformer the SE service releases
+(`_webui_case_tap_transformers`) plus `estimate`, whether the run estimates
+it under the effective configuration of the case (not named in
+`state_estimation.tap_estimation.exclude`, and for a machine transformer
+`include_machine_transformers` set) and `excluded`, whether it is named in
+the exclude list. `keep` lists the configured entries
+that name no transformer of the case. When the configuration of the case
+cannot be read, `editable` is false and `error` names the reason; the page
+then posts no table.
+"""
+function _webui_tap_exclusion_table(case_path::AbstractString, case_directory, config_file::AbstractString)
+  path = isabspath(String(case_path)) ? String(case_path) : (case_directory === nothing ? String(case_path) : joinpath(String(case_directory), String(case_path)))
+  _, err, _, trafos = _webui_case_import_facts(path, config_file)
+  te = TapEstimationConfig()
+  editable = true
+  try
+    te = resolve_config(isempty(strip(config_file)) ? DEFAULT_SPARLECTRA_CONFIG_PATH : String(config_file), path).config.state_estimation.tap_estimation
+  catch e
+    # the expected failures: a configuration file or case configuration that
+    # does not load (ArgumentError from the validators, ErrorException from
+    # the YAML reader); the run names the same error, the table shows it
+    (e isa ArgumentError || e isa ErrorException) || rethrow()
+    editable = false
+    err = isempty(err) ? sprint(showerror, e) : string(err, "; ", sprint(showerror, e))
+  end
+  wanted = Set{String}(te.exclude)
+  named(t) = t.name in wanted || (!isempty(t.mrid) && t.mrid in wanted)
+  rows = NamedTuple[merge(t, (estimate = !named(t) && (!t.machine || te.include_machine_transformers), excluded = named(t))) for t in trafos]
+  known = Set{String}(vcat([t.name for t in trafos], [t.mrid for t in trafos if !isempty(t.mrid)]))
+  keep = String[e for e in te.exclude if !(e in known)]
+  return (rows = rows, keep = keep, include_machine = te.include_machine_transformers, error = err, editable = editable)
+end
+
+"""
+    _webui_tap_exclusions_from_form(form) -> Union{Nothing,NamedTuple}
+
+The posted tap estimation table as `(exclude, include_machine)`, the values
+of `state_estimation.tap_estimation.exclude` and
+`include_machine_transformers`, or `nothing` when the form carries no table
+(`se_tap_trafo_n` absent: the configured values stay). A checked machine
+transformer sets `include_machine`; every unchecked transformer then goes
+into `exclude`. Without one, the unchecked machine transformers are left
+out of `exclude` (the default keeps them out and calculates their step),
+except those already named in the configured list
+(`se_tap_trafo_<i>_excluded`): a user exclusion is not calculated, and a
+save must not turn it into the machine default. A table without machine
+transformers keeps the configured `include_machine`
+(`se_tap_machine_configured`). The kept entries (`se_tap_keep_<j>`) come
+first.
+"""
+function _webui_tap_exclusions_from_form(form::AbstractDict)::Union{Nothing,NamedTuple}
+  n_raw = _webui_form_value(form, "se_tap_trafo_n", nothing)
+  n_raw === nothing && return nothing
+  n = something(tryparse(Int, strip(String(n_raw))), 0)
+  text(field) = strip(String(something(_webui_form_value(form, field, ""), "")))
+  rows = [(key = text("se_tap_trafo_$(i)_key"), machine = text("se_tap_trafo_$(i)_machine") == "true", estimate = text("se_tap_trafo_$(i)_estimate") == "true", excluded = text("se_tap_trafo_$(i)_excluded") == "true") for i in 1:n]
+  filter!(r -> !isempty(r.key), rows)
+  include_machine = any(r -> r.machine, rows) ? any(r -> r.machine && r.estimate, rows) : text("se_tap_machine_configured") == "true"
+  exclude = String[]
+  j = 1
+  while (k = text("se_tap_keep_$(j)")) != ""
+    push!(exclude, k)
+    j += 1
+  end
+  for r in rows
+    r.estimate && continue
+    (r.machine && !include_machine && !r.excluded) && continue
+    push!(exclude, r.key)
+  end
+  return (exclude = unique(exclude), include_machine = include_machine)
 end
 
 # The case file (or CGMES directory) behind a case name, or nothing (no
@@ -2085,10 +2201,9 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "se_robust_k2" => _webui_parse_form_value(_webui_form_value(form, "se_robust_k2", "6.0"), Float64, "se_robust_k2"),
     "se_k_suppress" => _webui_parse_form_value(_webui_form_value(form, "se_k_suppress", "6.0"), Float64, "se_k_suppress"),
     "se_suppression_sigma" => _webui_parse_form_value(_webui_form_value(form, "se_suppression_sigma", "2000"), Float64, "se_suppression_sigma"),
-    "se_max_eliminations" => _webui_parse_form_value(_webui_form_value(form, "se_max_eliminations", "3"), Int, "se_max_eliminations"),
+    "se_max_eliminations" => _webui_parse_form_value(_webui_form_value(form, "se_max_eliminations", "5"), Int, "se_max_eliminations"),
     "se_update_shunts" => _webui_parse_form_value(_webui_form_value(form, "se_update_shunts", "false"), Bool, "se_update_shunts"),
     "se_report_correlation" => _webui_parse_form_value(_webui_form_value(form, "se_report_correlation", "false"), Bool, "se_report_correlation"),
-    "se_tap_estimation" => _webui_parse_form_value(_webui_form_value(form, "se_tap_estimation", "false"), Bool, "se_tap_estimation"),
     "se_start_run_id" => (v = strip(String(something(_webui_form_value(form, "se_start_run_id", ""), ""))); isempty(v) ? nothing : v),
     "se_start_mode" => strip(String(something(_webui_form_value(form, "se_start_mode", "se_state"), "se_state"))),
   )

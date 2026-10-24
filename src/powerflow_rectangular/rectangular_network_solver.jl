@@ -338,6 +338,7 @@ function runpf_rectangular!(
   start_projection_requested_angle_mode::Symbol = :classic,
   start_projection_requested_voltage_mode::Symbol = :classic,
   start_projection_ratio_profile::Bool = false,
+  start_rotate_behind_pst::Bool = false,
   start_current_iteration_enabled::Bool = false,
   start_current_iteration_max_iter::Int = 10,
   start_current_iteration_tol::Float64 = 1.0e-3,
@@ -450,6 +451,7 @@ function runpf_rectangular!(
       start_projection_requested_angle_mode = start_projection_requested_angle_mode,
       start_projection_requested_voltage_mode = start_projection_requested_voltage_mode,
       start_projection_ratio_profile = start_projection_ratio_profile,
+      start_rotate_behind_pst = start_rotate_behind_pst,
       start_current_iteration_enabled = start_current_iteration_enabled,
       start_current_iteration_max_iter = start_current_iteration_max_iter,
       start_current_iteration_tol = start_current_iteration_tol,
@@ -535,7 +537,7 @@ function runpf_rectangular!(
 
   # 1) Initial complex voltages V0 and slack index
   V0, slack_idx = _perf_profile_time!(performance_profile, :solver_initial_voltage) do
-    initialVrect(net; flatstart = opt_flatstart)
+    initialVrect(net; flatstart = opt_flatstart, rotate_behind_pst = start_rotate_behind_pst)
   end
 
   # 2) Specified complex power injections S (p.u.). For Q(U)/P(U) controllers
@@ -593,7 +595,7 @@ function runpf_rectangular!(
   # the slack fix, so a star point next to the reference sees its setpoint.
   if opt_flatstart
     n_aux_start = _perf_profile_time!(performance_profile, :solver_aux_bus_flat_start) do
-      _aux_bus_flat_start!(V0, net, slack_idx)
+      _aux_bus_flat_start!(V0, net, slack_idx; rotate_behind_pst = start_rotate_behind_pst)
     end
     verbose > 0 && n_aux_start > 0 && @info "flat start: $(n_aux_start) auxiliary bus(es) start at the ratio of their lowest-impedance branch"
   end
@@ -855,6 +857,14 @@ function runpf_rectangular!(
     isempty(missing) || @warn "qlimit_trace_buses entries not found in network" missing = missing
     println("Q-limit trace enabled for BUS_I values: ", [_qlimit_original_bus_id(net, bus) for bus in qlimit_trace_internal])
   end
+
+  # for the wrong-branch hint only (_wrong_branch_pst_start_hint): Newton
+  # starts without angles on a net with phase shifters while
+  # power_flow.start_mode.rotate_behind_pst is off. Tested on the final start
+  # vector, after the start projection, the current-iteration and APSLF
+  # starts and the Q-limit guard start, since each of them can replace the
+  # angles of initialVrect (the DC candidate carries the shift angles).
+  start_without_angles_behind_pst = !start_rotate_behind_pst && _has_in_service_phase_shift(net) && _start_without_angles(V0, slack_idx)
 
   # 5) NR-Loop
   V = copy(V0)
@@ -1508,6 +1518,7 @@ function runpf_rectangular!(
     # it rates the core PF Jacobian without the appended lambda row and
     # column. See _make_rectangular_condest_thunk in condition_number.jl.
     status_build_ = merge(status_build_, (status = (; status_build_.status..., jacobian_condest = _make_rectangular_condest_thunk(Ybus, V, bus_types, Vset, slack_idx, net.isoNodes)),))
+    status_build_ = merge(status_build_, (status = (; status_build_.status..., start_without_angles_behind_pst = start_without_angles_behind_pst),))
     final_reason_ = status_build_.final_reason
     final_status_ = status_build_.final_status
     status_ = _store_and_print_rectangular_final_status!(net, status_build_.status, verbose)
@@ -1611,6 +1622,7 @@ function runpf_rectangular!(
   start_projection_requested_angle_mode::Symbol = :classic,
   start_projection_requested_voltage_mode::Symbol = :classic,
   start_projection_ratio_profile::Bool = false,
+  start_rotate_behind_pst::Bool = false,
   start_current_iteration_enabled::Bool = false,
   start_current_iteration_max_iter::Int = 10,
   start_current_iteration_tol::Float64 = 1.0e-3,
@@ -1714,6 +1726,7 @@ function runpf_rectangular!(
     start_projection_requested_angle_mode,
     start_projection_requested_voltage_mode,
     start_projection_ratio_profile,
+    start_rotate_behind_pst,
     start_current_iteration_enabled,
     start_current_iteration_max_iter,
     start_current_iteration_tol,
@@ -1890,6 +1903,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     start_projection_requested_angle_mode = start.angle_mode,
     start_projection_requested_voltage_mode = start.voltage_mode,
     start_projection_ratio_profile = start.ratio_profile,
+    start_rotate_behind_pst = start.rotate_behind_pst,
     start_current_iteration_enabled = start_ci.enabled,
     start_current_iteration_max_iter = start_ci.max_iter,
     start_current_iteration_tol = start_ci.tol,
@@ -2658,6 +2672,7 @@ Arguments:
 - `newton_update::Symbol`: how a Newton step is applied, `:polar` (default: magnitude times 1 + Re(dV/V), angle plus Im(dV/V); MATPOWER's update, keeps magnitudes in range on the large rotations of a flat start) or `:rectangular` (V + dV, the update up to 0.20.5)
 - `power_mode::Bool`: keep the Ybus, the symbolic LU analysis and the work arrays on the net between solves, for repeated solves of one network (default `false`)
 - `linear_solver::Symbol`: sparse linear-algebra backend for the Newton step, `:umfpack_reuse` (default: symbolic-analysis reuse across iterations via `lu!`) or `:umfpack` (full analysis every iteration, the historical path)
+- `start_rotate_behind_pst::Bool`: on a flat start (and a stored start without angles), start a bus that the reference reaches only across phase shifters at the slack angle plus the shift sum of a path with the fewest shifters (key `power_flow.start_mode.rotate_behind_pst`, default `false`)
 - `qlimit_start_iter::Int`: first Newton iteration where PV→PQ Q-limit switching may run in `:iteration` mode
 - `qlimit_start_mode::Symbol`: `:iteration`, `:auto`, or `:iteration_or_auto` start criterion for PV→PQ switching
 - `qlimit_auto_q_delta_pu::Float64`: PV reactive-power request change threshold for automatic switching start
@@ -2723,6 +2738,7 @@ function runpf!(
   start_projection_requested_angle_mode::Symbol = :classic,
   start_projection_requested_voltage_mode::Symbol = :classic,
   start_projection_ratio_profile::Bool = false,
+  start_rotate_behind_pst::Bool = false,
   start_current_iteration_enabled::Bool = false,
   start_current_iteration_max_iter::Int = 10,
   start_current_iteration_tol::Float64 = 1.0e-3,
@@ -2900,6 +2916,7 @@ function runpf!(
     start_projection_requested_angle_mode,
     start_projection_requested_voltage_mode,
     start_projection_ratio_profile,
+    start_rotate_behind_pst,
     start_current_iteration_enabled,
     start_current_iteration_max_iter,
     start_current_iteration_tol,

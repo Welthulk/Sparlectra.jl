@@ -135,9 +135,10 @@ calls a solver directly). With the settings in `opts` (see
 through the shared SE import paths, optionally shift up to `tap_count`
 seed-randomly selected in-service transformers by `tap_steps` MECHANICAL
 steps each, on one changer of the changer set the tap estimation uses (the
-first ratio changer, else the first phase changer; ratio, angle and, under
-`state_estimation.tap_estimation.impedance_correction = auto`, the
-impedance per step follow its data; the seed decides WHICH transformers,
+first ratio changer, else the first phase changer; ratio, angle and the
+impedance follow its data by the impedance rule of the tap estimation:
+per-step data always, the analytic correction only under
+`state_estimation.tap_estimation.impedance_correction = auto`; the seed decides WHICH transformers,
 releasable non-machine transformers are drawn first, a transformer without
 tap changer is skipped with a note), obtain the truth state
 (`truth_source = :fresh_solve` solves the configured power flow at
@@ -393,7 +394,9 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       # how hard the constraint binds. It is in MW, so 0.001 means 1 kW.
       # Without this the constraint mode ignored the setting and used the
       # built-in floor, and there was no way to loosen it from the Web UI.
-      zi_sigma = max(passive_sigma, ZERO_INJECTION_SIGMA)
+      # The floor is state_estimation.zero_injection_sigma_mva (default
+      # ZERO_INJECTION_SIGMA, 1 kW).
+      zi_sigma = max(passive_sigma, config.state_estimation.zero_injection_sigma_mva)
       addZeroInjectionMeasurements!(meas; net = net, busIdxs = passiveBuses, sigma = zi_sigma)
       passive_note = ", $(length(passiveBuses)) passive node(s) as protected zero-injection constraints at sigma $(zi_sigma) MW"
       passive_comment = "passive: zero-injection constraints (ZI, sigma $(zi_sigma) MW, elimination-protected) at $(pnames)"

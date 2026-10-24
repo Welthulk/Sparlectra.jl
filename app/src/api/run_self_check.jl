@@ -38,6 +38,8 @@
 # - flatstart=false: `initialVrect` keeps the imported vm/va instead of 1.0/0°;
 # - start_projection=false: no DC angle start, no blend scan;
 # - dc_seed_unconditional=false: no standalone DC pre-solve seeding;
+# - start_mode.rotate_behind_pst=false: a start without angles is not turned
+#   behind phase shifters;
 # - start_current_iteration.enabled=false: no current-iteration pre-solve;
 # - apslf_start.enabled=false: no APSLF start preconditioner.
 
@@ -123,7 +125,7 @@ function _write_self_check_summary(result, output_dir::AbstractString)::Nothing
   path = joinpath(output_dir, "self_check.log")
   open(path, "w") do io
     println(io, "# Fixed-reference self-check")
-    println(io, "forced: max_iter=1, qlimits.enabled=false, flatstart=false, start_mode.start_projection=false, start_mode.dc_seed_unconditional=false, start_current_iteration.enabled=false, apslf_start.enabled=false")
+    println(io, "forced: max_iter=1, qlimits.enabled=false, flatstart=false, start_mode.start_projection=false, start_mode.dc_seed_unconditional=false, start_mode.rotate_behind_pst=false, start_current_iteration.enabled=false, apslf_start.enabled=false")
     if raw === nothing
       # The run never reached the solver: no start state existed, so the
       # verbatim-start statement would be an empty claim.
