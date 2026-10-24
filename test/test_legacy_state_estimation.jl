@@ -463,10 +463,10 @@ function test_state_estimation_tap_guards()::Bool
   @testset "State estimation tap release guards" begin (function ()
     step = 0.00625
 
-    function _radial_net()
+    function _radial_net(; p = 8.0, q = 2.0)
       net = _tap_gate_net()
       addBus!(net = net, busName = "L3", vn_kV = 10.0)
-      addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = 8.0, q = 2.0)
+      addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = p, q = q)
       addPIModelTrafo!(net = net, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
       net.branchVec[5].has_ratio_tap = true
       net.branchVec[5].tap_step = step
@@ -495,28 +495,57 @@ function test_state_estimation_tap_guards()::Bool
     end
     @test res.converged
     te = res.tapEstimates[1]
-    @test te.frozen_reason == :none
+    @test te.reason == :none
     @test te.step_fixed == 2
     @test res.tapFixation.j_after < 1e-12
 
-    # 3) same release WITHOUT the far-side voltage measurement: the
-    # structural bridge guard freezes the tap, and the frozen run is
-    # BITWISE identical to a run without any release (stamp restored)
+    # 3) same release WITHOUT the far-side voltage measurement. At the flat
+    # start no current flows, the start test keeps the tap out
+    # (radial_no_voltage_pin); at the converged state the losses of the
+    # 8 MW load tie the far-side voltage level to the measured flows, the
+    # recheck at the estimate (0.60.0) finds the column determinable and
+    # estimates it: on the truth step 2 with exact rows.
+    # Until the recheck ran on a run without a fixation the tap stayed
+    # frozen here.
     idxL3 = 5   # bus L3 is the fifth bus of _radial_net
     measNoVm = [m for m in meas if !(m.typ == Sparlectra.VmMeas && m.busIdx == idxL3)]
     net = _radial_net()
+    setTapEstimation!(net; trafo = 5, mode = :ratio)
+    resE = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      runse!(net, measNoVm)
+    end
+    @test resE.converged && resE.tapFixation !== nothing && resE.tapFixation.fixed && resE.objectiveJ < 1e-12
+    @test only(resE.tapEstimates).status === :estimated && only(resE.tapEstimates).step_fixed == 2
+    # without load nothing flows at the estimate either, the tap is not
+    # determinable there: noisy rows (seed 11) give the estimate a small
+    # current, the recheck finds a rank, the joint estimate does not
+    # converge and the state before it is put back.
+    # The frozen run is BITWISE identical to a run without any release
+    # (stamp restored, also after that failed joint estimate)
+    tnet = _radial_net(p = 0.0, q = 0.0)
+    br = tnet.branchVec[5]
+    br.tap_ratio = br.ratio / (1.0 + 2 * step)
+    measNoVm = [m for m in _tap_truth_meas(tnet; noise = true) if !(m.typ == Sparlectra.VmMeas && m.busIdx == idxL3)]
+    net = _radial_net(p = 0.0, q = 0.0)
     setTapEstimation!(net; trafo = 5, mode = :ratio)
     resF = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
       runse!(net, measNoVm)
     end
     @test resF.converged
     @test resF.tapEstimates !== nothing && length(resF.tapEstimates) == 1
-    @test resF.tapEstimates[1].frozen_reason == :radial_no_voltage_pin
+    @test resF.tapEstimates[1].reason == :radial_no_voltage_pin
     @test occursin("bridge transformer", resF.tapEstimates[1].notice)
+    # the voltage hint of a changer the rank test kept out: measured minus
+    # estimated |V| at the terminal with a Vm
+    # row, here only L2 (bus 4) is left
+    idxL2 = 4
+    hint = match(r"voltage hint: measured minus estimated \|V\| at L2 (\S+) pu", resF.tapEstimates[1].notice)
+    mL2 = only(m for m in measNoVm if m.typ == Sparlectra.VmMeas && m.busIdx == idxL2)
+    @test hint !== nothing && abs(parse(Float64, hint[1]) - (mL2.value - abs(resF.voltages[idxL2]))) <= 5e-3 * abs(mL2.value - abs(resF.voltages[idxL2])) + 1e-15
     @test resF.tapEstimates[1].fixed == false
     @test resF.tapFixation === nothing   # no tap state entered the solve
     ref = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
-      runse!(_radial_net(), measNoVm)
+      runse!(_radial_net(p = 0.0, q = 0.0), measNoVm)
     end
     @test resF.objectiveJ == ref.objectiveJ
     @test resF.dof == ref.dof
@@ -593,7 +622,7 @@ function test_state_estimation_tap_determinability()::Bool
       setTapEstimation!(net; trafo = 5, mode = :both)
       res = _tap_se_run(net, meas)
       @test res.converged
-      @test all(t -> t.frozen_reason === :none && t.note === :none, res.tapEstimates)
+      @test all(t -> t.reason === :none && t.note === :none, res.tapEstimates)
       @test abs(rowof(res, :ratio).s_est - 3.0) < 1e-6 && rowof(res, :ratio).step_fixed == 3
       @test abs(rowof(res, kind).s_est - np) < 1e-6 && rowof(res, kind).deviation_steps == np
       @test res.tapFixation.j_after < 1e-9
@@ -612,7 +641,7 @@ function test_state_estimation_tap_determinability()::Bool
     setTapEstimation!(net; trafo = 5, mode = :both)
     res = _tap_se_run(net, meas)
     @test res.converged && count(isheavy, meas) == 1
-    @test all(t -> t.frozen_reason === :none, res.tapEstimates)
+    @test all(t -> t.reason === :none, res.tapEstimates)
     @test abs(rowof(res, :ratio).s_est - 3.0) < 1e-6 && rowof(res, :ratio).step_fixed == 3
     @test abs(rowof(res, :asymmetrical).s_est + 4.0) < 1e-6 && rowof(res, :asymmetrical).step_fixed == -4
 
@@ -624,8 +653,8 @@ function test_state_estimation_tap_determinability()::Bool
     setTapEstimation!(net; trafo = 5, mode = :both)
     res = _tap_se_run(net, meas)
     @test res.converged
-    @test rowof(res, :asymmetrical).frozen_reason === :no_angle_anchor && occursin("no angle measurement", rowof(res, :asymmetrical).notice)
-    @test rowof(res, :ratio).frozen_reason === :none && rowof(res, :ratio).note === :conditional && !isempty(rowof(res, :ratio).notice)
+    @test rowof(res, :asymmetrical).reason === :no_angle_anchor && occursin("no angle measurement", rowof(res, :asymmetrical).notice)
+    @test rowof(res, :ratio).reason === :none && rowof(res, :ratio).note === :conditional && !isempty(rowof(res, :ratio).notice)
     @test rowof(res, :ratio).step_fixed == 3
     # h) T5-like without Va: frozen as well, but no :conditional, the table
     # ratio is constant
@@ -633,18 +662,20 @@ function test_state_estimation_tap_determinability()::Bool
     net = pair_net(:tab, 0, 0)
     setTapEstimation!(net; trafo = 5, mode = :both)
     res = _tap_se_run(net, meas)
-    @test res.converged && rowof(res, :tabular).frozen_reason === :no_angle_anchor
+    @test res.converged && rowof(res, :tabular).reason === :no_angle_anchor
     @test rowof(res, :ratio).note === :none && rowof(res, :ratio).step_fixed == 3
 
-    # A released run that does not converge is refrozen: on the shipped
-    # sp_case5 the bridge transformer br5 gets a Delta-u changer of 5 % at
-    # psi 60 (truth step -6, start 0), no Va, and the Vm row of its far bus
-    # a gross error of -0.05 pu. Pinned only by its magnitude effect, the
-    # released step runs into the turning point of |t| at s du = -0.5 and
-    # the released run does not converge (40 iterations, s -9.5). The
-    # regulator is then frozen again (:not_converged_released) and the
-    # estimate is solved with the tap at its start: converged, the run
-    # without the release, one warning and the mark in tapFixation
+    # An elimination whose control solve converges only in the fallback
+    # without tap estimation does not count (c758bc91, the fallback of
+    # 0.60.0 since). On the shipped sp_case5 the bridge transformer br5 gets
+    # a Delta-u changer of 5 % at psi 60 (truth step -6, start 0), no Va,
+    # and the Vm row of its far bus a gross error of -0.05 pu; the run with
+    # the released step does not converge (the fallback itself is tested in
+    # test_state_estimation_tap_fallback). A second Vm meter at that bus
+    # reads 0.07 pu above the truth: the base run converges with the tap
+    # released, the top suspect is that meter, and the control solve without
+    # it converges only in the fallback. The row goes back to active and the
+    # loop stops with not_converged.
     case5 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case5.scf.json")
     m5 = redirect_stdout(() -> S.import_case(case5, S.resolve_config(S.DEFAULT_SPARLECTRA_CONFIG_PATH, case5).config; run_kind = :state_estimation), devnull)
     empty!(m5.net.measurements)
@@ -654,22 +685,6 @@ function test_state_estimation_tap_determinability()::Bool
     @test erg == 0
     lv = Int(tn.branchVec[5].toBus)
     meas = [m.typ == S.VmMeas && m.busIdx == lv ? Measurement(typ = S.VmMeas, value = m.value - 0.05, sigma = m.sigma, busIdx = lv, id = m.id * "_gross") : m for m in generateMeasurementsFromPF(tn; includeImag = true, noise = true, rng = Random.MersenneTwister(1))]
-    run5(n) = S.with_sparlectra_config(m5.config) do
-      with_state_estimation_config(() -> runse!(n, meas); max_iter = 40, tol = 1e-6, update_net = false)
-    end
-    net = du5(0)
-    setTapEstimation!(net; trafo = 5, mode = :pst)
-    res = @test_logs (:warn, r"tap estimation did not converge in 40 iteration\(s\) with 1 released tap regulator\(s\); they are frozen again") match_mode = :any run5(net)
-    ref = run5(du5(0))
-    row = only(t for t in res.tapEstimates if t.role === :phase)
-    @test res.converged && row.frozen_reason === :not_converged_released && !row.fixed && abs(row.s_est) < 1e-9 && occursin("did not converge", row.notice)
-    @test res.tapFixation.not_converged_released && !res.tapFixation.fixed && res.tapFixation.iterations_estimation == 40
-    @test res.dof == ref.dof && abs(res.objectiveJ - ref.objectiveJ) <= 1e-6 * ref.objectiveJ && maximum(abs.(res.voltages .- ref.voltages)) < 1e-6
-    # the same case reached through an elimination: a second Vm meter at that
-    # bus reads 0.07 pu above the truth. The base run converges with the tap
-    # released, the top suspect is that meter, and the control solve without
-    # it converges only because runse! froze the tap again. Such a solve does not confirm the elimination:
-    # the row goes back to active and the loop stops with not_converged.
     lvm = only(m for m in meas if m.typ == S.VmMeas && m.busIdx == lv)
     measc = [meas; Measurement(typ = S.VmMeas, value = lvm.value + 0.05 + 0.07, sigma = lvm.sigma, busIdx = lv, id = "Vm_counter")]
     diag5(n, ms, f) = S.with_sparlectra_config(m5.config) do
@@ -677,12 +692,12 @@ function test_state_estimation_tap_determinability()::Bool
     end
     net = du5(0)
     setTapEstimation!(net; trafo = 5, mode = :pst)
-    dc5 = @test_logs (:warn, r"they are frozen again") match_mode = :any diag5(net, measc, runse_diagnostics)
-    @test dc5.diagnostics.converged && isempty(S._se_report_tap_refrozen(dc5.diagnostics))
+    dc5 = @test_logs (:warn, r"falling back") match_mode = :any diag5(net, measc, runse_diagnostics)
+    @test dc5.diagnostics.converged && isempty(S._se_report_tap_fallback(dc5.diagnostics))
     @test dc5.reverted !== nothing && dc5.reverted.id == "Vm_counter" && isempty(dc5.eliminations) && dc5.stop_reason === :not_converged
     measc[end] = S._set_measurement_active(measc[end], false)
-    ctl = @test_logs (:warn, r"they are frozen again") match_mode = :any diag5(net, measc, validate_measurements)
-    @test ctl.converged && S._se_report_tap_refrozen(ctl) == [1]
+    ctl = @test_logs (:warn, r"falling back") match_mode = :any diag5(net, measc, validate_measurements)
+    @test ctl.converged && S._se_report_tap_fallback(ctl) == [1]
 
     # b) a symmetrical changer alone on the radial edge without Va: frozen at
     # its symmetric start, and the run is bitwise the run without a release
@@ -692,22 +707,45 @@ function test_state_estimation_tap_determinability()::Bool
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
     ref = _tap_se_run(sym_net(), meas)
-    @test only(res.tapEstimates).frozen_reason === :symmetric_start && res.tapFixation === nothing
+    @test only(res.tapEstimates).reason === :symmetric_start && res.tapFixation === nothing
     @test res.voltages == ref.voltages && res.objectiveJ == ref.objectiveJ
+    # the same without the Vm row of the far bus R (bus 5): the bridge rule
+    # names only changers that move the magnitude, so the pure angle
+    # changer keeps symmetric_start and the notice of a pure angle
+    # regulator (the bridge cause and its text "the tap would absorb the
+    # downstream voltage" were not true for it)
+    measNoVm = [m for m in meas if !(m.typ == S.VmMeas && m.busIdx == 5)]
+    net = sym_net()
+    setTapEstimation!(net; trafo = 5, mode = :pst)
+    t = only(_tap_se_run(net, measNoVm).tapEstimates)
+    @test t.status === :not_estimated && t.reason === :symmetric_start && occursin("pure angle regulator", t.notice) && !occursin("downstream voltage", t.notice)
 
     # c) a Delta-u changer at psi 90 on the radial edge: at its start 0 the
-    # magnitude does not move (symmetric start, frozen); from step 2 it is
-    # released with note :sign_from_start (|t| has its minimum at 0)
+    # magnitude does not move (symmetric start, frozen); from step 2 the
+    # start test releases it, the estimate is the truth 3, and the recheck
+    # at the estimate (0.60.0) withdraws it: |t| at the mirror
+    # step -3 is the same and no angle row tells the two apart
+    # (:mirror_step_fits), the transferred step 2 stays. Before the recheck it
+    # was fixed at 3 with note :sign_from_start
     du90(n) = (tn = _tap_radial_net(); applyTapNameplate!(tn.branchVec[5]; phase_du_step = 0.01, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(n), psi_deg = 90.0); tn)
     meas = _tap_truth_meas(du90(3))
     net = du90(0)
     setTapEstimation!(net; trafo = 5, mode = :pst)
-    @test only(_tap_se_run(net, meas).tapEstimates).frozen_reason === :symmetric_start
+    @test only(_tap_se_run(net, meas).tapEstimates).reason === :symmetric_start
+    # the same start without the rows of branch 5 and the injections at its
+    # buses: the noise test freezes it (zero column), and the notice carries
+    # no note of the structural pass (":sign_from_start" was left on it
+    # before, its text contradicted the freeze)
+    blind = [m for m in meas if !(m.branchIdx == 5) && !(m.typ in (S.PinjMeas, S.QinjMeas) && m.busIdx in (4, 5))]
+    net = du90(0)
+    setTapEstimation!(net; trafo = 5, mode = :pst)
+    t = only(_tap_se_run(net, blind).tapEstimates)
+    @test t.reason === :not_observable && t.note === :none && occursin("do not see", t.notice) && !occursin("sign of its step", t.notice)
     net = du90(2)
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
-    @test res.converged && only(res.tapEstimates).frozen_reason === :none && only(res.tapEstimates).note === :sign_from_start
-    @test only(res.tapEstimates).step_fixed == 3
+    row = only(res.tapEstimates)
+    @test res.converged && row.status === :not_estimated && row.reason === :mirror_step_fits && row.step_fixed == 2 && abs(row.s_est - 3.0) < 1e-6
 
     # d) the same changer at psi 60 starts with a moving magnitude: released
     # and exact without any angle measurement
@@ -716,7 +754,7 @@ function test_state_estimation_tap_determinability()::Bool
     net = du60(0)
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
-    @test res.converged && only(res.tapEstimates).frozen_reason === :none && abs(only(res.tapEstimates).s_est - 4.0) < 1e-6
+    @test res.converged && only(res.tapEstimates).reason === :none && abs(only(res.tapEstimates).s_est - 4.0) < 1e-6
 
     # e) two parallel Delta-u changers into the radial bus, no Va: at psi 90
     # the lower branch index (the tree edge) is frozen at its symmetric
@@ -740,7 +778,7 @@ function test_state_estimation_tap_determinability()::Bool
       res = _tap_se_run(net, meas)
       r5 = only(t for t in res.tapEstimates if t.branch == 5)
       r6 = only(t for t in res.tapEstimates if t.branch == 6)
-      @test res.converged && r5.frozen_reason === frozen5 && r6.frozen_reason === :none
+      @test res.converged && r5.reason === frozen5 && r6.reason === :none
       if psi == 90.0
         @test r6.note === :relative_to_frozen && !r6.fixed && abs(r6.s_fixed) < 1e-6 && occursin("relative to the frozen phase regulator", r6.notice)
         @test res.tapFixation.k_removed == 0 && res.dof == res.tapFixation.dof_before
@@ -750,7 +788,15 @@ function test_state_estimation_tap_determinability()::Bool
     end
 
     # f) an Ia row at the slack-side terminal of the PST and a Va row on its
-    # far side share the PMU time base: the edge is anchored, no freeze, exact
+    # far side share the PMU time base. The rank test counts a current row
+    # only when its predicted current at the start passes 3 sigma of its
+    # magnitude (the Ia gate of the WLS loop): from a flat start the PST at
+    # s = 0 between equal voltages carries no current, the Ia row does not
+    # count and at the start the column lies in the span of the angle states (not
+    # estimated, symmetric_start). From a warm start (the voltages of a power
+    # flow of the start model) the Ia row counts and anchors the edge:
+    # estimated, exact. Before the rank test the structural rule counted the
+    # Ia row in both cases.
     meas = _tap_truth_meas(du90(3); includeVa = true, includeIa = true)
     rbus = 5
     meas = [m for m in meas if !(m.typ == S.VaMeas && m.busIdx != rbus) && !(m.typ == S.IaMeas && !(m.branchIdx == 5 && m.direction == :from))]
@@ -758,70 +804,104 @@ function test_state_estimation_tap_determinability()::Bool
     net = du90(0)
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
-    @test res.converged && only(res.tapEstimates).frozen_reason === :none && abs(only(res.tapEstimates).s_est - 3.0) < 1e-6
+    # (0.60.0) the recheck at the estimate: kept out at the flat start, the
+    # run has no tap state, at the converged state the Ia row counts and the
+    # changer is estimated again, on the truth. Until
+    # the recheck ran on a run without a fixation it stayed symmetric_start
+    @test res.converged && only(res.tapEstimates).status === :estimated && only(res.tapEstimates).step_fixed == 3.0 && res.objectiveJ < 1e-12
+    net = du90(0)
+    runpf!(net, 40, 1e-12, 0; method = :rectangular)
+    setTapEstimation!(net; trafo = 5, mode = :pst)
+    res = _tap_se_run(net, meas; flatstart = false)
+    @test res.converged && only(res.tapEstimates).reason === :none && abs(only(res.tapEstimates).s_est - 3.0) < 1e-6
 
     # g) a regulator no row sees (no flow on its branch, no injection at its
-    # buses): its column is zero, it is frozen (:not_observable). The column
-    # test freezes only a column that is zero within its own FD noise:
-    # i) the same with one injection row back at a huge sigma: the row sees
-    # the regulator, it is estimated (the earlier rule, weighted norm below
-    # jac_eps times the largest Vm column, froze it); i2) the sz3 pattern, a
-    # weakly seen regulator (that row at sigma 1e3) next to a heavy row
-    # elsewhere (Vm at H2, sigma 1e-7): the heavy row does not freeze it (the
-    # old reference froze it, column 1.66 against 10). In i and i2 the old
-    # comparison survives as the
-    # hint "weak column, factor x below the strongest" in the notice and in
-    # the log, the regulator stays estimated
+    # buses): its column is zero within its own FD noise, it is not
+    # estimated (:not_observable, notice "do not see"); i) the same with one
+    # injection row back at a huge sigma (1e9): the row sees the regulator,
+    # it is estimated (the former weighted column rule froze it),
+    # and the hint "weak column" reads the unweighted sensitivity, so the
+    # huge sigma gives no hint any more. The sz3 pattern with the weights
+    # of a study case is the regression test below (it replaces the case
+    # with a Vm row at sigma 1e-7 next to that row at sigma 1e3, a weight
+    # ratio of 1e20)
     gmeas = _tap_truth_meas((tn = _tap_gate_net(); tn.branchVec[3].tap_ratio = 1.0 / (1.0 + 2 * 0.00625); tn))
     blind = [m for m in gmeas if !(m.branchIdx == 3) && !(m.typ in (S.PinjMeas, S.QinjMeas) && m.busIdx in (1, 3))]
     qinj3(sigma) = Measurement(typ = S.QinjMeas, value = only(m.value for m in gmeas if m.typ == S.QinjMeas && m.busIdx == 3), sigma = sigma, busIdx = 3, id = "Qinj_L1_wide")
-    heavy(ms) = [m.typ == S.VmMeas && m.busIdx == 2 ? Measurement(typ = S.VmMeas, value = m.value, sigma = 1e-7, busIdx = 2, id = "Vm_H2_heavy") : m for m in ms]
-    for (meas, frozen) in ((blind, :not_observable), (vcat(blind, [qinj3(1e9)]), :none), (heavy(vcat(blind, [qinj3(1e3)])), :none))
+    for (meas, frozen) in ((blind, :not_observable), (vcat(blind, [qinj3(1e9)]), :none))
       net = _tap_gate_net()
       setTapEstimation!(net; trafo = 3, mode = :ratio)
-      res = if frozen === :none
-        @test_logs (:info, r"tap regulator .*: weak column, factor .* below the strongest \(Vm column of bus .*\), kept released") match_mode = :any _tap_se_run(net, meas)
-      else
-        _tap_se_run(net, meas)
-      end
+      res = _tap_se_run(net, meas)
       t = only(res.tapEstimates)
-      @test res.converged && t.frozen_reason === frozen
+      @test res.converged && t.reason === frozen && !occursin("weak column", t.notice)
       if frozen === :none
         @test abs(t.s_est - 2.0) < 1e-6 && t.step_fixed == 2
-        @test occursin(r"^weak column, factor \S+ below the strongest$", t.notice)
       else
-        @test occursin("do not see", t.notice) && !occursin("weak column", t.notice)
+        @test occursin("do not see", t.notice)
       end
     end
+    # The constellation of a study case: a passive bus Z on H2 over a
+    # link-like line (x 1e-5 pu), its P and Q injection rows zero-injection
+    # pseudo measurements with weight 5e5 against weight 1 of the ordinary
+    # P and Q rows (sigma 1 MW, Mvar), far from the ratio changer on branch
+    # 3 (truth 2 steps, start 0). The Q row of Z puts about 1e7 Mvar per pu
+    # into the Vm column of Z, as a link aggregate Q row of the study case
+    # put 2.97e6 into the Vm column of its bus. The former column rule
+    # froze the changer: weighted column over its step 3331 against jac_eps
+    # times the largest weighted Vm column 7071 (study case 832 to 873
+    # against 2109); this test fails with that rule (reason not_observable,
+    # step 0) and passes here. The rank test does not read the weights: the
+    # changer is estimated, exact, and gets no weak-column hint.
+    function study_link_net()
+      n = _tap_gate_net()
+      addBus!(net = n, busName = "Z", vn_kV = 110.0)
+      addPIModelACLine!(net = n, fromBus = "H2", toBus = "Z", r_pu = 0.0, x_pu = 1e-5, b_pu = 0.0, status = 1)
+      return n
+    end
+    tn = study_link_net()
+    tn.branchVec[3].tap_ratio = 1.0 / (1.0 + 2 * 0.00625)
+    runpf!(tn, 40, 1e-12, 0; method = :rectangular)
+    zbus = only(i for (i, nd) in enumerate(tn.nodeVec) if getCompName(nd.comp) == "Z")
+    meas = generateMeasurementsFromPF(tn; stddev = measurementStdDevs(vm = 0.004, pinj = 1.0, qinj = 1.0, pflow = 1.0, qflow = 1.0, imag = 5.0), relativeSigma = false)
+    meas = [m.typ in (S.PinjMeas, S.QinjMeas) && m.busIdx == zbus ? Measurement(typ = m.typ, value = m.value, sigma = 1 / sqrt(5e5), busIdx = zbus, id = m.id * "_zi") : m for m in meas]
+    @test count(m -> m.busIdx == zbus && 1 / m.sigma^2 > 4.9e5, meas) == 2
+    net = study_link_net()
+    setTapEstimation!(net; trafo = 3, mode = :ratio)
+    res = _tap_se_run(net, meas)
+    t = only(res.tapEstimates)
+    @test res.converged && t.reason === :none && t.step_fixed == 2 && abs(t.s_est - 2.0) < 1e-6 && isempty(t.notice)
     # N1 on the bound itself: one tap column of the gate net on a row shaped
     # like a zero injection (value 0, terms of size 1e3 seen through a Va
     # column), entries a tenth and a hundred times the FD noise bound
     # n = 10 eps T sigma_c / jac_eps with T = |z| + sum (Vm |H_Vm| + |H_Va|)
     # = 1e3; a bound from |z| alone would be a thousand times lower and leave
-    # the tenth released (arithmetic, not run against that code). The weight
-    # of that row (1 or 1e6) does not move the verdict; against the Vm column
-    # of bus 1 (weight 1e6) it decides the hint
+    # the tenth released (arithmetic, not run against that code). Neither
+    # test reads a weight. The hint compares the unweighted column over its
+    # step (100 n / sigma_c = 2.2e-4) with jac_eps times the largest Vm
+    # column (bus 1): 1e-3 with an entry 1e3 gives the hint, 1e-6 with an
+    # entry 1 does not
     function colmap()
       n = _tap_gate_net()
       setTapEstimation!(n; trafo = 3, mode = :ratio)
       nb = length(n.nodeVec)
       return nb, first(S._build_tap_state_map(n, 2 * nb, :auto))
     end
-    for (mult, wrow, frozen, hint) in ((0.1, 1.0, :not_observable, false), (0.1, 1e6, :not_observable, false), (100.0, 1.0, :none, true), (100.0, 1e6, :none, false))
+    for (mult, vmcol, frozen, hint) in ((0.1, 1e3, :not_observable, false), (100.0, 1e3, :none, true), (100.0, 1.0, :none, false))
       nb, map = colmap()
       ts = only(map.trafos)
       noise = 10 * eps(Float64) * 1e3 * ts.sigma[1] / 1e-6
       H = zeros(2, 2 * nb)
-      H[1, nb] = 1.0
+      H[1, nb] = vmcol
       H[2, 1] = 1e3
       H[2, ts.cols[1]] = mult * noise
-      hints = S._tap_column_freezes!(map, H, [1e6, wrow], [1.0, 0.0], ones(2 * nb), nb, 1e-6)
+      S._tap_column_freezes!(map, H, [1.0, 0.0], ones(2 * nb), nb, 1e-6)
+      hints = S._tap_weak_hints!(map, H, nb, 1e-6)
       @test ts.frozen[1] === frozen && (length(hints) == 1) == hint && (ts.weak[1] > 0.0) == hint
     end
-    # the noise test is per row: a heavy row (weight 1e6) whose tap entry is
-    # half its noise bound does not freeze a column that a light row
-    # (weight 1) sees at 100 times its bound, both rows with T = 1e3; a
-    # pooled weighted test would freeze it (sum w H^2 = 2.6e5 n^2 against
+    # the noise test is per row: a row whose tap entry is half its noise
+    # bound does not freeze a column that another row sees at 100 times its
+    # bound, both rows with T = 1e3; a pooled test weighted 1e6 on the first
+    # row and 1 on the second would freeze it (sum w H^2 = 2.6e5 n^2 against
     # sum w n^2 = 1e6 n^2)
     let (nb, map) = colmap()
       ts = only(map.trafos)
@@ -832,7 +912,7 @@ function test_state_estimation_tap_determinability()::Bool
       H[2, ts.cols[1]] = 0.5 * noise
       H[3, 1] = 1e3
       H[3, ts.cols[1]] = 100.0 * noise
-      S._tap_column_freezes!(map, H, [1e6, 1e6, 1.0], [1.0, 0.0, 0.0], ones(2 * nb), nb, 1e-6)
+      S._tap_column_freezes!(map, H, [1.0, 0.0, 0.0], ones(2 * nb), nb, 1e-6)
       @test ts.frozen[1] === :none
     end
 
@@ -845,7 +925,7 @@ function test_state_estimation_tap_determinability()::Bool
       net = sep()
       setTapEstimation!(net; trafo = 3, mode = mode)
       res = _tap_se_run(net, meas)
-      @test res.converged && [t.frozen_reason for t in res.tapEstimates] == [:none, :not_separable]
+      @test res.converged && [t.reason for t in res.tapEstimates] == [:none, :not_separable]
     end
 
     # k) a branch off its changer curves (its live shift of 2 deg lies on no
@@ -868,43 +948,55 @@ function test_state_estimation_tap_determinability()::Bool
       set = joinpath(d, "offcurve.measurements.csv")
       SparlectraApp._se_generate_measurement_set(case, set, SparlectraApp.MeasurementGeneratorOptions(; noise = false, gross_k = 0.0, tap_steps = 0.0, include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0, sigma_ia_deg = 0.0, seed = 3))
       res = redirect_stdout(devnull) do
-        SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "run"), "offcurve", set; tap_estimation = true, max_iter = 50)
+        SparlectraApp._run_state_estimation_service(case, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "run"), "offcurve", set; max_iter = 50)
       end
       dd = SparlectraApp.to_dict(res)
       @test dd["status"] == "succeeded"
-      rows = [r for r in dd["metadata"]["se_tap_estimates"] if r["frozen_reason"] == "model_mismatch"]
+      rows = [r for r in dd["metadata"]["se_tap_estimates"] if r["reason"] == "model_mismatch"]
       @test length(rows) == 1 && occursin("do not lie on the curves", rows[1]["notice"])
       @test occursin("notice: tap regulator", read(joinpath(d, "run", "run.log"), String))
     end
 
     # l) a phase table whose ratio has its minimum at the start point: a
-    # vertex, the one-sided slopes of |t| change sign there, frozen at the
-    # symmetric start
+    # vertex, the one-sided slopes of |t| change sign there. Until the rank
+    # test the structural rule froze it (:symmetric_start). The step column
+    # follows the tangent of the table to the right of the start (ratio
+    # slope 0.002 per step), which the far-side angles do not explain, so
+    # the rank test keeps it: estimated from its start, it stays on the side
+    # of the start (note :sign_from_start), the truth at the start comes
+    # back, and the vertex notice says the step is not reliable
     vtab() = (n = _tap_radial_net(); n.branchVec[5].se_tap_changers = S.SETapChangerSet(ratio_n = 1.0, changers = [S.SETapChanger(name = "PTV", kind = :tabular, role = :phase, side = :from, neutral = 0, low = -4, high = 4, step = 0, table = [S.SETapPoint(step = k, ratio = 1.0 + 0.002 * k^2, angle_deg = 3.0 * k) for k in -4:4])], origin = :cgmes); n)
     meas = _tap_truth_meas(vtab())
     net = vtab()
     setTapEstimation!(net; trafo = 5, mode = :pst)
-    @test only(_tap_se_run(net, meas).tapEstimates).frozen_reason === :symmetric_start
+    res = _tap_se_run(net, meas)
+    row = only(res.tapEstimates)
+    @test res.converged && row.reason === :none && row.note === :sign_from_start && row.step_fixed == 0
+    @test occursin("its step is not reliable", row.notice)
 
     # a Delta-u changer at psi 90 started at step 2 with the
-    # truth at 0, the vertex of |t|: released (its start is no vertex),
-    # estimated, rounded and fixed, and reported by the vertex notice, not
-    # excluded; once with exact measurements, once with noise.
+    # truth at 0, the vertex of |t|: released (its start is no vertex) and
+    # estimated; once with exact measurements, once with noise. Since the
+    # recheck at the estimate (0.60.0) none of these runs keeps
+    # the step: at the vertex 0 the step column has no rank
+    # (:not_observable_at_estimate), at any other fixed step the mirror step
+    # fits as well (:mirror_step_fits); the transferred step 2 stays. Until
+    # the recheck they were fixed (exact at 0, seed 6 at 4, seed 5 at 0) with
+    # the vertex notice.
     # Exact: near the vertex h moves with s^2, Gauss-Newton halves s per
     # iteration (measured 28 iterations to the stop test on s du, against 3
-    # away from the vertex), the estimate rounds to 0
+    # away from the vertex), the estimate goes to 0
     meas = _tap_truth_meas(du90(0))
     net = du90(2)
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
     row = only(res.tapEstimates)
-    @test res.converged && row.fixed && row.step_fixed == 0 && abs(row.s_est) < 0.01
-    @test occursin("its step is not reliable", row.notice) && row.note === :sign_from_start
+    @test res.converged && !row.fixed && row.reason === :not_observable_at_estimate && row.step_fixed == 2 && abs(row.s_est) < 0.01
     @test res.tapFixation.iterations_estimation <= 40
     # noise, tight sigmas (vm 0.0005 pu, P and Q 0.1 MW, I 1 A), seed 6:
-    # converged, the estimate rounds to 4 (measured s 3.95, log
-    # S3a_fix1_vertex_after), far from the truth 0, and the vertex notice
-    # says that the step is not reliable
+    # converged, the estimate rounds to 4 (measured s 3.95), far from the
+    # truth 0; J at the fixed step 4 and at the mirror step -4 are equal
+    # (27.21), so the recheck withdraws it
     tight = measurementStdDevs(vm = 0.0005, pinj = 0.1, qinj = 0.1, pflow = 0.1, qflow = 0.1, imag = 1.0)
     tn = du90(0)
     runpf!(tn, 40, 1e-12, 0; method = :rectangular)
@@ -913,34 +1005,39 @@ function test_state_estimation_tap_determinability()::Bool
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
     row = only(res.tapEstimates)
-    @test res.converged && row.fixed && row.step_fixed == 4 && occursin("its step is not reliable", row.notice)
+    @test res.converged && !row.fixed && row.reason === :mirror_step_fits && row.step_fixed == 2 && round(row.s_est) == 4 && occursin("at the mirror step -4", row.notice)
     # noise, the generator's default sigmas, seed 5: the data put the best
     # |t| below the turning point, the step state moves half the way to it,
     # then onto it once the remaining magnitude effect is below the FD
     # tolerance (_tap_keep_side_pins!): converged in 6 iterations, s 0,
-    # fixed step 0 = truth, vertex notice. Before the side rule: no
+    # the vertex, withdrawn by the recheck. Before the side rule: no
     # convergence in 40 iterations, the state jumped between -3 and 2
-    # (log S3a_fix1_vertex_before)
     meas = _tap_truth_meas(du90(0); noise = true, rng = Random.MersenneTwister(5))
     net = du90(2)
     setTapEstimation!(net; trafo = 5, mode = :pst)
     res = _tap_se_run(net, meas)
     row = only(res.tapEstimates)
-    @test res.converged && row.fixed && row.step_fixed == 0 && row.s_est == 0.0
-    @test occursin("its step is not reliable", row.notice) && row.note === :sign_from_start
+    @test res.converged && !row.fixed && row.reason === :not_observable_at_estimate && row.step_fixed == 2 && row.s_est == 0.0
     @test res.tapFixation.iterations_estimation <= 10
     # seeds 1 to 12: every run converges and stays on the side of the start
     # (s >= 0) with J at most that of the run without the release. Before
     # the side rule seeds 2, 5, 7 and 9 did not converge and seeds 3 and 8
-    # ended at s -2.69 and -1.85 (log S3a_fix1_vertex_before)
+    # ended at s -2.69 and -1.85. Three seeds end above the band end 10
+    # (s 10.55, 12.23, 12.52); each such run logs exactly one
+    # out-of-band warning naming the mirror step, the others none. Every run
+    # is withdrawn by the recheck at the estimate (seeds 2, 5, 7 and 9 at the
+    # vertex 0, the others by the mirror step)
     for seed in 1:12
       meas = _tap_truth_meas(du90(0); noise = true, rng = Random.MersenneTwister(seed))
       net = du90(2)
       setTapEstimation!(net; trafo = 5, mode = :pst)
-      res = _tap_se_run(net, meas)
+      oorLog = Test.TestLogger(min_level = Logging.Warn)
+      res = Logging.with_logger(() -> _tap_se_run(net, meas), oorLog)
       row = only(res.tapEstimates)
       ref = with_state_estimation_config(() -> runse!(du90(2), meas); max_iter = 40, tol = 1e-10)
-      @test res.converged && row.fixed && row.s_est >= 0.0 && res.tapFixation.j_before <= ref.objectiveJ + 1e-6
+      @test res.converged && !row.fixed && row.reason in (:mirror_step_fits, :not_observable_at_estimate) && row.step_fixed == 2 && row.s_est >= 0.0 && res.tapFixation.j_before <= ref.objectiveJ + 1e-6
+      @test [r.message for r in oorLog.logs] == (row.out_of_range ? [string("runse!: ", S._tap_out_of_range_line(row))] : String[])
+      @test !row.out_of_range || occursin("lies outside the band -10 to 10, |t| has the same value at the mirror step", row.notice)
     end
 
     # h) mesh edges only relative to a frozen phase regulator, on the
@@ -975,7 +1072,7 @@ function test_state_estimation_tap_determinability()::Bool
       with_state_estimation_config(() -> runse!(net, meas); max_iter = 50, tol = 1e-6, update_net = false)
     end
     phase = Dict(t.branch => t for t in res.tapEstimates if t.role === :phase)
-    @test res.converged && [phase[k].frozen_reason for k in 70:74] == [:no_angle_anchor, :none, :none, :no_angle_anchor, :no_angle_anchor]
+    @test res.converged && [phase[k].reason for k in 70:74] == [:no_angle_anchor, :none, :none, :no_angle_anchor, :no_angle_anchor]
     name70 = getCompName(net.branchVec[70].comp)
     for k in (71, 72)
       @test phase[k].note === :relative_to_frozen && !phase[k].fixed && occursin(name70, phase[k].notice)
@@ -1047,7 +1144,7 @@ function test_state_estimation_tap_determinability()::Bool
     end
     r3 = only(t for t in res.tapEstimates if t.branch == 3)
     r4 = only(t for t in res.tapEstimates if t.branch == 4)
-    @test res.converged && r4.frozen_reason === :model_mismatch && r3.frozen_reason === :none
+    @test res.converged && r4.reason === :model_mismatch && r3.reason === :none
     @test r3.note === :relative_to_frozen && !r3.fixed && occursin(getCompName(net.branchVec[4].comp), r3.notice)
     @test abs(r3.s_est - 1.1272) < 1e-3 && abs(r3.s_fixed - r3.s_est) < 1e-6 && res.tapFixation.k_removed == 0
     @test length(d.residuals) == length(meas) && isapprox(sum(abs2, d.residuals ./ [m.sigma for m in meas]), res.objectiveJ; rtol = 1e-6)

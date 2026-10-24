@@ -78,10 +78,10 @@ Fields:
 - `busIdx`: Bus index for bus measurements.
 - `branchIdx`: Branch index for branch flow measurements.
 - `direction`: Branch direction `:from` or `:to`, otherwise `:none`.
-- `linkIdx`: Bus-link index for link flow measurements (SE phase 3). A
-  link-referenced flow measurement never enters the WLS estimator: the link
-  is not part of the Ybus, so it constrains only the post-SE flow
-  allocation (`calcLinkFlowsSE!`).
+- `linkIdx`: Bus-link index for link flow measurements. On a closed link
+  the row is a WLS row of the estimator: its flow is a function of the
+  fused state (the nodal balance of the link cluster) plus, on a coupler
+  ring, the estimated circulation; on an open link it is excluded.
 - `id`: Optional measurement identifier.
 - `zero_injection`: the row is a zero-injection row, set by the code that
   creates it (`addZeroInjectionMeasurements!`, the `zero_injection` source
@@ -176,7 +176,7 @@ function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real
   if typ == VmMeas || typ == VaMeas || typ == PinjMeas || typ == QinjMeas
     isnothing(busIdx) && error("Bus measurement requires busIdx")
   elseif (typ == PflowMeas || typ == QflowMeas) && !isnothing(linkIdx)
-    # link flow measurement (SE phase 3): allocation input, never a WLS row.
+    # link flow measurement (0.60.0): a weighted WLS row of the estimator.
     # Positive from link.fromBus to link.toBus; only :from is accepted (one
     # measured quantity per link and kind is enough at zero impedance).
     isnothing(branchIdx) || error("Link flow measurement must not carry a branchIdx")
@@ -299,9 +299,9 @@ end
 
 Append an active-power flow measurement identified by `branchNr` or a unique
 `fromBus`/`toBus` branch pair, or, with `linkNr`, on a bus link (SE phase 3):
-positive from `link.fromBus` to `link.toBus`, `direction = :from` only. A
-link flow measurement never enters the WLS estimator; it is consumed by the
-post-SE flow allocation (`calcLinkFlowsSE!`).
+positive from `link.fromBus` to `link.toBus`, `direction = :from` only. On
+a closed link it is a WLS row of the estimator (normalized residual, bad-data
+elimination); `calcLinkFlowsSE!` gives the link flows after the estimate.
 """
 function addPflowMeasurement!(measurements::Vector; net::Net, value::Real, sigma::Real, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, linkNr::Union{Nothing,Int} = nothing, active::Bool = true, id::AbstractString = "")
   if !isnothing(linkNr)
@@ -497,39 +497,24 @@ function findPassiveBuses(net::Net; atol::Float64 = 1e-9, includeSlack::Bool = f
 end
 
 """
-    ZERO_INJECTION_SIGMA
-
-Default sigma of a zero-injection pseudo-measurement.
-
-A passive bus injects nothing, so the row is a CONSTRAINT rather than a
-reading, and the sigma only says how hard it is enforced. The former 1e-6
-means a weight of 1e12, and on a large network that is not "tight", it is
-crushing: on a 25000-bus case with 27268 such rows the estimation did not
-converge in 30 iterations, reported an objective of 3.8e15 per degree of
-freedom and losses 2069 percent above the reference. The same set with 1e-3
-converges in 7 iterations to J/dof 4.97 and losses within 0.02 percent.
-
-1e-3 still binds the bus far tighter than any real transducer (the tightest
-real rows in that set carry 0.01), while leaving the normal equations
-solvable.
-"""
-const ZERO_INJECTION_SIGMA = 1.0e-3
-
-"""
-    addZeroInjectionMeasurements!(measurements; net, sigma=ZERO_INJECTION_SIGMA, busNames=nothing, busIdxs=nothing, active=true, idPrefix="ZI") -> Vector{Measurement}
+    addZeroInjectionMeasurements!(measurements; net, sigma=<state_estimation.zero_injection_sigma_mva>, busNames=nothing, busIdxs=nothing, active=true, idPrefix="ZI") -> Vector{Measurement}
 
 Append active- and reactive-power zero-injection pseudo-measurements for the
-selected buses and return the newly added measurements.
+selected buses and return the newly added measurements. `sigma` (MW, Mvar)
+defaults to the active `state_estimation.zero_injection_sigma_mva`
+(default `ZERO_INJECTION_SIGMA`).
 
 Selection rules:
 - If `busIdxs` is provided, those indices are used.
 - Else if `busNames` is provided, names are resolved to indices.
 - Else passive buses are detected automatically via `findPassiveBuses(net)`.
 
-These pseudo-measurements are the current way to encode equality constraints
-`P_inj = 0` and `Q_inj = 0` in the WLS estimator.
+The rows state `P_inj = 0` and `Q_inj = 0`. With
+`state_estimation.zero_injection = on` the estimator weights them with
+`1/sigma^2`, with `constraint` it solves them as equality constraints and
+`sigma` is not used.
 """
-function addZeroInjectionMeasurements!(measurements::Vector; net::Net, sigma::Real = ZERO_INJECTION_SIGMA, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
+function addZeroInjectionMeasurements!(measurements::Vector; net::Net, sigma::Real = state_estimation_config().zero_injection_sigma_mva, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
   selected = if !isnothing(busIdxs)
     copy(busIdxs)
   elseif !isnothing(busNames)
@@ -549,7 +534,7 @@ function addZeroInjectionMeasurements!(measurements::Vector; net::Net, sigma::Re
   return added
 end
 
-function addZeroInjectionMeasurements!(net::Net; sigma::Real = ZERO_INJECTION_SIGMA, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
+function addZeroInjectionMeasurements!(net::Net; sigma::Real = state_estimation_config().zero_injection_sigma_mva, busNames::Union{Nothing,Vector{String}} = nothing, busIdxs::Union{Nothing,Vector{Int}} = nothing, active::Bool = true, idPrefix::AbstractString = "ZI")
   return addZeroInjectionMeasurements!(_net_measurements(net); net = net, sigma = sigma, busNames = busNames, busIdxs = busIdxs, active = active, idPrefix = idPrefix)
 end
 
@@ -570,13 +555,15 @@ _zero_injection_written_row(typ::MeasurementType, value::Real, id::AbstractStrin
 # switch twice adds nothing. Isolated buses are skipped: they are outside
 # every energized island, and a row there would make an island "measured"
 # that no other row observes. Returns the number of rows added (two per
-# bus). Used by the measurement-table entry (applyMeasurementSet!) and the
-# SE service.
-function _add_missing_zero_injections!(measurements::Vector, net::Net)::Int
+# bus). `sigma` is the sigma of the rows; the SE service passes the value
+# of its effective configuration (case file first), which is not the
+# process default it runs under. Used by the measurement-table entry
+# (applyMeasurementSet!) and the SE service.
+function _add_missing_zero_injections!(measurements::Vector, net::Net; sigma::Real = state_estimation_config().zero_injection_sigma_mva)::Int
   measured = Set{Int}(m.busIdx for m in measurements if m.typ in (PinjMeas, QinjMeas) && m.busIdx !== nothing)
   buses = Int[b for b in findPassiveBuses(net) if !(b in measured) && getNodeType(net.nodeVec[b]) != Isolated]
   isempty(buses) && return 0
-  return length(addZeroInjectionMeasurements!(measurements; net = net, busIdxs = buses))
+  return length(addZeroInjectionMeasurements!(measurements; net = net, busIdxs = buses, sigma = sigma))
 end
 
 # Summed admittance in pu of the in-service shunts at busIdx. The power flow

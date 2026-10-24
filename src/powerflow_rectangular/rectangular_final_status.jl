@@ -263,7 +263,7 @@ end
 
 # The message of a run stopped by the switching cap: which setting stopped
 # it, at which value, and the buses that reached it, so the reader can raise
-# the cap or look at those machines (task 0.20.2: a stored max_switches of
+# the cap or look at those machines (0.20.2: a stored max_switches of
 # 2 was invisible in the Web UI, the old text said "max switching exceeded").
 function _max_switching_reason_text(net, switch_counts::AbstractDict, max_switches::Int)::String
   cap = max(max_switches, 1)
@@ -444,6 +444,10 @@ end
 """
 Store final rectangular solver status and optionally print convergence summary.
 
+A wrong-branch voltage finding after a start without angles behind a phase
+shifter (`_wrong_branch_pst_start_hint`) is logged as a warning at every
+verbosity level, since the hint names the configuration key that avoids it.
+
 # Why
 Status persistence and user-visible summary should be emitted from one place to
 avoid divergence between stored diagnostics and console output.
@@ -453,5 +457,7 @@ function _store_and_print_rectangular_final_status!(net, status, verbose::Int)
   if verbose > 0
     _print_rectangular_convergence_summary(stdout, stored_status)
   end
+  hint = _wrong_branch_pst_start_hint(stored_status)
+  isempty(hint) || @warn string("Wrong-branch check: ", uppercase(String(stored_status.wrong_branch_status)), " (", stored_status.wrong_branch_reason, "). ", hint)
   return stored_status
 end

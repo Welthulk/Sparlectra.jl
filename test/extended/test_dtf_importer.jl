@@ -44,7 +44,7 @@ function _synthetic_dtf_case(; kind::Char = 'T', g_s::Float64 = 4.0e-5, b_s::Flo
   )
 end
 
-function _synthetic_dtf_case_with_tap_control(; longitudinal_range_percent::Float64, actual_tap_step::Int, max_tap_step::Int, added_voltage_angle_deg::Float64 = 0.0)
+function _synthetic_dtf_case_with_tap_control(; longitudinal_range_percent::Float64, actual_tap_step::Union{Nothing,Int}, max_tap_step::Int, added_voltage_angle_deg::Float64 = 0.0)
   control = Sparlectra.DTFImporter.DTFTransformerControl(
     "", 1, "PV", "SLACK", "A", "", "PV", "SLACK",
     110.0, 110.0, longitudinal_range_percent, added_voltage_angle_deg, max_tap_step, actual_tap_step,
@@ -148,6 +148,16 @@ function run_dtf_importer_tests()
     @test get(net_corrected.matpower_branch_metadata, 1, nothing).tap_changer_model == :impedance_correction
     @test isapprox(get(net_corrected.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor, expected_factor; atol = 1e-12)
     @test get(net_ideal.matpower_branch_metadata, 1, nothing).tap_impedance_correction_factor == 1.0
+    # a control without its Stufe: the middle position,
+    # Stufe 0 of the symmetric band, so the branch keeps the base ratio as
+    # before (then without a model); the typed model sits on the winding,
+    # marked and named in one info line
+    nostep = _synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 10.0, actual_tap_step = nothing, max_tap_step = 10)
+    net_nostep = @test_logs (:info, "DTF: tap changer T1A PV -> SLACK: step not transferred, middle position 0 assumed") match_mode = :any Sparlectra.DTFImporter.build_net(nostep)
+    bn = only(net_nostep.branchVec)
+    @test bn.phase_step_assumed && only(net_nostep.trafos).side1.phase_taps.step == 0
+    @test (bn.tap_ratio, bn.phase_shift_deg) == (1.0, 0.0)
+    @test !branch_ideal.phase_step_assumed
     # with an added angle the step becomes a skew-angle tap:
     # f = range% / 100 * step / max_step, then calcSkewAngleTap with that angle
     skew_case = _synthetic_dtf_case_with_tap_control(longitudinal_range_percent = 12.0, actual_tap_step = 3, max_tap_step = 8, added_voltage_angle_deg = 15.0)

@@ -31,7 +31,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.qlimits.final_q_accept_pu",
   "power_flow.qlimits.classic_max_passes",
   # the rest of the Q-limit block, for PV/PQ switching studies in the Web UI
-  # (task 0.20.2): the start rule, hysteresis and cooldown, the bus lists
+  # (0.20.2): the start rule, hysteresis and cooldown, the bus lists
   # and the whole guard
   "power_flow.qlimits.start_iter",
   "power_flow.qlimits.start_mode",
@@ -99,6 +99,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.start_mode.voltage_mode",
   "power_flow.start_mode.dc_seed_unconditional",
   "power_flow.start_mode.ratio_profile",
+  "power_flow.start_mode.rotate_behind_pst",
   "power_flow.start_current_iteration.enabled",
   "power_flow.start_current_iteration.max_iter",
   "power_flow.start_current_iteration.tol",
@@ -195,6 +196,8 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   # Installation-wide SE knobs (takahashi_min_states, rank_tol_factor, the
   # topology-precheck thresholds) stay out on purpose.
   "state_estimation.flatstart",
+  # the SE flat start turned behind phase shifters, next to flatstart
+  "state_estimation.start_mode.rotate_behind_pst",
   "state_estimation.robust_mode",
   "state_estimation.robust",
   "state_estimation.k_eliminate",
@@ -205,6 +208,9 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   # the zero-injection switch, driven by the generator's passive-node
   # checkbox and read by every SE path of the case
   "state_estimation.zero_injection",
+  # the sigma of a zero-injection row under zero_injection = on, case scope
+  # like the switch
+  "state_estimation.zero_injection_sigma_mva",
   # measurement sigmas per voltage level, a table edited on the State
   # Estimation section and saved into the case configuration
   "state_estimation.sigma_by_voltage_level",
@@ -214,6 +220,14 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "state_estimation.symmetric_gain",
   # the impedance rule of the tap estimation, a modelling choice per case
   "state_estimation.tap_estimation.impedance_correction",
+  # the tap estimation switch (the Web UI "estimate taps" checkbox) and its
+  # fallback to the run without tap estimation, case scope like the rule
+  "state_estimation.tap_estimation.enabled",
+  "state_estimation.tap_estimation.fallback",
+  # which transformers stay out of the tap estimation: the table of the
+  # Case page writes both into the case configuration
+  "state_estimation.tap_estimation.exclude",
+  "state_estimation.tap_estimation.include_machine_transformers",
 ])
 
 function _flatten_config_keys!(keys_out::Set{String}, raw::AbstractDict, prefix::String = "")
@@ -231,7 +245,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.start_mode.rotate_behind_pst", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.start_mode.rotate_behind_pst", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "state_estimation.tap_estimation.enabled", "state_estimation.tap_estimation.fallback", "state_estimation.tap_estimation.include_machine_transformers", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "contingency.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -329,7 +343,7 @@ function _validate_gui_override_value(key::String, value)
   elseif key == "state_estimation.max_eliminations"
     _validate_override_type(key, value, Int)
     value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
-  elseif key in ("state_estimation.k_eliminate", "state_estimation.k_suppress")
+  elseif key in ("state_estimation.k_eliminate", "state_estimation.k_suppress", "state_estimation.zero_injection_sigma_mva")
     _validate_override_type(key, value, Float64)
     isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
   elseif key in ("power_flow.tol", "power_flow.tol_MW", "power_flow.autodamp_min", "power_flow.start_current_iteration.tol", "power_flow.start_current_iteration.damping", "power_flow.start_current_iteration.min_improvement_factor", "power_flow.start_current_iteration.vm_min_pu", "power_flow.start_current_iteration.vm_max_pu", "power_flow.start_current_iteration.max_angle_step_deg", "power_flow.merit.armijo_c1", "power_flow.trust_region.initial_radius", "power_flow.trust_region.eta_accept", "benchmark.seconds", "matpower_import.shift_sign")
@@ -393,6 +407,10 @@ function _validate_gui_override_value(key::String, value)
     _parse_sigma_by_voltage_level(value)
   elseif key == "state_estimation.linear_solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_LINEAR_SOLVER_VALUES)
+  elseif key == "state_estimation.tap_estimation.exclude"
+    # transformer names or mRIDs: a list of strings, or one string with ";"
+    # between them; whether they exist is checked against the net of the run
+    (value isa AbstractString || (value isa AbstractVector && all(v -> v isa AbstractString, value))) || throw(ArgumentError("Override $(key) must be a list of transformer names or mRIDs; got $(repr(value))."))
   elseif key == "state_estimation.tap_estimation.impedance_correction"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_TAP_IMPEDANCE_CORRECTION_VALUES)
   elseif key == "matpower_import.matpower_dcline_mode"
@@ -861,6 +879,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "power_flow.start_mode.ratio_profile",
+  "power_flow.start_mode.rotate_behind_pst",
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
   "power_flow.qlimits.start_iter",

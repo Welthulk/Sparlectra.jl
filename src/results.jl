@@ -785,6 +785,8 @@ Prints a single console/log line summarizing the wrong-branch detection
 outcome when it is suspect or invalid (`status` is neither `:ok` nor
 `:not_checked`). Clean runs and disabled detection print nothing, keeping
 logs stable for the common case.
+A voltage finding after a start without angles behind a phase shifter
+appends the hint of `_wrong_branch_pst_start_hint`.
 """
 function _print_wrong_branch_summary_line(io::IO, net::Net)
   rect_status = rectangular_pf_status(net)
@@ -808,8 +810,11 @@ function _print_wrong_branch_summary_line(io::IO, net::Net)
     string(reason)
   end
   label = status === :fail ? "FAIL" : "SUSPECT"
+  # a voltage finding after a start without angles behind a phase shifter
+  # names the start switch (empty otherwise)
+  hint = _wrong_branch_pst_start_hint(rect_status)
   # same 15-character label rule as every other classical header line
-  println(io, "Wrong-branch   : ", label, " (", reason, ", ", detail, ")")
+  println(io, "Wrong-branch   : ", label, " (", reason, ", ", detail, ")", isempty(hint) ? "" : string(" ", hint))
   return nothing
 end
 

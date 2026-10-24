@@ -110,7 +110,7 @@ function _webui_power_mode_lu_select(profile_values)
   return replace(select, "<select " => attrs; count = 1)
 end
 
-# --- Q-limit block (task 0.20.2) ------------------------------------------
+# --- Q-limit block (0.20.2) -----------------------------------------------
 # Grey-out markers read by the form script: data-qlimit-field (every field of
 # the block; off while the handling is off), data-qlimit-active-set-field
 # (no effect in the classic modes, whose inner solves run without Q limits
@@ -1839,6 +1839,7 @@ $(_webui_system_frequency_html(profile_values; applies = ctx.frequency_applies, 
 $(_webui_adapter_options_html(:matpower, profile_values; option_format = fmt))
 $(import_conventions_note)
 </fieldset>
+$(isempty(strip(effective_case_value)) ? "" : _webui_tap_exclusion_fieldset(_webui_tap_exclusion_table(effective_case_value, effective_case_directory, config_default)))
 <div class=\"span-2 actions\"><button class=\"secondary-button\" type=\"submit\">Save case options</button></div>
 </form>
 """
@@ -1957,7 +1958,9 @@ $(_webui_qlimit_block_html(profile_values))
 <details id="apslf-start-options" class="span-2 apslf-start-options" data-apslf-start-options data-ac-only-field>
 <summary>Newton-Raphson start values</summary>
 <label class=\"check\"><input name=\"power_flow_flatstart\" type=\"hidden\" value=\"false\"><input name=\"power_flow_flatstart\" type=\"checkbox\" value=\"true\" data-flatstart-toggle$(_webui_checked(profile_values, "power_flow_flatstart", _webui_option_default("power_flow_flatstart")))>$(_webui_field_label("power_flow_flatstart", "Flat start"))</label>
-<p class=\"field-help\">Start every bus at 1.0 pu and 0 degrees and ignore the imported start voltages; only three-winding star points start at the ratio of their stiffest winding. The run switches the start projection, the DC start values, the start angle and voltage modes and the ratio profile off (greyed) while it is set; the ratio profile stays off in the rescue and auto stages as well. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
+<p class=\"field-help\">Start every bus at 1.0 pu and the slack angle and ignore the imported start voltages; only three-winding star points start at the ratio of their stiffest winding. The run switches the start projection, the DC start values, the start angle and voltage modes and the ratio profile off (greyed) while it is set; the ratio profile stays off in the rescue and auto stages as well. A CGMES run starts flat as well unless its start values are set to sv on the Case page.</p>
+<label class=\"check\" data-nr-only-field><input name=\"power_flow_rotate_behind_pst\" type=\"hidden\" value=\"false\"><input name=\"power_flow_rotate_behind_pst\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_rotate_behind_pst", _webui_option_default("power_flow_rotate_behind_pst")))>$(_webui_field_label("power_flow_rotate_behind_pst", "Flat start turned behind phase shifters"))</label>
+<p class=\"field-help\">On a flat start, and on a stored start without angles, a bus that the slack reaches only across phase-shifting transformers starts at the slack angle plus the shifts of a path with the fewest shifters. A bus that a path without shifter reaches keeps the slack angle, since in a mesh the parallel path fixes its angle. Off (default): every bus starts at the slack angle.</p>
 <label class=\"check\" data-nr-only-field data-ratio-profile-field><input name=\"power_flow_ratio_profile\" type=\"hidden\" value=\"false\"><input name=\"power_flow_ratio_profile\" type=\"checkbox\" value=\"true\"$(_webui_checked(profile_values, "power_flow_ratio_profile", _webui_option_default("power_flow_ratio_profile")))>$(_webui_field_label("power_flow_ratio_profile", "Ratio profile as a start candidate"))</label>
 <p class=\"field-help\">A start projection candidate on a flat seed: the flat profile with each voltage level scaled by the transformer ratios on its path from the slack, kept when its mismatch is at least 10 percent lower. When it acts, it scales every PQ bus, not only three-winding star points. The flat start switches it off for the whole run. Without the flat start it acts only in the rescue ladder's alternate start (not with Start angle mode dc) and in the auto mode, so it is greyed in every other case.</p>
 <label class=\"check\" data-nr-only-field><input name=\"power_flow_apslf_start_enabled\" type=\"hidden\" value=\"false\"><input name=\"power_flow_apslf_start_enabled\" type=\"checkbox\" value=\"true\" data-apslf-start-toggle$(_webui_checked(profile_values, "power_flow_apslf_start_enabled", _webui_option_default("power_flow_apslf_start_enabled")))>$(_webui_field_label("power_flow_apslf_start_enabled", "Use APSLF start values"))</label>
@@ -4834,15 +4837,13 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   se_rm == "replacement" && push!(parts, "bad-data suppression on (replacement, k_suppress=$(get(metadata, "se_k_suppress", 6.0)), sigma=$(get(metadata, "se_suppression_sigma", 2000.0)))")
   # released taps: J of the continuous estimate versus J after the
   # mandatory fixation to the mechanical step (the tap left the state there)
-  # The tap fallback must be impossible to miss: a run whose tap positions
-  # are MODEL values looks exactly like a successful tap estimation
-  # otherwise, and its J measures the model positions. Marked line, not a
-  # footnote.
-  if get(metadata, "se_tap_estimation_fallback", false) == true
+  # The tap fallback must be impossible to miss: its J measures the
+  # transferred steps, not estimates. Marked line, not a footnote.
+  if get(metadata, "se_tap_fallback_used", false) == true
     push!(parts, string("WARNING: ", _se_tap_fallback_note(metadata)))
   end
   tapc = Int(get(metadata, "se_tap_count", 0))
-  if tapc > 0
+  if tapc > 0 && get(metadata, "se_tap_fallback_used", false) != true
     jb = get(metadata, "se_tap_j_before", nothing)
     ja = get(metadata, "se_tap_j_after", nothing)
     fixedtxt = get(metadata, "se_tap_fixed", false) == true ? "" : " (NOT fixed)"
@@ -4928,19 +4929,16 @@ function _webui_se_tap_section(result::AbstractDict)::String
   get(metadata, "run_mode", "") == "se" || return ""
   rows = get(metadata, "se_tap_estimates", nothing)
   esc = _webui_escape
-  # the fallback replaces the table: showing estimated-looking positions
-  # that are model values is worse than showing none
-  if get(metadata, "se_tap_estimation_fallback", false) == true
-    return string("<section class=\"result-block\"><h3>Transformer tap estimation</h3>",
-      "<p class=\"warning\">", esc(_se_tap_fallback_note(metadata)), "</p></section>")
-  end
-  (rows isa AbstractVector && !isempty(rows)) || return ""
+  # the fallback line stands above the table, whose rows then say
+  # "not estimated (fallback not converged)" or "(fallback worse fit)"
+  fallback_line = get(metadata, "se_tap_fallback_used", false) == true ? string("<p class=\"warning\">", esc(_se_tap_fallback_note(metadata)), "</p>") : ""
+  (rows isa AbstractVector && !isempty(rows)) || return isempty(fallback_line) ? "" : string("<section class=\"panel\"><h2>Transformer tap estimates</h2>", fallback_line, "</section>")
   head, body = any(t -> haskey(t, "s_est"), rows) ? _webui_se_tap_rows(rows) : _webui_se_tap_rows_pre060(rows)
   jb = get(metadata, "se_tap_j_before", nothing)
   ja = get(metadata, "se_tap_j_after", nothing)
   db = get(metadata, "se_tap_dof_before", "?")
   da = get(metadata, "se_tap_dof_after", "?")
-  jline = jb === nothing || ja === nothing ? "" : "<p>J before fixation: <strong>$(round(Float64(jb); sigdigits = 4))</strong> (dof $(db)) &rarr; J after fixation: <strong>$(round(Float64(ja); sigdigits = 4))</strong> (dof $(da)). After the fixation the tap is no state variable any more; a large J after with a small J before means the estimated position sits between mechanical steps.</p>"
+  jline = (jb === nothing || ja === nothing || !isempty(fallback_line)) ? fallback_line : "<p>J before fixation: <strong>$(round(Float64(jb); sigdigits = 4))</strong> (dof $(db)) &rarr; J after fixation: <strong>$(round(Float64(ja); sigdigits = 4))</strong> (dof $(da)). After the fixation the tap is no state variable any more; a large J after with a small J before means the estimated position sits between mechanical steps.</p>"
   return string(
     "<section class=\"panel\"><h2>Transformer tap estimates</h2>", jline,
     "<div style=\"overflow-x:auto\"><table class=\"details\"><thead>", head, "</thead><tbody>", join(body, ""), "</tbody></table></div>",
@@ -4953,6 +4951,7 @@ const _WEBUI_TAP_NOTE_SUFFIX = Dict{String,String}(
   "relative_only" => "relative only",
   "conditional" => "conditional on the frozen shift",
   "sign_from_start" => "sign from the start",
+  "p_from_schedule" => "P from the schedule",
 )
 
 ## header and body rows of the tap table for regulator rows (0.60.0
@@ -4968,17 +4967,18 @@ function _webui_se_tap_rows(rows::AbstractVector)
   head = string("<tr><th>Branch</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Regulator</th><th>Model step</th><th>s</th><th>Delta U</th><th>Ratio</th><th>Angle (deg)</th><th>Fixed step</th><th>Deviation</th><th>Status</th></tr>")
   body = String[]
   for t in rows
-    calculated = String(something(get(t, "source", "estimated"), "estimated")) == "calculated"
-    fr = String(something(get(t, "frozen_reason", "none"), "none"))
+    st = String(something(get(t, "status", "estimated"), "estimated"))
+    calculated = st == "calculated"
+    reason = String(something(get(t, "reason", "none"), "none"))
     dev = get(t, "deviation_steps", nothing)
     # machine transformers are never estimated: their tap is no state
     # variable, the position is back-calculated after the run and marked so
     status = if calculated
       "calculated (machine transformer, not estimated)"
-    elseif fr == "no_changer"
+    elseif reason == "no_changer"
       "not released (no tap changer of the released kind)"
-    elseif !(fr in ("none", ""))
-      "frozen ($(replace(fr, "_" => " ")))"
+    elseif st == "not_estimated"
+      "not estimated ($(replace(reason, "_" => " ")))"
     elseif get(t, "out_of_range", false) == true
       "out of range (clamped)"
     elseif get(t, "fixed", false) == true
@@ -5305,6 +5305,9 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<p class=\"se-recommend\">The list shows only the measurement sets of the selected case (their <code># case:</code> line names it, or their <code># cgmes_model:</code> line the EQ model of a CGMES case); the matching set (&lt;case&gt;.measurements.csv) is preselected.$(isempty(measurements) ? " No set in the case directory belongs to this case; generate one with the measurement generator above." : "")</p><label title=\"Measurement CSV v1 or measurement table (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
     "<fieldset class=\"se-options\"><legend>Estimator options</legend>",
     "<label title=\"Start from a flat voltage profile\">$(_webui_field_label("se_flatstart", "flatstart"))<input type=\"checkbox\" name=\"se_flatstart\" value=\"true\"$(gchk2("se_flatstart", true))></label> ",
+    # a config key (state_estimation.start_mode.rotate_behind_pst): the hidden
+    # false makes an unchecked box post false over a configured true
+    "<label title=\"Flat start only: a bus the slack reaches only across phase-shifting transformers starts at their shift sum, as in the power flow flat start; a bus a path without shifter reaches keeps 0. Off (default): every angle starts at 0.\">$(_webui_field_label("se_rotate_behind_pst", "flat start behind phase shifters"))<input type=\"hidden\" name=\"se_rotate_behind_pst\" value=\"false\"><input type=\"checkbox\" name=\"se_rotate_behind_pst\" value=\"true\"$(gchk2("se_rotate_behind_pst", "false"))></label> ",
     "<label title=\"WLS convergence tolerance on the state step. The default 1e-6 is the noise floor of the finite-difference Jacobian; a tighter value is raised with a log line.\">$(_webui_field_label("se_tol", "tol"))<input type=\"text\" name=\"se_tol\" value=\"$(gv("se_tol", "1e-6"))\" size=\"8\"></label> ",
     "<label title=\"Iteration cap, the same limit the service and the configuration use. A solve with released transformer taps can need close to 40 iterations before it settles.\">$(_webui_field_label("se_max_iter", "max_iter"))<input type=\"number\" name=\"se_max_iter\" value=\"$(gv("se_max_iter", "50"))\" min=\"1\" max=\"200\"></label> ",
     "<label title=\"Treatment of a large residual. off: plain WLS. staged: down-weighted between the knees k1 and k2. replacement: rows past the limit get a fixed large sigma.\">$(_webui_field_label("se_robust_mode", "down-weighting"))<select name=\"se_robust_mode\" id=\"se-robust-mode\"><option value=\"off\"$(gv("se_robust_mode", "off") == "off" ? " selected" : "")>off</option><option value=\"staged\"$(gv("se_robust_mode", "off") == "staged" ? " selected" : "")>staged</option><option value=\"replacement\"$(gv("se_robust_mode", "off") == "replacement" ? " selected" : "")>replacement</option></select></label> ",
@@ -5317,7 +5320,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"Replacement mode: from this normalized residual a measurement gets the replacement sigma and loses its influence; removal is the elimination limit's job.\">$(_webui_field_label("se_k_suppress", "down-weight from rn"))<input type=\"number\" name=\"se_k_suppress\" id=\"se-k-suppress\" value=\"$(gv("se_k_suppress", "4.0"))\" min=\"0.000001\" step=\"any\"></label> ",
     "<label title=\"Not a limit: the replacement sigma, in the measurement's unit. A down-weighted row is solved with this sigma instead of its own; statistics keep the original.\">$(_webui_field_label("se_suppression_sigma", "replacement sigma (MW/Mvar)"))<input type=\"number\" name=\"se_suppression_sigma\" value=\"$(gv("se_suppression_sigma", "2000"))\" min=\"0.000001\" step=\"any\"></label> ",
     "</span>",
-    "<label title=\"Sequential bad-data elimination budget\">$(_webui_field_label("se_max_eliminations", "max_eliminations"))<input type=\"number\" name=\"se_max_eliminations\" value=\"$(gv("se_max_eliminations", "3"))\" min=\"0\" max=\"20\"></label> ",
+    "<label title=\"Sequential bad-data elimination budget\">$(_webui_field_label("se_max_eliminations", "max_eliminations"))<input type=\"number\" name=\"se_max_eliminations\" value=\"$(gv("se_max_eliminations", "5"))\" min=\"0\" max=\"20\"></label> ",
     "<span id=\"se-threshold-warning\" class=\"field-help\" style=\"display:none\">Warning: k_suppress is below k_eliminate, so suppressed rows rarely reach the elimination. The run is allowed, but this is usually unintended.</span>",
     # Which limit the selected mode actually uses. Grayed out and disabled,
     # never hidden: hiding makes the form jump and conceals that the setting
@@ -5334,9 +5337,14 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "var f=mode&&mode.closest('form');f&&f.addEventListener('submit',function(){groups.forEach(function(g){g.querySelectorAll('input, select').forEach(function(c){c.disabled=false;});});});" *
     "})();</script>",
     "<label title=\"Write estimated shunt susceptances back into the model\">$(_webui_field_label("se_update_shunts", "update_shunts"))<input type=\"checkbox\" name=\"se_update_shunts\" value=\"true\"$(gchk("se_update_shunts"))></label> ",
-    "<label title=\"Release every in-service tap changer (ratio and phase) as an extra state, fix it to the nearest mechanical step and rerun. Checked by default when the case has tap changers. Machine and unobservable taps are skipped.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk("se_tap_estimation"))></label> ",
-    "<label title=\"Impedance of a released regulator. auto: r and x follow the step where the model has per-step data. off: the impedance of the start position.\">$(_webui_field_label("se_tap_impedance_correction", "tap impedance per step"))<select name=\"se_tap_impedance_correction\">$(join(("<option value=\"$(v)\"$(gv("se_tap_impedance_correction", "auto") == v ? " selected" : "")>$(v)</option>" for v in ("auto", "off")), ""))</select></label> ",
-    "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label>",
+    # both tap switches are config keys (state_estimation.tap_estimation):
+    # the hidden false makes an unchecked box post false, so it overrides
+    # the configured true instead of being left out of the form
+    "<label title=\"Release every in-service tap changer (ratio and phase) as an extra state, fix it to the nearest mechanical step and rerun. Off: every changer keeps its transferred step. Machine and unobservable taps are skipped.\">$(_webui_field_label("se_tap_estimation", "estimate taps"))<input type=\"hidden\" name=\"se_tap_estimation\" value=\"false\"><input type=\"checkbox\" name=\"se_tap_estimation\" value=\"true\"$(gchk2("se_tap_estimation", "true"))></label> ",
+    "<label title=\"When the run with tap estimation does not converge, or its fixed steps fit worse than the transferred steps (worse_fit), run once more without it on the same measurements; that run is the result. Off: the first run is shown as it is.\">$(_webui_field_label("se_tap_fallback", "tap fallback"))<input type=\"hidden\" name=\"se_tap_fallback\" value=\"false\"><input type=\"checkbox\" name=\"se_tap_fallback\" value=\"true\"$(gchk2("se_tap_fallback", "true"))></label> ",
+    "<label title=\"Impedance of a released regulator. Per-step data always follow the step. auto adds the analytic correction of typed models, off does not; an imported table takes the impedance alone.\">$(_webui_field_label("se_tap_impedance_correction", "tap impedance per step"))<select name=\"se_tap_impedance_correction\">$(join(("<option value=\"$(v)\"$(gv("se_tap_impedance_correction", "auto") == v ? " selected" : "")>$(v)</option>" for v in ("auto", "off")), ""))</select></label> ",
+    "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label> ",
+    "<label title=\"Sigma of one zero-injection row in MVA (MW for P, Mvar for Q) while the rows are weighted (zero_injection on); 0.001 MVA is 1 kW. Smaller binds harder and worsens the conditioning.\">$(_webui_field_label("se_zero_injection_sigma_mva", "zero-injection sigma (MVA)"))<input type=\"number\" name=\"se_zero_injection_sigma_mva\" value=\"$(gv("se_zero_injection_sigma_mva", string(ZERO_INJECTION_SIGMA)))\" min=\"0.000000000001\" step=\"any\"></label>",
     "</fieldset>",
     _webui_sigma_level_fieldset(sigma_levels),
     "<button type=\"submit\">Run state estimation</button> ",
@@ -5398,6 +5406,41 @@ function _webui_sigma_level_fieldset(sigma_levels)::String
     isempty(err) ? "" : string("<p class=\"alert warning\" style=\"white-space:pre-line\">", esc(err), "</p>"),
     table,
     "<p class=\"field-help\">For measurements without their own sigma (an empty sigma cell of a measurement table), for the table generators and for the measurement generator of this section. An empty cell keeps the default; the cells show the case configuration only. The sigma is max(absolute, rel. % of the value). <em>Save settings for this case</em> writes the table into the case configuration.</p>",
+    "</fieldset>",
+  )
+end
+
+# The tap estimation table of the Case page (state_estimation.tap_estimation
+# exclude and include_machine_transformers): one row per transformer the SE
+# service releases, an "estimate" checkbox each, machine transformers
+# unchecked by default. Inside the case options form, so "Save case
+# options" writes it into the case configuration
+# (_webui_tap_exclusions_from_form) and every SE run of the case reads it.
+function _webui_tap_exclusion_fieldset(table)::String
+  esc = _webui_escape
+  rows = table.rows
+  editable = table.editable
+  dis = editable ? "" : " disabled"
+  anymrid = any(r -> !isempty(r.mrid), rows)
+  trs = String[]
+  for (i, r) in enumerate(rows)
+    # the hidden false before the checkbox: an unchecked box posts nothing,
+    # the last value of a name wins
+    box = string("<input type=\"hidden\" name=\"se_tap_trafo_", i, "_estimate\" value=\"false\"", dis, "><input type=\"checkbox\" name=\"se_tap_trafo_", i, "_estimate\" value=\"true\"", r.estimate ? " checked" : "", dis, ">")
+    hidden = string("<input type=\"hidden\" name=\"se_tap_trafo_", i, "_key\" value=\"", esc(r.key), "\"", dis, "><input type=\"hidden\" name=\"se_tap_trafo_", i, "_machine\" value=\"", r.machine ? "true" : "false", "\"", dis, "><input type=\"hidden\" name=\"se_tap_trafo_", i, "_excluded\" value=\"", r.excluded ? "true" : "false", "\"", dis, ">")
+    push!(trs, string("<tr><td>", box, hidden, "</td><td>", esc(r.name), "</td>", anymrid ? string("<td>", esc(r.mrid), "</td>") : "", "<td>", esc(r.kinds), "</td><td>", r.machine ? (r.excluded ? "machine transformer, excluded (not calculated)" : "machine transformer") : "", "</td></tr>"))
+  end
+  head = string("<tr><th>estimate</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Tap changers</th><th></th></tr>")
+  body = isempty(rows) ? "<p class=\"field-help\">No transformer with a tap changer in this case.</p>" : string("<div style=\"overflow-x:auto\"><table class=\"details se-tap-exclusions\"><thead>", head, "</thead><tbody>", join(trs, ""), "</tbody></table></div>")
+  keep = join((string("<input type=\"hidden\" name=\"se_tap_keep_", j, "\" value=\"", esc(e), "\">") for (j, e) in enumerate(table.keep)), "")
+  keep_note = isempty(table.keep) ? "" : string("<p class=\"field-help\">Kept in the exclude list without a transformer in this case: ", esc(join(table.keep, ", ")), ".</p>")
+  return string(
+    "<fieldset class=\"span-2 se-tap-exclusion-options\"><legend>State estimation: tap estimation per transformer $(_webui_help_link("state_estimation.tap_estimation.exclude", "Tap estimation per transformer"))</legend>",
+    editable ? string("<input type=\"hidden\" name=\"se_tap_trafo_n\" value=\"", length(rows), "\"><input type=\"hidden\" name=\"se_tap_machine_configured\" value=\"", table.include_machine ? "true" : "false", "\">", keep) : "",
+    isempty(table.error) ? "" : string("<p class=\"alert warning\">", esc(table.error), "</p>"),
+    body,
+    keep_note,
+    "<p class=\"field-help\">Unchecked transformers keep their transferred step (reason excluded). Machine transformers are unchecked by default: their step is calculated after the estimation. <em>Save case options</em> writes the choice into the case configuration (<code>state_estimation.tap_estimation.exclude</code>, <code>include_machine_transformers</code>).</p>",
     "</fieldset>",
   )
 end

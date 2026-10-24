@@ -23,7 +23,7 @@ and the outage bookkeeping of that format.
 """
 module DTFImporter
 
-using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, model_config, setBranchStatus!, tap_changer_kind
+using ..Sparlectra: Net, addBus!, addProsumer!, _addPIModelACLine_by_idx!, _addPIModelTrafo_by_idx!, geNetBusIdx, validate!, normalize_bus_shunt_model, PhaseTapChangerModel, _tap_step_assumed_lines, calcPhaseTapAngleRatio, calcPhaseTapFraction, calcTapCorrectedRX, model_config, setBranchStatus!, tap_changer_kind
 
 export DTFCase, DTFParams, DTFSize, DTFBranch, DTFBus, DTFCompensation, DTFTransformerControl, DTFOutage, DTFTrailingRecord, read_dtf, build_net,
   dtf_branch_key, find_outage_branch_indices, outage_match_diagnostic, apply_single_branch_outage!, case_summary, outage_label, is_dtf_deck
@@ -404,7 +404,7 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
     skew_angle_deg = 0.0, effective_complex = 1.0 + 0.0im, convention = :dtf_regulating_vector_reciprocal,
     nominal_unregulated_kv = nothing, nominal_regulated_kv = nothing, from_bus_vn_kV = nominal_voltages_kv[from_bus.voltage_level_index],
     to_bus_vn_kV = nominal_voltages_kv[to_bus.voltage_level_index], winding_over_network_base_ratio = 1.0,
-    transformer_ratio_mode = ratio_mode, base_ratio_used = 1.0, effective_ratio = 1.0, phase_model = nothing)
+    transformer_ratio_mode = ratio_mode, base_ratio_used = 1.0, effective_ratio = 1.0, phase_model = nothing, step_assumed = false)
   control === nothing && return no_control
   control.nominal_unregulated_kv === nothing && return nothing
   control.nominal_regulated_kv === nothing && return nothing
@@ -425,15 +425,19 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
   # reach the typed model later (X(α) coupling, issue reference in
   # transformer_pst_architecture.md)
   phase_model = nothing
-  if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing &&
-      control.actual_tap_step !== nothing && control.max_tap_step != 0
+  # a control with range and band but without its Stufe sits at the middle
+  # position, Stufe 0 of the symmetric band; before, such
+  # a control built no model and the branch kept the fixed base ratio
+  step_assumed = false
+  if control.longitudinal_range_percent !== nothing && control.max_tap_step !== nothing && control.max_tap_step != 0
+    step_assumed = control.actual_tap_step === nothing
     # the regulator type through the one kind table: the longitudinal
     # regulator (angle 0) and the quadrature booster (90) are the
     # asymmetrical model with their nameplate angle, like every Schraegregler
     dtf_name = skew_angle_deg == 0.0 ? "Laengsregler" : (skew_angle_deg == 90.0 ? "Querregler" : "Schraegregler")
     phase_model = PhaseTapChangerModel(
       kind = tap_changer_kind(:dtf, dtf_name; angle = skew_angle_deg).kind,
-      step = control.actual_tap_step,
+      step = something(control.actual_tap_step, 0),
       lowStep = -control.max_tap_step,
       highStep = control.max_tap_step,
       neutralStep = 0,
@@ -465,7 +469,8 @@ function _dtf_effective_transformer_tap(case::DTFCase, branch::DTFBranch, contro
     transformer_ratio_mode = ratio_mode,
     base_ratio_used = base_ratio,
     effective_ratio = relative_ratio,
-    phase_model = phase_model)
+    phase_model = phase_model,
+    step_assumed = step_assumed)
 end
 
 
@@ -491,6 +496,8 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
   nominal_voltages_kv = _dtf_nominal_voltage_levels(case; legacy_voltage_level_collapse_230kv = legacy_voltage_level_collapse_230kv)
   net = Net(name = isempty(case.source_path) ? "DTF" : basename(case.source_path), baseMVA = case.baseMVA, bus_shunt_model = shunt_model)
   bus_by_name = Dict(bus.name => bus for bus in case.buses)
+  # transformers whose control carries no Stufe (middle position assumed)
+  assumed = Tuple{String,Int}[]
   for bus in case.buses
     vn = nominal_voltages_kv[bus.voltage_level_index]
     vm = bus.start_kv > 0 ? bus.start_kv / vn : 1.0
@@ -540,6 +547,10 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
         # resolver derives ratio, shift and the corrected impedance at the
         # model's step, the same numbers this importer computed itself before
         _addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, g_pu = pu.g, status = 1, ratedU = pu.u_ref_kv, ratedS = ratedS, ratio = tap.base_ratio_used, shift_deg = 0.0, phase_taps = tap.phase_model, tap_changer_model = tap_model)
+        if tap.step_assumed
+          net.branchVec[end].phase_step_assumed = true
+          push!(assumed, (string(branch.kind, branch.voltage_level_index, branch.parallel_id, " ", branch.from, " -> ", branch.to), 0))
+        end
       end
     else
       _addPIModelACLine_by_idx!(net = net, from = from, to = to, r_pu = pu.r, x_pu = pu.x, b_pu = pu.b, status = 1, ratedS = ratedS)
@@ -584,6 +595,10 @@ function build_net(case::DTFCase; bus_shunt_model = :admittance, legacy_voltage_
       tap_changer_model = tap_model,
       tap_impedance_correction_factor = branch.kind == 'T' ? tap_rx.factor : 1.0,
     )
+  end
+  # controls without a Stufe: one line each, or one for all of them
+  for line in _tap_step_assumed_lines(assumed)
+    @info "DTF: " * line
   end
   ok, msg = validate!(net = net)
   ok || error(msg)

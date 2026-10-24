@@ -283,7 +283,7 @@ end
 # is. Both readers (direct import and SCF converter) take the result, build
 # the transformer on the neutral position and apply the steps on top of it,
 # as for an older file. The input is never written to (it may alias
-# mpc.branch, which the net cache serializes).
+# mpc.branch, and the caller keeps the mpc).
 function _matpower_neutral_branch_data(brData::Matrix{Float64}, sp_taps::Union{Nothing,AbstractMatrix}, TAP::Int, SHIFT::Int)::Matrix{Float64}
   (sp_taps === nothing || size(sp_taps, 2) < 13) && return brData
   out = copy(brData)
@@ -347,8 +347,9 @@ Builds a Sparlectra `Net` from an already parsed MATPOWER case object `mpc`.
 This is the construction core behind [`createNetFromMatPowerFile`](@ref): bus,
 branch, generator and shunt import, PQ generator controllers, and the MATPOWER
 convention switches below. `flatstart` is stored as the start mode of the
-net: the solver then starts from 1 pu and 0 degrees instead of the case VM/VA,
-keeping the reference bus voltage and the PV voltage magnitudes. `profile`
+net: the solver then starts from 1 pu and the slack angle (see
+`initialVrect`) instead of the case VM/VA, keeping the
+reference bus voltage and the PV voltage magnitudes. `profile`
 collects per-stage import timings when given. Throws on inconsistent case data.
 
 `mpc` can be either:
@@ -390,7 +391,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   # convert instead of the Matrix constructor: elides the full copy when the
   # field already is a Matrix{Float64} (the parser output). The matrices are
   # only read below, so aliasing mpc.bus/gen/branch is safe. Keep it that
-  # way (the net cache also serializes the mpc alongside the built net).
+  # way (the import context reads the mpc again after the build).
   name    = hasproperty(mpc, :name)    ? getproperty(mpc, :name)    : "mpc"
   baseMVA = hasproperty(mpc, :baseMVA) ? Float64(getproperty(mpc, :baseMVA)) : error("mpc.baseMVA missing")
   busData = hasproperty(mpc, :bus)     ? convert(Matrix{Float64}, getproperty(mpc, :bus)) : error("mpc.bus missing")
@@ -917,6 +918,9 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
   # A ratio tap_step of 0 explicitly declares "no ratio tap changer" and
   # keeps that transformer out of the estimator's mass release.
   if sp_taps !== nothing
+    # a NaN current step (column 5 or 9): the file carried no step, the
+    # changer sits at its middle position, the neutral position 0
+    assumed = Tuple{String,Int}[]
     for row in eachrow(sp_taps)
       k = Int(row[1])
       1 <= k <= length(myNet.branchVec) || throw(ArgumentError("mpc.sparlectra.tap_changers references unknown branch $(k)."))
@@ -939,6 +943,7 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
       # (1) or on the fraction grid (0, and every file without the column)
       tgrid = (size(sp_taps, 2) >= 12 && row[12] == 1.0) ? :linear : :fraction
       applyTapNameplate!(br; tap_step = tstep, tap_min_step = tminS, tap_max_step = tmaxS, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pminS, phase_max_step = pmaxS, phase_current_step = pcur, psi_deg = psi, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "mpc.sparlectra.tap_changers branch $(k)")
+      (br.ratio_step_assumed || br.phase_step_assumed) && push!(assumed, ("branch $(k)", 0))
       # a 0.50.0 file states the position twice: TAP/SHIFT in effect and the
       # steps. They differ only after an edit of one of them; the steps are
       # kept, so the nameplate stays consistent, and the edit is named
@@ -949,6 +954,10 @@ function createNetFromMatPowerCase(; mpc, log::Bool=false, flatstart::Bool=false
           @warn "mpc.sparlectra.tap_changers branch $(k): TAP/SHIFT in mpc.branch differ from the ratio and shift of the tap position; the tap position is kept" tap_column = tap_file tap_of_position = br.tap_ratio shift_column_deg = shift_file shift_of_position_deg = br.phase_shift_deg
         end
       end
+    end
+    # one line per transformer, or one for all of them
+    for line in _tap_step_assumed_lines(assumed)
+      @info "MATPOWER: " * line
     end
   end
 

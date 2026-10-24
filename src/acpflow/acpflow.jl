@@ -5,7 +5,7 @@
 
 # file: src/acpflow/acpflow.jl
 # purpose: include hub for the configuration-driven AC power-flow framework
-#          runner: start modes, net cache, import context, execution, status,
+#          runner: start modes, import context, execution, status,
 #          output, and entry points
 # Configuration-driven AC power-flow framework runner.
 include("start_modes.jl")

@@ -58,7 +58,9 @@ because non-zero generation appears on the card.
 
 Winding values such as 400/231 kV are nameplate metadata, not a permanent
 off-nominal tap; tap positions and skew angles apply as deviations from
-neutral. `transformer_ratio_mode` selects the neutral base ratio:
+neutral. A control card with tap range and maximum step but without the
+actual step sits at its middle position, step 0, and the import names it
+in an info line. `transformer_ratio_mode` selects the neutral base ratio:
 
 - `:neutral_one` (default, the observed FOR002 legacy semantics): the base
   ratio at neutral tap is `1.0`.
@@ -75,7 +77,7 @@ With `model.tap_changer_model = impedance_correction` the
 `tap_fraction`/`skew_angle_deg` values are also folded into the transformer
 series impedance, and a later `writeMatpowerCasefile` export writes the
 corrected values with a reimport marker
-([Transformer tap-changer model](configuration.md#transformer-tap-changer-model)).
+([Transformer tap-changer model](configuration.md#Transformer-tap-changer-model)).
 
 The 60-degree field of the Schraegregler example is the skew angle of the
 regulating voltage, not the final phase shift: the complex tap follows

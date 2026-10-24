@@ -60,7 +60,7 @@ function _typed_tap_changers(br::Branch, w::PowerTransformerWinding)::SETapChang
   t = w.taps
   if t !== nothing && t.tapStepPercent != 0.0
     lo, hi = minmax(t.lowStep, t.highStep)
-    push!(chs, SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = :from, du = t.tapStepPercent / 100.0, neutral = t.neutralStep, low = lo, high = hi, step = t.step))
+    push!(chs, SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = :from, du = t.tapStepPercent / 100.0, step_assumed = br.ratio_step_assumed, neutral = t.neutralStep, low = lo, high = hi, step = t.step))
   end
   m = w.phase_taps
   m === nothing || push!(chs, _typed_phase_changer(br, m))
@@ -80,7 +80,7 @@ function _typed_phase_changer(br::Branch, m::PhaseTapChangerModel)::SETapChanger
   if m.kind === :tabular
     allx = all(p -> p.x_pu !== nothing, m.table)
     pts = SETapPoint[SETapPoint(step = p.step, ratio = p.ratio, angle_deg = p.angle_deg, x = allx ? p.x_pu : 1.0) for p in m.table]
-    return SETapChanger(name = "phase", kind = :tabular, role = :phase, side = :from, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, table = pts, impedance = allx ? :table : :none)
+    return SETapChanger(name = "phase", kind = :tabular, role = :phase, side = :from, step_assumed = br.phase_step_assumed, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, table = pts, impedance = allx ? :table : :none)
   end
   side = m.convention === :reciprocal_from_side ? :to : :from
   u = something(m.voltage_step_increment, 0.0)
@@ -92,14 +92,14 @@ function _typed_phase_changer(br::Branch, m::PhaseTapChangerModel)::SETapChanger
   end
   imp = xc === nothing ? :none : :x_curve
   if m.kind === :symmetrical
-    return SETapChanger(name = "phase", kind = :symmetrical, role = :phase, side = side, du = u, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, x_curve = xc, x_curve_form = :sin2, impedance = imp)
+    return SETapChanger(name = "phase", kind = :symmetrical, role = :phase, side = side, du = u, step_assumed = br.phase_step_assumed, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, x_curve = xc, x_curve_form = :sin2, impedance = imp)
   end
   rx = br.tap_correction === :impedance_correction
   psi = something(m.winding_connection_angle_deg, 0.0)
   if abs(sind(psi)) <= 1e-9
-    return SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = side, du = u * cosd(psi), neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, x_curve = xc, x_curve_form = :tan2, impedance = imp, rx_correction = rx)
+    return SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = side, du = u * cosd(psi), step_assumed = br.phase_step_assumed, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, x_curve = xc, x_curve_form = :tan2, impedance = imp, rx_correction = rx)
   end
-  return SETapChanger(name = "phase", kind = :asymmetrical, role = :phase, side = side, du = u, alpha_deg = psi, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, x_curve = xc, x_curve_form = :tan2, impedance = imp, rx_correction = rx)
+  return SETapChanger(name = "phase", kind = :asymmetrical, role = :phase, side = side, du = u, alpha_deg = psi, step_assumed = br.phase_step_assumed, neutral = m.neutralStep, low = m.lowStep, high = m.highStep, step = m.step, x_curve = xc, x_curve_form = :tan2, impedance = imp, rx_correction = rx)
 end
 
 # Set from the branch fields, neutral point (ratio, angle) as
@@ -125,12 +125,12 @@ function _field_tap_changers(br::Branch)::SETapChangerSet
   if du_changer
     du = br.phase_du_step
     lo, hi = minmax(Int(round(br.phase_du_min_step)), Int(round(br.phase_du_max_step)))
-    push!(chs, SETapChanger(name = "phase", kind = :asymmetrical, role = :phase, side = :to, du = du, alpha_deg = psi, neutral = 0, low = lo, high = hi, step = r2 / du, impedance = imp_phase))
+    push!(chs, SETapChanger(name = "phase", kind = :asymmetrical, role = :phase, side = :to, du = du, alpha_deg = psi, step_assumed = br.phase_step_assumed, neutral = 0, low = lo, high = hi, step = r2 / du, impedance = imp_phase))
   elseif declared
     dphi = br.phase_step_deg
     # the degree band is stored relative to neutral (applyTapNameplate!)
     lo, hi = minmax(Int(round(br.phase_min_deg / dphi)), Int(round(br.phase_max_deg / dphi)))
-    push!(chs, SETapChanger(name = "phase", kind = :linear, role = :phase, side = :from, dphi_deg = dphi, neutral = 0, low = lo, high = hi, step = (br.phase_shift_deg - br.angle) / dphi, impedance = imp_phase))
+    push!(chs, SETapChanger(name = "phase", kind = :linear, role = :phase, side = :from, dphi_deg = dphi, step_assumed = br.phase_step_assumed, neutral = 0, low = lo, high = hi, step = (br.phase_shift_deg - br.angle) / dphi, impedance = imp_phase))
   end
   return SETapChangerSet(ratio_n = br.ratio, shift_n_deg = br.angle, changers = chs, origin = :fields)
 end
@@ -168,18 +168,18 @@ function _field_ratio_changer(br::Branch, ratio_live::Float64, imp::Symbol)::SET
       pos = _tap_table_positions(br)
       if length(pos) > 1
         pts = SETapPoint[SETapPoint(step = n, ratio = r / base) for (n, r) in pos]
-        return SETapChanger(name = "ratio", kind = :tabular, role = :ratio, side = :from, neutral = 0, low = pos[1][1], high = pos[end][1], step = _tap_table_position_of(pts, ratio_live / base), table = pts, impedance = imp)
+        return SETapChanger(name = "ratio", kind = :tabular, role = :ratio, side = :from, step_assumed = br.ratio_step_assumed, neutral = 0, low = pos[1][1], high = pos[end][1], step = _tap_table_position_of(pts, ratio_live / base), table = pts, impedance = imp)
       end
     end
     lo, hi = minmax(ceil(Int, (br.tap_min - base) / step_abs - 1e-9), floor(Int, (br.tap_max - base) / step_abs + 1e-9))
-    return SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = :from, additive = true, step_abs = step_abs, du = step_abs / base, neutral = 0, low = lo, high = hi, step = (ratio_live - base) / step_abs, impedance = imp)
+    return SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = :from, additive = true, step_abs = step_abs, du = step_abs / base, step_assumed = br.ratio_step_assumed, neutral = 0, low = lo, high = hi, step = (ratio_live - base) / step_abs, impedance = imp)
   end
   du = _tap_step1(br)
   tmin = br.tap_min > 0.0 ? br.tap_min : 0.9
   tmax = br.tap_max > 0.0 ? br.tap_max : 1.1
   # the highest step gives the smallest ratio
   lo, hi = minmax(ceil(Int, (base / tmax - 1.0) / du - 1e-9), floor(Int, (base / tmin - 1.0) / du + 1e-9))
-  return SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = :to, du = du, neutral = 0, low = lo, high = hi, step = (base / ratio_live - 1.0) / du, impedance = imp)
+  return SETapChanger(name = "ratio", kind = :ratio, role = :ratio, side = :to, du = du, step_assumed = br.ratio_step_assumed, neutral = 0, low = lo, high = hi, step = (base / ratio_live - 1.0) / du, impedance = imp)
 end
 
 # continuous step of the factor `f` on a table with ascending ratios, linear
@@ -238,9 +238,43 @@ function _tap_set_tangent(set::SETapChangerSet, s::AbstractVector{<:Real}, c::In
   return cis(deg2rad(Phi)) * (dR + im * R * deg2rad(dPhi))
 end
 
-# whether changer `ch` moves the impedance with its step (under
-# impedance_correction auto; the option itself is read by the estimator)
+# whether changer `ch` moves the impedance with its step: per-step data
+# (`impedance` source) or the analytic correction; which of them applies is
+# decided per transformer by _tap_reactance_source
 _tap_changer_has_impedance(ch::SETapChanger)::Bool = ch.impedance !== :none || ch.rx_correction
+
+# whether `set` carries per-step impedance data: a table with r and x, the
+# reactance curve from xMin/xMax, or TapStepImpedance factors
+_tap_set_has_table(set::SETapChangerSet)::Bool = any(ch -> ch.impedance !== :none, set.changers)
+
+# Source of the reactance of a released transformer under the impedance
+# rule `mode` (state_estimation.tap_estimation.impedance_correction), one
+# rule per transformer (0.60.0):
+# per-step data always follow the step, whatever `mode` says; without them
+# `auto` takes the analytic correction (rx_correction,
+# |1 + f e^(j psi)|^2) where a changer has it and `off` keeps the start
+# impedance. Returns `:table`, `:analytic` or `:nominal` (the impedance
+# does not move). Where the analytic factor applies next to per-step data
+# says _tap_changer_impedance.
+function _tap_reactance_source(set::SETapChangerSet, mode::Symbol)::Symbol
+  _tap_set_has_table(set) && return :table
+  (mode === :auto && any(ch -> ch.rx_correction, set.changers)) && return :analytic
+  return :nominal
+end
+
+# The set as a run under `mode` uses it for the impedance. Under `off` the
+# analytic correction is not computed, so a typed set (origin :typed)
+# loses its rx_correction flag; its x curve or x table stays and follows
+# the step. Only typed sets need this: a stored set with per-step data
+# drops the flag in _tap_changer_impedance under both values, and one
+# without them is :nominal under `off`. A typed set is never written back
+# as a stored set (_tap_apply_position!), so the flag is not lost on the
+# branch.
+function _tap_set_under(set::SETapChangerSet, mode::Symbol)::SETapChangerSet
+  (mode === :off && set.origin === :typed && any(ch -> ch.rx_correction, set.changers)) || return set
+  chs = SETapChanger[ch.rx_correction ? SETapChanger(ch.name, ch.mrid, ch.kind, ch.role, ch.side, ch.additive, ch.du, ch.alpha_deg, ch.dphi_deg, ch.step_abs, ch.neutral, ch.low, ch.high, ch.step, ch.table, ch.outside_du, ch.x_curve, ch.x_curve_form, ch.impedance, false, ch.step_assumed) : ch for ch in set.changers]
+  return SETapChangerSet(set.ratio_n, set.shift_n_deg, chs, set.origin)
+end
 
 # Impedance factors (r, x, g, b) of `set` at `s`: the product of the
 # factors of every changer with per-step data. The estimator scales the
@@ -270,9 +304,15 @@ function _tap_impedance_slope(set::SETapChangerSet, s::AbstractVector{<:Real}, c
   return dF
 end
 
-# (factors, d factors / ds_c) of changer c. The source gives r, x, g, b; the
-# typed impedance correction scales r always and x unless a reactance
-# curve gives x (the resolver: x_alpha replaces the corrected x).
+# (factors, d factors / ds_c) of changer c. The source gives r, x, g, b.
+# The analytic correction (rx_correction) scales r always and x unless a
+# reactance curve gives x, as the power flow resolver does for a typed
+# model (resolve_winding_taps: x_alpha replaces the corrected x). On a set
+# from an import (CGMES, PowSyBl, a stored set) with per-step data the
+# flag is dropped: the table, the reactance curve or the TapStepImpedance
+# factors give the impedance alone.
+# A typed set keeps the resolver's form, so the estimation under `auto`
+# equals the power flow; under `off` _tap_set_under has removed the flag.
 function _tap_changer_impedance(set::SETapChangerSet, c::Int, s::AbstractVector{<:Real}, s0::AbstractVector{<:Real}, tsi::Union{Nothing,TapStepImpedance})::Tuple{NTuple{4,Float64},NTuple{4,Float64}}
   ch = set.changers[c]
   sc = Float64(s[c])
@@ -288,7 +328,7 @@ function _tap_changer_impedance(set::SETapChangerSet, c::Int, s::AbstractVector{
   elseif src === :tsi
     F, dF = _tap_tsi_impedance(set, c, s, s0, tsi)
   end
-  if ch.rx_correction
+  if ch.rx_correction && (set.origin === :typed || !_tap_set_has_table(set))
     q, dq = _tap_rx_factor(ch, sc)
     fr, dfr = F[1] * q, dF[1] * q + F[1] * dq
     fx, dfx = src === :x_curve ? (F[2], dF[2]) : (F[2] * q, dF[2] * q + F[2] * dq)

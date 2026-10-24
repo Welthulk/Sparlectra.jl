@@ -224,7 +224,8 @@ _inService(ctx::_MapCtx, o::CIMObject)::Bool = ctx.ignore_connected || something
 #
 # Step source order: SvTapStep position (the solved state, present in every
 # conformity data set and in real exchanges) → SSH `step` (initial operating
-# point) → neutralStep. The MicroGrid BaseCase SV was produced with active tap
+# point) → the middle position (_tapMiddleStep: neutralStep, the band middle
+# without one), named once per import (_mapTransformers!). The MicroGrid BaseCase SV was produced with active tap
 # control, so SvTapStep differs from SSH for regulated units; a fixed-tap
 # import must use the solved position to reproduce SV. Stage 2 controllers
 # will start from SSH instead.
@@ -242,7 +243,20 @@ function _svTapPositions(store::CGMESStore)::Dict{String,Float64}
   return out
 end
 
-_tapStep(tc::CIMObject, svsteps::Dict{String,Float64}) = something(get(svsteps, tc.mrid, nothing), num(tc, :step), num(tc, :neutralStep, 0.0))
+# Middle position of a changer whose delivery carries no step: its
+# neutralStep, the band middle without one, 0 without a band
+function _tapMiddleStep(tc::CIMObject)::Float64
+  n = num(tc, :neutralStep)
+  n === nothing || return n
+  lo, hi = num(tc, :lowStep), num(tc, :highStep)
+  (lo === nothing || hi === nothing) && return 0.0
+  return Float64(Sparlectra._tap_band_middle(lo, hi))
+end
+
+# true when the delivery carries a step for `tc` (SvTapStep or SSH step)
+_tapStepGiven(tc::CIMObject, svsteps::Dict{String,Float64})::Bool = haskey(svsteps, tc.mrid) || num(tc, :step) !== nothing
+
+_tapStep(tc::CIMObject, svsteps::Dict{String,Float64}) = something(get(svsteps, tc.mrid, nothing), num(tc, :step), _tapMiddleStep(tc))
 
 # linear step formula of a RatioTapChanger: 1 + (step - neutral) * increment
 function _ratioTapLinearCorrection(rtc::CIMObject, step::Float64)::Float64
@@ -741,16 +755,17 @@ _seTapTableHasImpedance(pts::Vector{Sparlectra.SETapPoint})::Bool = any(p -> (p.
 function _seTapChanger(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIMObject, on_from_side::Bool)::Union{Sparlectra.SETapChanger,String}
   name = something(str(tc, :name), tc.mrid)
   side = on_from_side ? :from : :to
+  assumed = !_tapStepGiven(tc, svsteps)
   if tc.class == :RatioTapChanger
     neutral = Int(round(num(tc, :neutralStep, 0.0)))
     lo, hi = minmax(Int(round(num(tc, :lowStep, 0.0))), Int(round(num(tc, :highStep, 0.0))))
     du = num(tc, :stepVoltageIncrement, 0.0) / 100.0
     step = _tapStep(tc, svsteps)
     table = _ratioTapTable(store, tc)
-    (table === nothing || isempty(table)) && return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :ratio, role = :ratio, side = side, du = du, neutral = neutral, low = lo, high = hi, step = step)
+    (table === nothing || isempty(table)) && return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, step_assumed = assumed, kind = :ratio, role = :ratio, side = side, du = du, neutral = neutral, low = lo, high = hi, step = step)
     pts = _seTapTablePoints(store, tc)
     pts === nothing && return "its RatioTapChangerTable has steps that are not whole and strictly ascending"
-    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :tabular, role = :ratio, side = side, neutral = neutral, low = lo, high = hi, step = step, table = pts, outside_du = du, impedance = _seTapTableHasImpedance(pts) ? :table : :none)
+    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, step_assumed = assumed, kind = :tabular, role = :ratio, side = side, neutral = neutral, low = lo, high = hi, step = step, table = pts, outside_du = du, impedance = _seTapTableHasImpedance(pts) ? :table : :none)
   end
   step = Int(round(_tapStep(tc, svsteps)))
   neutral = Int(round(num(tc, :neutralStep, 0.0)))
@@ -763,14 +778,14 @@ function _seTapChanger(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIM
     pts = _seTapTablePoints(store, tc)
     pts === nothing && return "its PhaseTapChangerTable has steps that are not whole and strictly ascending"
     m = built.model
-    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :tabular, role = :phase, side = side, neutral = m.neutralStep, low = pts[1].step, high = pts[end].step, step = m.step, table = pts, impedance = _seTapTableHasImpedance(pts) ? :table : :none)
+    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, step_assumed = assumed, kind = :tabular, role = :phase, side = side, neutral = m.neutralStep, low = pts[1].step, high = pts[end].step, step = m.step, table = pts, impedance = _seTapTableHasImpedance(pts) ? :table : :none)
   end
   xc = _phaseTapXCurve(store, tc)
   xcurve = xc === nothing ? nothing : (xc.xmin, xc.xmax, xc.amax)
   ximp = xc === nothing ? :none : :x_curve
   if tc.class == :PhaseTapChangerLinear
     lo <= neutral <= hi || (lo = min(lo, neutral); hi = max(hi, neutral))
-    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :linear, role = :phase, side = side, dphi_deg = num(tc, :stepPhaseShiftIncrement, 0.0), neutral = neutral, low = lo, high = hi, step = clamp(step, lo, hi), x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
+    return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, step_assumed = assumed, kind = :linear, role = :phase, side = side, dphi_deg = num(tc, :stepPhaseShiftIncrement, 0.0), neutral = neutral, low = lo, high = hi, step = clamp(step, lo, hi), x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
   end
   lo, hi = minmax(lo, hi)
   # both values are present: the import computed the correction of this
@@ -778,9 +793,9 @@ function _seTapChanger(store::CGMESStore, svsteps::Dict{String,Float64}, tc::CIM
   # (calcPhaseTapFraction, PhaseTapChangerModel for :asymmetrical), so a
   # delivery without them never reaches this point
   vinc = something(num(tc, :voltageStepIncrement))
-  tc.class == :PhaseTapChangerSymmetrical && return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :symmetrical, role = :phase, side = side, du = vinc / 100.0, neutral = neutral, low = lo, high = hi, step = step, x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
+  tc.class == :PhaseTapChangerSymmetrical && return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, step_assumed = assumed, kind = :symmetrical, role = :phase, side = side, du = vinc / 100.0, neutral = neutral, low = lo, high = hi, step = step, x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
   alpha = something(num(tc, :windingConnectionAngle))
-  return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, kind = :asymmetrical, role = :phase, side = side, du = vinc / 100.0, alpha_deg = alpha, neutral = neutral, low = lo, high = hi, step = step, x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
+  return Sparlectra.SETapChanger(name = name, mrid = tc.mrid, step_assumed = assumed, kind = :asymmetrical, role = :phase, side = side, du = vinc / 100.0, alpha_deg = alpha, neutral = neutral, low = lo, high = hi, step = step, x_curve = xcurve, x_curve_form = :sin2, impedance = ximp)
 end
 
 # Store the tap changer set of transformer branch `branch_idx`: the changers
@@ -1272,6 +1287,10 @@ function _ensureBus!(net::Sparlectra.Net, created::Set{String}, topo::CGMESTopol
   end
   Sparlectra.addBus!(net = net, busName = bus, vn_kV = vn, vm_pu = vm_pu, va_deg = va_deg, isAux = isAux)
   push!(created, bus)
+  # the imported state, kept apart from the start value that every solve
+  # overwrites: the state-estimation range check substitutes it for an
+  # implausible voltage measurement at this bus
+  (haskey(svmap, tn) && vn > 0.0) && (net._sv_vm_pu[net.busDict[bus]] = vm_pu)
   # Identity capture for a later CGMES export: remember the original TN mRID
   # under the structural bus key. Aux buses and per-side split buses are
   # synthetic identities without a 1:1 source TN, the exporter mints fresh
@@ -1978,6 +1997,19 @@ function _mapTransformers!(net, store, topo, created, svmap, svsteps, baseMVA, c
     else
       push!(ctx.messages, "skip: PowerTransformer $(something(str(pt, :name), pt.mrid)) with $(length(ends)) ends")
     end
+  end
+  # the changers of mapped transformers whose delivery carries no step: one
+  # notice each, or one for all of them (Sparlectra._tap_step_assumed_lines)
+  items = Tuple{String,Float64}[]
+  for pt in objectsOf(store, :PowerTransformer), e in _endsOfTransformer(store, pt)
+    (haskey(ctx.element_by_mrid, pt.mrid) || haskey(ctx.element_by_mrid, e.mrid)) || continue
+    for tc in _tapChangersOfEnd(store, e.mrid)
+      _tapStepGiven(tc, svsteps) && continue
+      push!(items, (string(something(str(pt, :name), pt.mrid), "/", something(str(tc, :name), tc.mrid)), _tapMiddleStep(tc)))
+    end
+  end
+  for line in Sparlectra._tap_step_assumed_lines(items)
+    push!(ctx.messages, "notice: " * line)
   end
 end
 

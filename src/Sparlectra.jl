@@ -185,7 +185,7 @@ export
   PowerFlowConfig,
   ControlConfig,
   ObservabilityConfig,
-  TapEstimationConfig,                    # state_estimation.tap_estimation settings (impedance_correction).
+  TapEstimationConfig,                    # state_estimation.tap_estimation settings (enabled, fallback, impedance_correction).
   StateEstimationConfig,
   MatpowerImportConfig,
   MatpowerExportConfig,                   # MATPOWER export settings (write_solution).

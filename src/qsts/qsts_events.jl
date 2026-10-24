@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # file: src/qsts/qsts_events.jl
-# purpose: the event list of a sequential QSTS run (point 24): a CSV
+# purpose: the event list of a sequential QSTS run: a CSV
 #          `step,element_id,action,value` with open/close on branches,
 #          transformers and switches and in/out on units, loads and shunts,
 #          read with its line in every error, and turned into a series whose

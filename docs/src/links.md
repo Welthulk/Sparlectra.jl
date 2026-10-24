@@ -20,7 +20,10 @@ V_i = V_j
 ## Relation to KCL
 
 Kirchhoff's current law holds per bus after topology processing; link flows
-are reconstructed after the solve from the bus power balances.
+are reconstructed after the solve from the bus power balances (injection
+specification minus shunt draw minus the branch flows leaving the bus). In
+state estimation a link flow measurement is a WLS row on the same balances;
+see [State Estimation Extensions](state_estimation_extensions.md).
 
 ## Zero-impedance loops (critical case)
 
@@ -58,7 +61,11 @@ f = A^{+} b
 
 with $A^{+}$ the Moore-Penrose pseudoinverse: a consistent KCL solution,
 uniform flows in symmetric loops, no artificial circulating currents. Loop
-flows are not unique; the minimum-norm solution is deterministic.
+flows are not unique; the minimum-norm solution is deterministic. Link flow
+measurements in a state estimation decide the circulation: one state per
+independent loop direction that moves a measured link flow, counted for P
+and Q apart. A loop direction that no measured link sees keeps the
+minimum-norm split. See [Link flow measurements](@ref se_link_measurements).
 
 ## Modeling guidelines
 

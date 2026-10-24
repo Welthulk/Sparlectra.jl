@@ -451,7 +451,7 @@ function _ratio_profile_factors(net::Net, slack_idx::Int)::Vector{Float64}
 end
 
 """
-    _aux_bus_flat_start!(V0, net, slack_idx) -> Int
+    _aux_bus_flat_start!(V0, net, slack_idx; rotate_behind_pst = false) -> Int
 
 Flat start of the auxiliary buses (three-winding star points and the other
 internal nodes an importer creates, see `_is_aux_node`): every in-service PQ
@@ -459,8 +459,12 @@ auxiliary bus starts at the value that lets no current flow through its
 branch with the smallest series impedance `|r + jx|`, i.e. the flat value of
 the visible bus at the other end times the ratio step of
 `_ratio_profile_adjacency` (the same step the ratio-profile candidate
-multiplies along its path). The angle is the neighbour's (0 on a flat
-start). Visible buses keep their flat values, and branches to another
+multiplies along its path). The angle is the neighbour's; with
+`rotate_behind_pst = true` it is turned by the difference of the two buses
+in the flat-start angles of `initialVrect` (`_flat_start_shift_angles`, the
+shifts on a path with the fewest phase shifters): the shift of that winding
+when it lies on such a path, nothing when a path without shifter reaches
+both buses. Visible buses keep their flat values, and branches to another
 auxiliary bus are not used. Applied on every flat start of the rectangular
 solver, with or without the start projection. Returns the number of buses
 set; a net without auxiliary PQ buses returns 0 before anything is built,
@@ -472,11 +476,13 @@ stiffest winding has an off-nominal ratio. On the CGMES MiniGrid the two
 circulating active power on a 9 MW case, and the polar Newton update
 diverges from that start.
 """
-function _aux_bus_flat_start!(V0::Vector{ComplexF64}, net::Net, slack_idx::Int)::Int
+function _aux_bus_flat_start!(V0::Vector{ComplexF64}, net::Net, slack_idx::Int; rotate_behind_pst::Bool = false)::Int
   nodes = net.nodeVec
   is_aux = [k != slack_idx && getNodeType(nodes[k]) == PQ && _is_aux_node(nodes[k]) for k in eachindex(nodes)]
   any(is_aux) || return 0
   adjacency = _ratio_profile_adjacency(net)
+  # nothing on a net without phase shift: no turn, the vector stays bit-identical
+  theta = rotate_behind_pst ? _flat_start_shift_angles(net, slack_idx) : nothing
   changed = 0
   for k in eachindex(nodes)
     is_aux[k] || continue
@@ -495,8 +501,11 @@ function _aux_bus_flat_start!(V0::Vector{ComplexF64}, net::Net, slack_idx::Int):
       end
     end
     best_j == 0 && continue
-    # step leads from k to the neighbour (V_j = V_k * step), so V_k = V_j / step
-    V0[k] = V0[best_j] / best_step
+    # step leads from k to the neighbour (V_j = V_k * step), so V_k = V_j / step;
+    # the angle step to the neighbour is the one of the flat-start angles, so
+    # the star point follows the same fewest-shifter rule as the visible buses
+    turn = theta === nothing ? 0.0 : theta[k] - theta[best_j]
+    V0[k] = turn == 0.0 ? V0[best_j] / best_step : V0[best_j] / best_step * cis(turn)
     changed += 1
   end
   return changed

@@ -44,7 +44,7 @@ file. Pass `path` for local files and `config` for a loaded configuration
 are per `run_sparlectra` call, not per batch:
 
 ```yaml
-matpower_import:
+runtime:
   cases: [case14.m, case118.m]
 ```
 
@@ -105,7 +105,7 @@ end
 using Sparlectra
 
 case_name, baseMVA, busData, genData, branchData = casefileparser("case9.m")
-println("Number of buses: \$(size(busData, 1))")
+println("Number of buses: $(size(busData, 1))")
 ```
 
 `examples/powerflow/matpower_import.jl` resolves `runtime.julia_threads`
@@ -151,7 +151,7 @@ The keys of a MATPOWER run: the case selectors, the import profile that recommen
 | `matpower_import.shift_unit` | Symbol/String | `deg` | `deg`, `rad` | Phase-shift input unit. |
 | `matpower_import.shift_sign` | Float64 | `1.0` | real (typ. `1.0`, `-1.0`) | Phase-shift sign convention. |
 | `matpower_import.ratio` | Symbol/String | `normal` | `normal`, `reciprocal` | Branch ratio interpretation: `TAP` as stored, or its reciprocal. |
-| `model.tap_changer_model` | Symbol/String | `ideal` | `ideal`, `impedance_correction` | Tap-changer model applied to all transformers after import, shared with the DTF importer; see [Transformer tap-changer model](configuration.md#transformer-tap-changer-model). |
+| `model.tap_changer_model` | Symbol/String | `ideal` | `ideal`, `impedance_correction` | Tap-changer model applied to all transformers after import, shared with the DTF importer; see [Transformer tap-changer model](configuration.md#Transformer-tap-changer-model). |
 | `matpower_export.write_solution` | Bool | `true` | `true`, `false` | Whether [`writeMatpowerCasefile`](@ref) writes the solved state (see [Export](#Export)). |
 | `matpower_import.enable_pq_gen_controllers` | Bool | `true` | `true`, `false` | Enable controller behavior on imported PQ generators; `false` reproduces the raw imported behavior. |
 | `model.preallocate_network` | Symbol/String | `auto` | `off`, `on`, `auto` | Import-time `sizehint!` preallocation for large network construction; no model change. |
@@ -165,14 +165,16 @@ The keys of a MATPOWER run: the case selectors, the import profile that recommen
 Example configuration for a case-conversion or validation workflow:
 
 ```yaml
-matpower_import:
+model:
   auto_profile: off
+  bus_shunt_model: admittance
+
+matpower_import:
   pv_voltage_source: gen_vg
   compare_voltage_reference: imported_setpoint
   ratio: normal
   shift_unit: deg
   shift_sign: 1.0
-  bus_shunt_model: admittance
   apply_bus_names: true
   apply_branch_names: true
   apply_branch_kind: true
@@ -235,7 +237,7 @@ to `Sparlectra.run_matpower_case`:
 
 ```bash
 julia --project=. examples/powerflow/matpower_import_multi_config.jl \
-  data/mpower/case14.m \
+  data/mpower/sp_case118.m \
   --config=path/to/config_a.yaml \
   --config=path/to/config_b.yaml \
   --status-only
@@ -274,7 +276,7 @@ its own and `ac_islands.csv` records the result per island
 
 A case built with `model.tap_changer_model = impedance_correction` exports
 `BR_R`/`BR_X` values that already carry the correction
-([Transformer tap-changer model](configuration.md#transformer-tap-changer-model));
+([Transformer tap-changer model](configuration.md#Transformer-tap-changer-model));
 `writeMatpowerCasefile` marks this with
 `mpc.sparlectra.tap_changer_model = 'impedance_correction'`. On reimport,
 `createNetFromMatPowerFile`/`createNetFromMatPowerCase` detect the marker
@@ -311,7 +313,7 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.sparlectra.links` | Busbar couplers, one `fbus tbus status` row per impedance-less coupler (`1` = closed) | Each row becomes a `BusLink`: a closed link merges its two buses into one electrical node (the same contraction CGMES switch imports use), an open link keeps them separate. Exports write the block from `net.linkVec`. Unknown bus numbers or a wrong column count are rejected. |
 | `mpc.sparlectra.tap_changers` | Tap-changer nameplates, one row per transformer branch | Columns `branch tap_step tap_min_step tap_max_step tap_current_step phase_step_deg phase_min_step phase_max_step phase_current_step` plus optional `psi_deg`, `phase_du_step`, `ratio_grid` and the pair `neutral_ratio`, `neutral_shift_deg`; see below. |
 | `mpc.sparlectra.aux_buses` | Auxiliary buses (three-winding star points, internal nodes), one `BUS_I` per row | The solver's flat start puts such a bus at the ratio of its stiffest winding instead of 1.0 pu. Exports write the block from the auxiliary role of the buses. Unknown bus numbers are rejected. |
-| `mpc.sparlectra.tap_changer_model` | Roundtrip marker `'impedance_correction'` | See [Tap-impedance correction and reimport](#tap-impedance-correction-and-reimport). |
+| `mpc.sparlectra.tap_changer_model` | Roundtrip marker `'impedance_correction'` | See [Tap-impedance correction and reimport](#Tap-impedance-correction-and-reimport). |
 | `mpc.sparlectra.solution_written` | Marker `1` that columns 8/9 and 14-17 are a solution | Written by `writeMatpowerCasefile` with `write_solution = true`. |
 
 **Notes**
@@ -342,7 +344,9 @@ the grid the tap estimation fixes to). `psi_deg` is the PST
 regulating-vector direction (`0` = unspecified, default the symmetric 90
 degrees). `ratio_grid` (column 12) is `1` for a CGMES ratio changer, whose
 positions count on its linear grid `tap = neutral + n * tap_step`; `0` or a
-missing column means the fraction grid.
+missing column means the fraction grid. A current step of `NaN` (column 5
+or 9) means the step was not transferred: the changer sits at its middle
+position, the neutral position 0, and the import names it in an info line.
 
 Where the neutral position stands depends on the width of the block:
 
@@ -416,7 +420,7 @@ writeMatpowerCasefile(net, filepath)                          # configuration de
 | `write_solution` | Export |
 |---|---|
 | `true` (default) | `mpc.bus` `VM`/`VA` carry the solved node state and `mpc.branch` gains the standard MATPOWER result columns 14-17 (`PF`, `QF`, `PT`, `QT`, flow into the branch at each end) from the branch-flow report; the exporter does not recompute flows. `mpc.sparlectra.solution_written = 1` marks columns 8/9 and 14-17 as a solution. An unsolved network (no branch flows) warns and falls back to the 13-column model-only export. |
-| `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved). An auxiliary bus (three-winding star point) gets the value of the solver's flat start instead, the voltage at which its stiffest winding carries no current; read back, a bus listed in `mpc.sparlectra.aux_buses` stays auxiliary. |
+| `false` | A pure model file: `mpc.branch` keeps its 13 columns, `VM = 1.0`/`VA = 0.0` for all non-slack/non-PV buses (slack and PV setpoints are preserved; with a slack angle other than 0 every bus gets `VA` = the slack angle, the angle of the flat start). An auxiliary bus (three-winding star point) gets the value of the solver's flat start instead, the voltage at which its stiffest winding carries no current; read back, a bus listed in `mpc.sparlectra.aux_buses` stays auxiliary. |
 
 A unit without an active-power limit is written with `Pmax = 9999` and
 `Pmin = -9999`, the MATPOWER convention for an unlimited unit; the CGMES

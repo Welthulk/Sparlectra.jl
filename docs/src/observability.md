@@ -6,15 +6,23 @@ fail? The checks run standalone, before and independently of `runse!`.
 
 ## What the global check answers
 
-`evaluate_global_observability(net; ...)` decides whether the complete
-state (all bus angles and magnitudes, plus released extra states) is
-determined by the active measurements in `net.measurements`, in two
-stages:
+`evaluate_global_observability(net; ...)` decides whether the state is
+determined by the active measurements in `net.measurements`: all bus
+angles and magnitudes, the circulation states of measured coupler rings,
+and the PMU reference offset when it is active. It works in two stages.
+Released shunt susceptances and tap steps are not part of this check.
+Whether a tap step is observable is decided per changer by `runse!` before
+its first iteration, see
+[Observability per changer](@ref se-tap-observability).
 
-1. **Structural stage**: `detect_ac_islands` runs on the contracted SE
-   net. More than one synchronous island containing measured buses
-   yields `:not_observable` with `:structural_islands` in `notes`,
-   because no measurement ties the islands' angle references together.
+1. **Islands**: a net with more than one synchronous AC island (islands
+   joined by a closed link count as one) is judged per measured island, on
+   its own subnet with its own angle reference. The quality is that of the
+   worst measured island. `notes` holds `:island_partition`, `islands`
+   holds the result per island, and unmeasured islands are counted and
+   left out. On a single island the check runs `detect_ac_islands` on the
+   contracted SE net, and a split there yields `:not_observable` with
+   `:structural_islands` in `notes`.
 2. **FD-aware numeric rank**: the measurement Jacobian is built by
    forward differences, so its error floor is of the order of `jacEps`
    rather than machine epsilon. With `tol = nothing` the rank tolerance
@@ -49,14 +57,14 @@ singular values drop below a cut measured against the largest column.
 Column normalization removes that dependence, and the verdict becomes
 insensitive to the factor over several orders of magnitude. Rows are not
 divided by their sigma, which would lift zero-injection rows (sigma
-`ZERO_INJECTION_SIGMA`) orders of magnitude above ordinary rows; they are
+`state_estimation.zero_injection_sigma_mva`) orders of magnitude above ordinary rows; they are
 normalized to unit norm, before the columns, because a bus coupler entered
 as a branch with near-zero impedance (`x = 1e-5` pu) otherwise dominates
 the columns of its two buses and pushes the feeding line below the cut.
 
 ## The quality labels
 
-- `:observable`: full rank with usable redundancy; the estimate and its
+- `:good`: full rank with usable redundancy; the estimate and its
   diagnostics are trustworthy.
 - `:critical`: full rank but with critical measurements in the set (see
   below); the estimate exists, parts of it are unprotected against bad
@@ -175,7 +183,7 @@ The zero-injection rows of passive buses are rows of H like measurements
 and raise observability and redundancy around the bus. That holds for
 weighted rows and for equality constraints alike; how the two enter the
 estimate is described in
-[Passive buses and zero injection](@ref se_zero_injection).
+[Zero injections and coupler balances](@ref se_zero_injection).
 
 ## Reading the diagnostics table
 
@@ -191,10 +199,12 @@ semantics, elimination trace and robust interplay:
 ## The H matrix as the didactic entry
 
 `measurement_jacobian(net; ...)` returns the labeled Jacobian behind
-both checks: `H` with one described row per active measurement and
-named state columns (`Va(bus)`, `Vm(bus)`, plus `alpha` when PMU angle
-measurements activate the reference-offset state), which shows which
-rows touch which columns before any SVD runs. The example suite
+both checks: `H` with one described row per active measurement (a link
+flow row has the location `link <k>`) and named state columns (`Va(bus)`,
+`Vm(bus)`, then `circP(j)` and `circQ(j)` for the circulation states of
+measured coupler rings, plus `alpha` when PMU angle measurements activate
+the reference-offset state). It shows which rows touch which columns
+before any SVD runs. The example suite
 `examples/run_state_estimation_suite.jl` writes such a measurement-matrix
 page with a stability verdict from rank, redundancy and `cond(H)`; the
 [state estimation workshop](generated/workshop_state_estimation.md)

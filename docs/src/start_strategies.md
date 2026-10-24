@@ -1,7 +1,7 @@
 # [Start strategies by case](@id start_strategies_page)
 
-A flat start sets every bus to 1 pu and 0 degrees, PV and slack buses to
-their setpoint magnitudes. The file's VM and VA columns are what the case
+A flat start sets every bus to 1 pu and the slack angle, PV and slack buses
+to their setpoint magnitudes. The file's VM and VA columns are what the case
 author stored: a solved state on some files, a rough profile on others.
 Whether plain Newton converges from a flat start depends on the distance
 between start and solution and on how the step is applied
@@ -45,11 +45,36 @@ machines on top and are reported as such.
 Only the auxiliary buses (the star points of three-winding transformers)
 leave the flat profile: they start at the current-free value of their
 lowest-impedance winding, while PQ buses keep 1.0 pu, PV and slack buses
-their setpoints, and every angle 0. A stiff winding off nominal otherwise
+their setpoints, and every angle at the slack angle. A stiff winding off nominal otherwise
 dominates the start: on the CGMES MiniGrid the flat star point drives
 164 pu of active power on a 9 MW case and the polar update diverges; with
 the star points at their ratio the MiniGrid converges from the flat start in
 four steps. A network without auxiliary buses starts exactly flat.
+
+Phase shifters stay out of the flat profile by default: the whole shift
+lies across the series impedance of the shifter at the start. With
+`start_mode.rotate_behind_pst: true` (default `false`) a bus that the
+reference reaches only across phase-shifting transformers starts at the
+slack angle plus the shifts of a path with the fewest shifters. A bus that
+a path without shifter reaches keeps the slack angle: in a mesh the
+parallel path fixes its angle, and the turn would put the whole shift
+across that path. The switch also turns a stored start without any angle
+(every bus but the reference at 0 degrees, as in a hand-built net). A
+110/20 kV transformer with a 30 or 90 degree shift in front of a load
+reaches the low-voltage root (0.044 pu) from the flat start without the
+turn and the operating root (0.953 pu, 5 iterations) with it. On the
+recipe rung below, with the switch on, case1888rte converges to the
+operating solution in 6 iterations (min Vm 0.84 pu, 975.7 MW losses);
+on case2848rte the rule turns five buses by 1.87 degrees and the start
+still reaches the low-voltage branch in 10 iterations. The other cases of
+the table were not measured with the switch on.
+
+With the switch off, a solve that started without angles on a net with an
+in-service phase shifter and ends with a voltage finding of the
+wrong-branch check (`voltage_collapse`, `low_voltage_magnitude`,
+`low_voltage_level_share`) warns and names
+`power_flow.start_mode.rotate_behind_pst = true`; the result summary line
+carries the same hint.
 
 The ratio profile (`start_mode.ratio_profile`, default `true`) is a
 candidate of the start projection: the flat magnitudes of all PQ buses, not

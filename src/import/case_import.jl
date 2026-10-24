@@ -262,7 +262,7 @@ Import a case of any format for a service run. Detection follows
 explicitly. Construction goes through the same per-format paths the
 power-flow service used, so every service gets the identical network for
 the identical file: the shared context for MATPOWER and the case format
-(auto profile, net cache, projected start, configuration stamping), the
+(auto profile, projected start, configuration stamping), the
 configured CGMES import with the start-values decision, and the DTF build
 with its DC-line rejection.
 

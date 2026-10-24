@@ -16,7 +16,8 @@
 # purpose: Web UI/service state-estimation run (SE phase 5): build the net
 #          through the shared import paths, read a measurement table set,
 #          check observability, run runse_diagnostics plus the final
-#          runse!(updateNet = true), and persist the SE artifacts including
+#          runse!(updateNet = true) (with released taps in rounds: result
+#          run, diagnostics on its end steps), and persist the SE artifacts including
 #          the se_state.csv chain anchor. Also the SE-started power-flow
 #          chain run (_run_pf_from_se_service). Mirrors
 #          run_contingency_service.jl (mode flag on POST /powerflow/run,
@@ -77,7 +78,7 @@ end
 The warning a measurement set inherits from the run it takes its truth
 state from: empty for a clean run, otherwise one sentence naming why the
 state is no solution of the model (state estimation outside the band,
-taps frozen at model positions, a non-converged run). Flows derived from
+the fallback without tap estimation, a non-converged run). Flows derived from
 such a state violate the node balances, and the set then contradicts the
 model before any estimation (a set built from a fallback
 run far outside the band produced KCL findings at every passive bus).
@@ -86,7 +87,7 @@ function _se_truth_run_warning(metadata::AbstractDict)::String
   reasons = String[]
   band = String(get(metadata, "se_band_reason", ""))
   (isempty(band) || band == "ok") || push!(reasons, "its J was outside the band ($(band))")
-  get(metadata, "se_tap_estimation_fallback", false) == true && push!(reasons, "its taps were frozen at their model positions")
+  get(metadata, "se_tap_fallback_used", false) == true && push!(reasons, "its taps were not estimated (fallback without tap estimation)")
   status = String(get(metadata, "numerical_status", ""))
   (isempty(status) || status == "converged") || push!(reasons, "it did not converge ($(status))")
   isempty(reasons) && return ""
@@ -185,36 +186,26 @@ function _se_apply_pf_voltage_csv!(net::Net, file::AbstractString)
   return nothing
 end
 
-## whether the first pass of `runse_diagnostics` solved its base run with
-## the released taps frozen again (`tapFixation.not_converged_released`,
-## per island on a multi-island net)
-_se_diag_tap_refrozen(diag)::Bool = !isempty(_se_report_tap_refrozen(diag.diagnostics))
 
-## True when at least one transformer of `net` has its tap released as an
-## estimation state.
-## The one statement the tap fallback makes, shared by all three surfaces
-## that must carry it: the Web UI result summary, the tap table (which the
-## fallback REPLACES, because estimated-looking positions that are model
-## values are worse than no table), and se_diagnostics.md. One constant so
-## the three cannot drift apart; a run whose tap positions are model values
-## is otherwise indistinguishable from a successful tap estimation.
-const _SE_TAP_FALLBACK_NOTE = "tap estimation did NOT converge: every tap was frozen at its MODEL position, so the tap positions in this result are model values, not estimates. The J of this run therefore measures the model tap positions, and a large J is expected when those positions are wrong."
+## The one statement the tap fallback makes, shared by the surfaces that
+## carry it: the Web UI result summary and tap section, and
+## se_diagnostics.md. One constant so they cannot drift apart.
+const _SE_TAP_FALLBACK_NOTE = "tap estimation did NOT converge: the result is the run without tap estimation, every tap keeps its transferred step (reason fallback_not_converged). The J of this run measures those steps, and a large J is expected when they are wrong."
+const _SE_TAP_REJECTED_NOTE = "tap estimation was REJECTED: its estimate, fixed to the mechanical steps, fitted the measurements worse than the transferred steps (worse_fit), so the result is the run without tap estimation and every tap keeps its transferred step (reason fallback_worse_fit). The set does not pin these taps reliably."
 
-## The same statement when the staged tap estimate converged but its FIXED
-## positions fitted the measurements worse than the model positions did
-## (the acceptance rule after the staged start). Same three surfaces.
-const _SE_TAP_REJECTED_NOTE = "tap estimation was REJECTED: its positions, fixed to the mechanical steps, fitted the measurements worse than the model positions, so every tap was frozen at its MODEL position and the tap positions in this result are model values, not estimates. The set does not pin these taps reliably."
+## the note of a fallback by its reason (`se_tap_fallback_reason`)
+_se_tap_fallback_note(metadata) = get(metadata, "se_tap_fallback_reason", "") == "worse_fit" ? _SE_TAP_REJECTED_NOTE : _SE_TAP_FALLBACK_NOTE
 
-## The note for a fallback run, chosen by the reason the service recorded
-## (`se_tap_estimation_fallback_reason`; runs before the reason existed
-## carry none and were all non-convergences).
-_se_tap_fallback_note(metadata) = get(metadata, "se_tap_estimation_fallback_reason", "not_converged") == "worse_fit" ? _SE_TAP_REJECTED_NOTE : _SE_TAP_FALLBACK_NOTE
-
-_any_tap_released(net::Net)::Bool = any(b -> b.tap_est_mode !== :none, net.branchVec)
+## run.log line 1 of a fallback: the library line for a failed run 1, the
+## acceptance rule of the staged start for a converged run 1 it rejected
+## (`pre` the staged pre-solve with the taps frozen)
+function _se_tap_fallback_line1_service(reason::Symbol, ite::Int, res, pre)::String
+  reason === :worse_fit || return _se_tap_fallback_line1(reason, ite)
+  return string("tap estimation: run 1 rejected (worse_fit, J = ", round(res.objectiveJ; sigdigits = 6), " at dof ", res.dof, " after the fixation against J = ", round(pre.objectiveJ; sigdigits = 6), " at dof ", pre.dof, " without tap estimation), falling back")
+end
 
 ## Freeze every released tap back to its model position and report how many
-## were frozen. Used by the service fallback: a set too thin to pin its taps
-## should still deliver an estimate of the voltages.
+## were frozen (the staged start solves once with the taps frozen).
 function _freeze_all_tap_estimation!(net::Net)::Int
   frozen = 0
   for (i, b) in enumerate(net.branchVec)
@@ -247,7 +238,9 @@ end
 function _se_reported_iterations(res)::Int
   base = res.iterations
   tf = res.tapFixation
-  tf === nothing && return base
+  # after the fallback the reported run is run 2 alone; the iterations of
+  # run 1 stand in its run.log line
+  (tf === nothing || tf.fallback_used) && return base
   return max(base, Int(get(tf, :iterations_estimation, 0)), Int(get(tf, :iterations_fixation, 0)))
 end
 
@@ -255,9 +248,16 @@ end
 ## 0.60.0): which changer, its data (kind, side, alpha, du), the continuous
 ## estimate (step s relative to neutral, Delta U = s du, branch ratio and
 ## angle at the estimate), the model step against the fixed step and the
-## deviation between them in steps, and the guard result. The metadata rows
+## deviation between them in steps, the standard deviation of the step from
+## the covariance (`sigma_s`) with the distance of the estimate from its
+## nearest step in units of it (`round_distance_sigma`, a hint), the step
+## from the control target of a regulator kept out automatically
+## (`step_from_target`, not applied), the source of the transformer
+## impedance (`table`, `analytic`, `nominal`), and the status (`estimated`,
+## `not_estimated`, `calculated`) with its reason and note (for example
+## `p_from_schedule` on a calculated machine transformer). The metadata rows
 ## of the result page carry the same keys plus `role` and `notice`.
-const _SE_TAP_CSV_COLUMNS = ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "kind", "side", "alpha_deg", "du", "s_est", "du_est", "ratio_est", "angle_est_deg", "step_model", "step_fixed", "deviation_steps", "out_of_range", "fixed", "frozen_reason", "note", "source"]
+const _SE_TAP_CSV_COLUMNS = ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "kind", "side", "alpha_deg", "du", "s_est", "du_est", "ratio_est", "angle_est_deg", "step_model", "step_fixed", "deviation_steps", "sigma_s", "round_distance_sigma", "step_from_target", "out_of_range", "fixed", "reactance_source", "status", "reason", "note"]
 
 ## a step value as an Int when it is a whole step (start positions carry
 ## round-off from the branch fields), else as it is
@@ -283,13 +283,14 @@ function _se_tap_row_record(t)::Dict{String,Any}
     "alpha_deg" => t.alpha_deg, "du" => t.du, "s_est" => t.s_est, "du_est" => t.du_est,
     "ratio_est" => t.ratio_est, "angle_est_deg" => t.angle_est_deg,
     "step_model" => _se_tap_step(t.step_model), "step_fixed" => _se_tap_step(t.step_fixed), "deviation_steps" => _se_tap_step(t.deviation_steps),
-    "out_of_range" => t.out_of_range, "fixed" => t.fixed, "frozen_reason" => String(t.frozen_reason), "note" => String(t.note),
-    "source" => "estimated", "role" => String(t.role), "notice" => t.notice,
+    "sigma_s" => t.sigma_s, "round_distance_sigma" => t.round_distance_sigma, "step_from_target" => t.step_from_target === nothing ? nothing : _se_tap_step(t.step_from_target),
+    "out_of_range" => t.out_of_range, "fixed" => t.fixed, "reactance_source" => String(t.reactance_source), "status" => String(t.status), "reason" => String(t.reason), "note" => String(t.note),
+    "role" => String(t.role), "notice" => t.notice,
   )
 end
 
 ## one record as a CSV line in the column order; `nothing` and the symbol
-## value "none" (kind, side, freeze reason, note) are empty cells, numbers
+## value "none" (kind, side, reason, note) are empty cells, numbers
 ## follow the regional CSV format, indices and whole steps are integers
 function _se_tap_csv_line(rec::AbstractDict, delim, fmt)::String
   function cell(c)
@@ -297,15 +298,18 @@ function _se_tap_csv_line(rec::AbstractDict, delim, fmt)::String
     v === nothing && return ""
     (v isa Bool || v isa Integer) && return string(v)
     v isa AbstractFloat && return _format_csv_number(v, fmt)
-    (c in ("kind", "side", "frozen_reason", "note") && v == "none") && return ""
+    (c in ("kind", "side", "reason", "note") && v == "none") && return ""
     return _csv_field(String(v), delim, fmt)
   end
   return join((cell(c) for c in _SE_TAP_CSV_COLUMNS), delim)
 end
 
-## the regulator rows of SEResult.tapEstimates (rows of transformers without
-## a changer of the released kind have regulator 0)
-_se_tap_regulator_rows(rows) = rows === nothing ? NamedTuple[] : [t for t in rows if t.regulator > 0]
+## the regulator rows of SEResult.tapEstimates the estimation saw: rows of
+## transformers without a changer of the released kind (regulator 0) and of
+## transformers the configuration keeps out (reason excluded,
+## machine_transformer or q_not_measured_in_group, counted as
+## se_tap_excluded and se_tap_machine) are left out
+_se_tap_regulator_rows(rows) = rows === nothing ? NamedTuple[] : [t for t in rows if t.regulator > 0 && !(t.reason in (:excluded, :machine_transformer, :q_not_measured_in_group))]
 
 ## number of distinct transformers among the tap regulator rows
 _se_tap_transformer_count(rows)::Int = length(unique(t.branch for t in _se_tap_regulator_rows(rows)))
@@ -407,10 +411,12 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   index = _se_measurement_index(imported, format)
   index === nothing && return nothing, "$(name) is a measurement table for a CGMES case, but the import kept no CGMES model to resolve its mRIDs."
   # rows without a sigma cell take the level sigma of the effective
-  # configuration (case configuration first), not of the process default
+  # configuration (case configuration first), not of the process default;
+  # the same holds for the zero-injection sigma (the sigma floor of the
+  # import and the sigma of the rows applyMeasurementSet! adds)
   # the sigma every row without a sigma cell gets, for the run artifact
   filled = Dict{Int,Tuple{String,Symbol}}()
-  imp = _import_measurement_table(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level, filled_sigmas = filled)
+  imp = _import_measurement_table(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level, zero_injection_sigma = config.state_estimation.zero_injection_sigma_mva, filled_sigmas = filled)
   if isempty(imp.sets)
     write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
     return nothing, "$(name) holds no measurement row that can be assigned to a set; see measurement_import.txt."
@@ -418,7 +424,7 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   set = imp.sets[1]
   # applied before the report is written, so the report carries the
   # zero-injection rows of state_estimation.zero_injection for this set
-  applyMeasurementSet!(net, set; zero_injection = config.state_estimation.zero_injection !== :off)
+  applyMeasurementSet!(net, set; zero_injection = config.state_estimation.zero_injection !== :off, zero_injection_sigma = config.state_estimation.zero_injection_sigma_mva)
   write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
   zi = set.counts[:zero_injection]
   open(logfile, "a") do io
@@ -460,7 +466,7 @@ function _se_artifact_row(r::MeasurementRow, filled)::_SE_ARTIFACT_ROW
   return _SE_ARTIFACT_ROW((r.timestamp, r.measurement_mrid, r.terminal_mrid, r.node_mrid, r.type, _measurement_table_number(r, :value), sigma, source, r.valid))
 end
 
-function _se_write_measurement_artifact!(net::Net, index::MeasurementKeyIndex, file::AbstractString, comments::Vector{String}, logfile; table = nothing)
+function _se_write_measurement_artifact!(net::Net, index::MeasurementKeyIndex, file::AbstractString, comments::Vector{String}, logfile, zero_injection_sigma::Real; table = nothing)
   rows = _SE_ARTIFACT_ROW[]
   # the measurement index (in net.measurements as loaded) of every row
   owner = Int[]
@@ -504,7 +510,7 @@ function _se_write_measurement_artifact!(net::Net, index::MeasurementKeyIndex, f
   # file row at a bus that is not energized) leaves the table and joins the
   # measurements without a place, and the table is written once more
   # an empty table (no measurement of a case file has a place) has no set
-  read_back() = isempty(rows) ? MeasurementSet("", Measurement[], Dict{String,Vector{Int}}(), Dict{Symbol,Int}(), NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}[], Dict{String,Symbol}()) : only(_import_measurement_table(readMeasurementTable(file), index).sets)
+  read_back() = isempty(rows) ? MeasurementSet("", Measurement[], Dict{String,Vector{Int}}(), Dict{Symbol,Int}(), NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}[], Dict{String,Symbol}()) : only(_import_measurement_table(readMeasurementTable(file), index; zero_injection_sigma = zero_injection_sigma).sets)
   back = read_back()
   data0 = 2 + length(head) + length(unplaced)
   if !isempty(back.problems)
@@ -549,14 +555,18 @@ end
 # member row the residual of the sum. An eliminated row carries the
 # residual and normalized residual of the solve before its removal
 # (`eliminations` holds the trace rows of every diagnostics pass of the
-# run, a tap fallback repeats the pass), every other active row those of
+# run, with released taps one pass per bad-data round), every other active row those of
 # the final diagnostics. A zero-injection
 # constraint (state_estimation.zero_injection = constraint) has normalized
 # residual 0 and constraint = true. `reason` lists the verdict tokens:
-# inactive, eliminated, suppressed, downweighted, suspicious, critical.
+# inactive, eliminated, suppressed, downweighted, suspicious, critical, and
+# from the range check of the voltage measurements (`range_rows`)
+# range_check_substituted (the row entered the run as a pseudo measurement,
+# its residual is that of the substitute) and deenergized (the row sits at
+# a bus that is not energized, or at its branches, and left the run).
 const _SE_VERDICT_HEADER = ["line", "key", "type", "measurement_id", "residual", "normalized_residual", "wii", "localizable", "eliminated", "constraint", "reason"]
 
-function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag, eliminations, res, critical::Set{Int}, zi_constraint::Bool, fmt)
+function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag, eliminations, res, critical::Set{Int}, zi_constraint::Bool, fmt; range_rows = NamedTuple[])
   delim = string(fmt.delimiter)
   cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
   num(x) = x === nothing || isnan(x) ? "" : _format_csv_number(Float64(x), fmt)
@@ -565,6 +575,8 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
   robust = something(res.robustRows, NamedTuple[])
   suppressed = Set{String}(String(r.id) for r in robust if r.stage == 3)
   downweighted = Set{String}(String(r.id) for r in robust if r.stage in (1, 2))
+  range_sub = Set{Int}(r.measurement_index for r in range_rows if r.reason === :range_check_substituted)
+  range_dead = Set{Int}(j for r in range_rows if r.reason === :deenergized for j in r.deactivated)
   flagged = 0
   open(file, "w") do io
     println(io, join(_SE_VERDICT_HEADER, delim))
@@ -600,12 +612,14 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
       # the final solve deactivates the eliminated rows in net.measurements;
       # inactive means valid=false in the table
       (m.active || eliminated) || push!(tokens, "inactive")
+      mi in range_dead && push!(tokens, "deenergized")
+      mi in range_sub && push!(tokens, "range_check_substituted")
       eliminated && push!(tokens, "eliminated")
       m.id in suppressed && push!(tokens, "suppressed")
       m.id in downweighted && push!(tokens, "downweighted")
       suspicious && push!(tokens, "suspicious")
       mi in critical && push!(tokens, "critical")
-      any(t -> t in ("eliminated", "suppressed", "downweighted", "suspicious"), tokens) && (flagged += 1)
+      any(t -> t in ("eliminated", "suppressed", "downweighted", "suspicious", "range_check_substituted"), tokens) && (flagged += 1)
       println(io, join((art.lines[k], cf(art.keys[k]), cf(art.types[k]), cf(m.id), num(residual), num(rn), num(wii), localizable, eliminated, constraint, cf(join(tokens, ";"))), delim))
     end
   end
@@ -655,7 +669,7 @@ end
 # A generated set already carries ZI rows or balance rows at every passive
 # bus and gets nothing added. Returns the number of rows added.
 function _se_apply_zero_injection!(net::Net, config, logfile)::Int
-  added = config.state_estimation.zero_injection !== :off ? _add_missing_zero_injections!(net.measurements, net) : 0
+  added = config.state_estimation.zero_injection !== :off ? _add_missing_zero_injections!(net.measurements, net; sigma = config.state_estimation.zero_injection_sigma_mva) : 0
   open(logfile, "a") do io
     _se_log_zero_injection(io, config, added)
   end
@@ -668,12 +682,25 @@ function _se_log_zero_injection(io::IO, config, added::Int)
     mode = config.state_estimation.zero_injection
     # constraint: every ZI row of the set is solved as an equality
     # constraint, the added ones and those the set brought along
-    how = mode === :constraint ? ", every ZI row solved as an equality constraint" : ""
+    how = mode === :constraint ? ", every ZI row solved as an equality constraint" : string(", sigma ", config.state_estimation.zero_injection_sigma_mva, " MW/Mvar per row")
     println(io, "zero injection: ", added, " row(s) added at ", added ÷ 2, " passive bus(es) without an injection measurement", how, " (state_estimation.zero_injection: ", mode, ")")
   else
     println(io, "zero injection: off, no rows added (state_estimation.zero_injection: off)")
   end
   return nothing
+end
+
+# the run.log summary line of the numerics of the reported run: the matrix
+# of the last Gauss-Newton step with its condition number (1-norm
+# estimate), J and dof, and under zero_injection = constraint where the
+# multipliers are
+function _se_conditioning_line(res)::String
+  c = res.conditioning
+  c === nothing && return string("numerics: J = ", round(res.objectiveJ; sigdigits = 6), ", dof = ", res.dof)
+  what = c.matrix === :kkt ? "KKT matrix" : "gain matrix"
+  kappa = isfinite(c.condition_number) ? string(round(c.condition_number; sigdigits = 3)) : "Inf (singular)"
+  zi = res.zeroInjectionMultipliers === nothing ? "" : string(", multipliers of ", length(res.zeroInjectionMultipliers), " bus(es) in se_zero_injection_multipliers.csv")
+  return string("numerics: zero_injection ", c.zero_injection, ", condition number of the ", what, " ", kappa, " (1-norm estimate), J = ", round(res.objectiveJ; sigdigits = 6), ", dof = ", res.dof, zi)
 end
 
 ## headline mapping for the state-estimation timing file
@@ -726,6 +753,219 @@ function _se_log_criticality(io::IO, net::Net, obs)
   return nothing
 end
 
+## The bad-data sequence of the SE service on `net`: returns the result
+## run, the diagnostics of the whole sequence, every eliminated row (with
+## its `round`), the staged-start and fallback state of the last round,
+## the number of rounds and the configuration of the last run.
+##
+## Bad data with released taps runs on the FIXED END STEPS of the result
+## run. One round: the result run (taps released,
+## estimated and fixed; or the fallback without tap estimation), then the
+## diagnostics with every tap frozen at its end step, and the row they
+## eliminate leaves the set. When a round eliminated a row, the next round
+## repeats the result run with released taps on the cleaned set; the rounds
+## end with the first round that eliminates nothing. One row per round: a
+## second row of the same pass would be judged on end steps the eliminated
+## row had pulled (sp_case14 with -2 kV on the
+## 20 kV bus of the deviated transformer: a full pass removed that row and
+## two good 20 kV voltages, one row per round only that row). The budget
+## state_estimation.max_eliminations counts over all rounds, a round with
+## no budget left only diagnoses. Measured on a study case with a
+## 0 kV voltage row, before the range check: the released run of round
+## 1 does not converge in 50 iterations and falls back, its diagnostics on
+## the transferred steps eliminate the 0 kV row, round 2 estimates three
+## transformers and gives J 212.27 at dof 924. The order before
+## (diagnostics with free taps, then the fallback for good) ended at J
+## 414.30 with every tap at its transferred step.
+## Without a released tap the result run and the diagnostics see the same
+## model, so the plain order (diagnostics, rows out, final run) is the
+## same sequence in one round.
+function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, tap_released_idxs::Vector{Int}, tap_estimable::Int, tap_staged_start::Bool, logfile::AbstractString, @nospecialize(se_phase))
+  tap_rounds = tap_cfg.enabled && tap_estimable > 0
+  # rounds of the sequence (1 without a released tap)
+  rounds = 0
+  staged = false
+  # the converged pre-solve of the round, the reference of the acceptance
+  # rule below
+  staged_pre = nothing
+  tap_fallback_used = false
+  tap_run1 = (:none, 0)
+  # every row the run removed, with the trace row of the pass that removed it
+  eliminations = NamedTuple[]
+  diag = nothing
+  res = nothing
+  if !tap_rounds
+    diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
+    # eliminated rows leave the FINAL run: the diagnostics identified them
+    # on its own copy, so deactivate them here or the headline J would keep
+    # carrying rows the workflow already removed (seen: an injected 10-sigma
+    # error, eliminated with stop reason consistent, still pushed the
+    # headline to J = 149 at dof 42 instead of J ~ dof)
+    for e in diag.eliminations
+      (1 <= e.measurement_index <= length(net.measurements)) || continue
+      net.measurements[e.measurement_index] = _set_measurement_active(net.measurements[e.measurement_index], false)
+      push!(eliminations, merge(e, (round = 1,)))
+    end
+    se_phase("state_estimation")
+    res = with_sparlectra_config(() -> runse!(net), run_cfg)
+    rounds = 1
+  else
+    base_cfg = run_cfg
+    max_elim_run = base_cfg.state_estimation.max_eliminations
+    # every round starts from the same state and model: the start voltages,
+    # the model data a converged run writes back (update_shunts,
+    # update_taps) and the transferred step of every released branch
+    v_start0 = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
+    model_start0 = _se_writeback_snapshot(net, base_cfg.state_estimation)
+    steps_start0 = [(k, deepcopy(net.branchVec[k])) for k in tap_released_idxs]
+    tap_snap = _tap_release_snapshot(net)
+    diag_first = nothing
+    reverted = nothing
+    tap_round = 0
+    while true
+      tap_round += 1
+      if tap_round > 1
+        for (i, nd) in enumerate(net.nodeVec)
+          nd._vm_pu, nd._va_deg = v_start0[i]
+        end
+        _se_writeback_restore!(net, model_start0)
+        for (k, br) in steps_start0
+          _copy_tap_position!(net.branchVec[k], br)
+        end
+      end
+      run_cfg = base_cfg
+      rtag = tap_round == 1 ? "" : string(" (round ", tap_round, ")")
+      # Staged start for the mass release. From flat voltages the released
+      # tap states take large first steps, the per-iteration tap step limit
+      # then scales the WHOLE step down, and the estimate crawls:
+      # case1354pegase with 240 released transformers needed 63 iterations
+      # on a generated measurement set with four deviated taps, so a limit
+      # of 50 never reached it and the run reported J/dof 16 instead of
+      # 1.02. One solve with the taps frozen first puts the voltages next to
+      # the solution; released from there, the same estimate needed 4
+      # iterations and reached the same J.
+      staged = false
+      staged_pre = nothing
+      if tap_staged_start
+        _freeze_all_tap_estimation!(net)
+        v_start = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
+        pre = with_sparlectra_config(() -> runse!(net), run_cfg)
+        _restore_tap_release!(net, tap_snap)
+        if pre.converged
+          staged = true
+          staged_pre = pre
+          run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; flatstart = false))
+        else
+          # the pre-solve wrote its diverged iterate into the net; the
+          # released run then starts from the state it would have had
+          # without the staging
+          for (i, nd) in enumerate(net.nodeVec)
+            nd._vm_pu, nd._va_deg = v_start[i]
+          end
+        end
+        open(logfile, "a") do io
+          if pre.converged
+            println(io, "tap estimation", rtag, ": staged start, one solve with the ", tap_estimable, " released tap(s) frozen (", pre.iterations, " iteration(s), J = ", round(pre.objectiveJ; sigdigits = 6), ", dof ", pre.dof, "), then the taps are estimated from that state")
+          else
+            println(io, "tap estimation", rtag, ": the staged start did not converge with the taps frozen (", pre.iterations, " iteration(s)); the released run starts as configured")
+          end
+        end
+      end
+      se_phase("state_estimation")
+      # kept for the fallback below: runse! writes its state into the net
+      # whether or not it converged, so the repeat needs the state as it was
+      # BEFORE the first attempt, not the diverged iterate it gave up on
+      # (measured on the svedala set: the failed tap run left bus angles
+      # spread over -178 to +167 degrees where the power flow had -26 to +40)
+      v_before_taps = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
+      # and the model data a converged run 1 writes back (update_shunts,
+      # update_taps), so the repeat after worse_fit starts from the same model
+      model_before_taps = _se_writeback_snapshot(net, run_cfg.state_estimation)
+      res = with_sparlectra_config(() -> runse!(net), run_cfg)
+      # The fallback of the run with tap estimation (one logic with runse!):
+      # when the run fell back, the result of this round is the run without
+      # tap estimation, so the diagnostics, the metadata and run.log describe
+      # the run that is the result. Its tap rows carry reason
+      # fallback_not_converged (fallback_worse_fit for the second trigger
+      # below).
+      tap_fallback_used = false
+      tap_run1 = (:none, 0)
+      res_fell_back = res.tapFixation !== nothing && res.tapFixation.fallback_used
+      # Second trigger, the acceptance rule of the staged start
+      # (worse_fit): the staged
+      # estimate converges where the cold one crawled, but on a set that
+      # cannot pin its taps it converges to positions that round badly. The
+      # FIXED estimate is kept only if it fits at least as well as the
+      # transferred steps in the pre-solve of the same round (same rows).
+      # "Larger" carries a relative margin of 1e-6: a tap fixed back onto
+      # its transferred step solves the same problem as the pre-solve, and
+      # the two J then differ in the last digits only (seen: 49.4686 against
+      # 49.4686 rejected without the margin). Its fallback is the same as
+      # for a failed run 1, reason worse_fit, rows fallback_worse_fit;
+      # fallback = false switches it off.
+      tap_worse_fit = !res_fell_back && staged_pre !== nothing && res.converged && res.tapFixation !== nothing && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
+      if tap_cfg.fallback && (res_fell_back || tap_worse_fit)
+        tap_fallback_used = true
+        tap_run1 = res_fell_back ? (res.tapFixation.fallback_reason, res.tapFixation.iterations_estimation) : (:worse_fit, _se_reported_iterations(res))
+        run1_res = res
+        run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; tap_estimation = _tap_config_off(tap_cfg)))
+        open(logfile, "a") do io
+          println(io, _se_tap_fallback_line1_service(tap_run1..., run1_res, staged_pre))
+        end
+        for (i, nd) in enumerate(net.nodeVec)
+          nd._vm_pu, nd._va_deg = v_before_taps[i]
+        end
+        _se_writeback_restore!(net, model_before_taps)
+        # tap_cfg: the settings of run 1, so the excluded and the machine
+        # transformers keep their reason in the rows of the fallback run
+        res = _se_tap_fallback_result(with_sparlectra_config(() -> runse!(net), run_cfg), tap_run1...; net = net, measurements = Measurement[m for m in net.measurements], excl = _tap_exclusion_map(net, tap_cfg), update_net = run_cfg.state_estimation.update_net)
+        open(logfile, "a") do io
+          println(io, _se_tap_fallback_line2(res))
+        end
+      end
+      # no end steps without a converged result: the run fails below
+      res.converged || break
+      # the diagnostics on the end steps of this result: every released
+      # branch at its end step (fixed estimate, or the transferred step of
+      # the fallback) and frozen, warm from the result state; the steps the
+      # run left in the net (update_taps) and the release are put back
+      # afterwards
+      se_phase("estimation_diagnostics")
+      steps_run = [(k, deepcopy(net.branchVec[k])) for k in tap_released_idxs]
+      _tap_stamp_end_steps!(net, res, run_cfg.state_estimation.tap_estimation.impedance_correction)
+      _freeze_all_tap_estimation!(net)
+      budget = clamp(max_elim_run - length(eliminations), 0, 1)
+      diag_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; max_eliminations = budget, flatstart = false))
+      d = with_sparlectra_config(() -> runse_diagnostics(net), diag_cfg)
+      for (k, br) in steps_run
+        _copy_tap_position!(net.branchVec[k], br)
+      end
+      _restore_tap_release!(net, tap_snap)
+      diag_first === nothing && (diag_first = d)
+      d.reverted === nothing || (reverted = d.reverted)
+      diag = d
+      for e in d.eliminations
+        (1 <= e.measurement_index <= length(net.measurements)) || continue
+        net.measurements[e.measurement_index] = _set_measurement_active(net.measurements[e.measurement_index], false)
+        push!(eliminations, merge(e, (elimination = length(eliminations) + 1, round = tap_round)))
+      end
+      isempty(d.eliminations) && break
+      open(logfile, "a") do io
+        println(io, "bad data", rtag, ": ", join((String(e.id) for e in d.eliminations), ", "), " eliminated on the end steps of the result run (", tap_fallback_used ? "fallback without tap estimation" : "taps estimated and fixed",
+                ", J = ", round(res.objectiveJ; sigdigits = 6), ", dof ", res.dof, "); the result run is repeated with released taps on the cleaned set")
+      end
+    end
+    # the report of the whole sequence: the first pass shows where the bad
+    # rows were (every row active), the last one describes the result
+    if diag !== nothing
+      diag = (diagnostics = diag_first.diagnostics, rerun = diag_first.rerun, eliminations = eliminations, reverted = reverted, stop_reason = diag.stop_reason,
+              final_diagnostics = diag.final_diagnostics, topology_findings = diag.topology_findings, range_check = diag_first.range_check)
+    end
+    rounds = tap_round
+  end
+  return (res = res, diag = diag, eliminations = eliminations, staged = staged, tap_fallback_used = tap_fallback_used, tap_run1 = tap_run1, rounds = rounds, tap_rounds = tap_rounds, run_cfg = run_cfg)
+end
+
 """
     _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
 
@@ -744,17 +984,34 @@ chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
 
 Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
 `update_shunts`, `report_correlation` mirror the estimator keywords.
-`tap_estimation = true` releases every tap changer of every in-service
-transformer except machine transformers (`setTapEstimation!` with the mode
-its changers give, `:ratio`, `:pst` or `:both`) before the solve; the
-estimator then fixes each regulator to its nearest physical step and
-reports J before versus after the fixation (`se_tap_estimates.csv`, one row
-per regulator).
+With `state_estimation.tap_estimation.enabled` (default `true`, the Web UI
+"estimate taps" box) every tap changer of every in-service transformer is
+released (`setTapEstimation!` with the mode its changers give, `:ratio`,
+`:pst` or `:both`) before the solve; the estimator then fixes each
+regulator to its nearest physical step and reports J before versus after
+the fixation (`se_tap_estimates.csv`, one row per regulator with `status`
+and `reason`). With `false` every changer keeps its transferred step and is
+listed with reason `disabled`. Transformers named in
+`state_estimation.tap_estimation.exclude` keep their step (reason
+`excluded`); machine transformers are calculated after the estimation
+(status `calculated`, reason `machine_transformer`) unless
+`include_machine_transformers` is set. run.log has one line per such
+transformer and one warning per exclude entry without a transformer.
 That release is staged: one solve with the taps frozen first, the estimate
-from that state, kept only if its fixed positions fit at least as well as
-the model positions (otherwise the frozen-tap fallback, reason
-`worse_fit`). The internal keyword `tap_staged_start = false` keeps the
-release cold (regression fixtures only).
+from that state. When the run with tap estimation does not converge and
+`state_estimation.tap_estimation.fallback` is on, the run is repeated
+without tap estimation and that run is the result of the round
+(`se_tap_fallback_used`, reason `fallback_not_converged`). The same
+fallback runs when the fixed estimate fits worse than the staged pre-solve
+(acceptance rule `worse_fit`, reason `fallback_worse_fit`). With released
+taps the bad-data diagnostics run on the end steps of that result (every
+tap frozen at its fixed step, or at its transferred step after the
+fallback); when they eliminate a row (one per round), the next round
+repeats the result run with released taps on the cleaned set, until a round
+eliminates nothing. `max_eliminations` counts over all rounds
+(`se_bad_data_rounds`). The
+internal keyword `tap_staged_start = false` keeps the release cold
+(regression fixtures only).
 
 Failure reasons: `se_unsupported_format`, `import_error`,
 `invalid_measurements` (missing/unreadable/rejected file),
@@ -782,7 +1039,6 @@ function _run_state_estimation_service(
   max_eliminations::Union{Nothing,Int} = nothing,
   update_shunts::Bool = false,
   report_correlation::Union{Nothing,Bool} = nothing,
-  tap_estimation::Bool = false,
   k_eliminate::Union{Nothing,Float64} = nothing,
   robust_mode::Union{Nothing,Symbol} = nothing,
   robust_k1::Union{Nothing,Float64} = nothing,
@@ -808,7 +1064,7 @@ function _run_state_estimation_service(
   options = _SeRunOptions(max_iter, tol, flatstart, robust, max_eliminations, report_correlation, k_eliminate, robust_mode, robust_k1,
     robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides, tap_staged_start)
   return _run_state_estimation_service_body(String(case_path), String(config_file), String(output_dir), run_id, String(measurement_file),
-    update_shunts, tap_estimation, case_format, options)
+    update_shunts, case_format, options)
 end
 
 # the optional solver settings keep their Union types as fields: a positional
@@ -839,7 +1095,6 @@ function _run_state_estimation_service_body(
   run_id::String,
   measurement_file::String,
   update_shunts::Bool,
-  tap_estimation::Bool,
   case_format::Symbol,
   options::_SeRunOptions,
 )::SparlectraApiResult
@@ -958,7 +1213,7 @@ function _run_state_estimation_service_body(
     end
     zi_rows = _se_apply_zero_injection!(net, config, logfile)
     case_index = _se_measurement_index(imported, format)
-    artifact = _se_write_measurement_artifact!(net, case_index, joinpath(output_dir, "measurements.csv"), [string("case: ", basename(String(case_path))), string("measurement set of state-estimation run ", run_id, ", taken from the case file; verdict per row in measurements_verdict.csv")], logfile)
+    artifact = _se_write_measurement_artifact!(net, case_index, joinpath(output_dir, "measurements.csv"), [string("case: ", basename(String(case_path))), string("measurement set of state-estimation run ", run_id, ", taken from the case file; verdict per row in measurements_verdict.csv")], logfile, config.state_estimation.zero_injection_sigma_mva)
     (total = n_case_rows,)
   else
     if !isfile(measurement_file)
@@ -1009,7 +1264,7 @@ function _run_state_estimation_service_body(
       filter!(c -> !startswith(c, "measurement set of state-estimation run ") && !startswith(c, "not in the table: "), table_comments)
       tset = table_summary.table.set
       push!(table_comments, string("measurement set of state-estimation run ", run_id, ": set ", isempty(tset.timestamp) ? "(no timestamp)" : tset.timestamp, " of ", basename(String(measurement_file)), ", ", sum(length, values(tset.sources); init = 0), " of ", tset.counts[:rows], " row(s) used (the others: measurement_import.txt); verdict per row in measurements_verdict.csv"))
-      artifact = _se_write_measurement_artifact!(net, table_summary.index, joinpath(output_dir, "measurements.csv"), table_comments, logfile; table = table_summary.table)
+      artifact = _se_write_measurement_artifact!(net, table_summary.index, joinpath(output_dir, "measurements.csv"), table_comments, logfile, config.state_estimation.zero_injection_sigma_mva; table = table_summary.table)
       table_summary
     else
       # the measurement CSV v1 reader was removed in 0.50.0: a v1 file is
@@ -1105,51 +1360,16 @@ function _run_state_estimation_service_body(
   else
     _measurement_set_tap_deviations(String(measurement_file))
   end
-  # A set that DOCUMENTS its tap deviations answers the question the
-  # estimator would otherwise have to be told, so those transformers are
-  # released automatically - exactly the ones named, nothing else. As a mere
-  # hint this produced a J the user could not explain, and the hint appeared
-  # only after a converged run. Bad-data elimination is the wrong tool here:
-  # the measurements are correct and the model is not, so dropping rows
-  # would hide a model error instead of fixing it.
-  auto_tap_branches = Int[]
-  if !tap_estimation && !isempty(set_tap_devs)
-    for d in set_tap_devs
-      b = d.branch
-      (1 <= b <= length(net.branchVec)) || continue
-      set = _effective_tap_changers(net.branchVec[b])
-      if set === nothing
-        open(logfile, "a") do io
-          println(io, "note: tap estimation could not be released automatically on branch ", b, ": the branch is a line")
-        end
-        continue
-      end
-      # release the role of the changer the deviation moved: the
-      # generator moves the first ratio changer, else the first phase
-      # changer (_tap_deviation_changer), so only that role is released
-      c = _tap_deviation_changer(set)
-      mode = (c > 0 && set.changers[c].role === :phase) ? :pst : :ratio
-      try
-        setTapEstimation!(net; trafo = b, mode = mode)
-        push!(auto_tap_branches, b)
-      catch err
-        # expected: the ArgumentError of setTapEstimation! for a transformer
-        # without tap changer data (empty set, c == 0); anything else is a bug
-        err isa ArgumentError || rethrow()
-        open(logfile, "a") do io
-          println(io, "note: tap estimation could not be released automatically on branch ", b, ": ", sprint(showerror, err))
-        end
-      end
-    end
-    open(logfile, "a") do io
-      if isempty(auto_tap_branches)
-        println(io, "note: the measurement set documents a tap deviation (", join(("$(d.steps) step(s) on branch $(d.branch)" for d in set_tap_devs), ", "), ") but no transformer could be released; the estimator cannot absorb it (expect band :high clustered at the transformer)")
-      else
-        println(io, "tap estimation released automatically on ", length(auto_tap_branches), " transformer(s) named by the measurement set: ", join(auto_tap_branches, ", "))
-      end
-    end
+  # A set that DOCUMENTS its tap deviations (the generator moved taps) can
+  # only be estimated with tap estimation on; with the switch off the
+  # estimator cannot absorb them and J stays large for a reason the log
+  # names here.
+  tap_enabled_cfg = config.state_estimation.tap_estimation.enabled
+  if !isempty(set_tap_devs)
     base_metadata["se_set_tap_deviation"] = true
-    base_metadata["se_auto_released_taps"] = auto_tap_branches
+    tap_enabled_cfg || open(logfile, "a") do io
+      println(io, "note: the measurement set documents a tap deviation (", join(("$(d.steps) step(s) on branch $(d.branch)" for d in set_tap_devs), ", "), ") but tap estimation is switched off (state_estimation.tap_estimation.enabled = false); the estimator cannot absorb it (expect band :high clustered at the transformer)")
+    end
   end
 
   # topology precheck: the check RESULT is logged on every run,
@@ -1184,212 +1404,103 @@ function _run_state_estimation_service_body(
   base_metadata["se_topology_findings"] = [Dict{String,Any}("stage" => String(f.stage), "kind" => String(f.kind), "location" => f.location, "evidence" => f.evidence, "severity" => String(f.severity)) for f in topo_pre.findings]
   base_metadata["se_topology_precheck_summary"] = topo_pre.summary
 
+  # the tap estimation switch of this run: the configuration of the case
+  # with the request overrides folded in (the Web UI "estimate taps" box is
+  # state_estimation.tap_estimation.enabled)
+  tap_cfg = run_cfg.state_estimation.tap_estimation
+  tap_enabled = tap_cfg.enabled
   tap_released = 0
-  tap_skipped_machine = 0
-  tap_machine_idxs = Int[]
-  if tap_estimation
-    for (k, br) in enumerate(net.branchVec)
-      # the release mode from the changer set of the branch (ratio and
-      # DECLARED phase changers; the constructor gives every MATPOWER trafo
-      # default phase fields, and mass-releasing those would add meaningless
-      # states everywhere); no direction: it comes from the changer data
-      mode = _tap_release_mode(br)
-      (mode !== nothing && _branch_terminal_state(br) == :closed) || continue
-      # machine (generator step-up) transformers are never mass-released:
-      # the generator terminal voltage is set by the AVR, not observed, so
-      # the tap state would absorb it. An explicit setTapEstimation! on a
-      # specific transformer remains the deliberate way around this guard.
-      if _is_machine_transformer(net, k)
-        tap_skipped_machine += 1
-        push!(tap_machine_idxs, k)
-        continue
-      end
-      setTapEstimation!(net; trafo = k, mode = mode)
-      tap_released += 1
+  tap_released_idxs = Int[]
+  for (k, br) in enumerate(net.branchVec)
+    # the release mode from the changer set of the branch (ratio and
+    # DECLARED phase changers; the constructor gives every MATPOWER trafo
+    # default phase fields, and mass-releasing those would add meaningless
+    # states everywhere); no direction: it comes from the changer data.
+    # Every changer is released; runse! keeps the excluded and the machine
+    # transformers out by the configuration and reports them with that reason
+    mode = _tap_release_mode(br)
+    (mode !== nothing && _branch_terminal_state(br) == :closed) || continue
+    setTapEstimation!(net; trafo = k, mode = mode)
+    tap_released += 1
+    push!(tap_released_idxs, k)
+  end
+  # which released transformers stay out (tap_estimation.exclude, machine
+  # transformers): one run.log line each below; the exclude entries without
+  # a transformer are named once here and left out of the runs, so the
+  # many estimator calls of this workflow do not warn again
+  # (with the switch off every changer says disabled: no reasons)
+  tap_excl = _tap_exclusions(net, tap_cfg; ks = tap_enabled ? tap_released_idxs : Int[])
+  if !isempty(tap_excl.unknown)
+    tap_cfg = TapEstimationConfig(enabled = tap_cfg.enabled, fallback = tap_cfg.fallback, impedance_correction = tap_cfg.impedance_correction, exclude = String[e for e in tap_cfg.exclude if !(e in tap_excl.unknown)], include_machine_transformers = tap_cfg.include_machine_transformers)
+    run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; tap_estimation = tap_cfg))
+  end
+  tap_n_excluded = count(==(:excluded), values(tap_excl.reasons))
+  tap_n_machine = count(==(:machine_transformer), values(tap_excl.reasons))
+  # the released transformers the estimation can actually see
+  tap_estimable = count(k -> !haskey(tap_excl.reasons, k), tap_released_idxs)
+  open(logfile, "a") do io
+    for e in tap_excl.unknown
+      println(io, "WARNING: state_estimation.tap_estimation.exclude names '", e, "', which is no transformer of this case; the entry has no effect")
     end
-    open(logfile, "a") do io
-      tap_released == 0 && println(io, "tap estimation requested, but the case has no in-service transformer with a tap changer", tap_skipped_machine > 0 ? " (besides $(tap_skipped_machine) machine transformer(s), which are never mass-released)" : "")
-      tap_skipped_machine > 0 && tap_released > 0 && println(io, "tap estimation: $(tap_skipped_machine) machine transformer(s) skipped (generator step-up; release explicitly via setTapEstimation! if intended)")
-      # loud warning when the set's documented deviation sits on a SKIPPED
-      # machine transformer: estimate taps can then never absorb it and J
-      # stays large for a reason the user cannot see otherwise
+    for k in sort!(collect(keys(tap_excl.reasons)))
+      nm = getCompName(net.branchVec[k].comp)
+      if tap_excl.reasons[k] === :excluded
+        println(io, "tap estimation: transformer ", nm, " (branch ", k, ") excluded (state_estimation.tap_estimation.exclude), keeps its transferred step, not calculated")
+      else
+        println(io, "tap estimation: transformer ", nm, " (branch ", k, ") is a machine transformer, not estimated (include_machine_transformers = false); its step is calculated after the estimation")
+      end
+    end
+    if !tap_enabled
+      tap_released > 0 && println(io, "tap estimation: switched off (state_estimation.tap_estimation.enabled = false); ", tap_released, " transformer(s) keep their transferred step")
+    else
+      # loud warning when the set's documented deviation sits on a
+      # transformer the run keeps out: the estimation can never absorb it
+      # and J stays large for a reason the user cannot see otherwise
       for d in set_tap_devs
-        (1 <= d.branch <= length(net.branchVec) && _is_machine_transformer(net, d.branch)) || continue
-        println(io, "WARNING: the set documents a tap deviation of $(d.steps) step(s) on branch $(d.branch), which is a machine transformer and SKIPPED by the mass release; the estimation cannot absorb it (release it explicitly via setTapEstimation!, or regenerate the set)")
+        r = get(tap_excl.reasons, d.branch, :none)
+        r === :none && continue
+        println(io, "WARNING: the set documents a tap deviation of $(d.steps) step(s) on branch $(d.branch), which is kept out of the tap estimation (", r, "); the estimation cannot absorb it (", r === :excluded ? "remove it from state_estimation.tap_estimation.exclude" : "set state_estimation.tap_estimation.include_machine_transformers", ", or regenerate the set)")
+      end
+      # a documented deviation on a branch the mass release cannot release
+      # (a line, a transformer without changer data, an open branch) is
+      # just as unabsorbable; named, or the set's provenance is lost here
+      for d in set_tap_devs
+        d.branch in tap_released_idxs && continue
+        println(io, "note: the measurement set documents a tap deviation of $(d.steps) step(s) on branch $(d.branch), which has no tap changer the run can release; the estimator cannot absorb it (expect band :high clustered at the branch)")
       end
     end
   end
 
-  # diagnostics (report) plus the final state-writing run (chain anchor)
+  # range check of the voltage measurements: every
+  # estimator call below runs it on net.measurements by itself; the rows
+  # are taken here once, with the settings of this run, for run.log, the
+  # metadata and the verdict file (same function, same rows)
+  range_rows = with_sparlectra_config(() -> last(_se_range_check(net, Measurement[m for m in net.measurements])), run_cfg)
+  isempty(range_rows) || open(logfile, "a") do io
+    for line in _se_range_check_lines(net, range_rows)
+      println(io, line)
+    end
+  end
+  base_metadata["se_range_check_substituted"] = count(r -> r.reason === :range_check_substituted, range_rows)
+  base_metadata["se_range_check_deenergized"] = count(r -> r.reason === :deenergized, range_rows)
+  # a non-finite measured value goes into the JSON as text
+  base_metadata["se_range_check"] = [Dict{String,Any}("id" => r.id, "bus" => r.bus, "value" => isfinite(r.value) ? r.value : string(r.value), "reason" => String(r.reason),
+                                                      "substitute" => isfinite(r.substitute) ? r.substitute : nothing, "source" => String(r.source), "sigma_substitute" => isfinite(r.sigma_substitute) ? r.sigma_substitute : nothing,
+                                                      "deactivated" => length(r.deactivated)) for r in range_rows]
+
+  # diagnostics (report) plus the final state-writing run (chain anchor),
+  # with released taps in rounds on the end steps (_se_bad_data_rounds!)
   se_phase("estimation_diagnostics")
-  # Staged start for the mass release. From flat voltages the released tap
-  # states take large first steps, the per-iteration tap step limit then
-  # scales the WHOLE step down, and the estimate crawls: case1354pegase
-  # with 240 released transformers needed 63 iterations on a generated
-  # measurement set with four deviated taps, so a limit of 50 never reached it,
-  # the fallback below froze every tap and the run reported J/dof 16
-  # instead of 1.02. One solve with the taps frozen first puts the
-  # voltages next to the solution; released from there, the same estimate
-  # needed 4 iterations and reached the same J. The frozen solve is also
-  # the reference of the acceptance rule below, which is why it runs under
-  # a configured warm start too (there the MiniGrid fixture
-  # cgmes_minigrid_tap_fallback converges straight to a tap estimate whose
-  # fixed positions fit worse than the model taps, J 48299 against 46692).
-  # Only for the mass release: a set-documented or explicit release names
-  # a few transformers and converges from flat (7 iterations on the same
-  # set), and its positions are the point of the run.
-  staged_pre = nothing
-  if tap_staged_start && tap_estimation && tap_released > 0
-    tap_snap = _tap_release_snapshot(net)
-    _freeze_all_tap_estimation!(net)
-    v_start = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
-    pre = with_sparlectra_config(() -> runse!(net), run_cfg)
-    _restore_tap_release!(net, tap_snap)
-    if pre.converged
-      staged_pre = pre
-      run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; flatstart = false))
-    else
-      # the pre-solve wrote its diverged iterate into the net; the released
-      # run then starts from the state it would have had without the staging
-      for (i, nd) in enumerate(net.nodeVec)
-        nd._vm_pu, nd._va_deg = v_start[i]
-      end
-    end
-    base_metadata["se_tap_staged_start"] = pre.converged
-    open(logfile, "a") do io
-      if pre.converged
-        println(io, "tap estimation: staged start, one solve with the ", length(tap_snap), " released tap(s) frozen (", pre.iterations, " iteration(s), J = ", round(pre.objectiveJ; sigdigits = 6), ", dof ", pre.dof, "), then the taps are estimated from that state")
-      else
-        println(io, "tap estimation: the staged start did not converge with the taps frozen (", pre.iterations, " iteration(s)); the released run starts as configured")
-      end
-    end
-  end
-  diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
-  # When the released taps do not converge on the full set, runse! freezes
-  # them again itself, so this pass
-  # ran its eliminations on taps frozen per control solve, one by one. The
-  # service decides that case on the final run below and repeats the
-  # diagnostics on every tap frozen; the eliminations of this pass are then
-  # void, as when the pass stopped at the non-converged released run before
-  # the library froze the taps (the MiniGrid fixture
-  # cgmes_minigrid_tap_fallback would otherwise lose its three rows twice)
-  if _se_diag_tap_refrozen(diag)
-    open(logfile, "a") do io
-      println(io, "tap estimation: the diagnostics pass did not converge with the released taps on the full set; its eliminations are not used, the pass is repeated with every tap frozen")
-    end
-    diag = (diagnostics = diag.diagnostics, rerun = nothing, eliminations = NamedTuple[], reverted = nothing, stop_reason = :not_converged, final_diagnostics = diag.diagnostics, topology_findings = nothing)
-  end
-  # eliminated rows leave the FINAL run: the diagnostics identified them on
-  # its own copy, so deactivate them here or the headline J would keep
-  # carrying rows the workflow already removed (seen: an injected 10-sigma
-  # error, eliminated with stop reason consistent, still pushed the
-  # headline to J = 149 at dof 42 instead of J ~ dof)
-  for e in diag.eliminations
-    (1 <= e.measurement_index <= length(net.measurements)) || continue
-    net.measurements[e.measurement_index] = _set_measurement_active(net.measurements[e.measurement_index], false)
-  end
-  # every row the run removed, with the trace row of the pass that removed
-  # it: a tap fallback below repeats the diagnostics on a set that already
-  # lacks the rows of this pass, so its own trace names only the rows it
-  # removed itself (seen on cgmes_minigrid_tap_fallback, staged start:
-  # 3 + 3 rows out of the reported run, 3 reported)
-  eliminations = NamedTuple[e for e in diag.eliminations]
-  first_pass_eliminations = length(eliminations)
-  se_phase("state_estimation")
-  # kept for the tap fallback below: runse! writes its state into the net
-  # whether or not it converged, so the retry needs the state as it was
-  # BEFORE the first attempt, not the diverged iterate it gave up on
-  v_before_taps = _any_tap_released(net) ? [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec] : nothing
-  res = with_sparlectra_config(() -> runse!(net), run_cfg)
-
-  # Released taps are extra states, and a measurement set that carries the
-  # voltages fine can still be too thin to pin them: the estimate then does
-  # not settle at all and the user gets nothing, although the SAME set
-  # estimates cleanly without the taps (seen on case300 and a
-  # CGMES delivery). So a non-convergence WITH released taps is not the
-  # final answer: the taps are frozen back to their model position and the
-  # estimation is repeated once. The log says it happened, because a silent
-  # retry would hide that the reported taps are model values, not estimates.
-  tap_fallback_used = false
-  # Acceptance rule for the staged start: the staged estimate converges
-  # where the cold one crawled, but on a set that cannot pin its taps it
-  # converges to positions that round badly. Measured on the MiniGrid
-  # fixture cgmes_minigrid_tap_fallback: fixed J 48299 at dof 75 against
-  # 46692 at dof 78 with the model taps (the cold run fell back to those);
-  # on cgmes_minigrid_elimination_reverted the fixed estimate fits better
-  # (34251 against 39952) and is kept. The FIXED estimate is kept only if
-  # it fits at least as well as the model positions in the pre-solve. The
-  # comparison is conservative: the final run carries no more rows than
-  # the pre-solve (eliminated rows are inactive), so a larger J here is a
-  # worse fit for certain. "Larger" carries a relative margin of 1e-6: a
-  # tap fixed back onto its model step solves the same problem as the
-  # pre-solve, and the two J then differ in the last digits only (seen:
-  # 49.4686 against 49.4686 rejected without the margin).
-  # runse! froze the released taps again itself when the released run did
-  # not converge (tapFixation.not_converged_released): its result is then
-  # the frozen-tap estimate, and the
-  # service handles it as the not_converged fallback below, so metadata,
-  # run.log and the diagnostics describe the run with every tap frozen
-  tap_refrozen = res.tapFixation !== nothing && res.tapFixation.not_converged_released
-  tap_worse_fit = !tap_refrozen && staged_pre !== nothing && res.converged && _any_tap_released(net) && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
-  if (!res.converged || tap_refrozen || tap_worse_fit) && _any_tap_released(net)
-    frozen = _freeze_all_tap_estimation!(net)
-    # The failed run wrote its state into the net (updateNet = true is not
-    # gated on convergence), so without this the retry starts from the
-    # DIVERGED iterate. Measured on the svedala set: the failed
-    # tap run left bus angles spread over -178 to +167 degrees where the
-    # power flow had -26 to +40. With state_estimation.flatstart = true the
-    # retry ignores the start state and the damage stays invisible, which is
-    # why this never showed up; with a warm start it decides whether the
-    # fallback converges at all.
-    if v_before_taps !== nothing
-      for (i, nd) in enumerate(net.nodeVec)
-        nd._vm_pu, nd._va_deg = v_before_taps[i]
-      end
-    end
-    open(logfile, "a") do io
-      if tap_worse_fit
-        println(io, "tap estimation rejected: the ", frozen, " estimated tap(s), fixed to their mechanical steps, give J = ", round(res.objectiveJ; sigdigits = 6), " (dof ", res.dof, ") against J = ", round(staged_pre.objectiveJ; sigdigits = 6), " (dof ", staged_pre.dof, ") with the model positions; repeating WITHOUT tap estimation (the taps keep their model position).")
-      else
-        println(io, "state estimation did not converge with ", frozen, " released transformer tap(s); repeating WITHOUT tap estimation (the taps keep their model position). A set that cannot pin its taps needs more measurements around those transformers, not more iterations.")
-      end
-    end
-    if tap_worse_fit
-      @info "state estimation: tap estimation rejected, the fixed taps fit worse than the model positions" released = frozen
-    else
-      @info "state estimation: tap estimation switched off after a non-converged run" released = frozen
-    end
-    res = with_sparlectra_config(() -> runse!(net), run_cfg)
-    tap_fallback_used = res.converged
-    base_metadata["se_tap_estimation_fallback"] = tap_fallback_used
-    base_metadata["se_tap_estimation_fallback_reason"] = tap_worse_fit ? "worse_fit" : "not_converged"
-    if tap_fallback_used
-      # The diagnostics above described the RELEASED-tap attempt (its J of
-      # the diverged iterate, its dof with the tap states), while the
-      # headline reports the frozen-tap run: se_diagnostics.md then
-      # contradicted the status line (a diverged J at the dof with tap
-      # states against the frozen run's J). The report has to describe the
-      # run it comes with, so the diagnostics repeat on the frozen taps; rows they
-      # eliminate leave the reported run the same way as in the first pass.
-      diag = with_sparlectra_config(() -> runse_diagnostics(net), run_cfg)
-      append!(eliminations, diag.eliminations)
-      if !isempty(diag.eliminations)
-        for e in diag.eliminations
-          (1 <= e.measurement_index <= length(net.measurements)) || continue
-          net.measurements[e.measurement_index] = _set_measurement_active(net.measurements[e.measurement_index], false)
-        end
-        if v_before_taps !== nothing
-          for (i, nd) in enumerate(net.nodeVec)
-            nd._vm_pu, nd._va_deg = v_before_taps[i]
-          end
-        end
-        res = with_sparlectra_config(() -> runse!(net), run_cfg)
-      end
-    end
-  end
+  bd = _se_bad_data_rounds!(net, run_cfg, tap_cfg, tap_released_idxs, tap_estimable, tap_staged_start, logfile, se_phase)
+  res, diag, eliminations, staged, tap_fallback_used, tap_run1, tap_rounds, run_cfg = bd.res, bd.diag, bd.eliminations, bd.staged, bd.tap_fallback_used, bd.tap_run1, bd.tap_rounds, bd.run_cfg
+  base_metadata["se_bad_data_rounds"] = bd.rounds
+  base_metadata["se_tap_staged_start"] = staged
+  base_metadata["se_tap_fallback_used"] = tap_fallback_used
+  base_metadata["se_tap_fallback_reason"] = String(tap_run1[1])
   if !res.converged
     _write_service_performance_log!(output_dir, phase_recorder, se_total_start; headline = _SE_PERF_HEADLINE, status = "failed", label = "state-estimation")
-    return _api_failure("se_not_converged", "State estimation did not converge within $(max_iter) iterations.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+    failure_text = tap_fallback_used ? string("State estimation did not converge: run 1 with tap estimation (", tap_run1[1], ", ", tap_run1[2], " iterations), run 2 without tap estimation (", _se_tap_run2_reason(res), ", ", res.iterations, " iterations).") : "State estimation did not converge within $(max_iter) iterations."
+    return _api_failure("se_not_converged", failure_text, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   se_phase("postprocessing_result")
 
@@ -1397,7 +1508,7 @@ function _run_state_estimation_service_body(
   open(joinpath(output_dir, "se_diagnostics.md"), "w") do io
     # same statement the result page carries: the tap positions below are
     # model values, so the J of this run measures THEM
-    tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _se_tap_fallback_note(base_metadata), " The diagnostics below describe that frozen-tap run, the same one the status line reports.\n")
+    tap_fallback_used && println(io, "\n> **Tap estimation fallback.** ", _se_tap_fallback_note(base_metadata), " The diagnostics below describe that run without tap estimation, the same one the status line reports.\n")
     # The numbers the status line and run.log report come from the FINAL
     # run (res); the diagnostics pass below ran on every active row before
     # any elimination, so its own J counts rows the reported run no longer
@@ -1415,10 +1526,14 @@ function _run_state_estimation_service_body(
     reported_it = _se_reported_iterations(res)
     println(io, "- **Converged:** ", res.converged, " in ", reported_it, " iteration(s)", reported_it != res.iterations ? " (max over the passes; final solve $(res.iterations))" : "")
     println(io, "- **J/dof:** ", round(res.objectiveJ / max(res.dof, 1); digits = 2))
-    println(io, "- **Objective J:** ", round(res.objectiveJ; digits = 6), " (dof=", res.dof, ")", tap_fallback_used ? ", every tap frozen at its model position" : "")
+    println(io, "- **Objective J:** ", round(res.objectiveJ; digits = 6), " (dof=", res.dof, ")", tap_fallback_used ? ", without tap estimation (fallback)" : "")
     n_elim = length(eliminations)
-    if tap_fallback_used && first_pass_eliminations > 0
-      println(io, "- **Eliminated rows:** ", n_elim, " (inactive in the reported run): ", first_pass_eliminations, " by the pass on the released taps (", join(("`" * String(e.id) * "`" for e in eliminations[1:first_pass_eliminations]), ", "), "), ", n_elim - first_pass_eliminations, " by the pass below on the frozen taps, which ran without the first ones")
+    n_rounds = maximum((e.round for e in eliminations); init = 1)
+    if n_rounds > 1
+      # rows of later rounds were found on the end steps of the repeated
+      # result run, not in the pass printed below
+      println(io, "- **Eliminated rows:** ", n_elim, " (inactive in the reported run), found on the end steps of the result run in ", n_rounds, " rounds: ",
+              join((string("round ", k, ": ", join(("`" * String(e.id) * "`" for e in eliminations if e.round == k), ", ")) for k in 1:n_rounds if any(e -> e.round == k, eliminations)), "; "))
     else
       n_elim > 0 && println(io, "- **Eliminated rows:** ", n_elim, " (identified by the diagnostics pass below; inactive in the reported run, still counted in the pass's own J)")
     end
@@ -1432,7 +1547,7 @@ function _run_state_estimation_service_body(
     end
     println(io)
     println(io, "## Diagnostics pass (every row active, before any elimination)\n")
-    println(io, "The pass below ran on all rows and identified the eliminated ones; its J is therefore not the reported J. It is where a bad row shows.\n")
+    println(io, "The pass below ran on all rows and identified the eliminated ones; its J is therefore not the reported J. It is where a bad row shows.", tap_rounds ? " With released taps it ran on the end steps of the first result run, every tap frozen there." : "", "\n")
     print_se_diagnostics(io, diag; topN = 15, format = :markdown)
     # the critical rows by name (a detected critical measurement is stated, never left to be read off the wii)
     println(io, "\n## Critical measurements\n")
@@ -1451,10 +1566,12 @@ function _run_state_estimation_service_body(
       println(io, "\nFindings are advisory: nothing was switched or excluded. Use the hypothesis test on the result page for ranked recommendations.")
     end
   end
-  # bus links are no WLS rows (no Ybus entry): their flows come from the
-  # nodal balance of the estimated state, split by the link flow
-  # measurements of the set where a link component carries one (a coupler
-  # ring has no unique split without them). nothing when no link is closed.
+  # bus links have no Ybus entry: their flows come from the nodal balances
+  # of the link clusters (injection specs of the members, shunt draw and
+  # branch flows at the estimated state) plus the ring circulations the
+  # final run estimated from the link flow measurements, which are WLS rows
+  # (a coupler ring has no unique split without them). nothing when no link
+  # is closed.
   link_rows = calcLinkFlowsSE!(net)
   view = se_view(net)
   open(joinpath(output_dir, "se_view.md"), "w") do io
@@ -1473,8 +1590,19 @@ function _run_state_estimation_service_body(
       fmtL(v) = isnan(v) ? "" : _format_csv_number(round(v; sigdigits = 8), se_csv_format)
       for r in link_rows
         l = net.linkVec[r.linkIdx]
-        r.source === :measured_ls && (n_link_measured += 1)
+        r.source === :kcl || (n_link_measured += 1)
         println(io, join((r.linkIdx, cfL(r.name), cfL(get(nbyL, l.fromBus, string(l.fromBus))), cfL(get(nbyL, l.toBus, string(l.toBus))), fmtL(r.pFlow_MW), fmtL(r.qFlow_MVar), r.source, fmtL(r.p_meas_residual), fmtL(r.q_meas_residual)), se_csv_delim))
+      end
+    end
+  end
+  # zero_injection = constraint: the Lagrange multiplier of every
+  # constraint row, one line per bus (passive bus or fused coupler bus)
+  if res.zeroInjectionMultipliers !== nothing
+    open(joinpath(output_dir, "se_zero_injection_multipliers.csv"), "w") do io
+      println(io, join(("bus", "kind", "lambda_p_per_mw", "lambda_q_per_mvar"), se_csv_delim))
+      fmtZ(v) = isnan(v) ? "" : _format_csv_number(round(v; sigdigits = 8), se_csv_format)
+      for z in res.zeroInjectionMultipliers
+        println(io, join((_csv_field(String(z.bus), se_csv_delim, se_csv_format), z.kind, fmtZ(z.lambda_p), fmtZ(z.lambda_q)), se_csv_delim))
       end
     end
   end
@@ -1486,31 +1614,19 @@ function _run_state_estimation_service_body(
       end
     end
   end
-  # machine transformers are CALCULATED, never estimated: their
-  # tap is no state variable, so after the estimation the
-  # position is back-calculated from the AVR setpoint, the dispatch P, and
-  # the MEASURED machine Q (the Qinj telemetry at the machine bus when the
-  # set carries it). The evaluation marks these rows as "calculated".
-  tap_calc_rows = Dict{String,Any}[]
-  if tap_estimation
-    trm = _transformer_mrids(net)
-    for k in tap_machine_idxs
-      mside = _machine_side(net, k)
-      mside == 0 && continue
-      qrow = findfirst(mm -> mm.active && mm.typ == QinjMeas && mm.busIdx == mside, net.measurements)
-      prow = findfirst(mm -> mm.active && mm.typ == PinjMeas && mm.busIdx == mside, net.measurements)
-      try
-        bt = calcMachineTrafoTapFromSE(net; trafo = k, p_mw = prow === nothing ? nothing : net.measurements[prow].value, q_mvar = qrow === nothing ? nothing : net.measurements[qrow].value)
-        # same record as an estimated regulator row: kind ratio,
-        # the back-calculated step s and the nearest step, nothing else
-        push!(tap_calc_rows, Dict{String,Any}("branch" => k, "name" => getCompName(net.branchVec[k].comp), "mrid" => get(trm, k, ""), "kind" => "ratio", "role" => "ratio", "s_est" => bt.s_est, "step_fixed" => bt.fixed_step, "source" => "calculated", "notice" => ""))
-        open(logfile, "a") do io
-          println(io, "machine transformer ", getCompName(net.branchVec[k].comp), ": tap CALCULATED (not estimated) from AVR setpoint and machine telemetry: electrical step ", round(bt.electrical_step; digits = 2), " -> step ", bt.fixed_step, " (Q residual ", round(bt.q_residual_mvar; digits = 2), " MVar)")
-        end
-      catch err
-        open(logfile, "a") do io
-          println(io, "machine transformer ", getCompName(net.branchVec[k].comp), ": tap back-calculation not possible (", sprint(showerror, err), ")")
-        end
+  # machine transformers are CALCULATED, never estimated: runse! keeps them
+  # out of the estimation and back-calculates the step from the AVR
+  # setpoint, the dispatch P and the MEASURED machine Q (the Qinj telemetry
+  # at the machine bus when the set carries it), status calculated. One
+  # run.log line per machine transformer with the result or the reason
+  # (q_not_measured_in_group: no Q row on every bus of the machine node)
+  open(logfile, "a") do io
+    for t in something(res.tapEstimates, NamedTuple[])
+      (t.reason in (:machine_transformer, :q_not_measured_in_group) && t.role === :ratio) || continue
+      if t.status === :calculated
+        println(io, "machine transformer ", t.name, ": tap CALCULATED (not estimated) from AVR setpoint and machine telemetry: s ", round(t.s_est; digits = 2), " -> step ", _se_tap_step_text(t.step_fixed), " (", t.notice, ")")
+      else
+        println(io, "machine transformer ", t.name, ": tap back-calculation not possible (", t.notice, ")")
       end
     end
   end
@@ -1560,7 +1676,12 @@ function _run_state_estimation_service_body(
       cfD(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
       # ZI rows solved as equality constraints are listed as constraints
       zi_constraint = config.state_estimation.zero_injection === :constraint
-      for m in net.measurements
+      # a row the range check replaced was solved as its substitute with the
+      # widened sigma: its residual belongs to the substitute, so the
+      # estimate is substitute - residual and t_est uses the widened sigma;
+      # `measured` keeps the raw reading of the set
+      rangeSubD = Dict{Int,Any}(r.measurement_index => r for r in range_rows if r.reason === :range_check_substituted)
+      for (mi, m) in enumerate(net.measurements)
         haskey(truthById, m.id) || continue
         tv = truthById[m.id]
         busD = m.busIdx !== nothing ? get(nbyD, m.busIdx, string(m.busIdx)) : ""
@@ -1572,11 +1693,14 @@ function _run_state_estimation_service_body(
           tbD = get(nbyD, Int(brD.toBus), string(Int(brD.toBus)))
         end
         rres = get(residById, m.id, nothing)
-        estv = rres === nothing ? nothing : m.value - rres
+        rsub = get(rangeSubD, mi, nothing)
+        zD = rsub === nothing ? m.value : rsub.substitute
+        sigD = rsub === nothing ? m.sigma : rsub.sigma_substitute
+        estv = rres === nothing ? nothing : zD - rres
         println(
           io,
           join(
-            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / m.sigma), m.id in elimD),
+            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / sigD), m.id in elimD),
             se_csv_delim,
           ),
         )
@@ -1595,14 +1719,11 @@ function _run_state_estimation_service_body(
     end
   end
 
-  if res.tapEstimates !== nothing || !isempty(tap_calc_rows)
+  if res.tapEstimates !== nothing
     open(joinpath(output_dir, "se_tap_estimates.csv"), "w") do io
       println(io, join(_SE_TAP_CSV_COLUMNS, se_csv_delim))
       for t in something(res.tapEstimates, NamedTuple[])
         println(io, _se_tap_csv_line(_se_tap_row_record(t), se_csv_delim, se_csv_format))
-      end
-      for c in tap_calc_rows
-        println(io, _se_tap_csv_line(c, se_csv_delim, se_csv_format))
       end
     end
   end
@@ -1611,7 +1732,7 @@ function _run_state_estimation_service_body(
   # residual, eliminated, constraint and the reason tokens per table row
   crit_idx = Set{Int}(crit_num)
   union!(crit_idx, crit_str)
-  verdict_flagged = _se_write_measurement_verdict(joinpath(output_dir, "measurements_verdict.csv"), net, artifact, diag, eliminations, res, crit_idx, config.state_estimation.zero_injection === :constraint, se_csv_format)
+  verdict_flagged = _se_write_measurement_verdict(joinpath(output_dir, "measurements_verdict.csv"), net, artifact, diag, eliminations, res, crit_idx, config.state_estimation.zero_injection === :constraint, se_csv_format; range_rows = range_rows)
   se_phase("writing_artifacts")
   writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"), format = String(config.output.csv_format))
 
@@ -1625,6 +1746,7 @@ function _run_state_estimation_service_body(
     println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "")
     _se_log_criticality(io, net, obs)
     println(io, "converged in ", res.iterations, " iteration(s); J = ", round(res.objectiveJ; digits = 6), ", dof = ", res.dof, ", band reason = ", verdict.reason, res.activeObjective === nothing ? "" : string("; J_active = ", round(res.activeObjective.j; digits = 6), " (dof ", res.activeObjective.dof, ", without ", res.activeObjective.suppressed, " suppressed row(s); band verdict stays on J)"))
+    println(io, _se_conditioning_line(res))
     if diag.topology_findings !== nothing
       # the stage-2 classification REPLACES the eliminations-exhausted
       # interpretation: this is a suspected topology error, not bad data
@@ -1644,25 +1766,33 @@ function _run_state_estimation_service_body(
     if res.tapEstimates !== nothing
       if res.tapFixation !== nothing
         tf = res.tapFixation
-        println(io, "tap estimation: ", _se_tap_transformer_count(res.tapEstimates), " transformer(s), ", length(_se_tap_regulator_rows(res.tapEstimates)), " regulator(s); J before fixation = ", round(tf.j_before; sigdigits = 4), " (dof ", tf.dof_before, "), J after fixation = ", round(tf.j_after; sigdigits = 4), " (dof ", tf.dof_after, ")", tf.fixed ? "" : "; NOT fixed (the released run did not converge, the taps were frozen again)")
+        if tf.fallback_used
+          println(io, "tap estimation: ", _se_tap_transformer_count(res.tapEstimates), " transformer(s), ", length(_se_tap_regulator_rows(res.tapEstimates)), " regulator(s), not estimated (", tap_run1[1] === :worse_fit ? "fallback_worse_fit" : "fallback_not_converged", ", see the two lines above)")
+        else
+          println(io, "tap estimation: ", _se_tap_transformer_count(res.tapEstimates), " transformer(s), ", length(_se_tap_regulator_rows(res.tapEstimates)), " regulator(s); J before fixation = ", round(tf.j_before; sigdigits = 4), " (dof ", tf.dof_before, "), J after fixation = ", round(tf.j_after; sigdigits = 4), " (dof ", tf.dof_after, ")", tf.fixed ? "" : "; NOT fixed (the released run did not converge)")
+        end
         tf.offgrid_residual && println(io, "note :offgrid_tap_residual: the band failure appears only through the fixation; this is an off-grid true position or a wrong step table, NOT bad data")
         isempty(get(tf, :delta_j_notice, "")) || println(io, "notice: ", tf.delta_j_notice)
       else
-        println(io, "tap estimation: every released tap was frozen by the guards; no tap state entered the solve")
+        println(io, tap_enabled ? "tap estimation: every released tap was frozen by the guards; no tap state entered the solve" : "tap estimation: switched off, no tap state entered the solve")
       end
       for t in res.tapEstimates
         # one line per regulator: estimate, branch ratio and angle at it,
         # model step -> fixed step with the deviation
-        println(io, "  ", t.name, isempty(t.changer) ? "" : "/" * t.changer, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", " (", t.kind, "): s ", round(t.s_est; digits = 3), t.du_est === nothing ? "" : string(" (dU ", round(t.du_est; sigdigits = 4), ")"), ", ratio ", round(t.ratio_est; digits = 5), ", angle ", round(t.angle_est_deg; digits = 3), " deg, step ", _se_tap_step_text(t.step_model), " -> ", _se_tap_step_text(t.step_fixed), " (deviation ", _se_tap_deviation_text(t.deviation_steps), ")", t.out_of_range ? " (OUT OF RANGE, clamped)" : "", t.frozen_reason == :none ? "" : " (FROZEN: $(t.frozen_reason))")
+        println(io, "  ", t.name, isempty(t.changer) ? "" : "/" * t.changer, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", " (", t.kind, "): s ", round(t.s_est; digits = 3), t.du_est === nothing ? "" : string(" (dU ", round(t.du_est; sigdigits = 4), ")"), ", ratio ", round(t.ratio_est; digits = 5), ", angle ", round(t.angle_est_deg; digits = 3), " deg, step ", _se_tap_step_text(t.step_model), " -> ", _se_tap_step_text(t.step_fixed), " (deviation ", _se_tap_deviation_text(t.deviation_steps), ")", t.sigma_s === nothing ? "" : string(", sigma_s ", round(t.sigma_s; sigdigits = 3), t.round_distance_sigma === nothing ? "" : string(", ", round(t.round_distance_sigma; sigdigits = 3), " sigma from the nearest step")), t.step_from_target === nothing ? "" : string(", step from the control target ", _se_tap_step_text(t.step_from_target)), t.out_of_range ? " (OUT OF RANGE, clamped)" : "", t.status === :estimated ? "" : t.status === :calculated ? " (CALCULATED, not estimated: $(t.reason))" : " (NOT ESTIMATED: $(t.reason))")
       end
       for t in res.tapEstimates
         isempty(t.notice) || println(io, "notice: tap regulator ", t.name, isempty(t.changer) ? "" : "/" * t.changer, ": ", t.notice)
       end
+      # the warning runse! logs for an estimate outside the band, same text
+      for t in res.tapEstimates
+        t.out_of_range && println(io, "warning: ", _tap_out_of_range_line(t))
+      end
     end
     (!isempty(suspicious) || !isempty(eliminations) || !isempty(suppressedIds)) && println(io, "bad data: measurements_verdict.csv (", length(suspicious), " suspicious, ", length(eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted; ", verdict_flagged, " table row(s) flagged)")
     deltas_written && println(io, "deltas: se_deltas.csv (measured vs generator truth vs estimated, per row and per released tap)")
-    link_rows !== nothing && println(io, "link flows: se_link_flows.csv (", length(link_rows), " closed link(s), ", n_link_measured, " split by link flow measurements)")
-    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "", link_rows !== nothing ? ", se_link_flows.csv" : "")
+    link_rows !== nothing && println(io, "link flows: se_link_flows.csv (", length(link_rows), " closed link(s), ", n_link_measured, " with link flow measurements or an estimated circulation)")
+    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.zeroInjectionMultipliers !== nothing ? ", se_zero_injection_multipliers.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "", link_rows !== nothing ? ", se_link_flows.csv" : "")
   end
 
   metadata = merge(
@@ -1671,6 +1801,13 @@ function _run_state_estimation_service_body(
       "input_format_detected" => String(format),
       "se_measurement_rows" => summary.total,
       "se_zero_injection_rows" => zi_rows,
+      # the numerics of the reported run: zero-injection mode, the matrix
+      # of its last step and its condition number (nothing when singular)
+      "se_zero_injection" => String(run_cfg.state_estimation.zero_injection),
+      "se_condition_matrix" => res.conditioning === nothing ? nothing : String(res.conditioning.matrix),
+      "se_condition_number" => (res.conditioning === nothing || !isfinite(res.conditioning.condition_number)) ? nothing : res.conditioning.condition_number,
+      "se_condition_method" => res.conditioning === nothing ? nothing : String(res.conditioning.method),
+      "se_zero_injection_multipliers" => res.zeroInjectionMultipliers === nothing ? 0 : length(res.zeroInjectionMultipliers),
       "se_converged" => res.converged,
       # the maximum over the solves of the run, see _se_reported_iterations
       "se_iterations" => _se_reported_iterations(res),
@@ -1703,13 +1840,16 @@ function _run_state_estimation_service_body(
       "se_update_shunts" => update_shunts,
       "se_islands_estimated" => res.islands === nothing ? 1 : count(i -> i.estimated, res.islands),
       "se_islands_skipped" => res.islands === nothing ? 0 : count(i -> !i.estimated, res.islands),
-      "se_tap_estimation" => tap_estimation,
+      "se_tap_estimation" => tap_enabled,
       # the impedance rule the run used (configuration, case file or override)
       "se_tap_impedance_correction" => String(run_cfg.state_estimation.tap_estimation.impedance_correction),
       "se_tap_count" => _se_tap_transformer_count(res.tapEstimates),
       "se_tap_regulators" => length(_se_tap_regulator_rows(res.tapEstimates)),
-      "se_tap_skipped_machine" => tap_skipped_machine,
-      "se_tap_frozen" => count(t -> t.frozen_reason != :none, _se_tap_regulator_rows(res.tapEstimates)),
+      # transformers kept out by the configuration: named in
+      # tap_estimation.exclude, and machine transformers (calculated)
+      "se_tap_excluded" => tap_n_excluded,
+      "se_tap_machine" => tap_n_machine,
+      "se_tap_not_estimated" => count(t -> t.status !== :estimated, _se_tap_regulator_rows(res.tapEstimates)),
       "se_tap_fixed" => res.tapFixation === nothing ? false : res.tapFixation.fixed,
       "se_tap_j_before" => res.tapFixation === nothing ? nothing : res.tapFixation.j_before,
       "se_tap_dof_before" => res.tapFixation === nothing ? nothing : res.tapFixation.dof_before,
@@ -1721,7 +1861,7 @@ function _run_state_estimation_service_body(
       "se_topology_station_findings" => diag.topology_findings === nothing ? nothing : [Dict{String,Any}("location" => tf.location, "evidence" => tf.evidence, "notes" => [String(n) for n in tf.notes]) for tf in diag.topology_findings],
       # rows for the result page table, one per regulator: the columns of
       # se_tap_estimates.csv plus role and notice
-      "se_tap_estimates" => res.tapEstimates === nothing && isempty(tap_calc_rows) ? nothing : vcat([_se_tap_row_record(t) for t in something(res.tapEstimates, NamedTuple[])], tap_calc_rows),
+      "se_tap_estimates" => res.tapEstimates === nothing ? nothing : [_se_tap_row_record(t) for t in res.tapEstimates],
       "artifact_status" => "completed",
       "solver_status" => "completed",
       "service_status" => "completed",
@@ -1739,8 +1879,9 @@ function _run_state_estimation_service_body(
     length(suspicious), " suspicious, ",
     length(eliminations), " eliminated.",
     diag.topology_findings === nothing ? "" : string(" Topology error suspected at ", join((tf.location for tf in diag.topology_findings), ", "), "; run the hypothesis test."),
+    tap_fallback_used ? string(" Tap estimation fallback: run 1 ", tap_run1[1] === :worse_fit ? "rejected" : "not converged", " (", tap_run1[1], ", ", tap_run1[2], " iterations), the result is the run without tap estimation.") :
     res.tapFixation === nothing ? "" : string(" Tap fixation (", _se_tap_transformer_count(res.tapEstimates), " transformer(s)): J ", round(res.tapFixation.j_before; sigdigits = 3), " -> ", round(res.tapFixation.j_after; sigdigits = 3), res.tapFixation.offgrid_residual ? "; off-grid tap residual, not bad data" : "", "."),
-    get(base_metadata, "se_set_tap_deviation", false) == true ? (isempty(get(base_metadata, "se_auto_released_taps", Int[])) ? " Hint: the set documents a tap deviation that could not be released automatically; enable 'estimate taps'." : string(" Tap estimation was released automatically on ", length(get(base_metadata, "se_auto_released_taps", Int[])), " transformer(s) named by the set.")) : "",
+    (get(base_metadata, "se_set_tap_deviation", false) == true && !tap_enabled) ? " Hint: the set documents a tap deviation, but tap estimation is switched off; enable 'estimate taps'." : "",
     duplicate_rows > 0 ? string(" Warning: ", duplicate_rows, " measurement(s) repeat an already measured quantity - that alone inflates J; regenerate the set.") : "",
   )
   # timing file plus the raw phase sequence in result.json, same as the

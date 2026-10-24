@@ -57,7 +57,7 @@ verdict of the sum). Its CSV format follows `output.csv_format`.
 | `localizable` | `wii` above the localizability threshold |
 | `eliminated` | removed by the bad-data elimination; residual and normalized residual are those of the solve before its removal |
 | `constraint` | zero-injection row solved as a constraint (`state_estimation.zero_injection: constraint`) |
-| `reason` | tokens separated by `;`: `inactive` (valid=false), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical` |
+| `reason` | tokens separated by `;`: `inactive` (valid=false), `deenergized` (the row sits at a bus that is not energized, or at one of its branches, and left the run), `range_check_substituted` (a voltage reading outside the range, replaced by a pseudo measurement; residual and normalized residual are those of the substitute, see [Range check of the voltage measurements](@ref se-range-check)), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical` |
 
 Every other active row carries the residuals of the final diagnostics
 (after every elimination). The suspicious count in `run.log`, on the
@@ -87,10 +87,11 @@ the reported numbers, then the pass that found them ("Diagnostics pass").
 An elimination counts only when the control solve without the row
 converges, with released taps also without `runse!` freezing them again
 where the run before kept them released; otherwise the row stays active, the attempt is named
-("Reverted") and the sequence stops with `not_converged`. After a
-tap-estimation fallback the diagnostics run again on the frozen taps,
-without the rows the first pass removed; the rows of both passes are
-`eliminated`, each with the residual of the pass that removed it. The
+("Reverted") and the sequence stops with `not_converged`. With released
+taps the service eliminates in rounds on the end steps of the result run,
+one row per round, see [Tap estimation switch and fallback](@ref se-tap-fallback);
+every row of all rounds is `eliminated`, each with the residual of the
+round that removed it. The
 topology hypothesis test reads `measurements.csv` and leaves out the rows
 the verdict file marks as eliminated.
 
@@ -138,21 +139,27 @@ Generates the measurements from a network state whose transformers run the
 given number of mechanical tap steps off the model position (0 = off;
 whole steps only); the model file stays untouched. **Transformers (max)**
 bounds how many transformers deviate; the seed picks them from the
-transformers whose deviation the tap estimation can absorb (in service,
-non-machine, with a tap changer the estimation can release), and the
-message names the affected branches. The deviation moves one changer per
-transformer, the first ratio changer, else the first phase changer, the
-same one the SE service releases for a documented deviation. A machine
-transformer is used only when the case has nothing else, because the Web
-UI mass release skips it and the deviation would leave an unexplainable
-model error (`J` far above `dof`); the estimator run
-warns in that case.
+in-service, non-machine transformers with a tap changer the estimation
+can release, and the message names the affected branches. The generator
+does not read `state_estimation.tap_estimation.exclude`. When the set puts
+a deviation on a transformer the run keeps out, run.log names it. The
+deviation moves one changer per transformer, the first ratio changer,
+else the first phase changer. A machine transformer is used only when the
+case has nothing else. The tap estimation keeps machine transformers out
+by default (`state_estimation.tap_estimation.include_machine_transformers = false`)
+and calculates their step after the estimate, so a deviation there stays
+in the estimate as a model error (`J` far above `dof`). run.log warns in
+that case and names the key.
 
-The deviation lies on a physical step of the changer (ratio, angle and,
-under `state_estimation.tap_estimation.impedance_correction = auto`, the
-impedance follow the changer data), the step the estimator fixes on, so
-tap estimation recovers it exactly and the fixation run ends near `J = 0`;
-without tap estimation the band test reports `:high` with the suspects
+The deviation lies on a physical step of the changer (ratio, angle and
+the impedance follow the changer data by the rule of the estimator, see
+Impedance per step in [State estimation extensions](state_estimation_extensions.md)),
+the step the estimator fixes on. When the set makes the step observable
+(see [Observability per changer](@ref se-tap-observability)), tap
+estimation recovers it exactly and the fixation run ends near `J = 0`. A
+changer the set does not observe keeps its transferred step
+(`status = not_estimated`), and the deviation stays as a model error.
+Without tap estimation the band test reports `:high` with the suspects
 clustered at that transformer. Off-grid positions are not a generator
 setting; the estimator reports them through the off-grid note.
 
@@ -191,7 +198,7 @@ critical measurements are configurable in the Web UI form.
 | | `from run` | adopts the solved voltages of a successful run of the same case from the run history (SE runs through `se_state.csv`, power-flow runs through `bus_voltages_complex.csv`, any CSV export format), bit-exact against the artifact |
 | Flow measurements per branch | `both ends` (default) | measures P/Q (and I) at from and to |
 | | `one end (balance-aware)` | keeps one flow group per branch; the end at a bus with injection telemetry is preferred (`ZI` rows do not count), the from end wins when both or neither qualify; the choice is documented per branch in the set's `# flow_end,...` comments |
-| Passive nodes | checkbox (`state_estimation.zero_injection`, default on; `constraint` shows as checked) | passive buses get zero-injection rows (prefix `ZI`, at the configured sigma, at least `ZERO_INJECTION_SIGMA`) and no duplicate injection rows; see [Passive buses and zero injection](@ref se_zero_injection) |
+| Passive nodes | checkbox (`state_estimation.zero_injection`, default on; `constraint` shows as checked) | passive buses get zero-injection rows (prefix `ZI`, at the configured sigma, at least `state_estimation.zero_injection_sigma_mva`) and no duplicate injection rows; see [Zero injections and coupler balances](@ref se_zero_injection) |
 | | off | explicit zero balance rows `Pinj/Qinj = 0` at the configured sigma (default 0.05 MW/MVar) |
 | | both | the checkbox is the case's `state_estimation.zero_injection`: it is seeded from the configuration, and a generation writes it into the case configuration file, so the SE runs of the case (measurement CSV, case file, measurement table) follow it; see [State-Estimation Configuration](state_estimation_configuration.md) |
 | `critical measurements` | count (0 = off) | thins the set until that many rows are critical; the set comments name the target, the rows that ended critical and the rows removed; when the target is out of reach, the message says how many were reached |
@@ -201,7 +208,7 @@ critical measurements are configurable in the Web UI form.
 - `from run` rejects a missing artifact, a foreign case or an unknown run
   id up front, and warns (in the confirmation and in the file's `# truth:`
   line) when the source run is no solution of the model (state estimation
-  outside the band, taps frozen at model positions, not converged): flows
+  outside the band, taps not estimated after a tap fallback, not converged): flows
   derived from such a state violate the node balances. The tap-deviation
   option is locked with `from run`.
 - Critical-measurement thinning reads the criticality from `diag(Omega)`

@@ -90,14 +90,21 @@ function run_legacy_pv_voltage_residuals_tests()
 
     V_start, _ = Sparlectra.initialVrect(net; flatstart = false)
     V_flat, _ = Sparlectra.initialVrect(net; flatstart = true)
+    V_turn, _ = Sparlectra.initialVrect(net; flatstart = true, rotate_behind_pst = true)
     @test isapprox(abs(V_start[pv_idx]), 1.03; atol = 1e-12, rtol = 0.0)
     @test isapprox(rad2deg(angle(V_start[pv_idx])), 20.0; atol = 1e-12, rtol = 0.0)
     @test abs(rad2deg(angle(V_start[pv_idx]))) > 1.0
     @test isapprox(rad2deg(angle(V_start[slack_idx])), 50.0; atol = 1e-12, rtol = 0.0)
 
-    # Intentional flat start: only non-reference bus angles are initialized to zero.
-    @test isapprox(angle(V_flat[pv_idx]), 0.0; atol = 1e-12, rtol = 0.0)
+    # Intentional flat start: a non-reference bus starts at the slack angle
+    # (50 degrees), not at its stored angle; the reference keeps its own
+    # angle. With power_flow.start_mode.rotate_behind_pst the PV bus, reached
+    # only across the 30 degree transformer Slack-PV, starts at 50 - 30 = 20
+    # degrees: the profile counts from the slack angle, not from 0.
+    @test isapprox(rad2deg(angle(V_flat[pv_idx])), 50.0; atol = 1e-12, rtol = 0.0)
     @test isapprox(rad2deg(angle(V_flat[slack_idx])), 50.0; atol = 1e-12, rtol = 0.0)
+    @test isapprox(rad2deg(angle(V_turn[pv_idx])), 20.0; atol = 1e-12, rtol = 0.0)
+    @test V_turn[slack_idx] == V_flat[slack_idx]
 
     _, erg = runpf!(
       net,

@@ -198,9 +198,12 @@ changer's own angle in the form `x_curve_form` (`:sin2` of the CGMES
 import, `:tan2` of a typed asymmetrical model). `impedance` names the
 per-step impedance data (`:none`, `:table`, `:x_curve`, `:tsi` for the
 branch `TapStepImpedance`), `rx_correction` the impedance correction of
-`model.tap_changer_model = impedance_correction`. Optional numbers are
-`nothing`. The keyword constructor checks the fields and throws an
-`ArgumentError` naming the field.
+`model.tap_changer_model = impedance_correction`. `step_assumed` marks a
+changer whose import carried no step: `step` is then the middle position
+(the neutral step, the band middle without one) and the report row of the
+tap estimation says so. Optional numbers are `nothing`. The keyword
+constructor checks the fields and throws an `ArgumentError` naming the
+field.
 """
 struct SETapChanger
   name::String
@@ -223,6 +226,7 @@ struct SETapChanger
   x_curve_form::Symbol                        # :sin2 (CGMES import) or :tan2 (typed asymmetrical model)
   impedance::Symbol                           # :none, :table, :x_curve, :tsi
   rx_correction::Bool                         # typed model under model.tap_changer_model = :impedance_correction
+  step_assumed::Bool                          # the import carried no step, `step` is the middle position
 end
 
 const SE_TAP_CHANGER_KINDS = [:ratio, :asymmetrical, :symmetrical, :tabular, :linear]
@@ -251,6 +255,7 @@ function SETapChanger(;
   x_curve_form::Symbol = :sin2,
   impedance::Symbol = :none,
   rx_correction::Bool = false,
+  step_assumed::Bool = false,
 )
   what = isempty(name) ? "SETapChanger" : "SETapChanger $(name)"
   kind in SE_TAP_CHANGER_KINDS || throw(ArgumentError("$(what): kind must be one of $(join(SE_TAP_CHANGER_KINDS, ", ")), got $(repr(kind))."))
@@ -278,7 +283,7 @@ function SETapChanger(;
   impedance === :table && table === nothing && throw(ArgumentError("$(what): impedance :table needs a table."))
   impedance === :x_curve && x_curve === nothing && throw(ArgumentError("$(what): impedance :x_curve needs x_curve."))
   xc = x_curve === nothing ? nothing : (Float64(x_curve[1]), Float64(x_curve[2]), Float64(x_curve[3]))
-  return SETapChanger(String(name), String(mrid), kind, role, side, additive, _se_tap_opt(du), _se_tap_opt(alpha_deg), _se_tap_opt(dphi_deg), _se_tap_opt(step_abs), Int(neutral), Int(low), Int(high), Float64(step), table, _se_tap_opt(outside_du), xc, x_curve_form, impedance, rx_correction)
+  return SETapChanger(String(name), String(mrid), kind, role, side, additive, _se_tap_opt(du), _se_tap_opt(alpha_deg), _se_tap_opt(dphi_deg), _se_tap_opt(step_abs), Int(neutral), Int(low), Int(high), Float64(step), table, _se_tap_opt(outside_du), xc, x_curve_form, impedance, rx_correction, step_assumed)
 end
 
 """
@@ -338,6 +343,7 @@ A mutable structure representing a branch in a power system.
 - `se_tap_changers::Union{Nothing,SETapChangerSet}`: the tap changers of a transformer as an import stored them for the tap estimation (state estimation only); `nothing` means the set is derived from the typed models or the branch fields.
 - `phase_tap_declared::Bool`: a nameplate row declared the phase tap changer of the branch fields (`applyTapNameplate!`); the constructor default phase grid is not declared.
 - `ratio_tap_declared::Bool`: a nameplate row declared the ratio tap changer of the branch fields (`applyTapNameplate!` with `tap_step > 0`); the constructor default ratio grid is not declared.
+- `ratio_step_assumed::Bool`, `phase_step_assumed::Bool`: the import carried no current step for the ratio changer (phase changer) of the branch fields or the typed models, so it sits at its middle position (the neutral step, the band middle without one); the tap estimation names it in its report row.
 
 # Constructors
 - `Branch(; from::Int, to::Int, baseMVA::Float64, branch::AbstractBranch, id::Int, status::Integer = 1, ratio::Union{Nothing,Float64} = nothing, side::Union{Nothing,Int} = nothing, vn_kV::Union{Nothing,Float64} = nothing,
@@ -459,6 +465,14 @@ mutable struct Branch <: AbstractBranch
   # Web UI default of "estimate taps", 0.60.0); the release itself does not
   # read it.
   ratio_tap_declared::Bool
+  # true when the import carried no current step for the ratio changer
+  # (phase changer) of the fields above or of the typed models: it sits at
+  # its middle position (applyTapNameplate! with a NaN step, SCF
+  # tap_changer_models without step, a DTF control without Stufe). Read by
+  # the tap estimation for its report row (0.60.0); a step written back off
+  # that position clears it.
+  ratio_step_assumed::Bool
+  phase_step_assumed::Bool
 
   function Branch(;
     branchIdx::Int,
@@ -502,7 +516,7 @@ mutable struct Branch <: AbstractBranch
       # (g_from, b_from, g_to, b_to): explicit split or the symmetric half;
       # the stored totals are the sums either way
       gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction, nothing, false, false)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, 0.0, 0.0, status, branch.ratedS, nothing, nothing, nothing, nothing, 1.0, 0.0, false, false, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction, nothing, false, false, false, false)
     elseif isa(branch, PowerTransformer) # Transformer     
       if (isnothing(side) && branch.isBiWinder)
         side = getSideNumber2WT(branch)
@@ -539,7 +553,7 @@ mutable struct Branch <: AbstractBranch
       end
 
       gf, bf, gt, bt = _split_branch_shunt(g_pu, b_pu, shunt_split)
-      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction, nothing, false, false)
+      new(c, branchIdx, from, to, r_pu, x_pu, r_pu, x_pu, bf + bt, gf + gt, gf, bf, gt, bt, ratio, angle, status, sn_MVA, nothing, nothing, nothing, nothing, ratio, angle, true, true, tap_min, tap_max, tap_step, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction, nothing, false, false, false, false)
     elseif isa(branch, BranchModel) # PI-Model
       @assert !isnothing(vn_kV) "vn_kV must be set for PI-Model"
 
@@ -554,7 +568,7 @@ mutable struct Branch <: AbstractBranch
       initial_angle = is_tap ? branch.angle : 0.0
       # the model carries its own split; an explicit keyword overrides it
       gf, bf, gt, bt = shunt_split === nothing ? (branch.g_from_pu, branch.b_from_pu, branch.g_to_pu, branch.b_to_pu) : shunt_split
-      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction, nothing, false, false)
+      new(c, branchIdx, from, to, branch.r_pu, branch.x_pu, branch.r_pu, branch.x_pu, bf + bt, gf + gt, gf, bf, gt, bt, branch.ratio, branch.angle, status, branch.sn_MVA, nothing, nothing, nothing, nothing, initial_ratio, initial_angle, is_tap, is_tap, 0.9, 1.1, 0.00625, -30.0, 30.0, 1.25, fs, ts, nothing, nothing, :none, 0.0, 0.0, 0.0, 0.0, false, nothing, :ideal, nothing, nothing, :fraction, nothing, false, false, false, false)
     else
       error("Branch type not supported")
     end
@@ -995,7 +1009,10 @@ estimation reads as its changers.
   neutral shift; the band is stored relative to neutral.
 
 `phase_step_deg` and `phase_du_step` are exclusive (a changer has one
-mechanical grid). A phase changer applied here is declared nameplate data
+mechanical grid). A `NaN` current step means the file carried no step: the
+changer starts at its middle position, the neutral position 0 the steps
+count from, and `ratio_step_assumed` (`phase_step_assumed`) is set. A phase
+changer applied here is declared nameplate data
 (`phase_tap_declared`), which releases it for the tap estimation whatever
 its psi. `context` prefixes the error messages, so a MATPOWER
 `mpc.sparlectra.tap_changers` row and an SCF `tap_changer` entry report in
@@ -1050,6 +1067,14 @@ function _apply_tap_nameplate!(
   context::AbstractString,
 )
   br.ratio != 0.0 || throw(ArgumentError("$(context): not a transformer branch (its neutral ratio is 0)."))
+  # a NaN current step: the file carried no step, so the changer starts at
+  # its middle position, the neutral position 0 the steps count from
+  ratio_assumed = isnan(tap_current_step)
+  phase_assumed = isnan(phase_current_step)
+  ratio_assumed && (tap_current_step = 0.0)
+  phase_assumed && (phase_current_step = 0.0)
+  br.ratio_step_assumed = tap_step > 0.0 && ratio_assumed
+  br.phase_step_assumed = (phase_step_deg > 0.0 || phase_du_step > 0.0) && phase_assumed
   tap_ratio_grid in (:fraction, :linear) || throw(ArgumentError("$(context): tap_ratio_grid must be :fraction or :linear, got $(repr(tap_ratio_grid))."))
   base = br.ratio
   if tap_step > 0.0
@@ -1117,6 +1142,25 @@ function _apply_tap_nameplate!(
     br.phase_tap_declared = false
   end
   return br
+end
+
+# Middle position of a tap changer band without a stated neutral step (a
+# changer without a transferred step sits at its middle position, the
+# neutral step, else the band middle). With an even number of steps the
+# lower of the two middle steps.
+_tap_band_middle(low::Real, high::Real)::Int = fld(Int(round(low)) + Int(round(high)), 2)
+
+# Import lines for tap changers whose file carried no step: one line per
+# changer, or one line listing all of them when there are more than
+# _TAP_STEP_ASSUMED_LIST_MAX. `items` are (name, middle step) pairs; the
+# importer emits the lines on its own channel (@info, the CGMES messages,
+# the PowSyBl report).
+const _TAP_STEP_ASSUMED_LIST_MAX = 10
+function _tap_step_assumed_lines(items::AbstractVector)::Vector{String}
+  isempty(items) && return String[]
+  fmt(x) = isinteger(x) ? string(Int(x)) : string(x)
+  length(items) <= _TAP_STEP_ASSUMED_LIST_MAX && return String["tap changer $(n): step not transferred, middle position $(fmt(s)) assumed" for (n, s) in items]
+  return String[string(length(items), " tap changers: step not transferred, middle position assumed: ", join((string(n, " (", fmt(s), ")") for (n, s) in items), ", "))]
 end
 
 # Live positions of a Delta-u phase changer (phase_du_step > 0) from the

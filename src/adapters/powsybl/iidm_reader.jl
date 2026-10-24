@@ -668,16 +668,19 @@ end
 
 # The current step of a tap changer child (ratioTapChanger, phaseTapChanger,
 # with a leg suffix on a three-winding transformer): the step attributes at
-# the tap position, the position and the step list.
+# the tap position, the position and the step list. Without a tapPosition
+# the changer sits at its middle position: IIDM has no
+# neutral step, so the middle of the step list; `assumed` says so.
 function _iidm_tap_changer(children, name::String)
   for (n, a, grand) in children
     n == name || continue
     low = _iidm_int(a, "lowTapPosition", 0)
-    tap = _iidm_int(a, "tapPosition", low)
     steps = Dict{String,String}[sa for (sn, sa, _) in grand if sn == "step"]
+    assumed = !haskey(a, "tapPosition")
+    tap = assumed ? Sparlectra._tap_band_middle(low, low + length(steps) - 1) : _iidm_int(a, "tapPosition", low)
     k = tap - low + 1
     (1 <= k <= length(steps)) || throw(ArgumentError("IIDM: tap changer $(name) tap position $(tap) is outside its steps $(low)..$(low + length(steps) - 1)"))
-    return (attrs = a, grand = grand, low = low, tap = tap, steps = steps, step = steps[k])
+    return (attrs = a, grand = grand, low = low, tap = tap, steps = steps, step = steps[k], assumed = assumed)
   end
   return nothing
 end
@@ -691,7 +694,7 @@ function _iidm_tap_changer_rows!(net::_IidmNetwork, ratio_rows, ratio_steps, pha
     reg, reg_side = _iidm_ref_terminal(net, rtc.grand, own, ("terminalRef",))
     mode = _iidm_str(a, "regulationMode", "VOLTAGE")
     target_v = haskey(a, "targetV") ? _iidm_float(a, "targetV") : (mode == "VOLTAGE" ? _iidm_float(a, "regulationValue") : NaN)
-    push!(ratio_rows, _IidmRow(:id => id, :side => side, :tap => rtc.tap, :solved_tap_position => Float64(_iidm_int(a, "solvedTapPosition", rtc.tap)), :low_tap => rtc.low, :high_tap => rtc.low + length(rtc.steps) - 1, :step_count => length(rtc.steps), :oltc => _iidm_bool(a, "loadTapChangingCapabilities", false), :regulating => _iidm_bool(a, "regulating", false), :target_v => target_v, :target_deadband => _iidm_float(a, "targetDeadband"), :regulating_bus_id => reg.bus_id, :regulated_side => reg_side))
+    push!(ratio_rows, _IidmRow(:id => id, :side => side, :tap => rtc.tap, :tap_assumed => rtc.assumed, :solved_tap_position => Float64(_iidm_int(a, "solvedTapPosition", rtc.tap)), :low_tap => rtc.low, :high_tap => rtc.low + length(rtc.steps) - 1, :step_count => length(rtc.steps), :oltc => _iidm_bool(a, "loadTapChangingCapabilities", false), :regulating => _iidm_bool(a, "regulating", false), :target_v => target_v, :target_deadband => _iidm_float(a, "targetDeadband"), :regulating_bus_id => reg.bus_id, :regulated_side => reg_side))
     for (k, s) in enumerate(rtc.steps)
       push!(ratio_steps, _IidmRow(:id => id, :position => rtc.low + k - 1, :side => side, :rho => _iidm_float(s, "rho", 1.0), :r => _iidm_float(s, "r", 0.0), :x => _iidm_float(s, "x", 0.0), :g => _iidm_float(s, "g", 0.0), :b => _iidm_float(s, "b", 0.0)))
     end
@@ -699,7 +702,7 @@ function _iidm_tap_changer_rows!(net::_IidmNetwork, ratio_rows, ratio_steps, pha
   if ptc !== nothing
     a = ptc.attrs
     reg, reg_side = _iidm_ref_terminal(net, ptc.grand, own, ("terminalRef",))
-    push!(phase_rows, _IidmRow(:id => id, :side => side, :tap => ptc.tap, :solved_tap_position => Float64(_iidm_int(a, "solvedTapPosition", ptc.tap)), :low_tap => ptc.low, :high_tap => ptc.low + length(ptc.steps) - 1, :step_count => length(ptc.steps), :oltc => _iidm_bool(a, "loadTapChangingCapabilities", false), :regulating => _iidm_bool(a, "regulating", false), :regulation_mode => _iidm_str(a, "regulationMode", "FIXED_TAP"), :regulation_value => _iidm_float(a, "regulationValue"), :target_deadband => _iidm_float(a, "targetDeadband"), :regulating_bus_id => reg.bus_id, :regulated_side => reg_side))
+    push!(phase_rows, _IidmRow(:id => id, :side => side, :tap => ptc.tap, :tap_assumed => ptc.assumed, :solved_tap_position => Float64(_iidm_int(a, "solvedTapPosition", ptc.tap)), :low_tap => ptc.low, :high_tap => ptc.low + length(ptc.steps) - 1, :step_count => length(ptc.steps), :oltc => _iidm_bool(a, "loadTapChangingCapabilities", false), :regulating => _iidm_bool(a, "regulating", false), :regulation_mode => _iidm_str(a, "regulationMode", "FIXED_TAP"), :regulation_value => _iidm_float(a, "regulationValue"), :target_deadband => _iidm_float(a, "targetDeadband"), :regulating_bus_id => reg.bus_id, :regulated_side => reg_side))
     for (k, s) in enumerate(ptc.steps)
       push!(phase_steps, _IidmRow(:id => id, :position => ptc.low + k - 1, :side => side, :rho => _iidm_float(s, "rho", 1.0), :alpha => _iidm_float(s, "alpha", 0.0), :r => _iidm_float(s, "r", 0.0), :x => _iidm_float(s, "x", 0.0), :g => _iidm_float(s, "g", 0.0), :b => _iidm_float(s, "b", 0.0)))
     end
@@ -968,6 +971,15 @@ function _iidm_build_tables(net::_IidmNetwork)::PowsyblTables
   for r in T["shunt_compensators"]
     (isfinite(r[:solved_section_count]) && Int(r[:solved_section_count]) != r[:section_count]) && (stale += 1)
   end
+  # changers without a tapPosition, at their middle position: no table
+  # column, the list travels in the manifest to the mapping, which marks the
+  # changer for the tap estimation and names it in the import report
+  assumed = Dict{String,Any}[]
+  for (name, role) in (("ratio_tap_changers", "ratio"), ("phase_tap_changers", "phase"))
+    for r in T[name]
+      get(r, :tap_assumed, false) === true && push!(assumed, Dict{String,Any}("id" => r[:id], "side" => r[:side], "role" => role, "tap" => r[:tap]))
+    end
+  end
   state_note = ""
   if stale > 0
     state_note = "bus state of the file not used as the start: $(stale) tap changer(s) or shunt(s) were solved at another position than the one imported (solvedTapPosition, solvedSectionCount); the import starts flat"
@@ -994,6 +1006,7 @@ function _iidm_build_tables(net::_IidmNetwork)::PowsyblTables
     "pypowsybl_version" => "",
     "all_attributes" => true,
     "state_note" => state_note,
+    "tap_position_assumed" => assumed,
     "tables" => Dict{String,Any}(name => Dict{String,Any}("rows" => length(T[name])) for name in POWSYBL_TABLE_NAMES),
   )
   kwargs = Dict{Symbol,Any}(POWSYBL_TABLE_FIELDS[name] => _iidm_table(name, T[name]) for name in POWSYBL_TABLE_NAMES)

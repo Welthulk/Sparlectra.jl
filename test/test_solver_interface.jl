@@ -166,10 +166,11 @@ function run_solver_interface_tests()
 
       Vflat, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
       @test slack_idx == 3
+      # every non-slack bus starts at the slack angle (2 degrees)
       @test abs(Vflat[1]) == 1.0
-      @test angle(Vflat[1]) == 0.0
+      @test isapprox(angle(Vflat[1]), deg2rad(2.0); atol = 1e-12)
       @test abs(Vflat[2]) == 1.04
-      @test angle(Vflat[2]) == 0.0
+      @test isapprox(angle(Vflat[2]), deg2rad(2.0); atol = 1e-12)
       @test abs(Vflat[3]) == 1.06
       @test isapprox(rad2deg(angle(Vflat[3])), 2.0; atol = 1e-12)
 
@@ -855,7 +856,7 @@ end)() end
         start_projection = true, start_projection_try_dc_start = false, start_projection_try_blend_scan = false, start_projection_branch_guard = false,
         start_projection_measure_candidates = false, start_projection_accept_unmeasured_dc_start = true, start_projection_blend_lambdas = [0.3],
         start_projection_dc_angle_limit_deg = 45.0, start_projection_requested_angle_mode = :dc, start_projection_requested_voltage_mode = :all_bus_vm,
-        start_projection_ratio_profile = true,
+        start_projection_ratio_profile = true, start_rotate_behind_pst = true,
         start_current_iteration_enabled = true, start_current_iteration_max_iter = 11, start_current_iteration_tol = 2.0e-3, start_current_iteration_damping = 0.6,
         start_current_iteration_accept_only_if_improved = false, start_current_iteration_min_improvement_factor = 0.97, start_current_iteration_vm_min_pu = 0.55,
         start_current_iteration_vm_max_pu = 1.45, start_current_iteration_max_angle_step_deg = 25.0, start_current_iteration_only_for_large_cases = true,

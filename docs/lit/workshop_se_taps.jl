@@ -342,6 +342,19 @@ est = only(res_oltc.tapEstimates)                 ## one row per released change
 # its distance from the grid is the honest uncertainty statement: 0.03
 # steps means the data agrees with position 4, and 0.5 would mean the data
 # cannot tell 4 from 5.
+#
+# The tap estimation has one switch, `state_estimation.tap_estimation.enabled`
+# (the Web UI box "estimate taps"). Off, no changer becomes a state, even a
+# released one: it keeps its transferred step, and its row says
+# `status = not_estimated`, `reason = disabled`.
+
+## uses: meas_oltc, model_oltc (Example 3)
+(@isdefined(meas_oltc) && @isdefined(model_oltc)) || error("Run Example 3 first: it sets up meas_oltc, model_oltc.")
+res_off = with_state_estimation_config(max_iter = 40, tol = 1e-10, tap_estimation = TapEstimationConfig(enabled = false)) do
+  runse!(model_oltc, deepcopy(meas_oltc))
+end
+est_off = only(res_off.tapEstimates)
+@printf("switched off: J = %.1f, dof = %d | status %s, reason %s\n", res_off.objectiveJ, res_off.dof, est_off.status, est_off.reason)
 
 # ## Example 4: the phase shifter
 #
@@ -426,14 +439,14 @@ res_bridge = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
   runse!(model_bridge, meas_bridge)
 end
 est_bridge = only(res_bridge.tapEstimates)
-@printf("radial T3: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), frozen: %s\n",
-        res_bridge.objectiveJ, res_bridge.dof, est_bridge.s_est, round(Int, est_bridge.step_fixed), 3, est_bridge.frozen_reason)
+@printf("radial T3: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), status: %s (%s)\n",
+        res_bridge.objectiveJ, res_bridge.dof, est_bridge.s_est, round(Int, est_bridge.step_fixed), 3, est_bridge.status, est_bridge.reason)
 println("notice: ", est_bridge.notice)
 
 # Reading aid: the estimator does NOT return 3, and it does not return a
 # random number either. It FREEZES the released tap at its declared
-# position and says why: the row carries the freeze reason
-# `radial_no_voltage_pin` and the notice printed above, and `runse!` logs
+# position and says why: the row carries status `not_estimated` with the
+# reason `radial_no_voltage_pin` and the notice printed above, and `runse!` logs
 # that a regulator was frozen. $J$ stays healthy, because nothing in the
 # data contradicts the model: the missing measurement is exactly the
 # information that would have exposed the error.

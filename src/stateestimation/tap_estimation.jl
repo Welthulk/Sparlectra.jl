@@ -62,14 +62,20 @@ freeze reason and note per changer, a scratch `Branch` the overlay rewrites
 per evaluation, the live impedance `z0 = (r, x, g_from, b_from, g_to, b_to)`
 with its factors `F0` at `s0`, the step size `sigma` per changer
 (`_tap_scale`), whether the run applies an impedance source on this branch
-(`impedance`), the branch `TapStepImpedance` for `:tsi` sources, and
+(`impedance`: `_tap_reactance_source` is not `:nominal`), the branch
+`TapStepImpedance` for `:tsi` sources, and
 `tree_phase`, the phase regulators on a tree edge without an angle anchor
 that the vertex notice watches, `weak`, the factor of the weak-column
-hint per changer (0.0 = no hint, see `_tap_column_freezes!`), and
+hint per changer (0.0 = no hint, see `_tap_weak_hints!`), and
 `rel_ref`, per changer the names of the frozen phase regulators a phase
 regulator is only relative to ("" = none, set with note
 `:relative_to_frozen` by `_tap_relative_to_frozen!`); such a regulator is
-never fixed, it stays a state in the fixed run.
+never fixed, it stays a state in the fixed run. `cause` holds per changer
+the structural cause the guard found (`_tap_guard_causes!`: `:none`,
+`:radial_no_voltage_pin`, `:not_separable`, `:no_angle_anchor`,
+`:symmetric_start`; `:zero_column` marks a column the noise test froze).
+A cause freezes nothing by itself: it becomes the reason only when the
+rank test drops the column (`_tap_rank_freezes!`).
 """
 struct TapBranchState
   branch::Int
@@ -89,6 +95,7 @@ struct TapBranchState
   tree_phase::Vector{Bool}
   weak::Vector{Float64}
   rel_ref::Vector{String}
+  cause::Vector{Symbol}
 end
 
 """
@@ -113,7 +120,7 @@ end
 _tap_role_released(role::Symbol, mode::Symbol)::Bool = mode === :both || (mode === :ratio && role === :ratio) || (mode === :pst && role === :phase)
 
 # the same state with other columns (and an other overlay position)
-_tap_with_cols(ts::TapBranchState, cols::Vector{Int}, spos::Vector{Float64}) = TapBranchState(ts.branch, ts.set, ts.s0, spos, ts.released, cols, ts.frozen, ts.notes, ts.scratch, ts.z0, ts.F0, ts.sigma, ts.impedance, ts.tsi, ts.tree_phase, ts.weak, ts.rel_ref)
+_tap_with_cols(ts::TapBranchState, cols::Vector{Int}, spos::Vector{Float64}) = TapBranchState(ts.branch, ts.set, ts.s0, spos, ts.released, cols, ts.frozen, ts.notes, ts.scratch, ts.z0, ts.F0, ts.sigma, ts.impedance, ts.tsi, ts.tree_phase, ts.weak, ts.rel_ref, ts.cause)
 
 # live impedance of a branch in the order the overlay scales it
 _tap_live_impedance(br::Branch)::NTuple{6,Float64} = (br.r_pu, br.x_pu, br.g_from_pu, br.b_from_pu, br.g_to_pu, br.b_to_pu)
@@ -134,6 +141,9 @@ function _build_tap_state_map(net::Net, col0::Int, impedance::Symbol)
     (br isa Branch && br.tap_est_mode !== :none && _branch_terminal_state(br) == :closed) || continue
     set = _effective_tap_changers(br)
     set === nothing && continue
+    # the set as this run takes its impedance (a typed set without the
+    # analytic flag under off)
+    set = _tap_set_under(set, impedance)
     n = length(set.changers)
     released = Bool[_tap_role_released(ch.role, br.tap_est_mode) for ch in set.changers]
     if !any(released)
@@ -146,7 +156,9 @@ function _build_tap_state_map(net::Net, col0::Int, impedance::Symbol)
     mismatch = s0 === nothing
     mismatch && (s0 = Float64[ch.step - ch.neutral for ch in set.changers])
     tsi = br.tap_step_impedance
-    active = impedance === :auto && any(_tap_changer_has_impedance, set.changers)
+    # per transformer: per-step data always, the analytic correction only
+    # without them and under auto
+    active = _tap_reactance_source(set, impedance) !== :nominal
     F0 = active ? _tap_impedance_factors(set, s0; s0 = s0, tsi = tsi) : (1.0, 1.0, 1.0, 1.0)
     sigma = Float64[_tap_scale(ch; ratio_n = set.ratio_n) for ch in set.changers]
     cols = zeros(Int, n)
@@ -161,7 +173,7 @@ function _build_tap_state_map(net::Net, col0::Int, impedance::Symbol)
         c += 1
       end
     end
-    ts = TapBranchState(k, set, s0, copy(s0), released, cols, frozen, notes, deepcopy(br), _tap_live_impedance(br), F0, sigma, active, tsi, falses(n), zeros(n), fill("", n))
+    ts = TapBranchState(k, set, s0, copy(s0), released, cols, frozen, notes, deepcopy(br), _tap_live_impedance(br), F0, sigma, active, tsi, falses(n), zeros(n), fill("", n), fill(:none, n))
     push!(mismatch ? out : states, ts)
   end
   isempty(states) && return (nothing, out, nochanger)
@@ -358,32 +370,17 @@ end
     _is_machine_transformer(net, k) -> Bool
 
 Machine (generator step-up) transformer detection for the tap-release
-guards: one terminal bus of branch `k` hangs on this branch alone (no
-other closed branch, no closed link) and carries a generator prosumer.
-Estimating such a tap is pointless: the generator terminal voltage behind
-it is set by the machine, not observed independently, so the tap state
-absorbs whatever the AVR does.
+guards: one terminal of branch `k` hangs on this branch alone and carries
+a generator prosumer. The terminal is its closed-link cluster (the buses
+closed links tie together count as one node, `_link_clusters`): a
+generator behind a closed coupler is at the terminal, and a closed link
+is no further connection. Estimating such a tap is pointless: the
+generator terminal voltage behind it is set by the machine, not observed
+independently, so the tap state absorbs whatever the AVR does. The test
+of `_machine_sides`, so the guards, the exclusion and the calculation
+after the estimation agree.
 """
-function _is_machine_transformer(net::Net, k::Int)::Bool
-  br = net.branchVec[k]
-  for side in (Int(br.fromBus), Int(br.toBus))
-    others = 0
-    for (i, b) in enumerate(net.branchVec)
-      i == k && continue
-      (Int(b.fromBus) == side || Int(b.toBus) == side) || continue
-      _branch_terminal_state(b) == :closed || continue
-      others += 1
-    end
-    for l in net.linkVec
-      (Int(l.fromBus) == side || Int(l.toBus) == side) || continue
-      l.status == 1 || continue
-      others += 1
-    end
-    others == 0 || continue
-    any(ps -> getPosumerBusIndex(ps) == side && isGenerator(ps), net.prosumpsVec) && return true
-  end
-  return false
-end
+_is_machine_transformer(net::Net, k::Int)::Bool = _machine_side(net, k) != 0
 
 """
     _tap_cut_component(net, k) -> Union{Nothing,Set{Int}}
@@ -466,14 +463,19 @@ function _tap_symmetric_at(ch::SETapChanger, s::Float64)::Bool
   return abs(re) <= 1e-9 * ab
 end
 
+# turning point of |t| of an asymmetrical changer, relative to neutral and
+# not limited to its band: d|1 + s du e^(j alpha)|/ds = 0 at
+# s* = -cos(alpha) / du, and |t|^2 = (s du + cos(alpha))^2 + sin(alpha)^2 is
+# symmetric about it, so s and 2 s* - s give the same |t|
+_tap_asym_turning_point(ch::SETapChanger)::Float64 = -cosd(ch.alpha_deg) / ch.du
+
 # whether |t| of a changer is not monotonic on its band: then only the start
 # side decides which of two positions with the same magnitude the estimate
 # takes (note :sign_from_start)
 function _tap_magnitude_not_monotonic(ch::SETapChanger)::Bool
   smin, smax = _tap_band(ch)
   if ch.kind === :asymmetrical
-    # d|1 + s du e^(j alpha)|/ds = 0 at s* = -cos(alpha) / du
-    sstar = -cosd(ch.alpha_deg) / ch.du
+    sstar = _tap_asym_turning_point(ch)
     return smin < sstar < smax
   elseif ch.kind === :tabular
     d = [ch.table[k + 1].ratio - ch.table[k].ratio for k in 1:length(ch.table) - 1]
@@ -489,7 +491,7 @@ end
 function _tap_magnitude_vertices(ch::SETapChanger)::Vector{Float64}
   smin, smax = _tap_band(ch)
   if ch.kind === :asymmetrical
-    sstar = -cosd(ch.alpha_deg) / ch.du
+    sstar = _tap_asym_turning_point(ch)
     return smin < sstar < smax ? [sstar] : Float64[]
   elseif ch.kind === :tabular
     out = Float64[]
@@ -562,55 +564,67 @@ function _tap_keep_side_pins!(held::Dict{Int,Float64}, side::Vector{Tuple{Int,Ve
 end
 
 """
-    _tap_guard_freezes!(net, map, activeMeas, slackIdx, withVaOffset)
+    _tap_guard_causes!(net, map, activeMeas, slackIdx, withVaOffset)
 
-Structural part of the determinability guard, in this
-order; it writes the freeze reasons and notes of `map` in place, the caller
-re-packs the columns (`_tap_repack`):
+Structural part of the determinability guard. It freezes nothing: it
+writes per changer the structural cause (`ts.cause`) that names a rank
+deficit when the rank test (`_tap_rank_freezes!`) finds one, plus the
+notes of `map`. The first cause found wins, in this order:
 
 1. Bridge rule: a transformer that is a bridge (its removal cuts the net)
-   without an active voltage-magnitude measurement on its cut-off side
-   freezes all its regulators (`:radial_no_voltage_pin`), the tap and the
-   downstream voltage cannot be told apart.
+   without an active voltage-magnitude measurement on its cut-off side,
+   its regulators that move the magnitude of the ratio on their band
+   (`_tap_changes_magnitude`, `:radial_no_voltage_pin`): the tap and the
+   downstream voltage cannot be told apart. A pure angle changer there
+   gets its cause from the angle rule (3).
 2. Separability: the released regulators of one transformer, in set order,
    each have to raise the rank of the real 2 x k matrix of
-   `(dt/ds_c)/t` at the start; one that does not is frozen
-   (`:not_separable`). The ratio plane has two real directions, so a third
-   regulator is always frozen, and so is the second of two along one
-   direction (two ratio changers, a ratio changer and an asymmetrical one at
-   alpha 0 or 180, two pure angle changers).
+   `(dt/ds_c)/t` at the start; one that does not gets `:not_separable`.
+   The ratio plane has two real directions, so a third regulator always
+   gets it, and so does the second of two along one direction (two ratio
+   changers, a ratio changer and an asymmetrical one at alpha 0 or 180,
+   two pure angle changers).
 3. Angle anchors: the transformers with a released regulator that moves the
    angle are the edges of a graph over the classes of buses that the other
-   closed branches and links tie together; buses with an active Va row or at
-   the measured end of an active Ia row are anchors (united, and with the
-   slack bus when the run has no PMU offset state). Walked from the slack
-   class: an edge inside one class is pinned by its loop; a tree edge to a
-   new class without a ratio regulator falls to the symmetric start test,
-   with a released ratio regulator its phase regulators freeze
-   (`:no_angle_anchor`) and the ratio regulator gets note `:conditional`
-   when the frozen one moves the magnitude; a further edge between two
-   reached classes (a mesh edge) gives its phase regulators note
-   `:relative_only`. Which of them are only relative to a frozen phase
-   regulator is decided after the column test (`_tap_relative_to_frozen!`).
-4. Symmetric start (tree edges without an anchor): a phase regulator whose
-   factor magnitude does not move at its start (`_tap_symmetric_at`) is
-   frozen (`:symmetric_start`); otherwise it stays released, is watched by
-   the vertex notice at the estimate, and gets note `:sign_from_start` when
-   the magnitude is not monotonic on its band.
+   closed branches and links tie together; buses with a Va row or at the
+   measured end of an Ia row of `activeMeas` are anchors (united, and with
+   the slack bus when the run has no PMU offset state; the caller passes
+   the rows of the rank test, so an Ia row whose current is zero at the
+   start does not count). Walked from the slack class: an edge inside one
+   class is pinned by its loop; on a tree edge to
+   a new class the phase regulators get `:no_angle_anchor` when the
+   transformer has a released ratio regulator, else `:symmetric_start` when
+   the magnitude of their factor does not move at the start
+   (`_tap_symmetric_at`). A tree-edge phase regulator is watched by the
+   vertex notice (`tree_phase`) and gets note `:sign_from_start` when the
+   magnitude is not monotonic on its band; the noise test and the rank
+   test clear both on the regulators they freeze (`_tap_freeze!`).
+   A further edge between two reached classes (a mesh edge) gives its
+   phase regulators note `:relative_only`. Which of them are only relative
+   to a frozen phase regulator is decided after the freezes
+   (`_tap_relative_to_frozen!`).
+
+Until 0.60.0 these rules froze the regulators themselves. The rank test
+replaced that: a regulator whose column the other
+columns explain is not estimated, and the cause found here only names why.
 """
-function _tap_guard_freezes!(net::Net, map::TapStateMap, activeMeas::Vector{Measurement}, slackIdx::Int, withVaOffset::Bool)
+function _tap_guard_causes!(net::Net, map::TapStateMap, activeMeas::Vector{Measurement}, slackIdx::Int, withVaOffset::Bool)
+  live(ts, c) = ts.cols[c] != 0 && ts.frozen[c] === :none
   vmBuses = Set{Int}(m.busIdx for m in activeMeas if m.typ == VmMeas && m.busIdx !== nothing)
   for ts in map.trafos
     cut = _tap_cut_component(net, ts.branch)
     (cut === nothing || !isempty(intersect(vmBuses, cut))) && continue
     for c in eachindex(ts.cols)
-      (ts.cols[c] != 0 && ts.frozen[c] === :none) && (ts.frozen[c] = :radial_no_voltage_pin)
+      # only a regulator that moves |t|: a pure angle changer moves no
+      # voltage magnitude, its deficit on a bridge is the missing angle
+      # anchor, which the angle pass below names
+      (live(ts, c) && _tap_changes_magnitude(ts.set.changers[c])) && (ts.cause[c] = :radial_no_voltage_pin)
     end
   end
   for ts in map.trafos
     basis = nothing
     for c in eachindex(ts.cols)
-      (ts.cols[c] != 0 && ts.frozen[c] === :none) || continue
+      (live(ts, c) && ts.cause[c] === :none) || continue
       R, _, dR, dPhi = _tap_set_partials(ts.set, ts.s0, c)
       col = (dR / R, deg2rad(dPhi))
       ncol = hypot(col[1], col[2])
@@ -618,17 +632,17 @@ function _tap_guard_freezes!(net::Net, map::TapStateMap, activeMeas::Vector{Meas
         if ncol > 1e-12
           basis = col
         else
-          ts.frozen[c] = :not_separable
+          ts.cause[c] = :not_separable
         end
       elseif basis isa Tuple{Float64,Float64} && abs(basis[1] * col[2] - basis[2] * col[1]) > 1e-9 * hypot(basis[1], basis[2]) * ncol
-        # the second direction: the plane is full, every later one is frozen
+        # the second direction: the plane is full, every later one gets the cause
         basis = :full
       else
-        ts.frozen[c] = :not_separable
+        ts.cause[c] = :not_separable
       end
     end
   end
-  _tap_angle_freezes!(net, map, activeMeas, slackIdx, withVaOffset)
+  _tap_angle_causes!(net, map, activeMeas, slackIdx, withVaOffset)
   return map
 end
 
@@ -672,7 +686,7 @@ function _tap_angle_classes(net::Net, skip::AbstractSet{Int}, activeMeas::Vector
   return Int[root(i) for i in 1:n]
 end
 
-function _tap_angle_freezes!(net::Net, map::TapStateMap, activeMeas::Vector{Measurement}, slackIdx::Int, withVaOffset::Bool)
+function _tap_angle_causes!(net::Net, map::TapStateMap, activeMeas::Vector{Measurement}, slackIdx::Int, withVaOffset::Bool)
   live(ts, c) = ts.cols[c] != 0 && ts.frozen[c] === :none
   E = Dict{Int,Int}()
   for (j, ts) in enumerate(map.trafos)
@@ -711,25 +725,20 @@ function _tap_angle_freezes!(net::Net, map::TapStateMap, activeMeas::Vector{Meas
       continue
     end
     ratio = [c for c in eachindex(ts.cols) if live(ts, c) && ts.set.changers[c].role === :ratio && !(c in phase)]
-    if !isempty(ratio)
-      for c in phase
-        ts.frozen[c] = :no_angle_anchor
+    for c in phase
+      ch = ts.set.changers[c]
+      if !isempty(ratio)
+        ts.cause[c] === :none && (ts.cause[c] = :no_angle_anchor)
+      elseif _tap_symmetric_at(ch, ts.s0[c])
+        ts.cause[c] === :none && (ts.cause[c] = :symmetric_start)
       end
-      if any(c -> _tap_changes_magnitude(ts.set.changers[c]), phase)
-        for c in ratio
-          ts.notes[c] = :conditional
-        end
-      end
-    else
-      for c in phase
-        ch = ts.set.changers[c]
-        if _tap_symmetric_at(ch, ts.s0[c])
-          ts.frozen[c] = :symmetric_start
-        else
-          ts.tree_phase[c] = true
-          _tap_magnitude_not_monotonic(ch) && ts.notes[c] === :none && (ts.notes[c] = :sign_from_start)
-        end
-      end
+      # pinned only by its magnitude effect when the rank test keeps it
+      # (also at a table vertex, where the column carries the one-sided
+      # slope of the tangent): watched by the vertex notice; the noise
+      # test and the rank test clear both on the regulators they freeze
+      # (`_tap_freeze!`)
+      ts.tree_phase[c] = true
+      _tap_magnitude_not_monotonic(ch) && ts.notes[c] === :none && (ts.notes[c] = :sign_from_start)
     end
   end
   return map
@@ -738,7 +747,7 @@ end
 """
     _tap_relative_to_frozen!(net, map, frozenStates, activeMeas, slackIdx, withVaOffset)
 
-Last part of the determinability guard, after the column test, so every
+Last part of the determinability guard, after the rank test, so every
 freeze reason counts. A phase regulator that is estimated (no freeze
 reason) and not pinned by its own magnitude effect (`tree_phase`) gets its
 angle from the
@@ -822,37 +831,41 @@ function _tap_relative_to_frozen!(net::Net, map::TapStateMap, frozenStates::Vect
   return map
 end
 
-# rounding units of the FD noise bound of the tap column test (below)
-const _TAP_FD_NOISE_ULPS = 10.0
-# singular-value bound of the single-column rank test. The column is scaled
-# to norm 1 before the SVD, so a non-zero column
-# has the singular value 1 up to rounding (about 1e-16) and a zero column
-# has none; any bound between the two gives the same verdict, 1e-8 keeps a
-# wide margin to both. The bound does not depend on the weights or on the
-# size of the other columns.
-const _TAP_RANK_TOL = 1.0e-8
-
-## numerical rank (0 or 1) of tap column `col` of H: the non-zero rows of
-## the column, scaled to norm 1, then the SVD against `_TAP_RANK_TOL`
-function _tap_column_rank(H::AbstractMatrix{<:Real}, col::Int)::Int
-  v = Float64[x for x in H[:, col] if !iszero(x)]
-  isempty(v) && return 0
-  nv = norm(v)
-  isfinite(nv) || error("tap column test: Jacobian column $(col) is not finite")
-  nv > 0.0 || return 0
-  return count(>(_TAP_RANK_TOL), svdvals(reshape(v ./ nv, :, 1)))
+## Freeze changer `c` of `ts` with `reason` in the guard (noise test or
+## rank test). The structural pass ran before both and wrote notes
+## (`:sign_from_start`, `:relative_only`) and `tree_phase` for a regulator
+## that stays estimated; on a frozen one they would contradict the freeze
+## text of its notice, so they go here.
+function _tap_freeze!(ts::TapBranchState, c::Int, reason::Symbol)
+  ts.frozen[c] = reason
+  ts.notes[c] = :none
+  ts.tree_phase[c] = false
+  return nothing
 end
 
-## Column part of the determinability guard (a regulator no measurement
-## sees): at the start point a tap column the measurements do not see is
-## frozen (`:not_observable`).
-## Dead is a column the single-column rank test refuses (`_tap_column_rank`,
-## a zero column) or one that is zero within the rounding noise of its own
-## forward difference. Bound: a row value h_i is a sum of terms and is
-## computed to about eps(Float64) times the size of its terms, not of its
-## value (a zero injection sums terms of thousands of MW to zero). The size
-## comes from the voltage columns of the same row, in the unit of the row
-## (MW, Mvar, pu):
+# rounding units of the FD noise bound of the tap column test (below)
+const _TAP_FD_NOISE_ULPS = 10.0
+# Singular-value bound of the rank test of the tap columns
+# (`_tap_rank_freezes!`). It applies AFTER every column of H is scaled to
+# norm 1. A column the other columns explain exactly (the
+# bridge null vector of a phase regulator: phi + 1 with + 1 on every
+# far-side angle; two regulators along one direction) leaves a singular
+# value at rounding level, about 1e-16 on the central-difference H, while
+# a column that adds rank leaves one far above 1e-8.
+# Without the scaling the bound would compare columns of different size
+# (MW rows against pu rows, one heavy pseudo measurement), the error of
+# the former column rule under another name. The bound does not
+# depend on the weights.
+const _TAP_RANK_TOL = 1.0e-8
+
+## Noise part of the determinability guard (a regulator no measurement
+## sees): at the start point a tap column that is zero within the rounding
+## noise of its own forward difference on every row is frozen
+## (`:not_observable`, cause `:zero_column` for its notice). Bound: a row
+## value h_i is a sum of terms and is computed to about eps(Float64) times
+## the size of its terms, not of its value (a zero injection sums terms of
+## thousands of MW to zero). The size comes from the voltage columns of the
+## same row, in the unit of the row (MW, Mvar, pu):
 ##   T_i = |z_i| + sum_b (Vm_b |H[i, Vm_b]| + |H[i, Va_b]|)
 ## For a P or Q injection or flow the term of bus j has the size
 ## Vm_i Vm_j |Y_ij|, and Vm_j |dh/dVm_j| + |dh/dVa_j| is at least that size
@@ -863,28 +876,13 @@ end
 ## sigma_c gives the entry noise
 ##   n_i = _TAP_FD_NOISE_ULPS * eps(Float64) * T_i * sigma_c / jac_eps
 ## on every row where the column is non-zero; the column is dead when
-## |H[i, col]| <= n_i on every one of those rows. The test is per row and
-## does not read the weights: a heavy row elsewhere (a small sigma at another
-## bus) or a heavy noise-only row of the column itself (a zero injection
-## where the regulator moves no flow) does not freeze a regulator that one
-## light row sees above its noise, and a row with a huge sigma on the
-## regulator still sees it. A pooled weighted test (sum w H^2 <= sum w n^2)
-## would let such a heavy noise-only row decide.
-## Hint without effect on the freeze: the comparison with the strongest
-## voltage column, which an earlier rule used to freeze. A live column with
-## norm(sqrt(w) .* H[:, col]) / sigma_c <= jac_eps * max_b norm(sqrt(w) .*
-## H[:, Vm_b]) gets the factor max / (norm / sigma_c) in `ts.weak` (the row
-## notice says "weak column, factor x below the strongest"). Returns one
-## (branch, changer, factor, bus of the strongest Vm column) per hint for
-## the log line of the caller.
-function _tap_column_freezes!(map::TapStateMap, H::AbstractMatrix{<:Real}, w::Vector{Float64}, z::Vector{Float64}, x::Vector{Float64}, nbus::Int, jacEps::Float64)::Vector{NTuple{4,Any}}
-  sw = sqrt.(w)
-  vmMax = 0.0
-  vmBus = 0
-  for b in 1:nbus
-    v = norm(sw .* H[:, (nbus - 1) + b])
-    v > vmMax && (vmMax = v; vmBus = b)
-  end
+## |H[i, col]| <= n_i on every one of those rows (an all-zero column too).
+## The test is per row and does not read the weights: a heavy row elsewhere
+## or a heavy noise-only row of the column itself (a zero injection where
+## the regulator moves no flow) does not freeze a regulator that one light
+## row sees above its noise. `H` is the forward-difference Jacobian at the
+## start.
+function _tap_column_freezes!(map::TapStateMap, H::AbstractMatrix{<:Real}, z::Vector{Float64}, x::Vector{Float64}, nbus::Int, jacEps::Float64)
   # T_i of the noise bound: Va columns 1:(nbus-1), Vm column of bus b at
   # (nbus-1)+b, Vm_b at the same index of the state x
   termSize = abs.(z)
@@ -894,22 +892,268 @@ function _tap_column_freezes!(map::TapStateMap, H::AbstractMatrix{<:Real}, w::Ve
   for b in 1:nbus
     termSize .+= abs(x[(nbus - 1) + b]) .* abs.(H[:, (nbus - 1) + b])
   end
+  for ts in map.trafos, c in eachindex(ts.cols)
+    col = ts.cols[c]
+    (col != 0 && ts.frozen[c] === :none) || continue
+    hc = Vector{Float64}(H[:, col])
+    all(isfinite, hc) || error("tap column test: Jacobian column $(col) is not finite")
+    scale = _TAP_FD_NOISE_ULPS * eps(Float64) * ts.sigma[c] / jacEps
+    if all(i -> iszero(hc[i]) || abs(hc[i]) <= scale * termSize[i], eachindex(hc))
+      _tap_freeze!(ts, c, :not_observable)
+      ts.cause[c] = :zero_column
+    end
+  end
+  return map
+end
+
+## Rank core of the tap columns (`_tap_rank_freezes!` at the start point,
+## the recheck at the estimate): H with every column scaled to norm 1, the
+## columns `stateCols` taken out by sparse least squares (QR), then the
+## candidates `cand` in their order; returns per candidate whether it adds
+## rank (one more singular value of [P_kept, p] above `_TAP_RANK_TOL`).
+## Columns outside both lists do not enter.
+function _tap_rank_kept(H::AbstractMatrix{<:Real}, stateCols::Vector{Int}, cand::Vector{Int})::Vector{Bool}
+  colScaled(j) = (v = Vector{Float64}(H[:, j]); n = norm(v); n > 0.0 ? v ./ n : v)
+  A = sparse(H[:, stateCols])
+  cn = [norm(view(A, :, j)) for j in axes(A, 2)]
+  A = A * Diagonal([n > 0.0 ? 1.0 / n : 0.0 for n in cn])
+  F = qr(A)
+  Q = Vector{Float64}[]
+  T = zeros(0, 0)
+  rankT = 0
+  kept = falses(length(cand))
+  for (i, j) in enumerate(cand)
+    b = colScaled(j)
+    p = b .- A * (F \ b)
+    # twice Gram-Schmidt against the kept parts (orthonormal), for rounding
+    coef = zeros(length(Q))
+    for _ in 1:2
+      for (k, q) in enumerate(Q)
+        a = dot(q, p)
+        coef[k] += a
+        p .-= a .* q
+      end
+    end
+    d = norm(p)
+    na = length(Q)
+    M = zeros(na + 1, na + 1)
+    M[1:na, 1:na] .= T
+    M[1:na, na + 1] .= coef
+    M[na + 1, na + 1] = d
+    rankM = count(>(_TAP_RANK_TOL), svdvals(M))
+    if rankM > rankT && d > 0.0
+      push!(Q, p ./ d)
+      T = M
+      rankT = rankM
+      kept[i] = true
+    end
+  end
+  return collect(kept)
+end
+
+## Rank test of the tap columns at the start point: H with every column scaled to norm 1; a tap column that
+## adds no rank to the state columns (Va, Vm, shunt B, PMU offset) and to
+## the tap columns kept before it is not estimated. Computed in two parts so
+## that it scales to large nets: the state columns are taken out by sparse
+## least squares (QR), which leaves the part p of each tap column outside
+## their span (rank [A B] = rank A + rank P for P the parts of B); a
+## candidate is kept when the singular values of [P_kept, p] count one more
+## above `_TAP_RANK_TOL` than those of P_kept. They are computed on the
+## small triangular factor [T c; 0 d] of [P_kept, p] (T the factor of the
+## kept parts, c and d the coefficients and the length of p against them),
+## which has the same singular values. Columns run in map order (branch
+## order, then the changer order of the set), the ones without a
+## structural cause before the ones with: of columns that share one null
+## vector the last one is dropped, which is the one a structural rule
+## names when one applies (else the last parallel member). A dropped regulator
+## is frozen with its structural cause (`ts.cause`, `_tap_guard_causes!`),
+## else with the cause of a phase regulator of another transformer that
+## joins the same two angle classes (a parallel member), else with
+## `:not_observable`. `H` is the central-difference Jacobian at the start
+## (the caller says why).
+function _tap_rank_freezes!(map::TapStateMap, H::AbstractMatrix{<:Real}, net::Net, activeMeas::Vector{Measurement}, slackIdx::Int, withVaOffset::Bool)
+  live(ts, c) = ts.cols[c] != 0 && ts.frozen[c] === :none
+  tapCols = Set{Int}(ts.cols[c] for ts in map.trafos for c in eachindex(ts.cols) if ts.cols[c] != 0)
+  cand = [(ts, c) for ts in map.trafos for c in eachindex(ts.cols) if live(ts, c)]
+  isempty(cand) && return map
+  # the columns without a structural cause first: of two columns that
+  # share one dependence the later one is dropped, so the drop lands on
+  # the changer the structural rule names (the phase changer of a ratio and
+  # phase pair on a bridge, the tree edge of parallel phase changers)
+  cand = vcat([x for x in cand if x[1].cause[x[2]] === :none], [x for x in cand if x[1].cause[x[2]] !== :none])
+  kept = _tap_rank_kept(H, [j for j in axes(H, 2) if !(j in tapCols)], Int[ts.cols[c] for (ts, c) in cand])
+  dropped = Tuple{TapBranchState,Int}[cand[i] for i in eachindex(cand) if !kept[i]]
+  isempty(dropped) && return map
+  # angle classes with every transformer of the map that carries a phase
+  # regulator taken out: parallel members join the same pair of classes
+  phaseTrafos = Set{Int}(ts.branch for ts in map.trafos if any(c -> ts.cols[c] != 0 && _tap_changes_angle(ts.set.changers[c]), eachindex(ts.cols)))
+  cls = _tap_angle_classes(net, phaseTrafos, activeMeas, slackIdx, withVaOffset)
+  pairOf(ts) = (br = net.branchVec[ts.branch]; minmax(cls[Int(br.fromBus)], cls[Int(br.toBus)]))
+  for (ts, c) in dropped
+    reason = ts.cause[c]
+    if reason === :none && _tap_changes_angle(ts.set.changers[c])
+      for other in map.trafos
+        (other.branch != ts.branch && other.branch in phaseTrafos && pairOf(other) == pairOf(ts)) || continue
+        k = findfirst(j -> other.cols[j] != 0 && other.cause[j] !== :none && _tap_changes_angle(other.set.changers[j]), eachindex(other.cols))
+        k === nothing && continue
+        reason = other.cause[k]
+        break
+      end
+    end
+    _tap_freeze!(ts, c, reason === :none ? :not_observable : reason)
+  end
+  return map
+end
+
+## note `:conditional` on the estimated ratio regulators of a transformer
+## whose phase regulator the rank test dropped with `:no_angle_anchor` while
+## it moves |t| on its band (kind b, or a table with varying ratio): the
+## ratio step holds only together with the frozen phase position
+function _tap_conditional_notes!(map::TapStateMap)
+  for ts in map.trafos
+    any(c -> ts.frozen[c] === :no_angle_anchor && _tap_changes_magnitude(ts.set.changers[c]), eachindex(ts.cols)) || continue
+    for c in eachindex(ts.cols)
+      (ts.cols[c] != 0 && ts.frozen[c] === :none && ts.set.changers[c].role === :ratio) && (ts.notes[c] = :conditional)
+    end
+  end
+  return map
+end
+
+## Note `:conditional` of the ratio regulators of one transformer after the
+## recheck at the estimate: set while a phase regulator of it that moves
+## |t| is kept out with `:no_angle_anchor` or withdrawn by the recheck (the
+## ratio step then holds only together with that frozen phase position),
+## cleared when no such regulator is left (a phase regulator estimated again)
+function _tap_recheck_conditional!(ts::TapBranchState)
+  held = any(c -> ts.frozen[c] in (:no_angle_anchor, :not_observable_at_estimate, :mirror_step_fits) && ts.set.changers[c].role === :phase && _tap_changes_magnitude(ts.set.changers[c]), eachindex(ts.cols))
+  for c in eachindex(ts.cols)
+    (ts.released[c] && ts.frozen[c] === :none && ts.set.changers[c].role === :ratio) || continue
+    if held
+      ts.notes[c] === :none && (ts.notes[c] = :conditional)
+    elseif ts.notes[c] === :conditional
+      ts.notes[c] = :none
+    end
+  end
+  return nothing
+end
+
+## The rows of the rank test at the state V (overlay `tapOv`, shunt B
+## `sb`): a current row (Imag, Ia) counts only when its predicted current
+## passes 3 sigma of its magnitude, the gate the WLS loop applies to the Ia
+## rows (sigma of the paired Imag row, else `floorA`; an Imag row its own
+## sigma). Below, the magnitude has a kink at zero current and the angle no
+## value, so no difference gives a derivative: at a flat start an Imag row
+## of size 1e-4 made a bridge tap look observable
+function _tap_rank_rows(net::Net, activeMeas::Vector{Measurement}, V::Vector{ComplexF64}, sb, tapOv, floorA::Float64)::Vector{Int}
+  function gate(m)
+    m.typ in (ImagMeas, IaMeas) || return true
+    pair = m.typ == ImagMeas ? m : findfirst(q -> q.typ == ImagMeas && q.branchIdx == m.branchIdx && q.busIdx == m.busIdx && q.direction == m.direction, activeMeas)
+    thr = 3.0 * (pair === nothing ? floorA : (pair isa Measurement ? pair : activeMeas[pair]).sigma)
+    return abs(_end_current_A(net, m, V, sb, tapOv)) >= thr
+  end
+  return Int[i for (i, m) in enumerate(activeMeas) if gate(m)]
+end
+
+# J difference below which the mirror step fits as well as the fixed step
+# (recheck at the estimate): 9 is the
+# 3 sigma threshold of chi2 with one degree of freedom
+const _TAP_MIRROR_DJ = 9.0
+
+## The mirror step of changer `ch` at its fixed step `s` (relative to
+## neutral) for the mirror check of the recheck at the estimate: a
+## symmetrical phase changer mirrors about its neutral step (-s, the angle
+## changes sign, |t| stays 1), an asymmetrical one with alpha not 0 or 180
+## about the turning point s* of |t| (2 s* - s, `_tap_asym_turning_point`).
+## Without an angle anchor the measurements see such a changer only through
+## quantities that are the same on both steps. Rounded to a physical step;
+## `nothing` for the other kinds, when the mirror lies outside the band or
+## rounds onto `s` itself (no second step).
+function _tap_mirror_step(ch::SETapChanger, s::Float64)::Union{Nothing,Float64}
+  ch.additive && return nothing
+  if ch.kind === :symmetrical
+    m = -s
+  elseif ch.kind === :asymmetrical && ch.du !== nothing && ch.du != 0.0 && abs(sind(ch.alpha_deg)) > 1e-9
+    m = 2.0 * _tap_asym_turning_point(ch) - s
+  else
+    return nothing
+  end
+  smin, smax = _tap_band(ch)
+  (smin - 0.5 <= m <= smax + 0.5) || return nothing
+  mf = _tap_fixed_position(ch, m)
+  return mf == s ? nothing : mf
+end
+
+## A copy of `ts` for the recheck at the estimate with the columns `cols`
+## and the positions `spos`: its own freeze, note, cause and hint vectors
+## (the noise test writes into them), so the verdicts do not touch the
+## states of the run
+_tap_recheck_copy(ts::TapBranchState, cols::Vector{Int}, spos::Vector{Float64}) = TapBranchState(ts.branch, ts.set, ts.s0, spos, ts.released, cols, fill(:none, length(cols)), copy(ts.notes), ts.scratch, ts.z0, ts.F0, ts.sigma, ts.impedance, ts.tsi, copy(ts.tree_phase), zeros(length(cols)), copy(ts.rel_ref), copy(ts.cause))
+
+## The map of the recheck at the estimate: over the fixed run (`fin` at the state `x`, in the
+## transformer order of the estimation map `est`) and the transformers that
+## left the map at the start (`moved`). Columns from `fin.col0`, in
+## transformer and changer order: an estimated and fixed changer (kind
+## `:est`, at its fixed step), a released changer the start test kept out
+## with a rank reason (`:frz`, at its transferred step; of `moved` only the
+## transformers with such a changer), and a state of the fixed run (a
+## `:relative_to_frozen` regulator, at its value; a state column, no
+## candidate). Returns `(rmap, xr, cand, movedIdx)`: the map of
+## `_tap_recheck_copy` states, the state vector with these columns in
+## place of the tap block of `x`, the candidates `(j, c, col, kind)` (`j`
+## the transformer in `rmap`) and the indices into `moved` of the
+## transformers appended after those of `fin`.
+function _tap_recheck_map(fin::TapStateMap, est::TapStateMap, x::Vector{Float64}, moved::Vector{TapBranchState})
+  trafos = TapBranchState[]
+  cand = NamedTuple{(:j, :c, :col, :kind),Tuple{Int,Int,Int,Symbol}}[]
+  vals = Float64[]
+  movedIdx = Int[]
+  col = fin.col0
+  frz(ts, c) = ts.released[c] && ts.cols[c] == 0 && ts.frozen[c] in _TAP_START_RANK_REASONS
+  function add!(ts, kinds)
+    cols = zeros(Int, length(ts.cols))
+    for c in eachindex(cols)
+      kinds[c] === :none && continue
+      cols[c] = col
+      push!(vals, kinds[c] === :state ? x[ts.cols[c]] : ts.spos[c])
+      kinds[c] === :state || push!(cand, (j = length(trafos) + 1, c = c, col = col, kind = kinds[c]))
+      col += 1
+    end
+    push!(trafos, _tap_recheck_copy(ts, cols, copy(ts.spos)))
+  end
+  for (j, ts) in enumerate(fin.trafos)
+    e = est.trafos[j]
+    add!(ts, Symbol[ts.cols[c] != 0 ? :state : (e.cols[c] != 0 && ts.frozen[c] === :none && _tap_fixable(e, c)) ? :est : frz(ts, c) ? :frz : :none for c in eachindex(ts.cols)])
+  end
+  for (i, ts) in enumerate(moved)
+    any(c -> frz(ts, c), eachindex(ts.cols)) || continue
+    push!(movedIdx, i)
+    add!(ts, Symbol[frz(ts, c) ? :frz : :none for c in eachindex(ts.cols)])
+  end
+  xr = vcat(x[1:(fin.col0 - 1)], vals, x[(fin.col0 + fin.ncols):end])
+  return TapStateMap(trafos, fin.col0, col - fin.col0, fin.impedance), xr, cand, movedIdx
+end
+
+## Hint without effect on the freeze: the
+## comparison with the strongest voltage column on the UNWEIGHTED
+## sensitivity H. A column still estimated with norm(H[:, col]) / sigma_c
+## <= jac_eps * max_b norm(H[:, Vm_b]) gets the factor max / (norm /
+## sigma_c) in `ts.weak` (the row notice says "weak column, factor x below
+## the strongest"). Before 0.60.0 the weighted form of this comparison froze
+## the regulator; with weights one heavy pseudo measurement set the
+## reference. Returns one (branch, changer, factor, bus of the strongest Vm
+## column) per hint for the log line of the caller.
+function _tap_weak_hints!(map::TapStateMap, H::AbstractMatrix{<:Real}, nbus::Int, jacEps::Float64)::Vector{NTuple{4,Any}}
+  vmMax = 0.0
+  vmBus = 0
+  for b in 1:nbus
+    v = norm(H[:, (nbus - 1) + b])
+    v > vmMax && (vmMax = v; vmBus = b)
+  end
   hints = NTuple{4,Any}[]
   for ts in map.trafos, c in eachindex(ts.cols)
     col = ts.cols[c]
     (col != 0 && ts.frozen[c] === :none) || continue
-    if _tap_column_rank(H, col) == 0
-      ts.frozen[c] = :not_observable
-      continue
-    end
-    hc = Vector{Float64}(H[:, col])
-    scale = _TAP_FD_NOISE_ULPS * eps(Float64) * ts.sigma[c] / jacEps
-    # the rank test above leaves at least one non-zero row
-    if all(i -> iszero(hc[i]) || abs(hc[i]) <= scale * termSize[i], eachindex(hc))
-      ts.frozen[c] = :not_observable
-      continue
-    end
-    strength = norm(sw .* hc) / ts.sigma[c]
+    strength = norm(H[:, col]) / ts.sigma[c]
     if strength <= jacEps * vmMax
       ts.weak[c] = vmMax / strength
       push!(hints, (ts.branch, c, ts.weak[c], vmBus))
@@ -945,28 +1189,377 @@ function _tap_prior_columns!(map::TapStateMap, net::Net, activeMeas::Vector{Meas
   return cols
 end
 
-## machine terminal of a machine transformer: the degree-1 generator bus
-## (0 when branch k is no machine transformer); shared by the guard and the
-## post-processing back-calculation
-function _machine_side(net::Net, k::Int)::Int
-  br = net.branchVec[k]
-  for side in (Int(br.fromBus), Int(br.toBus))
-    others = 0
-    for (i, b) in enumerate(net.branchVec)
-      i == k && continue
-      (Int(b.fromBus) == side || Int(b.toBus) == side) || continue
-      _branch_terminal_state(b) == :closed || continue
-      others += 1
-    end
-    for l in net.linkVec
-      (Int(l.fromBus) == side || Int(l.toBus) == side) || continue
-      l.status == 1 || continue
-      others += 1
-    end
-    others == 0 || continue
-    any(ps -> getPosumerBusIndex(ps) == side && isGenerator(ps), net.prosumpsVec) && return side
+## closed-link clusters of the net: the representative (smallest bus index)
+## of every bus, over the links with status 1; a bus without a closed link
+## is its own cluster. The links have no impedance, so the buses of a
+## cluster share one voltage, the node the SE link contraction fuses them
+## into (_se_prepare).
+function _link_clusters(net::Net)::Vector{Int}
+  root = collect(1:length(net.nodeVec))
+  find(i) = (while root[i] != i; root[i] = root[root[i]]; i = root[i]; end; i)
+  for l in net.linkVec
+    l.status == 1 || continue
+    a = find(Int(l.fromBus))
+    b = find(Int(l.toBus))
+    a == b && continue
+    a < b ? (root[b] = a) : (root[a] = b)
   end
-  return 0
+  return [find(i) for i in eachindex(root)]
+end
+
+## machine terminal of a machine transformer: the terminal bus of branch k
+## whose closed-link cluster hangs on this branch alone and carries a
+## generator (0 when branch k is no machine transformer); shared by the
+## guard and the post-processing back-calculation
+_machine_side(net::Net, k::Int)::Int = get(_machine_sides(net, (k,)), k, 0)
+
+## the machine terminal of every transformer in `ks` in one pass over the
+## net: a terminal bus whose closed-link cluster (`_link_clusters`, one
+## node) has no closed branch but this one and carries a generator on any
+## of its buses. A generator behind a closed coupler is at the terminal,
+## a closed link is no further connection. Transformers without such a
+## terminal are left out.
+function _machine_sides(net::Net, ks)::Dict{Int,Int}
+  root = _link_clusters(net)
+  deg = zeros(Int, length(net.nodeVec))
+  for b in net.branchVec
+    _branch_terminal_state(b) == :closed || continue
+    deg[root[Int(b.fromBus)]] += 1
+    deg[root[Int(b.toBus)]] += 1
+  end
+  gens = Set{Int}(root[getPosumerBusIndex(ps)] for ps in net.prosumpsVec if isGenerator(ps))
+  out = Dict{Int,Int}()
+  for k in ks
+    br = net.branchVec[k]
+    own = _branch_terminal_state(br) == :closed ? 1 : 0
+    for side in (Int(br.fromBus), Int(br.toBus))
+      if deg[root[side]] - own == 0 && root[side] in gens
+        out[k] = side
+        break
+      end
+    end
+  end
+  return out
+end
+
+## the buses of the closed-link cluster of bus `m` (m alone without links)
+function _link_cluster_buses(net::Net, m::Int)::Vector{Int}
+  root = _link_clusters(net)
+  return [i for i in eachindex(root) if root[i] == root[m]]
+end
+
+## Why transformers stay out of the tap estimation by the configuration
+## `te` (`state_estimation.tap_estimation`): `reasons` maps a branch index to
+## `:excluded` (named in `te.exclude` by name or CGMES mRID; the user's
+## choice wins over the machine rule) or `:machine_transformer` (generator
+## step-up, unless `te.include_machine_transformers`), for the transformers
+## in `ks` (default: every transformer); `unknown` lists the entries of
+## `te.exclude` that name no transformer of the net.
+function _tap_exclusions(net::Net, te::TapEstimationConfig; ks = (k for (k, br) in enumerate(net.branchVec) if br.ratio != 0.0))
+  reasons = Dict{Int,Symbol}()
+  ks = collect(Int, ks)
+  unknown = String[]
+  if !isempty(te.exclude)
+    mrids = _transformer_mrids(net)
+    names = Set{String}()
+    for (k, br) in enumerate(net.branchVec)
+      br.ratio != 0.0 || continue
+      push!(names, getCompName(br.comp))
+      haskey(mrids, k) && push!(names, mrids[k])
+    end
+    wanted = Set{String}(te.exclude)
+    unknown = String[e for e in unique(te.exclude) if !(e in names)]
+    for k in ks
+      (getCompName(net.branchVec[k].comp) in wanted || (haskey(mrids, k) && mrids[k] in wanted)) && (reasons[k] = :excluded)
+    end
+  end
+  if !te.include_machine_transformers
+    for k in keys(_machine_sides(net, ks))
+      haskey(reasons, k) || (reasons[k] = :machine_transformer)
+    end
+  end
+  return (reasons = reasons, unknown = unknown)
+end
+
+## The transformers `te` keeps out of a run on `net`, by component id of the
+## branch (reasons of `_tap_exclusions` for the released changers); empty
+## with the switch off. Resolved once on the caller's net and handed to
+## every solve of it: the link contraction of `_se_prepare` folds closed
+## links into their representative bus and renames it, which changes the
+## mRID match (keyed on bus names), so a solve on the contracted copy (the
+## diagnostics) would otherwise keep out other transformers than `runse!`
+## on the same net. The machine test sees the same node on both, it treats
+## a closed-link cluster as one (`_machine_sides`).
+function _tap_exclusion_map(net::Net, te::TapEstimationConfig)::Dict{String,Symbol}
+  te.enabled || return Dict{String,Symbol}()
+  ks = [k for (k, b) in enumerate(net.branchVec) if b.ratio != 0.0 && b.tap_est_mode !== :none]
+  return Dict{String,Symbol}(net.branchVec[k].comp.cID => r for (k, r) in _tap_exclusions(net, te; ks = ks).reasons)
+end
+
+## the warning on exclude entries that name no transformer of `net`, once
+## per call of the public entries (`who` names it)
+function _tap_warn_unknown_exclusions(net::Net, te::TapEstimationConfig, who::AbstractString)
+  isempty(te.exclude) && return nothing
+  unknown = _tap_exclusions(net, te; ks = Int[]).unknown
+  isempty(unknown) || @warn "$(who): state_estimation.tap_estimation.exclude names $(join(repr.(unknown), ", ")), which is no transformer of this net; the entry has no effect"
+  return nothing
+end
+
+## Freeze the released changers of the transformers the configuration keeps
+## out (`reasons` by component id of the branch, see `_tap_exclusions`):
+## the reason replaces any other, they keep their start position.
+function _tap_mark_exclusions!(states, net::Net, reasons::Dict{String,Symbol})
+  isempty(reasons) && return nothing
+  for ts in states
+    r = get(reasons, net.branchVec[ts.branch].comp.cID, :none)
+    r === :none && continue
+    for c in eachindex(ts.frozen)
+      ts.released[c] && (ts.frozen[c] = r)
+    end
+  end
+  return nothing
+end
+
+## The rows of machine transformers (reason `:machine_transformer`) after a
+## run that wrote its state into `net` (update_net): the ratio regulator
+## row gets the step calculated from the AVR setpoint, the dispatch and the
+## measured machine P and Q of the machine node (`_machine_tap_back_calc`),
+## `status = :calculated`; nothing is written back. Without a measured Q on
+## every bus of the machine node the row stays `:not_estimated` with reason
+## `:q_not_measured_in_group` and its transferred step, and one info line
+## names the transformer and the buses; without a measured P the scheduled
+## P is used and the row gets note `:p_from_schedule`. A row whose
+## calculation fails stays `:not_estimated`, its notice says why.
+function _tap_machine_rows(rows::Vector{NamedTuple}, net::Net, measurements::Vector{Measurement})::Vector{NamedTuple}
+  any(r -> r.reason === :machine_transformer, rows) || return rows
+  vm = Float64[something(nd._vm_pu, 1.0) for nd in net.nodeVec]
+  va = Float64[something(nd._va_deg, 0.0) for nd in net.nodeVec]
+  out = NamedTuple[]
+  for r in rows
+    if r.reason !== :machine_transformer || r.role !== :ratio
+      push!(out, r)
+      continue
+    end
+    k = r.branch
+    # the machine node is the closed-link cluster of the machine terminal:
+    # the GSU is its only branch, so the sum of the measured injections of
+    # its buses (the first active row per bus) is what the machine feeds
+    # into the transformer. Only a fully measured cluster gives that sum,
+    # the rule of the SE link contraction (_se_prepare): a partial sum
+    # misses the unmeasured buses (a zero-injection row at the coupler bus
+    # alone would read as a machine at zero)
+    cl = _link_cluster_buses(net, _machine_side(net, k))
+    hasrow(typ, b) = any(mm -> mm.active && mm.typ == typ && mm.busIdx == b, measurements)
+    injsum = function (typ)
+      s = 0.0
+      for b in cl
+        i = findfirst(mm -> mm.active && mm.typ == typ && mm.busIdx == b, measurements)
+        i === nothing && return nothing
+        s += measurements[i].value
+      end
+      return s
+    end
+    qm = injsum(QinjMeas)
+    if qm === nothing
+      # under voltage control the machine Q is not its schedule, a step
+      # from the scheduled Q would be invented: the transferred step stays
+      buses = join((net.nodeVec[b].comp.cName for b in cl if !hasrow(QinjMeas, b)), ", ")
+      @info "tap estimation: machine transformer $(r.name) not calculated, Q is not measured at $(buses) of its machine node; the transferred step stays"
+      push!(out, merge(r, (reason = :q_not_measured_in_group, notice = _tap_assumed_notice(r, string(_tap_notice_text(:q_not_measured_in_group), " (", buses, ")")))))
+      continue
+    end
+    pm = injsum(PinjMeas)
+    src = pm === nothing ? "the machine telemetry for Q and the generator schedule for P (P not measured on every bus of the machine node)" : "the machine telemetry"
+    bt = try
+      _machine_tap_back_calc(net, k, vm, va, true; p_mw = pm, q_mvar = qm)
+    catch err
+      # the named failures of the back-calculation (no ratio changer, no
+      # machine voltage or dispatch, no machine angle meets the dispatch)
+      # are ErrorExceptions; anything else is a bug and propagates
+      err isa ErrorException || rethrow()
+      push!(out, merge(r, (notice = string(r.notice, "; not calculated: ", sprint(showerror, err)),)))
+      continue
+    end
+    # only the first ratio changer is calculated; another ratio row of the
+    # same transformer keeps its start position
+    if bt.regulator != r.regulator
+      push!(out, r)
+      continue
+    end
+    s_fix = Float64(bt.fixed_step - r.neutral_step)
+    push!(out, merge(r, (
+      s_est = bt.s_est,
+      du_est = r.du === nothing ? nothing : bt.s_est * r.du,
+      ratio_est = bt.ratio_est,
+      angle_est_deg = bt.angle_est_deg,
+      s_fixed = s_fix,
+      step_fixed = Float64(bt.fixed_step),
+      deviation_steps = Float64(bt.fixed_step) - r.step_model,
+      status = :calculated,
+      note = pm === nothing ? :p_from_schedule : r.note,
+      notice = _tap_assumed_notice(r, string("calculated after the estimation from the AVR setpoint and ", src, ", not estimated (Q residual ", round(bt.q_residual_mvar; sigdigits = 3), " MVar)")),
+    )))
+  end
+  return out
+end
+
+## the reasons of a regulator the determinability guard kept out at the
+## start point (rank test with its structural causes, the noise test), and
+## with the two of the recheck at the estimate (`_tap_recheck_map`)
+const _TAP_START_RANK_REASONS = (:radial_no_voltage_pin, :not_separable, :no_angle_anchor, :symmetric_start, :not_observable)
+const _TAP_RANK_REASONS = (_TAP_START_RANK_REASONS..., :not_observable_at_estimate, :mirror_step_fits)
+
+## the reasons of a regulator the run kept out automatically (rank test,
+## noise test, fallback without tap estimation): its row gets the step
+## calculated from the control target as a comparison (`_tap_target_rows`)
+const _TAP_TARGET_REASONS = (_TAP_RANK_REASONS..., :fallback_not_converged, :fallback_worse_fit)
+
+## The rows after a run that wrote its state into `net` (update_net) with
+## the comparison column `step_from_target` (for the automatically
+## excluded transformers): for a regulator kept out
+## automatically (`_TAP_TARGET_REASONS`) the step that meets the control
+## target of its enabled tap controller (`_tap_step_from_target`), rounded
+## to the nearest physical step. It is not applied: the regulator keeps
+## its transferred step, the target is an assumption (a controller at a
+## limit, in hand, with another target). When it differs from the
+## transferred step by more than one step the notice says so, and the SE
+## service writes the notice to run.log. Without a control target the
+## column stays empty. Excluded and machine transformers are not touched.
+function _tap_target_rows(rows::Vector{NamedTuple}, net::Net)::Vector{NamedTuple}
+  any(r -> r.regulator > 0 && r.status === :not_estimated && r.reason in _TAP_TARGET_REASONS, rows) || return rows
+  ctrls = PowerTransformerControl[c for c in _tap_controllers(net) if c.enabled]
+  isempty(ctrls) && return rows
+  V = ComplexF64[something(nd._vm_pu, 1.0) * cis(deg2rad(something(nd._va_deg, 0.0))) for nd in net.nodeVec]
+  out = NamedTuple[]
+  for r in rows
+    if !(r.regulator > 0 && r.status === :not_estimated && r.reason in _TAP_TARGET_REASONS)
+      push!(out, r)
+      continue
+    end
+    st = _tap_step_from_target(net, r.branch, r.regulator, ctrls, V)
+    if st === nothing
+      push!(out, r)
+      continue
+    end
+    far = abs(st - r.step_model) > 1.0 + 1e-9
+    text = string("step from the control target ", round(Int, st), " differs from the transferred step ", round(Int, r.step_model), " by more than one step (not applied)")
+    push!(out, merge(r, (step_from_target = st, notice = far ? join(filter(!isempty, [r.notice, text]), "; ") : r.notice)))
+  end
+  return out
+end
+
+## The absolute step of changer `c` of branch `k` that meets the control
+## target of its tap controller in `ctrls` (matched by the transformer
+## name, id or branch index as `addPowerTransformerControl!` resolves it,
+## the controller of the changer's role; a ratio follower of a master/slave
+## group takes the master's voltage target) at the estimated voltages `V` (complex pu, net order), the other
+## changers at their transferred steps, the impedance at its live value;
+## `nothing` when there is no target for the changer's role or it cannot
+## be evaluated locally. Ratio changer, voltage control: the voltage at the
+## other terminal and the complex power through the regulated terminal stay
+## at their estimate, the terminal voltage follows from the branch equation
+## (fixed point), and the step is the one whose |V| meets the target; a
+## target bus that is no terminal counts through its estimated difference to
+## the terminal on its side, which needs the transformer to be a bridge.
+## Phase changer, active-power control over this transformer: both terminal
+## voltages stay at their estimate and the step is the one whose flow meets
+## the target; the network would share part of the change, so the step is
+## a lower bound of the move. The search scans the band (65 points) and
+## refines on a third of the interval as `_machine_tap_back_calc` does; the
+## result is the nearest physical step (`_tap_fixed_position`).
+function _tap_step_from_target(net::Net, k::Int, c::Int, ctrls::Vector{PowerTransformerControl}, V::Vector{ComplexF64})::Union{Nothing,Float64}
+  br = net.branchVec[k]
+  set = _effective_tap_changers(br)
+  (set === nothing || !(1 <= c <= length(set.changers))) && return nothing
+  ch = set.changers[c]
+  # the controller is chosen per role: a transformer may carry a ratio
+  # controller and a phase controller (one per TapChangerControl in the
+  # CGMES import), and the first one by name need not be the one of this
+  # changer
+  ownsTrafo(x) = br.comp.cName == x.trafo || br.comp.cID == x.trafo || string(br.branchIdx) == x.trafo
+  fitsRole(x) = ch.role === :ratio ? (x.control_ratio && x.mode in (:voltage, :voltage_and_branch_active_power) && x.target_bus !== nothing && x.target_vm_pu !== nothing) : (x.control_phase && x.mode in (:branch_active_power, :voltage_and_branch_active_power) && x.target_branch !== nothing && x.p_target_mw !== nothing)
+  ci = findfirst(x -> ownsTrafo(x) && fitsRole(x), ctrls)
+  # a ratio follower of a master/slave group has no controller of its own;
+  # it regulates the master's target bus
+  if ci === nothing && ch.role === :ratio
+    isFollower(x) = any(fn -> br.comp.cName == fn || br.comp.cID == fn || string(br.branchIdx) == fn, x.followers)
+    ci = findfirst(x -> fitsRole(x) && isFollower(x), ctrls)
+  end
+  ci === nothing && return nothing
+  ctrl = ctrls[ci]
+  s0 = _tap_s_from_branch(set, br)
+  s0 === nothing && return nothing
+  f = Int(br.fromBus)
+  t = Int(br.toBus)
+  busOf(name) = findfirst(nd -> getCompName(nd.comp) == name, net.nodeVec)
+  scratch = deepcopy(br)
+  function yAt(s::Float64)
+    sx = copy(s0)
+    sx[c] = s
+    R, Phi = _tap_set_ratio_shift(set, sx)
+    scratch.tap_ratio = R
+    scratch.phase_shift_deg = Phi
+    return calcAdmittance(scratch, br.comp.cVN, net.baseMVA)
+  end
+  objective = nothing
+  if ch.role === :ratio
+    (ctrl.control_ratio && ctrl.mode in (:voltage, :voltage_and_branch_active_power) && ctrl.target_bus !== nothing && ctrl.target_vm_pu !== nothing) || return nothing
+    tb = busOf(ctrl.target_bus)
+    tb === nothing && return nothing
+    g = if tb == f || tb == t
+      tb
+    else
+      cut = _tap_cut_component(net, k)
+      cut === nothing ? 0 : (tb in cut ? t : f)
+    end
+    g == 0 && return nothing
+    o = g == f ? t : f
+    y0 = yAt(s0[c])
+    Ig = g == f ? y0[1] * V[f] + y0[2] * V[t] : y0[3] * V[f] + y0[4] * V[t]
+    Sg = V[g] * conj(Ig)
+    target = ctrl.target_vm_pu - (abs(V[tb]) - abs(V[g]))
+    objective = function (s::Float64)
+      y = yAt(s)
+      ygg, ygo = g == f ? (y[1], y[2]) : (y[4], y[3])
+      v = V[g]
+      for _ in 1:200
+        vn = (conj(Sg / v) - ygo * V[o]) / ygg
+        abs(vn - v) < 1e-13 && return abs(abs(vn) - target)
+        v = vn
+      end
+      # no fixed point at this step: the load does not fit through the
+      # branch there
+      return Inf
+    end
+  else
+    (ctrl.control_phase && ctrl.mode in (:branch_active_power, :voltage_and_branch_active_power) && ctrl.target_branch !== nothing && ctrl.p_target_mw !== nothing) || return nothing
+    a = busOf(ctrl.target_branch[1])
+    b = busOf(ctrl.target_branch[2])
+    (a !== nothing && b !== nothing && minmax(a, b) == minmax(f, t)) || return nothing
+    objective = function (s::Float64)
+      y = yAt(s)
+      Ia = a == f ? y[1] * V[f] + y[2] * V[t] : y[3] * V[f] + y[4] * V[t]
+      return abs(real(V[a] * conj(Ia)) * net.baseMVA - ctrl.p_target_mw)
+    end
+  end
+  slo, shi = _tap_band(ch)
+  best_s = slo
+  best = Inf
+  n = 64
+  for i = 0:n
+    s = slo + (shi - slo) * i / n
+    q = objective(s)
+    q < best && (best = q; best_s = s)
+  end
+  isfinite(best) || return nothing
+  lo = max(slo, best_s - (shi - slo) / n)
+  hi = min(shi, best_s + (shi - slo) / n)
+  for _ = 1:60
+    m1 = lo + (hi - lo) / 3
+    m2 = hi - (hi - lo) / 3
+    objective(m1) <= objective(m2) ? (hi = m2) : (lo = m1)
+  end
+  return Float64(ch.neutral) + _tap_fixed_position(ch, (lo + hi) / 2)
 end
 
 """
@@ -975,7 +1568,11 @@ end
 Back-calculate the tap position of a MACHINE (generator step-up)
 transformer after a state estimation. Mutually exclusive with a tap
 release on the same transformer: a released tap is estimated, a machine
-tap is reconstructed here, never both.
+tap is reconstructed here, never both. A machine transformer has a
+terminal that connects to nothing but this transformer and carries a
+generator; the buses closed links tie together count as one terminal, so
+a generator behind a closed coupler qualifies, and its setpoint and
+schedule are read from the generators on those buses.
 
 A machine terminal is invisible to the estimator (the AVR sets its
 voltage, nothing measures it independently), so taking both the terminal
@@ -994,7 +1591,11 @@ branch's first ratio tap changer (reactive-power balance; the other
 changers stay at their start position, the impedance at the live value).
 Returns `s_est` (continuous step relative to neutral), `electrical_step =
 neutral + s_est` and `fixed_step`, the nearest physical step on the
-changer's own band. Reporting only, no write-back.
+changer's own band, the changer index `regulator` and the branch ratio and
+angle at `s_est`. Reporting only, no write-back. `runse!` runs the same
+calculation by itself for every released machine transformer that
+`state_estimation.tap_estimation.include_machine_transformers = false` keeps
+out of the estimation (`tapEstimates` row `status = :calculated`).
 
 Errors: transformer released for estimation, not a machine transformer, no
 ratio tap changer, no registered SE result, or no machine voltage/injection
@@ -1004,6 +1605,19 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
   k = _resolve_trafo_branch(net, trafo)
   br = net.branchVec[k]
   br.tap_est_mode == :none || error("calcMachineTrafoTapFromSE: transformer branch $(k) is released for tap estimation; back-calculation and release are mutually exclusive (disable the release first: setTapEstimation!(net; trafo = $(k), enabled = false))")
+  st = _se_start_state(net)
+  st === nothing && error("calcMachineTrafoTapFromSE: no state-estimation result is registered for this net; run runse! with state_estimation.update_net = true first")
+  return _machine_tap_back_calc(net, k, st.vm, st.va, st.converged; v_machine_pu = v_machine_pu, p_mw = p_mw, q_mvar = q_mvar)
+end
+
+## The back-calculation of `calcMachineTrafoTapFromSE` on the bus voltages
+## `vm` (pu) and `va` (degrees) of an estimate, for runse! (the rows of
+## machine transformers) and the public function. `converged` is passed
+## through as `converged_se`. Throws an ErrorException for each named failure
+## (not a machine transformer, no ratio changer, no machine voltage or
+## injection, no machine angle meets the dispatch).
+function _machine_tap_back_calc(net::Net, k::Int, vm::AbstractVector{Float64}, va::AbstractVector{Float64}, converged::Bool; v_machine_pu::Union{Nothing,Float64} = nothing, p_mw::Union{Nothing,Float64} = nothing, q_mvar::Union{Nothing,Float64} = nothing)
+  br = net.branchVec[k]
   m = _machine_side(net, k)
   m != 0 || error("calcMachineTrafoTapFromSE: branch $(k) is not a machine (generator step-up) transformer")
   set = _effective_tap_changers(br)
@@ -1012,20 +1626,20 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
   ch = set.changers[cr]
   s0 = _tap_s_from_branch(set, br)
   s0 === nothing && (s0 = Float64[c.step - c.neutral for c in set.changers])
-  st = _se_start_state(net)
-  st === nothing && error("calcMachineTrafoTapFromSE: no state-estimation result is registered for this net; run runse! with state_estimation.update_net = true first")
   f = Int(br.fromBus)
   t = Int(br.toBus)
   netBus = m == f ? t : f
-  # machine data: AVR setpoint and dispatch, never SE quantities
-  gens = [ps for ps in net.prosumpsVec if getPosumerBusIndex(ps) == m && isGenerator(ps)]
+  # machine data: AVR setpoint and dispatch, never SE quantities; the
+  # generators on any bus of the machine terminal's closed-link cluster
+  cl = Set{Int}(_link_cluster_buses(net, m))
+  gens = [ps for ps in net.prosumpsVec if getPosumerBusIndex(ps) in cl && isGenerator(ps)]
   vset = v_machine_pu !== nothing ? v_machine_pu : something(isempty(gens) ? nothing : gens[1].vm_pu, nothing)
   vset === nothing && error("calcMachineTrafoTapFromSE: no machine voltage available; the generator carries no vm_pu setpoint, pass v_machine_pu")
   pset = p_mw !== nothing ? p_mw : sum(something(g.pVal, 0.0) for g in gens; init = 0.0)
   qset = q_mvar !== nothing ? q_mvar : sum(something(g.qVal, 0.0) for g in gens; init = 0.0)
   (p_mw !== nothing || any(g.pVal !== nothing for g in gens)) || error("calcMachineTrafoTapFromSE: no machine injection available; the generator carries no p schedule, pass p_mw")
   Sset = complex(pset, qset) / net.baseMVA
-  Vnet = st.vm[netBus] * cis(deg2rad(st.va[netBus]))
+  Vnet = vm[netBus] * cis(deg2rad(va[netBus]))
   scratch = deepcopy(br)
   # terminal equation at the machine end for a candidate step s and machine
   # angle theta: S_pred = V_m * conj(I_m), V_m = vset * cis(theta)
@@ -1040,7 +1654,7 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
     Im = m == f ? y11 * Vm + y12 * Vnet : y21 * Vnet + y22 * Vm
     return Vm * conj(Im)
   end
-  θnet = deg2rad(st.va[netBus])
+  θnet = deg2rad(va[netBus])
   # nested solve: for a given s the active power is monotone in the machine
   # angle (power-angle relation across one reactance); bisect theta on the
   # P balance, then scan s on the Q residual
@@ -1095,7 +1709,10 @@ function calcMachineTrafoTapFromSE(net::Net; trafo, v_machine_pu::Union{Nothing,
   end
   s = (lo + hi) / 2
   isfinite(best) || error("calcMachineTrafoTapFromSE: no machine angle satisfies the active-power schedule across the transformer; check p_mw/v_machine_pu against the SE state")
-  return (branch = k, name = getCompName(br.comp), machine_bus = m, network_bus = netBus, s_est = s, electrical_step = ch.neutral + s, fixed_step = round(Int, ch.neutral + _tap_fixed_position(ch, s)), q_residual_mvar = qres(s) * net.baseMVA, v_machine_pu = vset, converged_se = st.converged)
+  sx = copy(s0)
+  sx[cr] = s
+  R, Phi = _tap_set_ratio_shift(set, sx)
+  return (branch = k, name = getCompName(br.comp), machine_bus = m, network_bus = netBus, regulator = cr, s_est = s, electrical_step = ch.neutral + s, fixed_step = round(Int, ch.neutral + _tap_fixed_position(ch, s)), ratio_est = R, angle_est_deg = Phi, q_residual_mvar = qres(s) * net.baseMVA, v_machine_pu = vset, converged_se = converged)
 end
 
 # Ratio grid positions of the branch fields, counted from `ratio`: the
@@ -1299,12 +1916,21 @@ end
 ## position when frozen), the delta U s_est * du (`nothing` without du), the
 ## branch ratio and angle at the estimate, the position of the fixed run
 ## `s_fixed`, model step, fixed step and deviation in steps, the
-## out-of-range flag, whether the regulator was fixed, its freeze reason,
-## note and notice. A regulator with note `:relative_to_frozen` is not
+## out-of-range flag, whether the regulator was fixed, its status
+## (`:estimated` or `:not_estimated`) with the reason, note and notice. A regulator with note `:relative_to_frozen` is not
 ## fixed: `s_fixed` is its continuous value in the fixed run. `converged` enables the notices of the estimate (the
 ## vertex notice of a phase regulator on a tree edge without an angle
-## anchor, the re-import guard of a CGMES changer).
-function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::AbstractString, s_est::Vector{Float64}, s_fix::Vector{Float64}, oor::AbstractVector{Bool}, fixed::Bool, converged::Bool)::Vector{NamedTuple}
+## anchor, the re-import guard of a CGMES changer). `sigma_s` holds per
+## changer the standard deviation of the step from the covariance of the
+## estimate (`nothing` = none, see `_se_state_sigmas`); the row carries it
+## and the distance of `s_est` from its nearest physical step in units of
+## it (`round_distance_sigma`, a hint only, the rounding does not read it).
+## `step_from_target` is filled later for the regulators the run kept out
+## automatically (`_tap_target_rows`). `voltage_hint` (`_tap_voltage_hint`)
+## goes into the notice of a changer the rank test kept out.
+## `extra_notice` holds per changer a text the notice ends with (the J of
+## the mirror check of the recheck at the estimate, "" = none).
+function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::AbstractString, s_est::Vector{Float64}, s_fix::Vector{Float64}, oor::AbstractVector{Bool}, fixed::Bool, converged::Bool; sigma_s::AbstractVector = fill(nothing, length(ts.cols)), voltage_hint::AbstractString = "", extra_notice::AbstractVector{<:AbstractString} = fill("", length(ts.cols)))::Vector{NamedTuple}
   rows = NamedTuple[]
   R, Phi = _tap_set_ratio_shift(ts.set, s_est)
   for c in eachindex(ts.set.changers)
@@ -1318,6 +1944,7 @@ function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::Abst
       m, _ = _tap_changer_factor(ch, s_fix[c])
       (0.5 <= m <= 2.0) || (guard = :reimport_guard)
     end
+    sg = estimated ? sigma_s[c] : nothing
     push!(rows, (
       branch = ob,
       regulator = c,
@@ -1340,20 +1967,54 @@ function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::Abst
       step_model = ch.neutral + ts.s0[c],
       step_fixed = ch.neutral + s_fix[c],
       deviation_steps = s_fix[c] - ts.s0[c],
+      sigma_s = sg,
+      round_distance_sigma = (sg === nothing || !(sg > 0.0)) ? nothing : _tap_step_distance(ch, s_est[c]) / sg,
+      step_from_target = nothing,
       out_of_range = oor[c],
       fixed = fixed && estimated && !relative,
-      frozen_reason = ts.frozen[c],
+      # where the impedance of the transformer comes from in this run
+      # (_tap_reactance_source): the per-step data, the analytic correction
+      # or none (the start impedance)
+      reactance_source = !ts.impedance ? :nominal : _tap_set_has_table(ts.set) ? :table : :analytic,
+      # :estimated (a state of the run) or :not_estimated with the reason
+      # (a guard freeze, :disabled, :fallback_not_converged, :excluded,
+      # :machine_transformer); _tap_machine_rows turns a machine row into
+      # :calculated after a run with update_net, or into reason
+      # :q_not_measured_in_group
+      status = estimated ? :estimated : :not_estimated,
+      reason = estimated ? :none : ts.frozen[c],
       note = ts.notes[c],
-      notice = join(filter(!isempty, [_tap_regulator_notice(ts.frozen[c], relative ? :none : ts.notes[c], vertex, guard), relative ? _tap_relative_text(ts.rel_ref[c]) : "", (estimated && ts.weak[c] > 0.0) ? _tap_weak_text(ts.weak[c]) : ""]), "; "),
+      # the import carried no step, step_model is the middle position;
+      # every later rewrite of the notice keeps the text (_tap_assumed_notice)
+      step_assumed = ch.step_assumed,
+      notice = join(filter(!isempty, [ch.step_assumed ? _tap_notice_text(:step_assumed) : "", oor[c] ? _tap_out_of_range_text(ch, s_est[c]) : "", _tap_freeze_text(ts, c), _tap_regulator_notice(relative ? :none : ts.notes[c], vertex, guard), relative ? _tap_relative_text(ts.rel_ref[c]) : "", (estimated && ts.weak[c] > 0.0) ? _tap_weak_text(ts.weak[c]) : "", ts.frozen[c] in _TAP_RANK_REASONS ? String(voltage_hint) : "", String(extra_notice[c])]), "; "),
     ))
   end
   return rows
 end
 
+## The voltage hint of a transformer (snet branch `k`) whose regulator the
+## rank test kept out: measured minus
+## estimated |V| of the active Vm rows at its two terminals (final
+## residuals `r`, pu), the larger of the two. A wrong transferred step
+## shows there when a measurement sees that bus. Empty when no terminal
+## carries an active Vm row.
+function _tap_voltage_hint(net::Net, k::Int, activeMeas::Vector{Measurement}, r::AbstractVector{Float64})::String
+  br = net.branchVec[k]
+  ends = (Int(br.fromBus), Int(br.toBus))
+  best = 0
+  for (i, m) in enumerate(activeMeas)
+    (m.typ == VmMeas && m.busIdx !== nothing && Int(m.busIdx) in ends) || continue
+    (best == 0 || abs(r[i]) > abs(r[best])) && (best = i)
+  end
+  best == 0 && return ""
+  return string("voltage hint: measured minus estimated |V| at ", getCompName(net.nodeVec[Int(activeMeas[best].busIdx)].comp), " ", round(r[best]; sigdigits = 3), " pu")
+end
+
 ## the report row of a released transformer without a changer of the
 ## released role (regulator 0)
 function _tap_no_changer_row(br::Branch, ob::Int, mrid::AbstractString)::NamedTuple
-  return (branch = ob, regulator = 0, name = getCompName(br.comp), changer = "", mrid = String(mrid), changer_mrid = "", kind = :none, role = :none, side = :none, mode = br.tap_est_mode, alpha_deg = nothing, du = nothing, neutral_step = 0, s_est = 0.0, du_est = nothing, ratio_est = br.tap_ratio, angle_est_deg = br.phase_shift_deg, s_fixed = 0.0, step_model = 0.0, step_fixed = 0.0, deviation_steps = 0.0, out_of_range = false, fixed = false, frozen_reason = :no_changer, note = :none, notice = _tap_notice_text(:no_changer))
+  return (branch = ob, regulator = 0, name = getCompName(br.comp), changer = "", mrid = String(mrid), changer_mrid = "", kind = :none, role = :none, side = :none, mode = br.tap_est_mode, alpha_deg = nothing, du = nothing, neutral_step = 0, s_est = 0.0, du_est = nothing, ratio_est = br.tap_ratio, angle_est_deg = br.phase_shift_deg, s_fixed = 0.0, step_model = 0.0, step_fixed = 0.0, deviation_steps = 0.0, sigma_s = nothing, round_distance_sigma = nothing, step_from_target = nothing, out_of_range = false, fixed = false, reactance_source = :nominal, status = :not_estimated, reason = :no_changer, note = :none, step_assumed = false, notice = _tap_notice_text(:no_changer))
 end
 
 # the vertex share of a phase regulator at its estimate: |Re(f'/f)| /
@@ -1364,13 +2025,24 @@ function _tap_magnitude_share(ch::SETapChanger, s::Float64)::Float64
 end
 
 const _TAP_NOTICE_TEXTS = Dict{Symbol,String}(
-  :radial_no_voltage_pin => "frozen: bridge transformer without a voltage measurement on its cut-off side, the tap would absorb the downstream voltage",
-  :no_angle_anchor => "phase regulator frozen: no angle measurement (Va, Ia) or meshed path ties its far side to the reference",
-  :symmetric_start => "frozen: pure angle regulator at its symmetric start without an angle anchor, its step is not determinable",
-  :not_separable => "frozen: its effect on the branch ratio equals that of another regulator of the same transformer",
-  :not_observable => "frozen: the measurements do not see this regulator (Jacobian column zero within its finite-difference noise)",
+  # the import carried no step, the changer started at its middle position
+  # (SETapChanger.step_assumed)
+  :step_assumed => "step not transferred, middle position assumed",
+  :radial_no_voltage_pin => "not estimated (rank test): bridge transformer without a voltage measurement on its cut-off side, the tap would absorb the downstream voltage",
+  :no_angle_anchor => "not estimated (rank test): no angle measurement (Va, Ia) or meshed path ties its far side to the reference, and the ratio regulator of the same transformer covers its magnitude effect",
+  :symmetric_start => "not estimated (rank test): pure angle regulator without an angle anchor (no Va or Ia row, no meshed path), its step is not determinable",
+  :not_separable => "not estimated (rank test): its effect on the branch ratio equals that of another regulator of the same transformer",
+  :not_observable => "not estimated (rank test): the other columns of the Jacobian explain its column at the start point, no structural cause found",
+  :zero_column => "not estimated: the measurements do not see this regulator (Jacobian column zero within its finite-difference noise)",
+  :not_observable_at_estimate => "not estimated (rank test at the estimate): at the converged state with the fixed steps the other columns of the Jacobian explain its column, the estimate is withdrawn and the transferred step stays",
+  :mirror_step_fits => "not estimated: no angle anchor ties its far side, and its mirror step fits the measurements as well as the fixed step (J difference below 9), the estimate is withdrawn and the transferred step stays",
   :model_mismatch => "frozen: the branch ratio and angle do not lie on the curves of its tap changer data",
-  :not_converged_released => "frozen again: the estimate with the released taps did not converge, the regulator stays at its start position",
+  :disabled => "not estimated: tap estimation is switched off (state_estimation.tap_estimation.enabled = false), the transferred step stays",
+  :excluded => "not estimated: named in state_estimation.tap_estimation.exclude, the transferred step stays and is not calculated",
+  :machine_transformer => "not estimated: machine (generator step-up) transformer (state_estimation.tap_estimation.include_machine_transformers = false), its step is calculated by a converged run with update_net = true",
+  :q_not_measured_in_group => "not calculated: machine transformer whose machine node has no Q measurement on every bus, the transferred step stays",
+  :fallback_not_converged => "not estimated: the run with tap estimation did not converge, the result is the run without tap estimation, the transferred step stays",
+  :fallback_worse_fit => "not estimated: the fixed steps of the run with tap estimation fitted the measurements worse than the transferred steps (worse_fit), the result is the run without tap estimation, the transferred step stays",
   :no_changer => "not released: the transformer has no tap changer of the released kind",
   :relative_only => "parallel member: estimated only relative to the other member",
   :relative_to_frozen => "not fixed: estimated only relative to the frozen phase regulator of",
@@ -1382,6 +2054,60 @@ const _TAP_NOTICE_TEXTS = Dict{Symbol,String}(
 
 ## notice text of a freeze reason or note
 _tap_notice_text(key::Symbol)::String = get(_TAP_NOTICE_TEXTS, key, "")
+
+# `text` as the new notice of row `r`, after the step-assumed text when the
+# import carried no step for the changer of the row (field step_assumed)
+_tap_assumed_notice(r::NamedTuple, text::AbstractString)::String = get(r, :step_assumed, false) ? join(filter(!isempty, [_tap_notice_text(:step_assumed), String(text)]), "; ") : String(text)
+
+## The freeze text of changer `c` of `ts`, true for its kind: a column the noise test froze says that no
+## measurement sees it; `:symmetric_start` and `:no_angle_anchor` name what
+## the changer moves. A pure angle changer (symmetrical, linear, a table of
+## constant ratio) moves no magnitude anywhere on its band; an asymmetrical
+## changer and a table of varying ratio do, only not at the start step (a
+## turning point of |t|, a flat piece or a vertex of the table ratio).
+function _tap_freeze_text(ts::TapBranchState, c::Int)::String
+  r = ts.frozen[c]
+  r === :none && return ""
+  ch = ts.set.changers[c]
+  r === :not_observable && ts.cause[c] === :zero_column && return _tap_notice_text(:zero_column)
+  pure = !_tap_changes_magnitude(ch)
+  if r === :symmetric_start && !pure
+    what = ch.kind === :tabular ? "the table ratio is flat or turns at the start step" : string("|t| turns at the start step (alpha ", round(something(ch.alpha_deg, 0.0); digits = 2), " deg)")
+    return string("not estimated (rank test): ", what, " and no angle anchor (no Va or Ia row, no meshed path) ties its far side; the changer moves the magnitude away from this step, but from this start its step is not determinable")
+  elseif r === :no_angle_anchor && pure
+    return "not estimated (rank test): pure angle regulator, no angle measurement (Va, Ia) or meshed path ties its far side to the reference"
+  end
+  return _tap_notice_text(r)
+end
+
+# a step for the notices: whole steps as integers, others with two decimals
+function _tap_notice_step(x::Float64)::String
+  r = round(x; digits = 2)
+  return isinteger(r) ? string(Int(r)) : string(r)
+end
+
+## Notice of an estimate `s` (relative to neutral) outside the band of
+## changer `ch` (row flag out_of_range). For an
+## asymmetrical changer with alpha not 0 the text also names the mirror
+## step 2 s* - s across the turning point s* of |t|
+## (`_tap_asym_turning_point`): |t| is the same there, and a changer pinned
+## only by the magnitude of its ratio can end on either side. Steps are
+## model steps (neutral + s). No ';' in the text: the warning line of
+## runse! and run.log is built from the joined notice.
+function _tap_out_of_range_text(ch::SETapChanger, s::Float64)::String
+  smin, smax = _tap_band(ch)
+  txt = string("estimate at step ", _tap_notice_step(ch.neutral + s), " lies outside the band ", _tap_notice_step(ch.neutral + smin), " to ", _tap_notice_step(ch.neutral + smax))
+  if ch.kind === :asymmetrical && ch.du !== nothing && ch.du != 0.0 && abs(sind(ch.alpha_deg)) > 1e-9
+    sstar = _tap_asym_turning_point(ch)
+    txt = string(txt, ", |t| has the same value at the mirror step ", _tap_notice_step(ch.neutral + 2.0 * sstar - s), " across its turning point at step ", _tap_notice_step(ch.neutral + sstar))
+  end
+  return txt
+end
+
+## The warning line of a tap row whose estimate lies outside the band
+## (`t.out_of_range`): regulator name and its notice. runse! logs it once
+## per such row, the SE service writes it into run.log.
+_tap_out_of_range_line(t::NamedTuple)::String = string("tap regulator ", t.name, isempty(t.changer) ? "" : "/" * t.changer, " estimated outside its band: ", t.notice)
 
 ## notice text of note :relative_to_frozen with the names of the frozen
 ## phase regulators (`TapBranchState.rel_ref`)
@@ -1395,45 +2121,63 @@ function _tap_regulator_notice(keys::Symbol...)::String
 end
 
 ## text of the weak-column hint (no effect on the freeze; factor from
-## `_tap_column_freezes!`)
+## `_tap_weak_hints!`)
 _tap_weak_text(factor::Float64)::String = "weak column, factor $(round(factor; sigdigits = 3)) below the strongest"
 
 ## Write the changer positions `s_new` onto branch `br` (the write-back of
 ## update_taps, the diagnostics stamp, the island mirror's source): ratio and
-## shift from the set; with impedance mode :auto and per-step data (the
-## condition under which the run applied an impedance source, as in
+## shift from the set; with an impedance source of the transformer under
+## the mode `impedance` (`_tap_reactance_source` not `:nominal`, as in
 ## _build_tap_state_map) the impedance by the factor ratio
 ## F(s_new) / F(s_from) on the live values, r_base_pu/x_base_pu included,
 ## else r and x stay; a stored set gets the new steps. A typed set
 ## moves the model steps instead and resolves the winding; the resolver
 ## always rewrites r_pu and x_pu from the model, so without an applied
-## impedance source the values of the run are put back. With
+## impedance source the values of the run are put back, and under `off`
+## r of the run (the resolver's analytic factor is not taken). With
 ## `continuous = true` a typed set is written like a stored one (ratio,
 ## shift and impedance from the set at `s_new`, the model steps stay), so a
 ## position between two steps is not rounded: the diagnostics stamp of a
 ## regulator that stayed a state (note `:relative_to_frozen`).
 function _tap_apply_position!(br::Branch, set::SETapChangerSet, s_new::Vector{Float64}; s_from::Vector{Float64}, impedance::Symbol, continuous::Bool = false)
-  applied = impedance === :auto && any(_tap_changer_has_impedance, set.changers)
+  applied = _tap_reactance_source(set, impedance) !== :nominal
   if !continuous && set.origin === :typed && br.tap_winding !== nothing
     w = br.tap_winding
     c = 1
+    # a model step written off its assumed middle position is a step now
     if w.taps !== nothing && w.taps.tapStepPercent != 0.0
       w.taps.step = round(Int, set.changers[c].neutral + s_new[c])
+      s_new[c] == s_from[c] || (br.ratio_step_assumed = false)
       c += 1
     end
-    w.phase_taps !== nothing && c <= length(set.changers) && (w.phase_taps.step = round(Int, set.changers[c].neutral + s_new[c]))
+    if w.phase_taps !== nothing && c <= length(set.changers)
+      w.phase_taps.step = round(Int, set.changers[c].neutral + s_new[c])
+      s_new[c] == s_from[c] || (br.phase_step_assumed = false)
+    end
     r_run, x_run = br.r_pu, br.x_pu
     resolve_branch_taps!(br, w; tap_changer_model = br.tap_correction)
     applied || (br.r_pu = r_run; br.x_pu = x_run)
+    # under off the resolver's analytic factor on r is not taken (the
+    # estimation kept r), the x of the curve or table is
+    impedance === :off && (br.r_pu = r_run)
     return br
   end
   R, Phi = _tap_set_ratio_shift(set, s_new)
   br.tap_ratio = R
   br.phase_shift_deg = Phi
+  # the same for a set of the branch fields: its ratio changer is the
+  # ratio changer of the fields, every other one the phase changer
+  if set.origin === :fields
+    for c in eachindex(set.changers)
+      s_new[c] == s_from[c] && continue
+      set.changers[c].role === :ratio ? (br.ratio_step_assumed = false) : (br.phase_step_assumed = false)
+    end
+  end
   if applied
     tsi = br.tap_step_impedance
-    Ff = _tap_impedance_factors(set, s_from; s0 = s_from, tsi = tsi)
-    Fn = _tap_impedance_factors(set, s_new; s0 = s_from, tsi = tsi)
+    fs = _tap_set_under(set, impedance)
+    Ff = _tap_impedance_factors(fs, s_from; s0 = s_from, tsi = tsi)
+    Fn = _tap_impedance_factors(fs, s_new; s0 = s_from, tsi = tsi)
     br.r_pu *= Fn[1] / Ff[1]
     br.x_pu *= Fn[2] / Ff[2]
     br.r_base_pu = br.r_pu
@@ -1447,13 +2191,45 @@ function _tap_apply_position!(br::Branch, set::SETapChangerSet, s_new::Vector{Fl
   return br
 end
 
-# the same changer at another import position
-_tap_changer_at(ch::SETapChanger, step::Float64) = SETapChanger(ch.name, ch.mrid, ch.kind, ch.role, ch.side, ch.additive, ch.du, ch.alpha_deg, ch.dphi_deg, ch.step_abs, ch.neutral, ch.low, ch.high, step, ch.table, ch.outside_du, ch.x_curve, ch.x_curve_form, ch.impedance, ch.rx_correction)
+# the same changer at another import position; a step written back off the
+# assumed middle position is no longer an assumption
+_tap_changer_at(ch::SETapChanger, step::Float64) = SETapChanger(ch.name, ch.mrid, ch.kind, ch.role, ch.side, ch.additive, ch.du, ch.alpha_deg, ch.dphi_deg, ch.step_abs, ch.neutral, ch.low, ch.high, step, ch.table, ch.outside_du, ch.x_curve, ch.x_curve_form, ch.impedance, ch.rx_correction, ch.step_assumed && step == ch.step)
+
+## Write the end steps of an SE result onto the branches of `net` (the
+## diagnostics of `validate_measurements` and the bad-data rounds of the SE
+## service evaluate the residuals there). Per regulator: an estimated one at
+## its fixed step, a frozen one at its start position (s_fixed of its row),
+## the other changers of the set at their start, one that stayed a state
+## (note `:relative_to_frozen`) at its continuous value. A machine
+## transformer row (status `:calculated`) stays at its start position: its
+## s_fixed is the step calculated after the run, which the run never solved
+## with (`_tap_machine_rows`). A result without a fixed tap run (no tap
+## rows, not fixed, the fallback) leaves the model.
+function _tap_stamp_end_steps!(net::Net, result, impedance::Symbol)
+  (result.tapEstimates !== nothing && result.tapFixation !== nothing && result.tapFixation.fixed) || return net
+  for b in unique(tr.branch for tr in result.tapEstimates)
+    (1 <= b <= length(net.branchVec)) || continue
+    br = net.branchVec[b]
+    set = _effective_tap_changers(br)
+    set === nothing && continue
+    sstart = _tap_s_from_branch(set, br)
+    sstart === nothing && continue
+    s_w = copy(sstart)
+    cont = false
+    for tr in result.tapEstimates
+      (tr.branch == b && 1 <= tr.regulator <= length(s_w) && tr.status !== :calculated) || continue
+      s_w[tr.regulator] = tr.s_fixed
+      cont |= tr.note === :relative_to_frozen
+    end
+    s_w == sstart || _tap_apply_position!(br, set, s_w; s_from = sstart, impedance = impedance, continuous = cont)
+  end
+  return net
+end
 
 ## Copy the tap position (and with it the impedance a write-back changed)
 ## from the island copy `src` onto the parent branch `dst`: ratio and
 ## shift, r/x with their equipment base, the shunt arms, the stored set,
-## and for a typed winding the model steps with the resolved neutral point.
+## the step-assumed marks, and for a typed winding the model steps with the resolved neutral point.
 function _copy_tap_position!(dst::Branch, src::Branch)
   dst.tap_ratio = src.tap_ratio
   dst.phase_shift_deg = src.phase_shift_deg
@@ -1463,6 +2239,9 @@ function _copy_tap_position!(dst::Branch, src::Branch)
   dst.x_base_pu = src.x_base_pu
   set_branch_shunt!(dst; g_from_pu = src.g_from_pu, b_from_pu = src.b_from_pu, g_to_pu = src.g_to_pu, b_to_pu = src.b_to_pu)
   dst.se_tap_changers = src.se_tap_changers
+  # the marks of a step the import did not carry travel with the step
+  dst.ratio_step_assumed = src.ratio_step_assumed
+  dst.phase_step_assumed = src.phase_step_assumed
   if src.taps_derived && src.tap_winding !== nothing && dst.tap_winding !== nothing
     src.tap_winding.taps === nothing || dst.tap_winding.taps === nothing || (dst.tap_winding.taps.step = src.tap_winding.taps.step)
     src.tap_winding.phase_taps === nothing || dst.tap_winding.phase_taps === nothing || (dst.tap_winding.phase_taps.step = src.tap_winding.phase_taps.step)
@@ -1470,6 +2249,29 @@ function _copy_tap_position!(dst::Branch, src::Branch)
     dst.angle = src.angle
   end
   return dst
+end
+
+## The model data an SE run may write back (update_taps, update_shunts),
+## taken before run 1 so the fallback run 2 starts from the same model: an
+## island that converged in run 1 writes its steps and shunts into the
+## parent net even when another island fails and the whole net falls back.
+## Empty when the run writes nothing back.
+function _se_writeback_snapshot(net::Net, cfg::StateEstimationConfig)
+  taps = cfg.update_taps ? [deepcopy(br) for br in net.branchVec] : Branch[]
+  shunts = cfg.update_shunts ? [(sh.y_pu_shunt, sh.B_shunt) for sh in net.shuntVec] : Tuple{ComplexF64,Float64}[]
+  return (taps = taps, shunts = shunts)
+end
+
+## Put the snapshot of `_se_writeback_snapshot` back onto `net`.
+function _se_writeback_restore!(net::Net, snap)
+  for (k, br) in enumerate(snap.taps)
+    _copy_tap_position!(net.branchVec[k], br)
+  end
+  for (k, (y, b)) in enumerate(snap.shunts)
+    net.shuntVec[k].y_pu_shunt = y
+    net.shuntVec[k].B_shunt = b
+  end
+  return net
 end
 
 ## 95 % quantile of the chi-square distribution with k degrees of freedom
@@ -1518,7 +2320,11 @@ the release. Neither call writes the stored direction `tap_est_alpha_deg`.
 
 A branch that does not lie on the curves of its changer data is no error
 here: the release is recorded and the estimator freezes the regulators with
-`:model_mismatch` and a notice.
+`:model_mismatch` and a notice. The release does not override the
+configuration: a transformer named in `state_estimation.tap_estimation.exclude`
+stays out (`:excluded`), and so does a machine transformer unless
+`include_machine_transformers` is set (`:machine_transformer`, calculated
+after the run).
 
 Returns `(branch, mode, alpha_deg, s0)`: `alpha_deg` of the first selected
 asymmetrical changer or `nothing`, `s0` the start positions (steps relative

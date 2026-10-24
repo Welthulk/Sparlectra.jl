@@ -791,6 +791,24 @@ function test_configuration_every_key_arrives()
     @test load_with("state_estimation.zero_injection", false).state_estimation.zero_injection === :off
     @test load_with("state_estimation.zero_injection", "on").state_estimation.zero_injection === :on
     @test_throws "state_estimation.zero_injection" load_with("state_estimation.zero_injection", "maybe")
+    # the sigma of a zero-injection row: default ZERO_INJECTION_SIGMA, a
+    # value that is not finite and positive is refused with the key named,
+    # in a file and as a Web UI override
+    zs_key = "state_estimation.zero_injection_sigma_mva"
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.zero_injection_sigma_mva == Sparlectra.ZERO_INJECTION_SIGMA
+    for bad in (0.0, -1.0e-3, Inf)
+      @test_throws zs_key load_with(zs_key, bad)
+      @test_throws zs_key Sparlectra.validate_gui_config_overrides(Dict{String,Any}(zs_key => bad))
+    end
+    # the SE flat start behind phase shifters: default false, a file value
+    # and a Web UI override arrive, a scalar where the block belongs and a
+    # non-Bool override are refused with the key named
+    rot_key = "state_estimation.start_mode.rotate_behind_pst"
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.start_mode.rotate_behind_pst === false
+    @test load_with(rot_key, true).state_estimation.start_mode.rotate_behind_pst === true
+    @test_throws "state_estimation.start_mode" Sparlectra.StateEstimationConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("start_mode" => true)))
+    @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}(rot_key => true))["state_estimation"]["start_mode"]["rotate_behind_pst"] === true
+    @test_throws rot_key Sparlectra.validate_gui_config_overrides(Dict{String,Any}(rot_key => "maybe"))
     # the tap impedance rule has two values (auto and off, there is no on):
     # a bare YAML off arrives as off, on (bare or quoted) is refused with the
     # key named, a scalar where the block belongs names the block
@@ -975,6 +993,8 @@ function test_configuration_form_defaults()
     @test SparlectraApp._webui_option_default("se_max_eliminations") == se.max_eliminations
     @test SparlectraApp._webui_option_default("se_k_suppress") == se.k_suppress
     @test SparlectraApp._webui_option_default("se_k_eliminate") == se.k_eliminate
+    @test SparlectraApp._webui_option_default("se_zero_injection_sigma_mva") == se.zero_injection_sigma_mva
+    @test SparlectraApp._webui_option_default("se_rotate_behind_pst") == se.start_mode.rotate_behind_pst
     @test SparlectraApp._webui_option_default("se_max_iter") == se.max_iter
     # the system frequency select starts at the configuration default
     @test SparlectraApp._webui_option_default("model_nominal_frequency_hz") == Sparlectra.ModelConfig().nominal_frequency_hz == 50.0
@@ -1281,6 +1301,12 @@ function test_configuration_value_domain_validation()
     write(angle_limit_bad, "power_flow:\n  start_mode:\n    dc_angle_limit_deg: 0\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(angle_limit_bad; reload = true)
 
+    # the substitute of the SE range check is never trusted more than the
+    # meter it replaces: a factor below 1 is refused with the key named
+    factor_bad = test_scratch_path(".yaml")
+    write(factor_bad, "state_estimation:\n  bad_data:\n    substitute_sigma_factor: 0.5\n")
+    @test_throws "state_estimation.bad_data.substitute_sigma_factor" Sparlectra.load_sparlectra_config(factor_bad; reload = true)
+
     bool_ok_true = test_scratch_path(".yaml")
     write(bool_ok_true, "power_flow:\n  autodamp: true\n")
     @test Sparlectra.load_sparlectra_config(bool_ok_true; reload = true).powerflow.autodamp === true
@@ -1477,6 +1503,8 @@ function test_configuration_webui_keys_both_directions()
       "cgmes_import.shunt_control" => "CGMES import switch for the bank regulators of a delivery; set via configuration.yaml or the case sidecar",
       "power_flow.plausibility.vmin_warn" => "threshold of the plausibility warning after a converged run; set via configuration.yaml or the case sidecar",
       "state_estimation.sigma_by_voltage_level" => "a table, not a scalar field: the sigma table of the State Estimation section posts it (se_sigma_lvl_* fields), the run takes it as an override and Save settings writes it into the case configuration",
+      "state_estimation.tap_estimation.exclude" => "a table, not a scalar field: the tap estimation table of the Case page posts it (se_tap_trafo_* fields) and Save case options writes the unchecked transformers into the case configuration",
+      "state_estimation.tap_estimation.include_machine_transformers" => "set by the same Case page table: a checked machine transformer (se_tap_trafo_* fields) makes Save case options write it into the case configuration",
     )
     for key in sort(collect(Sparlectra.GUI_EDITABLE_CONFIG_KEYS))
       key in have && continue

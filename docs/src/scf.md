@@ -258,8 +258,10 @@ keeps every attribute PGM requires.
 | `extra.<machine>.dynamics` | absent | no dynamic data (`ProSumer.dynamics = nothing`) |
 | `extra.<branch>.meta.sn_mva` | absent | no rating recorded |
 | `components.tap_changer[].tap_est_mode` | `"none"` | the tap is not released for estimation |
+| `components.tap_changer[].controllers[].pos` | absent | the step was not transferred: the changer sits at its middle position, the neutral position 0, and the import names it in an info line |
+| `tap_changer_models.<id>.ratio.step`, `.phase.step`, `.estimation.changers[].step` | absent | the changer sits at its middle position, `neutral_step` (`neutral` in `estimation`), named in an info line |
 | `components.tap_changer[].controllers[].grid` | `"fraction"` | ratio positions on the fraction grid `ratio_base / (1 + pos * step)`; `"linear"` for a CGMES changer |
-| `components.tap_changer[].controllers[].declared` | `true` | the changer is nameplate data; a declared phase changer joins the mass release of the tap estimation, a declared ratio changer makes the Web UI check "estimate taps" for the case. The writer puts `false` on a controller no nameplate row declared (the default ratio or phase grid of a transformer), so the re-read keeps that state |
+| `components.tap_changer[].controllers[].declared` | `true` | the changer is nameplate data; a declared phase changer joins the mass release of the tap estimation. The writer puts `false` on a controller no nameplate row declared (the default ratio or phase grid of a transformer), so the re-read keeps that state |
 | `components.transformer3w[].status` | `1` | in service |
 | `roles.slack.normalize` | `true` | participation factors are normalized |
 
@@ -609,9 +611,8 @@ the table does; every other number of the file is read as a 64-bit float.
 A row without `value` or `sigma` takes it from its sensor; a sensor no row
 names is read after the rows with the id `Vm_<node id>` (`Pinj_<node id>`,
 `Imag_<branch id>`, ... with the ids of the file). A bus link flow has no row:
-the link is no branch of the model, the export names such rows as
-`not_modelled` in a warning (the measurement table carries them on the
-terminals of the link).
+the file has no sensor for a bus link, and the export names such rows in a
+warning (the measurement table carries them on the terminals of the link).
 
 Two places where the block differs from the table: it is keyed by the ids
 of the file instead of names or mRIDs, and the shunt bay is keyed by its

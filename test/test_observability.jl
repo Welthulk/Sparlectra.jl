@@ -576,6 +576,14 @@ function test_observability_takahashi_diagnostics(fx)::Bool
     end
     for demo in ("sp_case60", "sp_case188")
       netd = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", demo * ".scf.json"))
+      # a P and a Q row on the coupler of the case (0.60.0): link rows in
+      # the colored assembly, bit-identical and inside the pattern as well
+      couplers = [k for (k, l) in enumerate(netd.linkVec) if l.status == 1]
+      @test !isempty(couplers)
+      for k in couplers
+        addPflowMeasurement!(netd; value = 0.0, sigma = 1.0, linkNr = k)
+        addQflowMeasurement!(netd; value = 0.0, sigma = 1.0, linkNr = k)
+      end
       H1, H2, col = fd_probe(netd)
       @test (demo, H2.colptr == H1.colptr, H2.rowval == H1.rowval, H2.nzval == H1.nzval) == (demo, true, true, true)
       ncolors = length(col.groups)

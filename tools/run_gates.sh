@@ -31,14 +31,70 @@
 #          extended_b), about a third less wall time. `set` is the full gate
 #          set of one commit under one lock: three strands at once (set_a;
 #          extended_b; set_c, then the docs build and the workshops), then
-#          the threads profile alone. Plain sh.
-# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs|set [--threads=N] [--strands=2] [--allow-dirty]
+#          the threads profile alone. After every test profile (and every
+#          part or strand) the gate prints "skipped/broken: <n>", the Broken
+#          count of its Test Summary (a @test_skip counts there, for example
+#          the DTF tests when data/DTF/*.DAT is missing in a worktree), and
+#          at the end one line with the profiles that had any. --release
+#          makes such a count fail the gate: exit 4 after all profiles ran,
+#          when nothing else failed (a failing profile keeps its own code).
+#          Plain sh.
+# usage:   sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs|set [--threads=N] [--strands=2] [--release] [--allow-dirty]
 #          sh tools/run_gates.sh map [--since <ref>] [<path>...]
 #          (SPARLECTRA_LARGE_CASES_DIR and other env pass through)
 #          `map` runs nothing: it prints the profiles a change to the given
 #          paths (or the files changed since <ref> and in the working tree)
 #          has to run, in run order. `legacy` is run before a release and on
 #          a change to a protected file; CI does not run it.
+
+# --- skipped and broken tests ------------------------------------------------
+# A @test_skip counts as Broken in the Julia Test Summary. A gate set in a
+# worktree without the untracked DTF files printed green with four of them
+# once, so every test profile reports its count on a line of its own.
+# broken_count prints the Broken count of the last profile summary in the log
+# $1: the field under "Broken" in the "Test Summary:" header directly above
+# the "Sparlectra.jl ... |" line. Julia shows a column only when its total is
+# not zero, so a summary without that column is 0. Nothing is printed when the
+# log has no profile summary (the process crashed before it).
+broken_count() {
+  awk '
+    prev ~ /^Test Summary:/ && /^Sparlectra\.jl .* [|] / {
+      nh = split(substr(prev, index(prev, "|") + 1), head, " ")
+      split(substr($0, index($0, "|") + 1), vals, " ")
+      count = 0
+      for (i = 1; i <= nh; i++) if (head[i] == "Broken") count = vals[i]
+      found = 1
+    }
+    { prev = $0 }
+    END { if (found) print count }
+  ' "$1"
+}
+# report_skips <profile> <log>: the line "skipped/broken: <n>" of one profile;
+# a profile with a count above zero is added to skip_profiles for the closing
+# line and for --release
+skip_profiles=
+report_skips() {
+  rs_n=$(broken_count "$2")
+  if [ -z "$rs_n" ]
+  then
+    echo "run_gates: $1 skipped/broken: unknown (no test summary in its output)"
+    return
+  fi
+  echo "run_gates: $1 skipped/broken: $rs_n"
+  [ "$rs_n" -gt 0 ] && skip_profiles="${skip_profiles:+$skip_profiles }$1($rs_n)"
+  return 0
+}
+# final_status <status> <release> <profiles with skips>: the exit status of
+# the gate. A failing run keeps its own code; with --release a green run with
+# skipped or broken tests ends with 4
+final_status() {
+  if [ "$1" -eq 0 ] && [ "$2" = "--release" ] && [ -n "$3" ]
+  then
+    echo 4
+  else
+    echo "$1"
+  fi
+}
 
 gate=$1
 [ $# -gt 0 ] && shift
@@ -124,16 +180,18 @@ fi
 allow_dirty=
 julia_threads=
 strands=1
+release=
 for arg in "$@"
 do
   case "$arg" in
     --allow-dirty) allow_dirty=--allow-dirty ;;
+    --release) release=--release ;;
     --threads=[1-9]*) julia_threads=$arg ;;
     --strands=1) strands=1 ;;
     --strands=2) strands=2 ;;
     *)
       echo "run_gates: unknown option $arg" >&2
-      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--strands=2] [--allow-dirty]" >&2
+      echo "usage: sh tools/run_gates.sh $gate [--threads=N] [--strands=2] [--release] [--allow-dirty]" >&2
       exit 2
       ;;
   esac
@@ -149,7 +207,7 @@ fi
 case "$gate" in
   fast | pf | se | config | webui | extd | cgmes | formats | legacy | install | workshops | extended | all | threads | docs | set) ;;
   *)
-    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs|set [--threads=N] [--strands=2] [--allow-dirty]" >&2
+    echo "usage: sh tools/run_gates.sh fast|pf|se|config|webui|extd|cgmes|formats|legacy|install|workshops|extended|all|threads|docs|set [--threads=N] [--strands=2] [--release] [--allow-dirty]" >&2
     exit 2
     ;;
 esac
@@ -494,6 +552,10 @@ then
     [ "$status" -eq 0 ] && status=$rc
   done
   echo "run_gates: set wall ${wall} s (strands ${wall_strands} s, threads $(( wall - wall_strands )) s)"
+  for part in set_a extended_b set_c workshops threads
+  do
+    report_skips "$part" "$lockdir/part_$part.log"
+  done
   # the test parts added up; nothing when a part ended without a summary
   for part in set_a extended_b set_c workshops threads
   do
@@ -531,12 +593,26 @@ else
     echo "run_gates: strand extended_a rc=$status_a, extended_b rc=$status_b, wall ${wall} s"
     status=$status_a
     [ "$status" -eq 0 ] && status=$status_b
+    for s in a b
+    do
+      report_skips "extended_$s" "$lockdir/strand_$s.log"
+    done
     # the summary lines of both strands, added up; nothing when a strand
     # ended without one (a crash shows in its output above)
     grep -h "^Sparlectra.jl extended_[ab] profile |" "$lockdir/strand_a.log" "$lockdir/strand_b.log" | awk -v wall="$wall" '{ for (i = 1; i <= NF; i++) if ($i == "|") { p += $(i + 1); t += $(NF - 1); n++ } } END { if (n == 2) printf "Sparlectra.jl extended profile (2 strands) | %d %d %ds\n", p, t, wall }'
   else
-    SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"
-    status=$?
+    # stdout also goes into the lock directory for the skip count; the
+    # status of julia, not of tee, through a file (plain sh has no pipefail)
+    { SPARLECTRA_TEST_PROFILE=$gate julia --startup-file=no $julia_threads --project="$run_root" "$run_root/test/runtests.jl"; echo $? > "$lockdir/rc_$gate"; } | tee "$lockdir/part_$gate.log"
+    status=$(cat "$lockdir/rc_$gate" 2>/dev/null || echo 1)
+    report_skips "$gate" "$lockdir/part_$gate.log"
   fi
+fi
+if [ "$gate" != "docs" ]
+then
+  echo "run_gates: profiles with skipped/broken tests: ${skip_profiles:-none}"
+  run_status=$status
+  status=$(final_status "$run_status" "$release" "$skip_profiles")
+  [ "$status" != "$run_status" ] && echo "run_gates: --release: skipped or broken tests in ${skip_profiles}; exit $status" >&2
 fi
 exit $status

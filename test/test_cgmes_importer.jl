@@ -929,6 +929,26 @@ function run_cgmes_importer_tests()
       @test cmp.n == 2
       @test cmp.max_dvm < 1e-8
       @test cmp.max_dva < 1e-6
+      # no SvTapStep and no SSH step: the changer sits at
+      # its middle position, the neutral step (moved to 2 here), or without
+      # a neutral step the band middle 3 of 1..5; the ratio is the table
+      # point of that step, the set of the tap estimation marks it, and one
+      # notice names it
+      for (neutral, step) in ((2, 2), (nothing, 3))
+        nd = mktempdir()
+        for f in readdir(dir)
+          txt = read(joinpath(dir, f), String)
+          nstep = neutral === nothing ? "" : "<cim:TapChanger.neutralStep>$(neutral)</cim:TapChanger.neutralStep>"
+          write(joinpath(nd, f), replace(txt, r"<cim:SvTapStep .*?</cim:SvTapStep>" => "", "<cim:TapChanger.step>5</cim:TapChanger.step>" => "", "<cim:TapChanger.neutralStep>3</cim:TapChanger.neutralStep>" => nstep))
+        end
+        nr = importCGMES(path = nd, name = "synth_rtct_nostep")
+        nbr = nr.net.branchVec[last(nr.element_by_mrid["_t2w"])]
+        @test nbr.ratio ≈ _RTC_TABLE_RATIOS[step] atol = 1e-12
+        nch = only(nbr.se_tap_changers.changers)
+        @test (nch.step, nch.step_assumed) == (Float64(step), true)
+        @test count(==("notice: tap changer T2W/T2W_OLTC: step not transferred, middle position $(step) assumed"), nr.messages) == 1
+      end
+      @test !only(br.se_tap_changers.changers).step_assumed && !any(m -> occursin("step not transferred", m), res.messages)
       # tap_control: start ratio, range and step come from the table ratios
       ctl = importCGMES(path = dir, name = "synth_rtct_ctl", tap_control = true)
       cbr = ctl.net.branchVec[last(ctl.element_by_mrid["_t2w"])]
@@ -2539,7 +2559,7 @@ function run_cgmes_importer_tests()
       # the MicroGrid and the MiniGrid test configurations): the run pairs the
       # one that resolves the case. By name alone the MicroGrid BD sorts
       # first and the MiniGrid import failed with unresolved topology
-      # references (testbook 0.60.0, step 5).
+      # references.
       local ext = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "extracted")
       local mini_case = joinpath(ext, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_BaseCase_Complete_v3")
       local mini_bd = joinpath(ext, "MiniGrid", "NodeBreaker", "CGMES_v2.4.15_MiniGridTestConfiguration_Boundary_v3")
