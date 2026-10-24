@@ -63,6 +63,7 @@ function warmup()
       @printf("  %.1f   %7.3f   %-5s   %-5s   %-5s  %.3f\n", w_row.lambda, w_row.dmin, w_row.level, w_row.apslf, w_row.nr, w_row.vmin)
     end
   end
-  println("warm: both solvers, series options, loadability sweep, hybrid start, case import ", round(t_paths; digits = 2), " s (first calls compile); everything warm")
+  println("warm-up wall time, first calls include compilation:")
+  println("  all paths [s]:                    ", round(t_paths; digits = 2), " (both solvers, series options, loadability sweep, hybrid start, case import)")
   return nothing
 end

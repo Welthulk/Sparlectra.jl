@@ -56,7 +56,9 @@ the delivery, resolved to the bus, branch end or bus group of `result.net`.
   map, de-energized nodes) resolves to `:not_modelled` with the reason.
 - A node resolves to its bus, a ConnectivityNode through its
   TopologicalNode, a BusbarSection through its terminal. A node that is
-  not energized resolves to bus 0.
+  not energized resolves to bus 0. A bus that only closed switches join to
+  the network (no branch of its own, typed `Isolated` by the import) is
+  energized: the solver fuses it with its switch group.
 - A bus or branch end without any mRID (the star point of a three-winding
   transformer, the legs ending there, auxiliary buses of the import) takes
   its name key from `nameMeasurementKeys`, in canonical form; a name never
@@ -72,7 +74,7 @@ function cgmesMeasurementKeys(result::CGMESImportResult)::Sparlectra.Measurement
   store = result.store
   topo = result.topo
   key = Sparlectra._measurement_key
-  iso = Set(net.isoNodes)
+  iso = Sparlectra._unfed_isolated_buses(net)
   pos = Dict(br.branchIdx => k for (k, br) in enumerate(net.branchVec))
   bus_of_tn(tn) = (tn === nothing || !haskey(topo.bus_name, tn)) ? 0 : get(net.busDict, topo.bus_name[tn], 0)
   energized(b) = b > 0 && !(b in iso)
@@ -240,7 +242,7 @@ function generateMeasurementTableFromSV(result::CGMESImportResult; timestamp::Ab
   store = result.store
   topo = result.topo
   key = Sparlectra._measurement_key
-  iso = Set(net.isoNodes)
+  iso = Sparlectra._unfed_isolated_buses(net)
   pos = Dict(br.branchIdx => k for (k, br) in enumerate(net.branchVec))
 
   # the SV voltage state per bus; a bus without SvVoltage keeps the start

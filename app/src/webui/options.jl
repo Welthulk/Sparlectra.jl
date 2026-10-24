@@ -252,6 +252,13 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("state_estimation.zero_injection", "gen_passive_as_zi", Bool, :checkbox, true, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "gen_seed", Int, :number, 42, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "gen_critical_count", Int, :number, 0, (), :basic, :case, true),
+  # display resolution of the generated values (U kV, P MW, Q Mvar, I A,
+  # angles deg); 0.0 is no rounding, the set stays as without the option
+  WebUIOptionSpec(nothing, "gen_resolution_u_kv", Float64, :number, 0.0, (), :basic, :case, true),
+  WebUIOptionSpec(nothing, "gen_resolution_p_mw", Float64, :number, 0.0, (), :basic, :case, true),
+  WebUIOptionSpec(nothing, "gen_resolution_q_mvar", Float64, :number, 0.0, (), :basic, :case, true),
+  WebUIOptionSpec(nothing, "gen_resolution_i_a", Float64, :number, 0.0, (), :basic, :case, true),
+  WebUIOptionSpec(nothing, "gen_resolution_angle_deg", Float64, :number, 0.0, (), :basic, :case, true),
   WebUIOptionSpec(nothing, "performance_timing", String, :select, "compact", _WEBUI_PERFORMANCE_TIMING_VALUES, :basic, :case, true),
   WebUIOptionSpec(nothing, "detailed_result_csv", Bool, :checkbox, true, (), :basic, :case, true),
   # the ONE CSV setting (issue #386): a machine-scope configuration key like

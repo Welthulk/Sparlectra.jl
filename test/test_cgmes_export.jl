@@ -357,6 +357,19 @@ function run_cgmes_export_tests()
     @test erg == 0
     @test its <= 2
     _compare_solved(original, net2; atol = 1e-8)
+    # a ratio step that was not transferred: CGMES has no mark for it, the
+    # SSH step is the assumed middle position and one warning names the
+    # transformer
+    tidx = only(i for (i, br) in enumerate(exported.branchVec) if occursin("_2WT_", br.comp.cName))
+    exported.branchVec[tidx].ratio_step_assumed = true
+    assumed_note = "transformer $(exported.trafos[1].comp.cName): ratio step not transferred, the export writes the assumed middle position"
+    notes2 = String[]
+    files2 = writeCGMESFiles(exported; path = mktempdir(), created = _EXPORT_STAMP, notices = notes2)
+    @test notes2 == [assumed_note]
+    @test occursin("<cim:TapChanger.step>2</cim:TapChanger.step>", read(only(f for f in files2 if endswith(f, "_SSH.xml")), String))
+    # read back, the written step counts as transferred
+    @test !any(m -> occursin("step not transferred", m), importCGMES(path = dirname(files2[1]), name = "rt_assumed").messages)
+    @test_logs (:warn, "CGMES export: " * assumed_note) match_mode = :any writeCGMESFiles(exported; path = mktempdir(), created = _EXPORT_STAMP)
   end)() end
 
   @testset "SSH and SV profiles carry the operating point" begin (function ()

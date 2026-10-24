@@ -244,20 +244,28 @@ function _se_reported_iterations(res)::Int
   return max(base, Int(get(tf, :iterations_estimation, 0)), Int(get(tf, :iterations_fixation, 0)))
 end
 
-## Columns of se_tap_estimates.csv, one row per tap regulator (since
-## 0.60.0): which changer, its data (kind, side, alpha, du), the continuous
-## estimate (step s relative to neutral, Delta U = s du, branch ratio and
-## angle at the estimate), the model step against the fixed step and the
-## deviation between them in steps, the standard deviation of the step from
-## the covariance (`sigma_s`) with the distance of the estimate from its
+## Columns of se_tap_estimates.csv, one row per tap regulator: the
+## identification (branch, regulator index, transformer name, changer, both
+## mRIDs), then the steps on the changer's own step numbers: the
+## transferred step of the input (`step_transferred`), the step the
+## estimate takes after rounding (`step_estimated`, the transferred step
+## where the row was not estimated or was out of range) and the continuous
+## estimate before rounding (`step_estimated_raw`, neutral step plus s).
+## Then the changer data (kind, side, alpha, du), Delta U = s du, branch
+## ratio and angle at the estimate, the deviation estimated minus
+## transferred in steps, the standard deviation of the step from the
+## covariance (`sigma_s`) with the distance of the estimate from its
 ## nearest step in units of it (`round_distance_sigma`, a hint), the step
 ## from the control target of a regulator kept out automatically
-## (`step_from_target`, not applied), the source of the transformer
-## impedance (`table`, `analytic`, `nominal`), and the status (`estimated`,
-## `not_estimated`, `calculated`) with its reason and note (for example
-## `p_from_schedule` on a calculated machine transformer). The metadata rows
-## of the result page carry the same keys plus `role` and `notice`.
-const _SE_TAP_CSV_COLUMNS = ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "kind", "side", "alpha_deg", "du", "s_est", "du_est", "ratio_est", "angle_est_deg", "step_model", "step_fixed", "deviation_steps", "sigma_s", "round_distance_sigma", "step_from_target", "out_of_range", "fixed", "reactance_source", "status", "reason", "note"]
+## (`step_from_target`, not applied), whether the step was fixed, the
+## source of the transformer impedance (`table`, `analytic`, `nominal`),
+## the band flag `out_of_range` (estimate more than half a step outside the
+## band; with status `estimated` it was fixed to the band end step), the
+## status (`estimated`, `out_of_range`, `not_estimated`, `calculated`),
+## reason, note (for example `p_from_schedule` on a calculated machine transformer)
+## and the notice text. A state is never written into a step column. The
+## metadata rows of the result page carry the same keys plus `role`.
+const _SE_TAP_CSV_COLUMNS = ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "step_transferred", "step_estimated", "step_estimated_raw", "kind", "side", "alpha_deg", "du", "du_est", "ratio_est", "angle_est_deg", "deviation_steps", "sigma_s", "round_distance_sigma", "step_from_target", "fixed", "reactance_source", "out_of_range", "status", "reason", "note", "notice"]
 
 ## a step value as an Int when it is a whole step (start positions carry
 ## round-off from the branch fields), else as it is
@@ -272,17 +280,29 @@ end
 ## the signed deviation of a regulator row for the run log
 _se_tap_deviation_text(d::Real)::String = d > 0 ? string("+", _se_tap_step_text(d)) : _se_tap_step_text(d)
 
+## the run-log mark of a regulator row whose estimate lies outside the
+## band: status out_of_range keeps the transferred step, a fixed row took
+## the band end step, any other row (withdrawn later, not fixed) only the mark
+function _se_tap_out_of_range_text(t)::String
+  t.out_of_range || return ""
+  t.status === :out_of_range && return " (OUT OF RANGE, transferred step kept)"
+  return t.fixed ? " (OUT OF RANGE, fixed to the band end step)" : " (OUT OF RANGE)"
+end
+
 ## one tap regulator row of SEResult.tapEstimates as the record of the
-## outputs: the CSV columns plus role and notice. Symbols become strings,
-## the values that do not exist for the changer (alpha of a ratio changer,
-## du of a linear changer or a table) stay `nothing`.
+## outputs: the CSV columns plus role. The library fields step_model,
+## step_fixed and s_est (relative to neutral) become step_transferred,
+## step_estimated and step_estimated_raw (absolute, neutral_step + s_est).
+## Symbols become strings, the values that do not exist for the changer
+## (alpha of a ratio changer, du of a linear changer or a table) stay
+## `nothing`.
 function _se_tap_row_record(t)::Dict{String,Any}
   return Dict{String,Any}(
     "branch" => t.branch, "regulator" => t.regulator, "name" => t.name, "changer" => t.changer,
     "mrid" => t.mrid, "changer_mrid" => t.changer_mrid, "kind" => String(t.kind), "side" => String(t.side),
-    "alpha_deg" => t.alpha_deg, "du" => t.du, "s_est" => t.s_est, "du_est" => t.du_est,
-    "ratio_est" => t.ratio_est, "angle_est_deg" => t.angle_est_deg,
-    "step_model" => _se_tap_step(t.step_model), "step_fixed" => _se_tap_step(t.step_fixed), "deviation_steps" => _se_tap_step(t.deviation_steps),
+    "step_transferred" => _se_tap_step(t.step_model), "step_estimated" => _se_tap_step(t.step_fixed), "step_estimated_raw" => Float64(t.neutral_step + t.s_est),
+    "alpha_deg" => t.alpha_deg, "du" => t.du, "du_est" => t.du_est,
+    "ratio_est" => t.ratio_est, "angle_est_deg" => t.angle_est_deg, "deviation_steps" => _se_tap_step(t.deviation_steps),
     "sigma_s" => t.sigma_s, "round_distance_sigma" => t.round_distance_sigma, "step_from_target" => t.step_from_target === nothing ? nothing : _se_tap_step(t.step_from_target),
     "out_of_range" => t.out_of_range, "fixed" => t.fixed, "reactance_source" => String(t.reactance_source), "status" => String(t.status), "reason" => String(t.reason), "note" => String(t.note),
     "role" => String(t.role), "notice" => t.notice,
@@ -788,6 +808,9 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
   # the converged pre-solve of the round, the reference of the acceptance
   # rule below
   staged_pre = nothing
+  # the start the staged pre-solve of the last round took (SEResult.start,
+  # :none without a staged start)
+  staged_start_from = :none
   tap_fallback_used = false
   tap_run1 = (:none, 0)
   # every row the run removed, with the trace row of the pass that removed it
@@ -846,42 +869,47 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
       # iterations and reached the same J.
       staged = false
       staged_pre = nothing
+      # the staged pre-solve that did not converge (also not from the case
+      # voltages of the start ladder): no released run is started on it
+      staged_failed = nothing
+      se_phase("state_estimation")
       if tap_staged_start
         _freeze_all_tap_estimation!(net)
         v_start = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
         pre = with_sparlectra_config(() -> runse!(net), run_cfg)
         _restore_tap_release!(net, tap_snap)
+        # the start ladder of runse! names the start the pre-solve took
+        staged_start_from = pre.start
         if pre.converged
           staged = true
           staged_pre = pre
           run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; flatstart = false))
         else
           # the pre-solve wrote its diverged iterate into the net; the
-          # released run then starts from the state it would have had
-          # without the staging
+          # fallback below starts from the start state of the round
           for (i, nd) in enumerate(net.nodeVec)
             nd._vm_pu, nd._va_deg = v_start[i]
           end
+          staged_failed = pre
         end
         open(logfile, "a") do io
+          pre.start === :stored_after_flat && println(io, "tap estimation", rtag, ": staged start: ", _se_start_ladder_line(nothing))
           if pre.converged
-            println(io, "tap estimation", rtag, ": staged start, one solve with the ", tap_estimable, " released tap(s) frozen (", pre.iterations, " iteration(s), J = ", round(pre.objectiveJ; sigdigits = 6), ", dof ", pre.dof, "), then the taps are estimated from that state")
+            println(io, "tap estimation", rtag, ": staged start, one solve with the ", tap_estimable, " released tap(s) frozen (", pre.iterations, " iteration(s)", pre.start === :stored_after_flat ? " from the case voltages" : "", ", J = ", round(pre.objectiveJ; sigdigits = 6), ", dof ", pre.dof, "), then the taps are estimated from that state")
           else
-            println(io, "tap estimation", rtag, ": the staged start did not converge with the taps frozen (", pre.iterations, " iteration(s)); the released run starts as configured")
+            println(io, "tap estimation", rtag, ": the staged start did not converge with the taps frozen (", pre.iterations, " iteration(s)", pre.start === :stored_after_flat ? ", also not from the case voltages" : "", "); the released run is not started")
           end
         end
       end
-      se_phase("state_estimation")
-      # kept for the fallback below: runse! writes its state into the net
-      # whether or not it converged, so the repeat needs the state as it was
-      # BEFORE the first attempt, not the diverged iterate it gave up on
-      # (measured on the svedala set: the failed tap run left bus angles
-      # spread over -178 to +167 degrees where the power flow had -26 to +40)
-      v_before_taps = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
-      # and the model data a converged run 1 writes back (update_shunts,
-      # update_taps), so the repeat after worse_fit starts from the same model
-      model_before_taps = _se_writeback_snapshot(net, run_cfg.state_estimation)
-      res = with_sparlectra_config(() -> runse!(net), run_cfg)
+      res = if staged_failed === nothing
+        with_sparlectra_config(() -> runse!(net), run_cfg)
+      elseif !tap_cfg.fallback
+        # tap_estimation.fallback = false: no repeat, the pre-solve that
+        # did not converge is the result and the run fails below
+        staged_failed
+      else
+        nothing
+      end
       # The fallback of the run with tap estimation (one logic with runse!):
       # when the run fell back, the result of this round is the run without
       # tap estimation, so the diagnostics, the metadata and run.log describe
@@ -890,7 +918,26 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
       # below).
       tap_fallback_used = false
       tap_run1 = (:none, 0)
-      res_fell_back = res.tapFixation !== nothing && res.tapFixation.fallback_used
+      if res === nothing
+        # The staged pre-solve with the taps frozen did not converge, also
+        # not from the case voltages: a released run from that state would
+        # run its whole iteration budget with the tap states on top (seen on
+        # case6495rte, where it then sat in the rank test for hours). The
+        # result is the run without tap estimation, from the start state
+        # and model of the round, reason staged_not_converged.
+        tap_fallback_used = true
+        tap_run1 = (:staged_not_converged, staged_failed.iterations)
+        run_cfg = _sparlectra_config_with(base_cfg; state_estimation = _se_config_with(base_cfg.state_estimation; tap_estimation = _tap_config_off(tap_cfg)))
+        for (i, nd) in enumerate(net.nodeVec)
+          nd._vm_pu, nd._va_deg = v_start0[i]
+        end
+        _se_writeback_restore!(net, model_start0)
+        res = _se_tap_fallback_result(with_sparlectra_config(() -> runse!(net), run_cfg), tap_run1...; net = net, measurements = Measurement[m for m in net.measurements], excl = _tap_exclusion_map(net, tap_cfg), update_net = run_cfg.state_estimation.update_net)
+        open(logfile, "a") do io
+          println(io, _se_tap_fallback_line2(res))
+        end
+      end
+      res_fell_back = !tap_fallback_used && res.tapFixation !== nothing && res.tapFixation.fallback_used
       # Second trigger, the acceptance rule of the staged start
       # (worse_fit): the staged
       # estimate converges where the cold one crawled, but on a set that
@@ -903,19 +950,28 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
       # 49.4686 rejected without the margin). Its fallback is the same as
       # for a failed run 1, reason worse_fit, rows fallback_worse_fit;
       # fallback = false switches it off.
-      tap_worse_fit = !res_fell_back && staged_pre !== nothing && res.converged && res.tapFixation !== nothing && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
+      tap_worse_fit = !tap_fallback_used && !res_fell_back && staged_pre !== nothing && res.converged && res.tapFixation !== nothing && res.objectiveJ > staged_pre.objectiveJ * (1.0 + 1.0e-6)
       if tap_cfg.fallback && (res_fell_back || tap_worse_fit)
         tap_fallback_used = true
         tap_run1 = res_fell_back ? (res.tapFixation.fallback_reason, res.tapFixation.iterations_estimation) : (:worse_fit, _se_reported_iterations(res))
         run1_res = res
-        run_cfg = _sparlectra_config_with(run_cfg; state_estimation = _se_config_with(run_cfg.state_estimation; tap_estimation = _tap_config_off(tap_cfg)))
+        # the repeat is the run without tap estimation of this round: the
+        # configuration of the round without the warm start of the staged
+        # pre-solve, from the start voltages and model data of the round.
+        # runse! writes its state into the net whether or not it converged
+        # (the svedala set left bus angles over -178 to +167 degrees where the
+        # power flow had -26 to +40), and the pre-solve and a converged run 1
+        # write back (update_shunts, update_taps). Starting from the
+        # pre-solve state instead gave a result that differs from the run
+        # with tap estimation switched off in the last digits.
+        run_cfg = _sparlectra_config_with(base_cfg; state_estimation = _se_config_with(base_cfg.state_estimation; tap_estimation = _tap_config_off(tap_cfg)))
         open(logfile, "a") do io
           println(io, _se_tap_fallback_line1_service(tap_run1..., run1_res, staged_pre))
         end
         for (i, nd) in enumerate(net.nodeVec)
-          nd._vm_pu, nd._va_deg = v_before_taps[i]
+          nd._vm_pu, nd._va_deg = v_start0[i]
         end
-        _se_writeback_restore!(net, model_before_taps)
+        _se_writeback_restore!(net, model_start0)
         # tap_cfg: the settings of run 1, so the excluded and the machine
         # transformers keep their reason in the rows of the fallback run
         res = _se_tap_fallback_result(with_sparlectra_config(() -> runse!(net), run_cfg), tap_run1...; net = net, measurements = Measurement[m for m in net.measurements], excl = _tap_exclusion_map(net, tap_cfg), update_net = run_cfg.state_estimation.update_net)
@@ -963,7 +1019,7 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
     end
     rounds = tap_round
   end
-  return (res = res, diag = diag, eliminations = eliminations, staged = staged, tap_fallback_used = tap_fallback_used, tap_run1 = tap_run1, rounds = rounds, tap_rounds = tap_rounds, run_cfg = run_cfg)
+  return (res = res, diag = diag, eliminations = eliminations, staged = staged, staged_start_from = staged_start_from, tap_fallback_used = tap_fallback_used, tap_run1 = tap_run1, rounds = rounds, tap_rounds = tap_rounds, run_cfg = run_cfg)
 end
 
 """
@@ -985,9 +1041,10 @@ chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
 Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
 `update_shunts`, `report_correlation` mirror the estimator keywords.
 With `state_estimation.tap_estimation.enabled` (default `true`, the Web UI
-"estimate taps" box) every tap changer of every in-service transformer is
-released (`setTapEstimation!` with the mode its changers give, `:ratio`,
-`:pst` or `:both`) before the solve; the estimator then fixes each
+"estimate taps" box) every declared tap changer of every in-service
+transformer is released (`setTapEstimation!` with the mode its changers
+give, `:ratio`, `:pst` or `:both`) before the solve; a transformer that only
+carries a ratio has no tap changer, no state and no row; the estimator then fixes each
 regulator to its nearest physical step and reports J before versus after
 the fixation (`se_tap_estimates.csv`, one row per regulator with `status`
 and `reason`). With `false` every changer keeps its transferred step and is
@@ -1311,6 +1368,8 @@ function _run_state_estimation_service_body(
   obs = try
     evaluate_global_observability(net)
   catch err
+    # an abort is no rejected measurement set
+    err isa PowerFlowAborted && rethrow()
     return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   base_metadata["se_observability_quality"] = String(obs.quality)
@@ -1339,9 +1398,10 @@ function _run_state_estimation_service_body(
     return _api_failure("se_not_observable", msg, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
 
-  # released transformer taps: every tap changer of an in-service
+  # released transformer taps: every declared tap changer of an in-service
   # transformer becomes an estimation state (the mode from its changer set,
-  # _tap_release_mode). Released AFTER the
+  # _tap_release_mode); a transformer that only carries a ratio has an
+  # empty set, gets no state and no tap row. Released AFTER the
   # observability verdict: tap states are deliberately outside the
   # observability count, like the gated current rows.
   # the generator documents an injected tap deviation inside the set; a run
@@ -1412,10 +1472,11 @@ function _run_state_estimation_service_body(
   tap_released = 0
   tap_released_idxs = Int[]
   for (k, br) in enumerate(net.branchVec)
-    # the release mode from the changer set of the branch (ratio and
-    # DECLARED phase changers; the constructor gives every MATPOWER trafo
-    # default phase fields, and mass-releasing those would add meaningless
-    # states everywhere); no direction: it comes from the changer data.
+    # the release mode from the changer set of the branch (DECLARED changers
+    # only; the constructor gives every transformer a default ratio grid and
+    # phase fields, and mass-releasing those added meaningless states
+    # everywhere, 8617 on case6495rte); no direction: it comes from the
+    # changer data.
     # Every changer is released; runse! keeps the excluded and the machine
     # transformers out by the configuration and reports them with that reason
     mode = _tap_release_mode(br)
@@ -1497,9 +1558,19 @@ function _run_state_estimation_service_body(
   base_metadata["se_tap_staged_start"] = staged
   base_metadata["se_tap_fallback_used"] = tap_fallback_used
   base_metadata["se_tap_fallback_reason"] = String(tap_run1[1])
+  # where the estimation started (flat, stored, stored_after_flat: the
+  # start ladder): after a converged staged start the start of that
+  # pre-solve, the released run then starts from its state; else the start
+  # of the result run. The staged pre-solve on its own (none without one).
+  base_metadata["se_start"] = String(staged ? bd.staged_start_from : res.start)
+  base_metadata["se_tap_staged_start_from"] = String(bd.staged_start_from)
+  res.start === :stored_after_flat && open(logfile, "a") do io
+    println(io, "start: ", _se_start_ladder_line(nothing), "; the result run starts from the case voltages")
+  end
   if !res.converged
     _write_service_performance_log!(output_dir, phase_recorder, se_total_start; headline = _SE_PERF_HEADLINE, status = "failed", label = "state-estimation")
-    failure_text = tap_fallback_used ? string("State estimation did not converge: run 1 with tap estimation (", tap_run1[1], ", ", tap_run1[2], " iterations), run 2 without tap estimation (", _se_tap_run2_reason(res), ", ", res.iterations, " iterations).") : "State estimation did not converge within $(max_iter) iterations."
+    run1_text = tap_run1[1] === :staged_not_converged ? string("the staged start with the taps frozen (", tap_run1[2], " iterations)") : string("run 1 with tap estimation (", tap_run1[1], ", ", tap_run1[2], " iterations)")
+    failure_text = tap_fallback_used ? string("State estimation did not converge: ", run1_text, ", run 2 without tap estimation (", _se_tap_run2_reason(res), ", ", res.iterations, " iterations).") : "State estimation did not converge within $(max_iter) iterations."
     return _api_failure("se_not_converged", failure_text, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   se_phase("postprocessing_result")
@@ -1779,10 +1850,15 @@ function _run_state_estimation_service_body(
       for t in res.tapEstimates
         # one line per regulator: estimate, branch ratio and angle at it,
         # model step -> fixed step with the deviation
-        println(io, "  ", t.name, isempty(t.changer) ? "" : "/" * t.changer, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", " (", t.kind, "): s ", round(t.s_est; digits = 3), t.du_est === nothing ? "" : string(" (dU ", round(t.du_est; sigdigits = 4), ")"), ", ratio ", round(t.ratio_est; digits = 5), ", angle ", round(t.angle_est_deg; digits = 3), " deg, step ", _se_tap_step_text(t.step_model), " -> ", _se_tap_step_text(t.step_fixed), " (deviation ", _se_tap_deviation_text(t.deviation_steps), ")", t.sigma_s === nothing ? "" : string(", sigma_s ", round(t.sigma_s; sigdigits = 3), t.round_distance_sigma === nothing ? "" : string(", ", round(t.round_distance_sigma; sigdigits = 3), " sigma from the nearest step")), t.step_from_target === nothing ? "" : string(", step from the control target ", _se_tap_step_text(t.step_from_target)), t.out_of_range ? " (OUT OF RANGE, clamped)" : "", t.status === :estimated ? "" : t.status === :calculated ? " (CALCULATED, not estimated: $(t.reason))" : " (NOT ESTIMATED: $(t.reason))")
+        println(io, "  ", t.name, isempty(t.changer) ? "" : "/" * t.changer, isempty(t.mrid) ? "" : " (mRID " * t.mrid * ")", " (", t.kind, "): s ", round(t.s_est; digits = 3), t.du_est === nothing ? "" : string(" (dU ", round(t.du_est; sigdigits = 4), ")"), ", ratio ", round(t.ratio_est; digits = 5), ", angle ", round(t.angle_est_deg; digits = 3), " deg, step ", _se_tap_step_text(t.step_model), " -> ", _se_tap_step_text(t.step_fixed), " (deviation ", _se_tap_deviation_text(t.deviation_steps), ")", t.sigma_s === nothing ? "" : string(", sigma_s ", round(t.sigma_s; sigdigits = 3), t.round_distance_sigma === nothing ? "" : string(", ", round(t.round_distance_sigma; sigdigits = 3), " sigma from the nearest step")), t.step_from_target === nothing ? "" : string(", step from the control target ", _se_tap_step_text(t.step_from_target)), _se_tap_out_of_range_text(t), t.status in (:estimated, :out_of_range) ? "" : t.status === :calculated ? " (CALCULATED, not estimated: $(t.reason))" : " (NOT ESTIMATED: $(t.reason))")
       end
+      # rank_budget holds for every regulator of the run with one text: one
+      # line with the count instead of one per regulator (8617 on case6495rte)
+      nbudget = count(t -> t.reason === :rank_budget, res.tapEstimates)
+      nbudget > 0 && println(io, "notice: ", nbudget, " tap regulator(s) ", _tap_notice_text(:rank_budget))
       for t in res.tapEstimates
-        isempty(t.notice) || println(io, "notice: tap regulator ", t.name, isempty(t.changer) ? "" : "/" * t.changer, ": ", t.notice)
+        (isempty(t.notice) || t.reason === :rank_budget) && continue
+        println(io, "notice: tap regulator ", t.name, isempty(t.changer) ? "" : "/" * t.changer, ": ", t.notice)
       end
       # the warning runse! logs for an estimate outside the band, same text
       for t in res.tapEstimates
@@ -1850,6 +1926,8 @@ function _run_state_estimation_service_body(
       "se_tap_excluded" => tap_n_excluded,
       "se_tap_machine" => tap_n_machine,
       "se_tap_not_estimated" => count(t -> t.status !== :estimated, _se_tap_regulator_rows(res.tapEstimates)),
+      # of those, the estimates too far outside the band (transferred step kept)
+      "se_tap_out_of_range" => count(t -> t.status === :out_of_range, _se_tap_regulator_rows(res.tapEstimates)),
       "se_tap_fixed" => res.tapFixation === nothing ? false : res.tapFixation.fixed,
       "se_tap_j_before" => res.tapFixation === nothing ? nothing : res.tapFixation.j_before,
       "se_tap_dof_before" => res.tapFixation === nothing ? nothing : res.tapFixation.dof_before,
@@ -1860,7 +1938,7 @@ function _run_state_estimation_service_body(
       "se_tap_sequential_fixation" => res.tapFixation === nothing ? false : res.tapFixation.sequential,
       "se_topology_station_findings" => diag.topology_findings === nothing ? nothing : [Dict{String,Any}("location" => tf.location, "evidence" => tf.evidence, "notes" => [String(n) for n in tf.notes]) for tf in diag.topology_findings],
       # rows for the result page table, one per regulator: the columns of
-      # se_tap_estimates.csv plus role and notice
+      # se_tap_estimates.csv plus role
       "se_tap_estimates" => res.tapEstimates === nothing ? nothing : [_se_tap_row_record(t) for t in res.tapEstimates],
       "artifact_status" => "completed",
       "solver_status" => "completed",

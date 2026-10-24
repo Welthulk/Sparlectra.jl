@@ -554,14 +554,19 @@ _zero_injection_written_row(typ::MeasurementType, value::Real, id::AbstractStrin
 # and a list that already holds ZI rows is left as it is, so applying the
 # switch twice adds nothing. Isolated buses are skipped: they are outside
 # every energized island, and a row there would make an island "measured"
-# that no other row observes. Returns the number of rows added (two per
+# that no other row observes. A bus typed Isolated that a closed link joins
+# to a fed bus (`_linkFedIsolatedBuses`, a busbar with couplers only) is not
+# skipped: it is a member of its fused node, and without its rows the
+# estimator drops the zero injections of the whole link cluster as a
+# partial sum. Returns the number of rows added (two per
 # bus). `sigma` is the sigma of the rows; the SE service passes the value
 # of its effective configuration (case file first), which is not the
 # process default it runs under. Used by the measurement-table entry
 # (applyMeasurementSet!) and the SE service.
 function _add_missing_zero_injections!(measurements::Vector, net::Net; sigma::Real = state_estimation_config().zero_injection_sigma_mva)::Int
   measured = Set{Int}(m.busIdx for m in measurements if m.typ in (PinjMeas, QinjMeas) && m.busIdx !== nothing)
-  buses = Int[b for b in findPassiveBuses(net) if !(b in measured) && getNodeType(net.nodeVec[b]) != Isolated]
+  fed = _linkFedIsolatedBuses(net)
+  buses = Int[b for b in findPassiveBuses(net) if !(b in measured) && (getNodeType(net.nodeVec[b]) != Isolated || haskey(fed, b))]
   isempty(buses) && return 0
   return length(addZeroInjectionMeasurements!(measurements; net = net, busIdxs = buses, sigma = sigma))
 end
@@ -694,15 +699,18 @@ end
 # breaks the sum: a noise-free set did not fit (J 3859). Per cluster the
 # device values must add up to the Y-bus total; a cluster where they do not
 # (an injection the node fields do not carry, e.g. a voltage-dependent
-# shunt) keeps the Y-bus values and is reported.
-function _link_cluster_device_injections(net::Net, Sbus_MVA::AbstractVector{ComplexF64}, is_iso::Function, iso_shift::Function)::Dict{Int,ComplexF64}
+# shunt) keeps the Y-bus values and is reported. A link-fed isolated member
+# (couplers only, `is_iso` but not `is_dead`) has no Y-bus row and no
+# branch: its Y-bus term is the draw of its shunts at V, which the Y-bus
+# leaves out with the bus.
+function _link_cluster_device_injections(net::Net, Sbus_MVA::AbstractVector{ComplexF64}, V::AbstractVector{ComplexF64}, is_iso::Function, is_dead::Function, iso_shift::Function)::Dict{Int,ComplexF64}
   out = Dict{Int,ComplexF64}()
   parent = collect(eachindex(net.nodeVec))
   root(b) = parent[b] == b ? b : (parent[b] = root(parent[b]))
   linked = Set{Int}()
   for l in net.linkVec
     l.status == 1 || continue
-    (is_iso(l.fromBus) || is_iso(l.toBus)) && continue
+    (is_dead(l.fromBus) || is_dead(l.toBus)) && continue
     push!(linked, l.fromBus, l.toBus)
     parent[root(l.fromBus)] = root(l.toBus)
   end
@@ -725,7 +733,7 @@ function _link_cluster_device_injections(net::Net, Sbus_MVA::AbstractVector{Comp
       p_gen = share === nothing ? something(nd._pƩGen, 0.0) : last(_distributed_slack_bus_pgen(net, b, share[2]))
       dev[b] = complex(p_gen - something(nd._pƩLoad, 0.0), something(nd._qƩGen, 0.0) - something(nd._qƩLoad, 0.0))
     end
-    ybus_total = sum(Sbus_MVA[iso_shift(b)] for b in members)
+    ybus_total = sum((is_iso(b) ? abs2(V[b]) * conj(_bus_shunt_y_pu(net, b)) * net.baseMVA : Sbus_MVA[iso_shift(b)]) for b in members)
     dev_total = sum(values(dev))
     if abs(dev_total - ybus_total) <= 1e-3 * max(1.0, abs(ybus_total))
       merge!(out, dev)
@@ -735,6 +743,37 @@ function _link_cluster_device_injections(net::Net, Sbus_MVA::AbstractVector{Comp
     end
   end
   return out
+end
+
+# Display resolution of generated measurements, the step an online system
+# delivers its values in (for example U 0.1 kV, P and Q 0.1 MW). The keys
+# are measurement types, the values steps in the units of the measurement
+# table: VmMeas in kV (the pu value is converted with the bus Vn and back),
+# PinjMeas and PflowMeas in MW, QinjMeas, QflowMeas and ShuntQMeas in Mvar,
+# ImagMeas in A, VaMeas and IaMeas in degrees. A missing type or a step of 0
+# leaves the value as it is. Only the value changes; the sigma stays, the
+# rounding is part of the measurement error (uniform, standard deviation
+# step / sqrt(12)).
+function _round_to_resolution(x::Float64, step::Float64)::Float64
+  # n * step carries binary noise (3 * 0.1 = 0.30000000000000004); rounding
+  # to the decimals of the step gives the double nearest to the decimal
+  y = round(x / step) * step
+  for d in 0:12
+    round(step; digits = d) == step && return round(y; digits = d)
+  end
+  return y
+end
+
+function _round_measurement_to_resolution(net::Net, m::Measurement, resolution::AbstractDict{MeasurementType,Float64})::Measurement
+  step = get(resolution, m.typ, 0.0)
+  step > 0.0 || return m
+  if m.typ == VmMeas
+    vn = net.nodeVec[m.busIdx].comp.cVN
+    z = _round_to_resolution(m.value * vn, step) / vn
+  else
+    z = _round_to_resolution(m.value, step)
+  end
+  return Measurement(typ = m.typ, value = z, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
 end
 
 """
@@ -770,6 +809,14 @@ Keyword options:
 - `sigmaFloor`: the per-type floors for `relativeSigma` (default
   `measurementSigmaFloors()`)
 - `rng`: random number generator
+- `resolution`: round every generated value (after the noise) to a step per
+  measurement type, as an online system delivers it, for example
+  `Dict(VmMeas => 0.1, PflowMeas => 0.1)`. Steps in table units: `VmMeas`
+  in kV, P types in MW, Q types (also `ShuntQMeas`) in Mvar, `ImagMeas` in
+  A, `VaMeas` and `IaMeas` in degrees. The sigma stays as computed: the
+  rounding is part of the measurement error, and a step coarser than about
+  `sigma * sqrt(12)` adds visible error. `nothing` (default) or a missing
+  type keeps the value unrounded.
 """
 function generateMeasurementsFromPF(
   net::Net;
@@ -789,6 +836,7 @@ function generateMeasurementsFromPF(
   relativeSigma::Bool = false,
   sigmaFloor::Dict{MeasurementType,Float64} = measurementSigmaFloors(),
   rng::AbstractRNG = Random.default_rng(),
+  resolution::Union{Nothing,Dict{MeasurementType,Float64}} = nothing,
 )
   # per-row sigma: absolute from stddev, or (relative mode) a fraction of
   # the reading with the per-type floor; the angle types Va and Ia stay
@@ -799,15 +847,23 @@ function generateMeasurementsFromPF(
   # createYBUS drops isolated nodes (its rows are iso-shifted), so the
   # injection computation must run in that compressed space; V stays in full
   # bus numbering for the voltage and branch-flow rows. Isolated buses get
-  # no measurements at all: they carry no defined state.
+  # no measurements at all: they carry no defined state. A link-fed isolated
+  # bus (`_linkFedIsolatedBuses`, couplers only) is the exception: it has the
+  # voltage of its fed partner and its own device injection, and no Y-bus
+  # row (it has no branch).
   iso_sorted = sort(net.isoNodes)
   is_iso(b::Int) = insorted(b, iso_sorted)
   iso_shift(b::Int) = b - (searchsortedfirst(iso_sorted, b) - 1)
+  fed = _linkFedIsolatedBuses(net)
+  is_dead(b::Int) = is_iso(b) && !haskey(fed, b)
+  for (b, partner) in fed
+    V[b] = V[partner]
+  end
   Vc = isempty(iso_sorted) ? V : V[[i for i in eachindex(V) if !is_iso(i)]]
   Sbus_pu = calc_injections(createYBUS(net = net), Vc)
   Sbus_MVA = Sbus_pu .* net.baseMVA
   # buses of a closed-link cluster read their own generation minus load
-  linkInj = _link_cluster_device_injections(net, Sbus_MVA, is_iso, iso_shift)
+  linkInj = _link_cluster_device_injections(net, Sbus_MVA, V, is_iso, is_dead, iso_shift)
   injMVA(i::Int) = get(linkInj, i, Sbus_MVA[iso_shift(i)])
 
   m = Measurement[]
@@ -816,7 +872,7 @@ function generateMeasurementsFromPF(
   vaSelected = isnothing(vaBusIdxs) ? nothing : Set(vaBusIdxs)
 
   for i = 1:nbus
-    is_iso(i) && continue
+    is_dead(i) && continue
     if includeVm
       σ = rowσ(VmMeas, abs(V[i]))
       z = abs(V[i]) + (noise ? randn(rng) * σ : 0.0)
@@ -827,6 +883,9 @@ function generateMeasurementsFromPF(
       z = rad2deg(angle(V[i])) + vaRefOffsetDeg + (noise ? randn(rng) * σ : 0.0)
       push!(m, Measurement(typ = VaMeas, value = z, sigma = σ, busIdx = i, id = "Va_bus_$(i)"))
     end
+    # a link-fed bus whose cluster kept the Y-bus values (warned in
+    # _link_cluster_device_injections) has no injection value of its own
+    (is_iso(i) && !haskey(linkInj, i)) && continue
     if includePinj
       σ = rowσ(PinjMeas, real(injMVA(i)))
       z = real(injMVA(i)) + (noise ? randn(rng) * σ : 0.0)
@@ -897,7 +956,8 @@ function generateMeasurementsFromPF(
     end
   end
 
-  return m
+  resolution === nothing && return m
+  return Measurement[_round_measurement_to_resolution(net, x, resolution) for x in m]
 end
 
 """

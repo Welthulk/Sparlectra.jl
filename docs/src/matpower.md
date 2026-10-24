@@ -301,9 +301,9 @@ importer takes the same switches as keywords (`apply_bus_names = true`,
 | `mpc.baseMVA` | Common power base for per-unit quantities | Typically `100`. |
 | `mpc.bus` | Network nodes: type (`1` PQ, `2` PV, `3` reference, `4` isolated), demand, shunts, `VM`/`VA` start or reference values, base voltage, limits | Lines and transformers refer to `BUS_I`. |
 | `mpc.gen` | Generators: `PG`, `VG` setpoint, `QMAX`/`QMIN` for Q-limit handling, status | `PG`, `VG`, `QMAX` and `QMIN` are the values to inspect first. |
-| `mpc.branch` | Lines and transformers: `BR_R`/`BR_X`, charging, ratings, `TAP`, `SHIFT`, status | A non-zero tap ratio or phase shift marks a transformer; `TAP = 0` is treated as ratio `1`. `TAP` (column 9) and `SHIFT` (column 10) are the ratio and shift in effect; Sparlectra exports write them that way since 0.50.0. |
+| `mpc.branch` | Lines and transformers: `BR_R`/`BR_X`, charging, ratings, `TAP`, `SHIFT`, status | A branch with `TAP` 0 or exactly 1, `SHIFT` 0 and the same `BASE_KV` at both ends is a line; any other `TAP`, a shift or two voltage levels make a transformer (`TAP = 1` between two levels: ratio 1). Some files write `TAP = 1` on lines (case6495rte on every branch). `mpc.branch_kind`, Sparlectra loss or tap-changer rows and a three-winding star point at one end override the rule. `TAP = 0` is treated as ratio `1`. `TAP` (column 9) and `SHIFT` (column 10) are the ratio and shift in effect; Sparlectra exports write them that way since 0.50.0. |
 | `mpc.gencost` | Optimal power flow | Kept per generator ([`GenCost`](@ref)) and written back unchanged on export; no calculation reads it. |
-| `mpc.bus_name` | Readable bus names | `matpower_import.apply_bus_names: true`; the original `BUS_I` values stay in `busOrigIdxDict`. In a file without `mpc.sparlectra.aux_buses` (written before 0.50.0) a name starting with `Aux_` marks an auxiliary bus (three-winding star point), with or without that switch. |
+| `mpc.bus_name` | Readable bus names | `matpower_import.apply_bus_names: true`; the original `BUS_I` values stay in `busOrigIdxDict`. Without `mpc.bus_name`, or with a length other than the bus count, the import keeps the numeric names and warns once per case and session; later imports of the same case log this at debug level. In a file without `mpc.sparlectra.aux_buses` (written before 0.50.0) a name starting with `Aux_` marks an auxiliary bus (three-winding star point), with or without that switch. |
 | `mpc.branch_name` | Readable branch/source names, outage mapping | `matpower_import.apply_branch_names = true`; lands in `net.matpower_branch_metadata`. |
 | `mpc.branch_kind` | Line/transformer classification override | `matpower_import.apply_branch_kind = true`; `L`, `LINE`, `ACL` force a line, `T`, `TRAFO`, `TRANSFORMER`, `2WT` a transformer. Missing or length-mismatched metadata falls back to the electrical heuristic. |
 | `mpc.for001_contingencies` | FOR001-derived contingency names for validation workflows | `matpower_import.import_for001_contingencies = true`; lands in `net.for001Contingencies`. |
@@ -426,6 +426,14 @@ A unit without an active-power limit is written with `Pmax = 9999` and
 `Pmin = -9999`, the MATPOWER convention for an unlimited unit; the CGMES
 import reads limits of 9999 MW and above as no limit as well. The reactive
 limits of a unit without them stay at `±baseMVA`.
+
+A transformer whose step was not transferred (its changer sits at the
+assumed middle position) has no mark in MATPOWER: the export writes the
+middle position as the step, in `TAP`/`SHIFT` and in
+`mpc.sparlectra.tap_changers`, and logs one warning per transformer. Read
+back, the step counts as transferred. The SCF export keeps the mark. A
+changer that a tap controller or a QSTS carry moved has no mark and gets
+no warning.
 
 Sparlectra writes no OPF columns 18-21. Exported `.m` files with
 transformer losses carry a `SPARLECTRA EXTENSION WARNING` comment, because

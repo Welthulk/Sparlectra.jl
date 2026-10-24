@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 820" font-family="DejaVu Sans, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+    <marker id="load" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#222" stroke-width="1.5"/>
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="900" height="820" fill="#ffffff"/>
+
+  <text x="450" y="32" text-anchor="middle" font-size="17" font-weight="bold">sp_case6tap: test network for tap control and tap estimation</text>
+
+  <!-- 220 kV -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="150" y1="170" x2="330" y2="170"/>
+    <line x1="570" y1="170" x2="750" y2="170"/>
+  </g>
+  <text x="140" y="175" text-anchor="end" font-weight="bold">Nordwerk_220</text>
+  <text x="760" y="175" font-weight="bold">Suedfeld_220</text>
+
+  <!-- grid / slack -->
+  <rect x="175" y="70" width="50" height="40" fill="url(#hatch)" stroke="#222" stroke-width="2"/>
+  <line x1="200" y1="110" x2="200" y2="170" stroke="#222" stroke-width="2"/>
+  <text x="235" y="88">Grid (slack)</text>
+  <text x="235" y="104">U = 1.02 pu</text>
+
+  <!-- generator -->
+  <circle cx="700" cy="85" r="22" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="700" y="91" text-anchor="middle" font-size="18">~</text>
+  <line x1="700" y1="107" x2="700" y2="170" stroke="#222" stroke-width="2"/>
+  <text x="668" y="80" text-anchor="end">G 80 MW, PV</text>
+  <text x="668" y="96" text-anchor="end">U = 1.02 pu, Q ±60 Mvar</text>
+
+  <!-- L1 -->
+  <polyline points="300,170 300,130 600,130 600,170" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="450" y="122" text-anchor="middle">L1  220 kV, 60 km</text>
+
+  <!-- T1 in-phase and quadrature regulator -->
+  <line x1="240" y1="170" x2="240" y2="204" stroke="#222" stroke-width="2"/>
+  <circle cx="240" cy="222" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="240" cy="252" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="240" y1="270" x2="240" y2="330" stroke="#222" stroke-width="2"/>
+  <line x1="214" y1="274" x2="266" y2="200" stroke="#c0392b" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="208" y="241" text-anchor="end" fill="#c0392b" font-weight="bold">U, φ</text>
+  <text x="272" y="214" font-weight="bold">T1 quadrature regulator 220/110 kV, 200 MVA</text>
+  <text x="272" y="231">ratio tap ±12 × 1.25 %  → U Kreuzau_110</text>
+  <text x="272" y="248">phase tap ±20 × 1.0°  → active power</text>
+  <text x="272" y="265">uk 12 %, two tap changers on one transformer</text>
+
+  <!-- T2 -->
+  <line x1="660" y1="170" x2="660" y2="204" stroke="#222" stroke-width="2"/>
+  <circle cx="660" cy="222" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="660" cy="252" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="660" y1="270" x2="660" y2="330" stroke="#222" stroke-width="2"/>
+  <text x="690" y="231" font-weight="bold">T2 220/110 kV, 200 MVA</text>
+  <text x="690" y="248">ratio tap ±12 × 1.25 %</text>
+  <text x="690" y="265">not controlled</text>
+
+  <!-- 110 kV -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="150" y1="330" x2="330" y2="330"/>
+    <line x1="570" y1="330" x2="750" y2="330"/>
+    <line x1="380" y1="500" x2="520" y2="500"/>
+  </g>
+  <text x="140" y="335" text-anchor="end" font-weight="bold">Kreuzau_110</text>
+  <text x="150" y="352" fill="#555">no load (passive)</text>
+  <text x="760" y="335" font-weight="bold">Ostheim_110</text>
+  <text x="370" y="505" text-anchor="end" font-weight="bold">Mittelbach_110</text>
+
+  <!-- L4 Kreuzau-Ostheim -->
+  <polyline points="310,330 310,380 590,380 590,330" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="450" y="372" text-anchor="middle">L4  110 kV, 40 km</text>
+  <!-- L2 Kreuzau-Mittelbach -->
+  <polyline points="280,330 280,440 420,440 420,500" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="350" y="432" text-anchor="middle">L2  25 km</text>
+  <!-- L3 Mittelbach-Ostheim -->
+  <polyline points="620,330 620,440 480,440 480,500" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="550" y="432" text-anchor="middle">L3  30 km</text>
+
+  <!-- load Ostheim -->
+  <line x1="720" y1="330" x2="720" y2="372" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="735" y="366">40 MW, 12 Mvar</text>
+
+  <!-- load Mittelbach -->
+  <line x1="395" y1="500" x2="395" y2="542" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="385" y="538" text-anchor="end">60 MW, 20 Mvar</text>
+
+  <!-- T3 in-phase regulator -->
+  <line x1="450" y1="500" x2="450" y2="522" stroke="#222" stroke-width="2"/>
+  <circle cx="450" cy="540" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="450" cy="570" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="450" y1="588" x2="450" y2="620" stroke="#222" stroke-width="2"/>
+  <line x1="424" y1="592" x2="476" y2="518" stroke="#c0392b" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="484" y="545" font-weight="bold">T3 in-phase regulator 110/20 kV, 40 MVA</text>
+  <text x="484" y="562">ratio tap ±12 × 1.25 %  → U Lindenau_20</text>
+  <text x="484" y="579">uk 10 %</text>
+
+  <!-- 20 kV -->
+  <line x1="380" y1="620" x2="520" y2="620" stroke="#222" stroke-width="5" stroke-linecap="square"/>
+  <text x="370" y="625" text-anchor="end" font-weight="bold">Lindenau_20</text>
+  <line x1="450" y1="620" x2="450" y2="662" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="465" y="658">25 MW, 8 Mvar</text>
+
+  <!-- notes -->
+  <rect x="30" y="690" width="840" height="112" fill="#f4f6f8" stroke="#b0b8c0"/>
+  <text x="44" y="711"><tspan font-weight="bold">Loop:</tspan> Nordwerk_220 - T1 - Kreuzau_110 - (L4 or L2/L3) - Ostheim_110 - T2 - Suedfeld_220 - L1.</text>
+  <text x="44" y="730">The phase tap of T1 shifts active power between T1 and T2, about 7 MW per degree.</text>
+  <text x="44" y="749"><tspan font-weight="bold">Controllers:</tspan> T1 ratio tap holds U Kreuzau_110 at 1.00 pu (deadband 0.01 pu), T1 phase tap holds</text>
+  <text x="44" y="768">P over T1 at 60 MW (deadband 4 MW), T3 holds U Lindenau_20 at 1.00 pu (deadband 0.01 pu). All steps start at 0.</text>
+  <text x="44" y="787">Nominal voltages 220 / 110 / 20 kV, base 100 MVA, 50 Hz.</text>
+</svg>

@@ -143,7 +143,9 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   # the transformers are built on the neutral position (TAP/SHIFT of a
   # file before 0.50.0, columns 13 and 14 of the tap block since, #513);
   # the tap_changer rows below move them off it
-  brData = _matpower_neutral_branch_data(convert(Matrix{Float64}, getproperty(mpc, :branch)), _matpower_sparlectra_tap_changers(mpc), TAP, SHIFT)
+  sp_taps_rows = _matpower_sparlectra_tap_changers(mpc)
+  brData = _matpower_neutral_branch_data(convert(Matrix{Float64}, getproperty(mpc, :branch)), sp_taps_rows, TAP, SHIFT)
+  tap_changer_rows = _matpower_tap_changer_rows(sp_taps_rows)
   nbus = size(busData, 1)
   nbranch = size(brData, 1)
   s_base_va = baseMVA * 1.0e6
@@ -153,7 +155,7 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
   pv_vset_by_bus = Dict(row.busI => row.imported_vset for row in pv_voltage_rows)
   opts.matpower_dcline_mode in (:reject_active, :ignore_inactive, :pf_injections, :paired_control) || throw(ArgumentError("matpower_dcline_mode must be one of :reject_active, :ignore_inactive, :pf_injections, :paired_control."))
   opts.matpower_dcline_mode in (:pf_injections, :paired_control) || MatpowerIO.assert_no_active_dcline(mpc)
-  bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = opts.apply_bus_names)
+  bus_name_by_orig = _matpower_bus_names(mpc, busData, BUS_I; apply_bus_names = opts.apply_bus_names, name = name, brData = convert(Matrix{Float64}, getproperty(mpc, :branch)))
   aux_buses = _matpower_aux_bus_numbers(mpc, busData, BUS_I)
   aux_ids = Int[]
   bus_original_name_by_orig = Dict{Int,String}()
@@ -273,16 +275,19 @@ function convert_case(::MatpowerAdapter, mpc, opts::MatpowerAdapterOptions)::SCF
     ratedS_raw = Float64(row[RATE_A])
     ratedS = ratedS_raw > 0.0 ? ratedS_raw : Inf
     tap_raw = Float64(row[TAP])
-    tap_specified = tap_raw != 0.0
     ratio = _matpower_import_ratio(tap_raw; mode = opts.ratio)
     angle = _matpower_shift_degrees(Float64(row[SHIFT]); sign = opts.shift_sign, unit = opts.shift_unit)
     status = Int(row[BR_STATUS])
     vn_from = u_rated_by_orig[fbus] / 1.0e3
     vn_to = u_rated_by_orig[tbus] / 1.0e3
-    heuristic_is_line = ((!tap_specified && angle == 0.0) && (vn_from == vn_to))
+    heuristic_is_line = _matpower_heuristic_is_line(tap_raw, angle, vn_from, vn_to)
     loss_meta = get(transformer_loss_by_row, branch_row_index, nothing)
     kind = branch_kind_overrides === nothing ? :unknown : branch_kind_overrides[branch_row_index]
-    kind = loss_meta !== nothing ? :transformer : kind
+    # as in the direct import: loss metadata, or with TAP not 0 a tap block
+    # row (counted in imported branches, like branch_index below) or a star
+    # point end, make a transformer
+    declared_trafo = loss_meta !== nothing || (tap_raw != 0.0 && ((branch_index + 1) in tap_changer_rows || fbus in aux_buses || tbus in aux_buses))
+    kind = declared_trafo ? :transformer : kind
     isLine = kind === :line ? true : kind === :transformer ? false : heuristic_is_line
 
     id = nid()

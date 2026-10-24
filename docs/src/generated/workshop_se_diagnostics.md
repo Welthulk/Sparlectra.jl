@@ -50,7 +50,8 @@ and B3-B6):
 
 Julia compiles each function on first use. This cell loads the packages.
 `Random` (standard library) seeds the synthetic measurement noise so
-every run of this notebook produces the same numbers. The notebook needs
+every run of this notebook produces the same numbers; `Printf` (standard
+library) aligns the printed values. The notebook needs
 no helper functions; every chapter works on the study network of the
 next section, so after this cell and that one any chapter can run on
 its own. A code cell that uses a name from another cell says so in a
@@ -68,6 +69,7 @@ pauses.
 ````@example workshop_se_diagnostics
 using Sparlectra
 using Random
+using Printf
 
 # compile every path the chapters use once; the warm-up code is in
 # docs/lit/warmup/workshop_se_diagnostics.jl of the installed package
@@ -131,7 +133,8 @@ setMeasurementsFromPF!(
   stddev = std,
   rng = MersenneTwister(42),
 )
-println("reference PF: ", ite_pf, " iterations; ", length(net.measurements), " measurements created")
+println("reference power flow (true state):  ", ite_pf, " iterations")
+println("measurement set from the true state: ", length(net.measurements), " rows, seeded noise")
 ````
 
 ## Detection: the band test on a healthy set
@@ -161,11 +164,14 @@ noise-free set), and `small_redundancy` flags verdicts on thin evidence
 # uses: net (The study network and a healthy measurement set)
 @isdefined(net) || error("Run the section \"The study network and a healthy measurement set\" first: it sets up net.")
 rep = validate_measurements(net)
-println("converged:          ", rep.converged)
-println("global consistency: ", rep.global_consistency)
-println("J = ", round(rep.objective.value; digits = 2), ", dof = ", rep.objective.dof, ", J/dof = ", round(rep.objective.value / rep.objective.dof; digits = 3))
-println("z_wh = ", round(rep.objective.z_wh; digits = 3), "  (|z| <= 3 is in band; reason = ", rep.objective.reason, ")")
-println("suspicious measurements: ", length(rep.suspicious_measurements))
+println("Healthy set, band test of the estimate:")
+println("  estimator converged:                   ", rep.converged)
+println("  global consistency:                    ", rep.global_consistency)
+@printf("  objective J [-]:                       %.2f\n", rep.objective.value)
+@printf("  degrees of freedom dof [-]:            %d\n", rep.objective.dof)
+@printf("  J/dof [-] (healthy: near 1):           %.3f\n", rep.objective.value / rep.objective.dof)
+@printf("  z_wh [-] (in band: |z_wh| <= 3):       %.3f   reason = %s\n", rep.objective.z_wh, rep.objective.reason)
+println("  suspicious measurements (|r_N| >= 3):  ", length(rep.suspicious_measurements))
 ````
 
 Reading aid (Example 1): $J/\mathrm{dof}$ near one, $|z_{WH}| \le 3$, no
@@ -218,16 +224,23 @@ from an error elsewhere. `validate_measurements` reports both per row.
 bad_idx = findfirst(m -> m.typ == Sparlectra.PflowMeas, net.measurements)
 m0 = net.measurements[bad_idx]
 net.measurements[bad_idx] = Measurement(typ = m0.typ, value = m0.value + 25.0, sigma = m0.sigma, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx)
-println("corrupted ", m0.id, ": ", round(m0.value; digits = 2), " -> ", round(m0.value + 25.0; digits = 2), " MW (sigma ", m0.sigma, ")")
+println("Measurement ", m0.id, " (line B1-B2 at B1), active power flow P [MW]:")
+@printf("  measured, healthy (with noise):   %6.2f\n", m0.value)
+@printf("  measured after corruption:        %6.2f   (+25 MW)\n", m0.value + 25.0)
+@printf("  declared sigma:                   %6.2f\n", m0.sigma)
 
 rep_bad = validate_measurements(net)
 println()
-println("J/dof now: ", round(rep_bad.objective.value / rep_bad.objective.dof; digits = 1), ", z_wh = ", round(rep_bad.objective.z_wh; digits = 1), " (reason = ", rep_bad.objective.reason, ")")
+println("Band test of the estimate with the corrupted row:")
+@printf("  J/dof [-]:                        %6.1f\n", rep_bad.objective.value / rep_bad.objective.dof)
+@printf("  z_wh [-]:                         %6.1f   reason = %s\n", rep_bad.objective.z_wh, rep_bad.objective.reason)
+@printf("  suspicious rows (|r_N| >= 3):     %6d\n", length(rep_bad.suspicious_measurements))
 top = rep_bad.largest_normalized_residual
-println("prime suspect: ", top.id, "  |r_N| = ", round(top.abs_normalized_residual; digits = 1), ", w_ii = ", round(top.wii; digits = 2), ", localizable = ", top.localizable)
-println("suspicious rows (|r_N| >= 3): ", length(rep_bad.suspicious_measurements))
+println("  prime suspect (largest |r_N|):    ", top.id)
+println("Ranking, top 5 (localizable if w_ii > 0.3):")
+println("  measurement             |r_N| [-]   w_ii [-]   localizable")
 for row in rep_bad.measurement_ranking[1:5]
-  println("  ", rpad(row.id, 22), " |r_N| = ", lpad(round(row.abs_normalized_residual; digits = 1), 6), "   w_ii = ", round(row.wii; digits = 2))
+  @printf("  %-22s %9.1f %10.2f   %s\n", row.id, row.abs_normalized_residual, row.wii, row.localizable)
 end
 ````
 
@@ -254,12 +267,16 @@ The trace records every step; the stop reason says why the loop ended.
 diag = with_state_estimation_config(max_eliminations = 3) do
   runse_diagnostics(net)
 end
-println("eliminations: ", length(diag.eliminations), ", stop reason: ", diag.stop_reason)
+println("Sequential elimination (max_eliminations = 3): ", length(diag.eliminations), " row(s) removed, stop reason = ", diag.stop_reason)
+println("  step   removed measurement      |r_N| before removal [-]")
 for e in diag.eliminations
-  println("  step ", e.elimination, ": removed ", e.id, " (|r_N| before = ", round(abs(e.normalized_residual_before); digits = 1), ")")
+  @printf("  %4d   %-22s %8.1f\n", e.elimination, e.id, abs(e.normalized_residual_before))
 end
 fin = diag.final_diagnostics
-println("after elimination: J/dof = ", round(fin.objective.value / fin.objective.dof; digits = 3), ", z_wh = ", round(fin.objective.z_wh; digits = 3), ", reason = ", fin.objective.reason)
+println("Band test of the estimate after elimination:")
+@printf("  J/dof [-]:                        %6.3f\n", fin.objective.value / fin.objective.dof)
+@printf("  z_wh [-]:                         %6.3f   reason = %s\n", fin.objective.z_wh, fin.objective.reason)
+@printf("  suspicious rows (|r_N| >= 3):     %6d\n", length(fin.suspicious_measurements))
 ````
 
 Reading aid (Example 3): one elimination, and it removed exactly the row
@@ -290,29 +307,53 @@ sigmas, so the diagnostics remain honest. `SEResult.robustRows` lists
 every row that left stage 0.
 
 ````@example workshop_se_diagnostics
-# uses: net, vm_true (The study network and a healthy measurement set)
+# uses: bad_idx, m0 (Example 2); net, vm_true (The study network and a healthy measurement set)
+(@isdefined(bad_idx) && @isdefined(m0)) || error("Run Example 2 first: it sets up bad_idx, m0.")
 (@isdefined(net) && @isdefined(vm_true)) || error("Run the section \"The study network and a healthy measurement set\" first: it sets up net, vm_true.")
 meas_bad = Measurement[m for m in net.measurements]   ## still contains the +25 MW error
+# the same set with the healthy row restored, as the reference level
+meas_ok = copy(meas_bad)
+meas_ok[bad_idx] = m0
 
-res_plain = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
+res_ok = with_state_estimation_config(max_iter = 20, tol = 1e-6, update_net = false) do
+  runse!(net, meas_ok)
+end
+res_plain = with_state_estimation_config(max_iter = 20, tol = 1e-6, update_net = false) do
   runse!(net, meas_bad)
 end
-res_robust = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false, robust = true) do
+res_robust = with_state_estimation_config(max_iter = 20, tol = 1e-6, update_net = false, robust = true) do
   runse!(net, meas_bad)
 end
 
+err_ok = maximum(abs.(abs.(res_ok.voltages) .- vm_true))
 err_plain = maximum(abs.(abs.(res_plain.voltages) .- vm_true))
 err_robust = maximum(abs.(abs.(res_robust.voltages) .- vm_true))
-println("max |Vm_est - Vm_true|: plain = ", round(err_plain; sigdigits = 3), " pu, robust = ", round(err_robust; sigdigits = 3), " pu")
+println("Largest voltage magnitude error over B1..B7, max |Vm_est - Vm_true| [pu]:")
+@printf("  plain WLS, healthy set (reference):         %.5f\n", err_ok)
+@printf("  plain WLS, corrupted row at full weight:    %.5f\n", err_plain)
+@printf("  robust WLS, corrupted row down-weighted:    %.5f\n", err_robust)
+println("Robust rows (left stage 0), t = |r| / sigma:")
+println("  measurement             stage   t [-]   sigma factor [-]")
 for rw in res_robust.robustRows
-  println("  robust row: ", rw.id, "  stage ", rw.stage, ", t = ", round(rw.t; digits = 1), ", sigma widened by ", round(rw.sigma_factor; digits = 1), "x")
+  @printf("  %-22s %5d %7.1f %12.1f\n", rw.id, rw.stage, rw.t, rw.sigma_factor)
 end
 ````
 
-Reading aid (Example 4): the corrupted row sits in stage 2 (its gradient
-contribution suppressed), and the robust state error is close to the
-healthy-set level, while the plain WLS state is visibly bent. Rule of
-thumb: robust for riding through, elimination for finding and fixing;
+Reading aid (Example 4): the two runs on the corrupted set open with a
+warning from the topology precheck, `kcl_violation at bus B1`: the P
+balance at `B1` misses by 27 MW, 19 sigma. That is the +25 MW row again,
+found before the estimation starts: `B1` is completely measured
+(injection and both branch flows), so its balance can be checked on the
+raw values. The precheck is advisory, the estimation proceeds, and each
+`runse!` call checks its set once, hence two warnings; the reference run
+on the healthy set has none. Examples 2 and 3 did not show it because
+the diagnostics run their solve without the precheck.
+
+The corrupted row sits in stage 2 (its gradient contribution
+suppressed). The robust voltage error (0.00074 pu) is at the level of
+the healthy set (0.00076 pu), while the plain WLS error is about
+1.5 times as large (0.00113 pu): the bad row bends the plain state. Rule
+of thumb: robust for riding through, elimination for finding and fixing;
 the two compose (a robust solve makes the residuals of the OTHER rows
 cleaner, which sharpens the ranking).
 
@@ -341,14 +382,16 @@ q12 = get_branch_q_from_to_mvar(net, "B1", "B2")
 vm1 = net.nodeVec[net.busDict["B1"]]._vm_pu
 i12_A = 1000.0 * sqrt(p12^2 + q12^2) / (sqrt(3.0) * 110.0 * vm1)
 addImagMeasurement!(net; fromBus = "B1", toBus = "B2", direction = :from, value = i12_A, sigma = 5.0)
-println("bay current B1->B2: ", round(i12_A; digits = 1), " A added as ImagMeas")
+println("Line B1-B2 at B1, current magnitude |I| [A]:")
+@printf("  true (from the power flow), added as ImagMeas:  %.1f   sigma 5.0\n", i12_A)
 
 gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
-println("observability rows: ", gobs.n_measurements, " of ", length(net.measurements), " active measurements (ImagMeas excluded)")
 rep_i = validate_measurements(net)
-println("diagnostics rows:   ", length(rep_i.measurement_ranking), " (ImagMeas included, dof = ", rep_i.objective.dof, ")")
+println("Measurement rows used, of ", length(net.measurements), " active:")
+println("  observability check (ImagMeas excluded):  ", gobs.n_measurements)
+println("  diagnostics report (ImagMeas included):   ", length(rep_i.measurement_ranking), ", dof = ", rep_i.objective.dof)
 ````
 
 Reading aid (Example 5): the observability count is one short of the
@@ -360,16 +403,22 @@ activation gate waits for a settled state.
 
 ## Parameter estimation: a shunt reactor's susceptance
 
-**Example 6: when the bad data is the MODEL.** A 30 MVar compensation
-reactor hangs at `B5`, but the model database carries its susceptance
-20 percent too high (a nameplate-vs-asbuilt classic). No telemetry row
-is wrong, yet every run misfits around `B5`: bad-data logic would start
-eliminating healthy measurements. The honest fix is to ESTIMATE the
-parameter: `setShuntEstimation!` releases the shunt's susceptance $B$ as
-an additional state, the bay's reactive-power measurement
-(`ShuntQMeas`) provides the information, and the estimator recovers the
-true value. Write-back into the model is a separate, explicit decision
-(`updateShunts`); by default the estimate is only REPORTED.
+**Example 6: when the bad data is the MODEL.** A separate three-bus
+network (`S1` to `S3`) has a 30 MVar compensation reactor at `S3`.
+`addShunt!` follows the MATPOWER convention: `qShunt` is the reactive
+power in MVar at 1 pu voltage, $B > 0$ is a capacitor, $B < 0$ a
+reactor. The reactor therefore enters as `qShunt = -30`, which is
+$B = -0.30$ pu on 100 MVA. The model database carries its susceptance
+20 percent too large (factor 1.2, $B = -0.36$ pu; a nameplate-vs-asbuilt
+classic). No telemetry row is wrong, yet every run misfits around `S3`:
+bad-data logic would start eliminating healthy measurements. The fix is
+to ESTIMATE the parameter: `setShuntEstimation!` releases the shunt's
+susceptance $B$ as an additional state, the bay's reactive-power
+measurement (`ShuntQMeas`) provides the information, and the estimator
+recovers the true value. Whether a converged run writes the estimate
+into the model is set by `state_estimation.update_shunts`; the default is
+`true`. Run 1 below switches the write-back off to show the estimate on
+its own, run 2 switches it on.
 
 ````@example workshop_se_diagnostics
 net_sh = Net(name = "workshop_se_shunt", baseMVA = 100.0)
@@ -382,7 +431,7 @@ addPIModelACLine!(net = net_sh, fromBus = "S1", toBus = "S3", r_pu = 0.010, x_pu
 addProsumer!(net = net_sh, busName = "S1", type = "EXTERNALNETWORKINJECTION", referencePri = "S1", vm_pu = 1.02, va_deg = 0.0)
 addProsumer!(net = net_sh, busName = "S2", type = "ENERGYCONSUMER", p = 35.0, q = 12.0)
 addProsumer!(net = net_sh, busName = "S3", type = "ENERGYCONSUMER", p = 28.0, q = 9.0)
-addShunt!(net = net_sh, busName = "S3", pShunt = 0.0, qShunt = 30.0)   ## the reactor, TRUE value
+addShunt!(net = net_sh, busName = "S3", pShunt = 0.0, qShunt = -30.0)   ## the reactor (B < 0), TRUE value
 ok_sh, msg_sh = validate!(net = net_sh)
 ok_sh || error("shunt demo net invalid: $msg_sh")
 runpf!(net_sh, 40, 1e-10, 0)
@@ -391,27 +440,47 @@ runpf!(net_sh, 40, 1e-10, 0)
 std_sh = measurementStdDevs(vm = 1e-3, pinj = 0.1, qinj = 0.1, pflow = 0.1, qflow = 0.1, shuntq = 0.1)
 meas_sh = generateMeasurementsFromPF(net_sh; includeShuntQ = true, noise = false, stddev = std_sh)
 
-# now poison the MODEL: +20 percent on the susceptance, then release it
+# now falsify the MODEL: factor 1.2 on the susceptance, then release it
 sh = net_sh.shuntVec[1]
 b_true = imag(sh.y_pu_shunt)
 sh.y_pu_shunt = complex(real(sh.y_pu_shunt), 1.2 * b_true)
+b_model_before = imag(sh.y_pu_shunt)
 setShuntEstimation!(net_sh; busName = "S3")
 
-res_sh = with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false) do
+# run 1: estimate only, no write-back
+res_sh = with_state_estimation_config(max_iter = 30, tol = 1e-6, update_net = false, update_shunts = false) do
   runse!(net_sh, meas_sh)
 end
 row = only(res_sh.shuntEstimates)
-println("B_model = ", round(row.B_model; digits = 4), " pu (stale)   B_est = ", round(row.B_est; digits = 4), " pu   B_true = ", round(b_true; digits = 4), " pu")
-println("model after the run (untouched): ", round(imag(sh.y_pu_shunt); digits = 4), " pu")
-with_state_estimation_config(max_iter = 30, tol = 1e-10, update_net = false, update_shunts = true) do
+b_after_run1 = imag(sh.y_pu_shunt)
+# run 2: the same estimation with write-back (the default)
+with_state_estimation_config(max_iter = 30, tol = 1e-6, update_net = false, update_shunts = true) do
   runse!(net_sh, meas_sh)
 end
-println("after updateShunts = true:       ", round(imag(sh.y_pu_shunt); digits = 4), " pu")
+b_after_run2 = imag(sh.y_pu_shunt)
+
+println("Shunt at S3 (reactor), susceptance B [pu]:")
+@printf("  true value (used to generate measurements):    %.2f\n", b_true)
+@printf("  model before estimation (falsified):           %.2f\n", b_model_before)
+@printf("  estimated by SE:                               %.2f\n", row.B_est)
+@printf("  model after run 1 (update_shunts = false):     %.2f   %s\n", b_after_run1, b_after_run1 == b_model_before ? "unchanged" : "changed")
+@printf("  model after run 2 (update_shunts = true):      %.2f   %s\n", b_after_run2, isapprox(b_after_run2, row.B_est; atol = 1e-4) ? "written back" : "not written back")
+@printf("SE quality: J = %.1e, dof = %d\n", res_sh.objectiveJ, res_sh.dof)
 ````
 
-Reading aid (Example 6): the estimate lands on the true susceptance
-while the model keeps its stale value until you explicitly opt into the
-write-back. Two practical notes: without a direct bay Q measurement,
+Reading aid (Example 6): both runs open with a warning from the topology
+precheck, `kcl_violation at bus S3`: the Q balance at `S3` misses by
+5.9 MVar, 34 sigma. This is the wanted result. The measured injection
+and bay flows at `S3` do not balance with the model's shunt, and the miss
+is the model error itself (0.06 pu on 100 MVA, times $V^2$ at `S3`). The
+precheck finds the wrong parameter at the right bus before the
+estimation starts. Run 1 leaves the falsified model in place, so run 2
+sees the same mismatch, hence two warnings.
+
+The estimate lands on the true susceptance (-0.30 pu). Run 1 leaves the
+model at the falsified -0.36 pu, run 2 writes the estimate back. $J$ is
+practically zero: the measurements are noise-free, and with $B$ as a
+state the model fits them exactly. Two practical notes: without a direct bay Q measurement,
 `deriveShuntPseudoMeasurements!` can derive one from the bay current and
 a LOCAL voltage measurement (the derived row is protected from
 elimination, it encodes model knowledge); and a released shunt whose bay
@@ -427,9 +496,9 @@ report row says so (`frozen = true`).
   power flow and an N-1 analysis (`runpf_from_se!`). See
   [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).
 - Busbar couplers and FACTS devices in the measurement model (link
-  contraction, flow allocation, the `se_view` report):
-  [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/),
-  sections on links and FACTS.
+  contraction, link flow measurements as WLS rows, link flows after the
+  estimate, the `se_view` report):
+  [State Estimation Extensions](https://welthulk.github.io/Sparlectra.jl/state_estimation_extensions/).
 - Every `state_estimation.*` key, including the robust and Takahashi
   thresholds used above:
   [State-Estimation Configuration](https://welthulk.github.io/Sparlectra.jl/state_estimation_configuration/).

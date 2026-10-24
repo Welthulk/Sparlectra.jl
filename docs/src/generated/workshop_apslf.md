@@ -126,7 +126,7 @@ off because the chapter prints its own comparisons.
 
 ````@example workshop_apslf
 # uses: build_ring7, cfg_apslf, cfg_nr (warm-up cell)
-println("AnalyticLoadFlow ", pkgversion(Sparlectra.AnalyticLoadFlow))
+println("AnalyticLoadFlow package version (installed): ", pkgversion(Sparlectra.AnalyticLoadFlow))
 
 res_nr = run_sparlectra(net=build_ring7("ring7 NR"), config=cfg_nr)
 res_ap = run_sparlectra(net=build_ring7("ring7 APSLF"), config=cfg_apslf)
@@ -143,7 +143,9 @@ enters a workflow:
 (@isdefined(res_ap) && @isdefined(res_nr)) || error("Run the section \"Part 1: the same network, two solvers\" first: it sets up res_ap, res_nr.")
 max_dvm = maximum(abs.(bus_vm(res_nr.net) .- bus_vm(res_ap.net)))
 max_dva = maximum(abs.(bus_va(res_nr.net) .- bus_va(res_ap.net)))
-@printf("max |ΔVm| = %.2e pu, max |ΔVa| = %.2e deg\n", max_dvm, max_dva)
+println("ring7, bus voltages of the NR solve against the APSLF solve, all 7 buses:")
+@printf("  max |ΔVm|, voltage magnitude difference [pu]:  %.2e\n", max_dvm)
+@printf("  max |ΔVa|, voltage angle difference [deg]:     %.2e\n", max_dva)
 ````
 
 What differs is how the two got there. `iterations` counts Newton steps
@@ -156,9 +158,12 @@ APSLF run additionally reports its convergence radius:
 # uses: res_ap, res_nr (Part 1: the same network, two solvers)
 (@isdefined(res_ap) && @isdefined(res_nr)) || error("Run the section \"Part 1: the same network, two solvers\" first: it sets up res_ap, res_nr.")
 apslf_status = Sparlectra.rectangular_pf_status(res_ap.net)
-println("NR    : ", res_nr.iterations, " iterations, mismatch ", res_nr.final_mismatch)
-println("APSLF : ", res_ap.iterations, " pass(es),   mismatch ", res_ap.final_mismatch)
-println("APSLF : ", apslf_status.apslf_convergence_line)
+println("ring7, solver effort and result:")
+@printf("  NR, Newton iterations:                         %d\n", res_nr.iterations)
+@printf("  NR, max power mismatch after solve [pu]:       %.1e\n", res_nr.final_mismatch)
+@printf("  APSLF, outer passes:                           %d\n", res_ap.iterations)
+@printf("  APSLF, max power mismatch after solve [pu]:    %.1e\n", res_ap.final_mismatch)
+@printf("  APSLF, Padé margin dmin [-] (nearest pole at bus %d): %.2f, level %s\n", apslf_status.apslf_convergence_bus, apslf_status.apslf_convergence_radius, apslf_status.apslf_convergence_level)
 ````
 
 Reading aid: `dmin` is the distance of the nearest Padé pole to the
@@ -184,9 +189,10 @@ for order in (4, 6, 8, 12, 16, 24, 40)
     r = run_sparlectra(net=build_ring7("ring7 order $(order)"), config=cfg)
     push!(order_table, (order, r.final_mismatch, r.final_converged))
 end
-println(" order   max mismatch [pu]   converged")
+println("ring7, APSLF solve per series order:")
+println("  order [coefficients]   max power mismatch after solve [pu]   converged")
 for (order, mismatch, ok) in order_table
-    @printf("  %3d    %.3e          %s\n", order, mismatch, ok)
+    @printf("  %3d                    %.3e                             %s\n", order, mismatch, ok)
 end
 ````
 
@@ -218,16 +224,18 @@ for lambda in (1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0)
     vmin = r_ap.final_converged ? minimum(bus_vm(r_ap.net)) : NaN
     push!(margin_table, (lambda=lambda, dmin=st.apslf_convergence_radius, level=st.apslf_convergence_level, apslf=r_ap.final_converged, nr=r_nr.final_converged, vmin=vmin))
 end
-println("   λ      dmin    level   APSLF   NR     min Vm")
+println("ring7 with every load scaled by λ; dmin and min Vm from the APSLF run:")
+println("  λ [-]   Padé margin dmin [-]   level   APSLF converged   NR converged   lowest bus voltage Vm [pu]")
 for row in margin_table
-    @printf("  %.1f   %7.3f   %-5s   %-5s   %-5s  %.3f\n", row.lambda, row.dmin, row.level, row.apslf, row.nr, row.vmin)
+    vmin_text = isnan(row.vmin) ? "no solution" : @sprintf("%.3f", row.vmin)
+    @printf("  %.1f     %7.3f                %-5s   %-5s             %-5s          %s\n", row.lambda, row.dmin, row.level, row.apslf, row.nr, vmin_text)
 end
 ````
 
-Reading aid: as $\lambda$ grows, the lowest voltage falls, `dmin`
-shrinks and the level moves from `GRN` towards `RED`, all on a network
-that still solves. Past the fold neither solver converges; the
-difference is that APSLF told you it was coming. In a run log or on the
+Reading aid: as $\lambda$ grows, the lowest voltage falls and `dmin`
+shrinks. The level turns `YEL` at $\lambda = 3.5$, where Newton still
+solves, and `RED` at $\lambda = 4.0$, past the fold, where neither
+solver converges; the difference is that APSLF told you it was coming. In a run log or on the
 Web UI runs page this is the line `APSLF radius`, reported next to the
 Jacobian condition number of a Newton run.
 
@@ -244,14 +252,19 @@ else is changed:
 lambda_yel = margin_table[end-1].lambda
 cfg_order40 = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=40)), output=quiet)
 r_yel = run_sparlectra(net=scaled_ring7(lambda_yel), config=cfg_order40)
-@printf("λ = %.1f with order 40: %s, mismatch %.1e, %s\n", lambda_yel, r_yel.outcome, r_yel.final_mismatch, Sparlectra.rectangular_pf_status(r_yel.net).apslf_convergence_line)
+st_yel = Sparlectra.rectangular_pf_status(r_yel.net)
+@printf("ring7 at λ = %.1f, APSLF with order 40:\n", lambda_yel)
+println("  outcome:                                   ", r_yel.outcome)
+@printf("  max power mismatch after solve [pu]:       %.1e\n", r_yel.final_mismatch)
+@printf("  Padé margin dmin [-] (nearest pole at bus %d): %.3f, level %s\n", st_yel.apslf_convergence_bus, st_yel.apslf_convergence_radius, st_yel.apslf_convergence_level)
 ````
 
 The radius evaluation costs about as much as the solve itself: for
 every non-slack bus it forms the Padé denominator and finds its roots,
 one small eigenvalue problem per bus. On a large network it can be
-switched off with `power_flow.apslf.convergence_radius: false`, and
-the status line then says so instead of showing a number.
+switched off with `power_flow.apslf.convergence_radius: false`; the
+status line then says so in place of `dmin` and keeps only the series
+radius R, a root test on the coefficients without an eigenvalue problem.
 
 Two reading rules for `dmin`. It is a heuristic continuation margin,
 not a stability certificate: Padé approximants can produce spurious
@@ -264,7 +277,7 @@ verdict; raise the order first, as shown above.
 # uses: build_ring7, quiet (warm-up cell)
 cfg_noradius = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(convergence_radius=false)), output=quiet)
 r_noradius = run_sparlectra(net=build_ring7("ring7 no radius"), config=cfg_noradius)
-println(Sparlectra.rectangular_pf_status(r_noradius.net).apslf_convergence_line)
+println("ring7, APSLF status line without radius evaluation: ", Sparlectra.rectangular_pf_status(r_noradius.net).apslf_convergence_line)
 ````
 
 ### Reactive limits under APSLF
@@ -272,9 +285,12 @@ println(Sparlectra.rectangular_pf_status(r_noradius.net).apslf_convergence_line)
 A generator that would leave its reactive band cannot stay a PV bus.
 The rectangular solver switches such a machine to PQ at the binding
 limit inside its active-set loop; APSLF does the same in its own outer
-passes (the `iterations` count of Part 1). Sparlectra registers the
-clamps the solver reports in the net's Q-limit log, so the result table
-and the Q-V check judge an APSLF run exactly like a Newton run. The
+passes (the `iterations` count of Part 1). AnalyticLoadFlow compares the
+injection of a bus with the band, so Sparlectra hands it the generator
+band minus the reactive load of the bus. The clamps the solver reports go
+into the net's Q-limit log, and after the solve the limit status checks
+every regulated machine against its band: the result table, the limit
+status and the Q-V check judge an APSLF run like a Newton run. The
 shipped `sp_case118` (a synthetic case with the cardinalities of the
 IEEE 118-bus system: 118 buses, 186 branches, 54 generators, of which
 a good third are synchronous condensers with tight reactive bands) has
@@ -286,27 +302,42 @@ sorted list of machines at a Q-limit, is defined in the warm-up cell):
 case118 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "mpower", "sp_case118.m")
 r118_nr = run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_nr)
 r118_ap = run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_apslf)
-println("NR    : ", r118_nr.outcome, ", ", length(clamped(r118_nr.net)), " machine(s) at a Q-limit, ", r118_nr.iterations, " iterations")
-println("APSLF : ", r118_ap.outcome, ", ", length(clamped(r118_ap.net)), " machine(s) at a Q-limit, ", r118_ap.iterations, " pass(es)")
-println("APSLF : ", Sparlectra.rectangular_pf_status(r118_ap.net).apslf_convergence_line)
+st118 = Sparlectra.rectangular_pf_status(r118_ap.net)
+println("sp_case118, final state per solver              NR          APSLF")
+@printf("  outcome                                       %-10s  %s\n", r118_nr.outcome, r118_ap.outcome)
+@printf("  machines at a Q-limit (count)                 %-10d  %d\n", length(clamped(r118_nr.net)), length(clamped(r118_ap.net)))
+@printf("  Newton iterations (NR), outer passes (APSLF)  %-10d  %d\n", r118_nr.iterations, r118_ap.iterations)
+@printf("  limit status                                  %-10s  %s\n", r118_nr.limit_validation_status, r118_ap.limit_validation_status)
+@printf("  Q-limit stability check                       %-10s  %s\n", r118_nr.diagnostics.qlimit_stability_status, r118_ap.diagnostics.qlimit_stability_status)
+@printf("  APSLF, Padé margin dmin [-] (nearest pole at bus %d): %.2f, level %s\n", st118.apslf_convergence_bus, st118.apslf_convergence_radius, st118.apslf_convergence_level)
 ````
 
-The two clamp sets need not be identical, and neither the voltages:
-which machines end at a limit depends on the path taken, and a case
-with many machines near their limits can have more than one valid
-limit configuration (the Q-limit strategy
-question of the [control chapter](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour_control/); the rectangular
-solver's active-set loop and the series solver's outer passes are two
-such paths). This is the one place where "same equations, same answer"
-does not hold, and the run log's Q-limit block is where to look when
-two solvers disagree on a case with many machines at their limits:
+Both runs end with 10 machines at a Q-limit, the limit status `ok` and
+the stability check `ok`. The next cell compares the two clamp sets and
+the voltages, and shows two machines where the bus load matters: bus 4
+(generator band -15 .. 25 MVAr, bus Q load 23 MVAr) and bus 85 (band
+-10 .. 10 MVAr, bus Q load 11 MVAr) end at their Qmax of 25 and 10 MVAr,
+with a bus injection of 2 and -1 MVAr. AnalyticLoadFlow sees only the
+injection, which lies well inside the generator band; only the band
+shifted by the load clamps these two machines. A case with many machines
+near their limits can have more than one valid limit configuration (the
+Q-limit strategy question of the [control chapter](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour_control/));
+when two solvers disagree on such a case, the run log's Q-limit block is
+where to look.
 
 ````@example workshop_apslf
 # uses: bus_vm, clamped (warm-up cell); r118_ap, r118_nr (Reactive limits under APSLF)
 (@isdefined(r118_ap) && @isdefined(r118_nr)) || error("Run the section \"Reactive limits under APSLF\" first: it sets up r118_ap, r118_nr.")
 common = intersect(clamped(r118_nr.net), clamped(r118_ap.net))
-println(length(common), " machine(s) clamped by both solvers, ", length(symdiff(clamped(r118_nr.net), clamped(r118_ap.net))), " differ")
-@printf("max |ΔVm| over all buses: %.2e pu\n", maximum(abs.(bus_vm(r118_nr.net) .- bus_vm(r118_ap.net))))
+println("sp_case118, NR against APSLF:")
+println("  machines at a Q-limit in both solutions (count):       ", length(common))
+println("  machines at a Q-limit in only one solution (count):    ", length(symdiff(clamped(r118_nr.net), clamped(r118_ap.net))))
+@printf("  max |ΔVm| over all 118 buses, voltage magnitude [pu]:  %.2e\n", maximum(abs.(bus_vm(r118_nr.net) .- bus_vm(r118_ap.net))))
+for row in Sparlectra.qlimitStabilityReport(r118_ap.net)
+    row.bus_name in ("4", "85") || continue
+    qload = something(r118_ap.net.nodeVec[row.bus]._qƩLoad, 0.0)
+    @printf("  bus %-2s APSLF: %s, machine Q %.1f MVAr (Qmax %.1f), bus Q load %.1f MVAr, bus injection %.1f MVAr\n", row.bus_name, row.end_type, row.q_MVar, row.qmax_MVar, qload, row.q_MVar - qload)
+end
 ````
 
 ## Part 3: the series as a start value for Newton
@@ -324,8 +355,9 @@ lambda_hard = 3.5
 cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=Sparlectra.ApslfStartConfig(enabled=true)), output=quiet)
 r_flat = run_sparlectra(net=scaled_ring7(lambda_hard), config=cfg_nr)
 r_hyb = run_sparlectra(net=scaled_ring7(lambda_hard), config=cfg_hybrid)
-println("flat start  : ", r_flat.outcome, ", ", r_flat.iterations, " Newton iterations")
-println("APSLF start : ", r_hyb.outcome, ", ", r_hyb.iterations, " Newton iterations")
+@printf("ring7 at λ = %.1f, rectangular Newton solver:\n", lambda_hard)
+println("  from flat start:   ", r_flat.outcome, ", Newton iterations: ", r_flat.iterations)
+println("  from APSLF start:  ", r_hyb.outcome, ", Newton iterations: ", r_hyb.iterations)
 ````
 
 The hybrid start is also what the automatic rescue ladder of a
@@ -352,7 +384,11 @@ configuration is repeated here so this cell runs on its own:
 case14 = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "scf", "sp_case14.scf.json")
 cfg_hybrid = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, apslf_start=Sparlectra.ApslfStartConfig(enabled=true)), output=quiet)
 r14 = run_sparlectra(net=importSCF(case14), config=cfg_hybrid)
-println("hybrid start on sp_case14: ", r14.outcome, ", ", r14.iterations, " Newton iterations")
+cr14 = latest_control_result(r14.net)
+println("sp_case14 with its tap controller, APSLF start for the rectangular solver:")
+println("  outcome:                                   ", r14.outcome)
+println("  outer control loop:                        ", cr14.status, ", passes: ", cr14.outer_iterations)
+println("  Newton iterations, last pass / all passes: ", cr14.last_pf_iterations, " / ", cr14.total_pf_iterations)
 ````
 
 ## Summary

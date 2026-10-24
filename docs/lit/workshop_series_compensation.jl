@@ -87,6 +87,7 @@
 # compile pauses.
 
 using Sparlectra
+using Printf
 
 ## the network builders of the examples, defined here so that any example
 ## runs on its own after this cell:
@@ -165,15 +166,16 @@ warmup()
 #
 # **Example 1: the natural flow split.** 80 MW travel from source `A` to
 # sink `B` over two parallel corridors.
-# The upper corridor (`A` to `M2` to `B`) has twice the reactance of the
-# lower one, so it naturally carries only one third of the transfer.
+# Corridor 2 (`A` to `M2` to `B`, the lower one in the diagram) has twice
+# the reactance of corridor 1, so it naturally carries only one third of
+# the transfer.
 #
 # ```text
-#          +---- M1 ----+      corridor 1: x = 0.10 per line (TCSC here)
+#          +---- M1 ----+      corridor 1: x = 0.10 per line
 #          |            |
 #    A ----+            +---- B (load 80 MW)
 #  (slack) |            |
-#          +---- M2 ----+      corridor 2: x = 0.20 per line
+#          +---- M2 ----+      corridor 2: x = 0.20 per line (TCSC on A-M2 from Example 2)
 # ```
 #
 # `build_loop` (this network) is defined in the warm-up cell at the top.
@@ -181,8 +183,9 @@ warmup()
 ## uses: build_loop (warm-up cell)
 net = build_loop()
 run_sparlectra(net = net)
-println("natural split: corridor 1 (A->M1) = ", round(get_branch_p_from_to_mw(net, "A", "M1"); digits = 2), " MW")
-println("               corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net, "A", "M2"); digits = 2), " MW")
+println("natural split, active power flow at the sending end [MW]:")
+@printf("  corridor 1, line A->M1:  %.2f\n", get_branch_p_from_to_mw(net, "A", "M1"))
+@printf("  corridor 2, line A->M2:  %.2f\n", get_branch_p_from_to_mw(net, "A", "M2"))
 
 # Reading aid (Example 1): the 2:1 reactance ratio produces the 2:1 flow
 # split, independent of any thermal ratings: the low-reactance corridor
@@ -202,9 +205,14 @@ println("               corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(ne
 ## uses: net (Example 1)
 @isdefined(net) || error("Run Example 1 first: it sets up net.")
 ctrl = addSeriesReactanceControl!(net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
-run_sparlectra(net = net)
-println("steered:  corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net, "A", "M2"); digits = 2), " MW (target 35)")
-println("          x_pu moved 0.20 -> ", round(ctrl.x_pu; digits = 4), ", status = ", ctrl.status)
+x_before = ctrl.x_pu
+res = run_sparlectra(net = net)
+println("line A->M2 with TCSC:")
+@printf("  active power flow, target [MW]:      %.2f\n", ctrl.p_target_mw)
+@printf("  active power flow, achieved [MW]:    %.2f\n", get_branch_p_from_to_mw(net, "A", "M2"))
+@printf("  series reactance x, before [pu]:     %.4f\n", x_before)
+@printf("  series reactance x, after [pu]:      %.4f\n", ctrl.x_pu)
+println("  controller status:                   ", ctrl.status)
 
 # The controller row from the last control run (Example 2) and the generic
 # controllable-element view carry the shared vocabulary (actuator, range,
@@ -213,12 +221,16 @@ println("          x_pu moved 0.20 -> ", round(ctrl.x_pu; digits = 4), ", status
 ## uses: net (Example 1, Example 2)
 @isdefined(net) || error("Run Example 1, Example 2 first: they set up net.")
 cr = latest_control_result(net)
-println("outer loop: status = ", cr.status, ", outer iterations = ", cr.outer_iterations, ", pf solves = ", cr.powerflow_solves)
+println("outer control loop: status ", cr.status, ", outer iterations: ", cr.outer_iterations, ", power-flow solves: ", cr.powerflow_solves)
 for row in cr.controllers
-  println("controller: ", row.controller_name, " achieved ", round(row.achieved_p_mw; digits = 2), " MW of ", row.p_target_mw, " MW, x_pu = ", round(row.x_pu; digits = 4))
+  println("controller row ", row.controller_name, ":")
+  @printf("  active power flow, target / achieved [MW]:  %.2f / %.2f\n", row.p_target_mw, row.achieved_p_mw)
+  @printf("  series reactance x, final [pu]:             %.4f\n", row.x_pu)
 end
 for e in controllableElements(net)
-  println("element:    ", e.element, " | ", e.device, " | ", e.actuator, " in [", e.actuator_min, ", ", e.actuator_max, "] | ", e.quantity, " @ ", e.target)
+  println("element ", e.element, ", ", e.device, ":")
+  @printf("  actuator %s, range [pu]:             %.2f .. %.2f\n", e.actuator, e.actuator_min, e.actuator_max)
+  @printf("  controlled quantity %s at %s, target [MW]: %.2f\n", e.quantity, e.target, e.target_value)
 end
 
 # The same information lands in the classical result tables: the "Controllers"
@@ -226,10 +238,11 @@ end
 # marker with its P target and status (the moved reactance is in the Series
 # Reactance Control Summary of the Control footer).
 
-## uses: net (Example 1, Example 2)
+## uses: net (Example 1, Example 2); res (Example 2)
 @isdefined(net) || error("Run Example 1, Example 2 first: they set up net.")
+@isdefined(res) || error("Run Example 2 first: it sets up res.")
 calcNetLosses!(net)
-printACPFlowResults(net, 0.0, 1, 1e-8)
+printACPFlowResults(net, res.elapsed_s, res.iterations, 1e-8)
 
 # ## The honest limit
 #
@@ -243,18 +256,21 @@ printACPFlowResults(net, 0.0, 1, 1e-8)
 ## uses: build_loop (warm-up cell)
 net2 = build_loop()
 ctrl2 = addSeriesReactanceControl!(net2; fromBus = "A", toBus = "M2", p_target_mw = 70.0, x_min_pu = 0.02, x_max_pu = 0.30)
-run_sparlectra(net = net2)
-println("limited: corridor 2 (A->M2) = ", round(get_branch_p_from_to_mw(net2, "A", "M2"); digits = 2), " MW (target 70)")
-println("         x_pu = ", round(ctrl2.x_pu; digits = 4), " (clamped), at_limit = ", ctrl2.at_limit, ", converged = ", ctrl2.converged)
+res2 = run_sparlectra(net = net2)
+println("line A->M2 with TCSC, target out of reach:")
+@printf("  active power flow, target [MW]:      %.2f\n", ctrl2.p_target_mw)
+@printf("  active power flow, achieved [MW]:    %.2f\n", get_branch_p_from_to_mw(net2, "A", "M2"))
+@printf("  series reactance x, after [pu]:      %.4f (lower range end %.2f)\n", ctrl2.x_pu, ctrl2.x_min_pu)
+println("  at_limit / converged:                ", ctrl2.at_limit, " / ", ctrl2.converged)
 
 # In the classical result the honest limit is visible in the branch row: the
 # A->M2 line's Ctrl status reads "at_limit_not_converged" instead of pretending
 # convergence.
 
-## uses: net2 (Example 3)
-@isdefined(net2) || error("Run Example 3 first: it sets up net2.")
+## uses: net2, res2 (Example 3)
+(@isdefined(net2) && @isdefined(res2)) || error("Run Example 3 first: it sets up net2, res2.")
 calcNetLosses!(net2)
-printACPFlowResults(net2, 0.0, 1, 1e-8)
+printACPFlowResults(net2, res2.elapsed_s, res2.iterations, 1e-8)
 
 # ## From series reactance to the UPFC
 #
@@ -288,24 +304,27 @@ addProsumer!(net = netu, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.0)
 upfc = addUpfcControl!(netu; fromBus = "A", toBus = "M2", shunt_bus = "M2",
                        target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0,
                        v_inj_max_pu = 0.08, s_max_mva = 40.0)
-run_control!(netu)
+t_u = @elapsed (cr_u = run_control!(netu))
 println("quadrature UPFC: two converter rows for one device:")
 for row in controllableElements(netu)
-  println("  ", rpad(row.device, 48), row.actuator, ", at_limit = ", row.at_limit)
+  println("  ", row.device, ": actuator ", row.actuator, ", at_limit = ", row.at_limit)
 end
 
 # The classical result tables show the composite as its two sub-controllers:
 # the series side under the TCSC/SSSC summary, the shunt side under the
 # machine (STATCOM) summary, both counted on the "Controllers" line.
 
-## uses: netu (Example 4)
-@isdefined(netu) || error("Run Example 4 first: it sets up netu.")
+## uses: cr_u, netu, t_u (Example 4)
+(@isdefined(cr_u) && @isdefined(netu) && @isdefined(t_u)) || error("Run Example 4 first: it sets up cr_u, netu, t_u.")
 calcNetLosses!(netu)
-printACPFlowResults(netu, 0.0, 1, 1e-8)
+printACPFlowResults(netu, t_u, cr_u.last_pf_iterations, 1e-8)
 
 # Reading aid (Example 4): one call, one composite name, but honestly TWO
 # result rows, the series (SSSC) and the shunt (STATCOM), each with its own
-# `at_limit`. This is the whole device in the quadrature limit; it steers ONE
+# `at_limit`. Here the series side reaches its 35 MW target within the
+# deadband, while the shunt side runs into its 40 MVA current limit and
+# holds `B` at about 0.972 pu instead of 0.99 pu (Machine Voltage Control
+# Summary). This is the whole device in the quadrature limit; it steers ONE
 # line quantity plus the shunt voltage, but not independent P and Q.
 #
 # **Example 5: the full model, independent P and Q.** Lifting the quadrature
@@ -329,21 +348,23 @@ full = addUpfcControl!(netf; model = :full, fromBus = "I", toBus = "J", shunt_bu
                        p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
                        v_inj_max_pu = 0.30, s_max_mva = 120.0,
                        deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
-run_control!(netf; control_config = ControlConfig(max_outer_iterations = 80))
+t_f = @elapsed (cr_f = run_control!(netf; control_config = ControlConfig(max_outer_iterations = 80)))
 f = full.upfc
-println("full UPFC on I->J:")
-println("  line P = ", round(f.achieved_p_mw; digits = 2), " MW (target 40) and Q = ", round(f.achieved_q_mvar; digits = 2), " MVAr (target 10), both at once")
-println("  series V_se = ", round(abs(f.v_se_pu); digits = 4), " pu, P_se = ", round(f.p_se_mw; digits = 3), " MW")
-println("  DC-link balance P_se + P_sh = ", round(f.p_se_mw + f.p_sh_mw; digits = 4), " MW")
+println("full UPFC on line I->J:")
+@printf("  line active power P, target / achieved [MW]:      %.2f / %.2f\n", f.p_target_mw, f.achieved_p_mw)
+@printf("  line reactive power Q, target / achieved [MVAr]:  %.2f / %.2f\n", f.q_target_mvar, f.achieved_q_mvar)
+@printf("  series voltage |V_se|, final [pu]:                %.4f\n", abs(f.v_se_pu))
+@printf("  series converter active power P_se, final [MW]:   %.3f\n", f.p_se_mw)
+@printf("  DC-link residual |P_se + P_sh|, solved state [MW]: %.4f\n", f.dc_residual_mw)
 
 # The classical result tables carry the whole picture: the "Controllers" line
 # now counts the UPFC, and the "UPFC Control Summary" block reports the line
 # P/Q targets vs achieved, the series voltage, and the DC-link residual.
 
-## uses: netf (Example 5)
-@isdefined(netf) || error("Run Example 5 first: it sets up netf.")
+## uses: cr_f, netf, t_f (Example 5)
+(@isdefined(cr_f) && @isdefined(netf) && @isdefined(t_f)) || error("Run Example 5 first: it sets up cr_f, netf, t_f.")
 calcNetLosses!(netf)
-printACPFlowResults(netf, 0.0, 1, 1e-8)
+printACPFlowResults(netf, t_f, cr_f.last_pf_iterations, 1e-8)
 
 # Forcing the series phase back to quadrature collapses P_se to zero, back to
 # the Example 4 behaviour:
@@ -354,7 +375,8 @@ fq = addUpfcControl!(netfq; model = :full, series_phase = :quadrature, fromBus =
                      shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
                      v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, max_outer_iters = 80)
 run_control!(netfq; control_config = ControlConfig(max_outer_iterations = 80))
-println("quadrature-forced: P_se = ", round(fq.upfc.p_se_mw; digits = 4), " MW (zero: no phase-shifter DOF)")
+println("UPFC on line I->J, series phase forced to quadrature:")
+println("  series converter active power P_se, final [MW]:   ", fq.upfc.p_se_mw)
 
 # Reading aid (Example 5): the number that unlocks independent P and Q is
 # `P_se`, the active power the series converter pushes through the DC link

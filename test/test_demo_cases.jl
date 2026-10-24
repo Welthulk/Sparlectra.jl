@@ -16,11 +16,15 @@
 # purpose: the shipped demo cases (data/scf/sp_case*) are read through
 #          import_case like any other SCF file; power flow, state estimation
 #          on the measurements the file carries, and the declared controllers
-#          must converge. The file checks (provenance, case config, size
-#          budget, bad-data twin) live in test_repository_hygiene.jl.
+#          must converge; sp_case6tap holds its three tap control targets.
+#          The file checks (provenance, case config, size budget, bad-data
+#          twin) live in test_repository_hygiene.jl.
 
 const _DEMO_CASE_DIR = normpath(joinpath(dirname(@__DIR__), "data", "scf"))
-const _DEMO_CASE_NAMES = ("sp_case5", "sp_case14", "sp_case60", "sp_case188")
+const _DEMO_CASE_NAMES = ("sp_case5", "sp_case6tap", "sp_case14", "sp_case60", "sp_case188")
+# the hand-written tap control case carries no measurement rows in its file;
+# its measurement table next to it is read instead
+const _DEMO_CASES_TABLE_ONLY = ("sp_case6tap",)
 # scf_with_foreign_stamp for the legacy group of this file
 isdefined(@__MODULE__, :scf_roundtrip_field_diffs) || include("test_scf_support.jl")
 # the cases are machine-neutral: they run against the PACKAGE defaults and
@@ -42,6 +46,9 @@ function run_demo_case_tests()
         # 2) state estimation on the measurements the file itself carries;
         # the topology precheck advises on two of the shipped cases by design,
         # captured, anything else that warns fails
+        meas_file = joinpath(_DEMO_CASE_DIR, "$(name).measurements.csv")
+        @test isfile(meas_file)
+        name in _DEMO_CASES_TABLE_ONLY && readMeasurementTable!(net; file = meas_file)
         se = run_with_expected_warnings(() -> runse!(net), (r"topology precheck reported",))
         @test se.converged
 
@@ -58,6 +65,38 @@ function run_demo_case_tests()
       end)() end
     end
 
+    # sp_case6tap, the tap control case (diagram
+    # data/scf/sp_case6tap_single_line.svg): its names, the ratio changer of
+    # T2 that no controller drives, and the three targets of the case file
+    # met inside their deadbands after the outer control loop
+    @testset "sp_case6tap names, T2 changer and control targets" begin (function ()
+      net = Sparlectra.import_case(joinpath(_DEMO_CASE_DIR, "sp_case6tap.scf.json"), _DEMO_REF_CONFIG()).net
+      @test [n.comp.cName for n in net.nodeVec] == ["Nordwerk_220", "Suedfeld_220", "Kreuzau_110", "Mittelbach_110", "Ostheim_110", "Lindenau_20"]
+      @test [b.comp.cName for b in net.branchVec] == ["Nordwerk_Suedfeld", "Kreuzau_Mittelbach", "Mittelbach_Ostheim", "Kreuzau_Ostheim", "T1_Nordwerk_Kreuzau", "T2_Suedfeld_Ostheim", "T3_Mittelbach_Lindenau"]
+      # T2: declared ratio changer, +-12 steps of 1.25 percent around the
+      # neutral ratio 1.0, at position 0, no phase changer; no controller
+      # names it (the controllers sit on branch 5, T1, and 7, T3)
+      t2 = net.branchVec[6]
+      @test t2.has_ratio_tap && t2.ratio_tap_declared && !t2.has_phase_tap
+      @test t2.tap_step == 0.0125 && t2.tap_ratio == 1.0
+      @test Sparlectra._tap_position(t2.tap_ratio, 1.0, t2.tap_step) == 0
+      @test t2.tap_min ≈ 1 / (1 + 12 * 0.0125) && t2.tap_max ≈ 1 / (1 - 12 * 0.0125)
+      controllers = Sparlectra.collect_outer_controllers(net)
+      @test sort([(c.trafo, c.mode) for c in controllers]) == [("5", :branch_active_power), ("5", :voltage), ("7", :voltage)]
+      cres = Sparlectra.run_control!(net; verbose = 0)
+      @test cres.converged
+      row(n) = only(r for r in cres.controllers if r.controller_name == n)
+      @test abs(row("T1_Nordwerk_Kreuzau OLTC").achieved_vm_pu - 1.0) <= 0.01
+      @test abs(row("T3_Mittelbach_Lindenau OLTC").achieved_vm_pu - 1.0) <= 0.01
+      @test abs(row("T1_Nordwerk_Kreuzau PST").achieved_p_mw - 60.0) <= 4.0
+      # the result rows read the solved net: the bus voltages and the T1
+      # flow agree with them
+      vm(b) = only(n for n in net.nodeVec if n.comp.cName == b)._vm_pu
+      @test row("T1_Nordwerk_Kreuzau OLTC").achieved_vm_pu ≈ vm("Kreuzau_110")
+      @test row("T3_Mittelbach_Lindenau OLTC").achieved_vm_pu ≈ vm("Lindenau_20")
+      @test row("T1_Nordwerk_Kreuzau PST").achieved_p_mw ≈ Sparlectra.get_branch_p_from_to_mw(net, "Nordwerk_220", "Kreuzau_110")
+    end)() end
+
     # the shipped cases load through the Web
     # UI. The chooser offers them without any cache copy, and the run path
     # stages a bundled case into the cache WITH its sidecars (the per-case
@@ -67,6 +106,7 @@ function run_demo_case_tests()
       app_root = normpath(joinpath(dirname(@__DIR__)))
       offered = SparlectraApp._webui_bundled_scf_options(app_root)
       @test "sp_case14.scf.json" in offered
+      @test "sp_case6tap.scf.json" in offered
       @test "sp_casePST.scf.json" in offered
       # 0.12.5: the feeder/Q-limit example cases and the plain PGM files are
       # offered too, each with its case configuration sidecar

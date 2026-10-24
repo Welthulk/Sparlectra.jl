@@ -34,7 +34,11 @@
 #          Usage: julia --project=app tools/generate_webui_help_excerpts.jl
 #                 julia --project=app tools/generate_webui_help_excerpts.jl --check
 #          --check regenerates in memory and fails when the committed file
-#          differs (part of the docs gate).
+#          differs (part of the docs gate). Both fail when a help text, as
+#          the Web UI renders it, still carries a `$` or a TeX command
+#          outside code: formulas are converted at render time
+#          (app/src/webui/help_math.jl), and a command that converter does
+#          not cover is named with its topic.
 
 using SparlectraApp
 
@@ -277,6 +281,7 @@ function generate_webui_help_excerpts(; docs_src::AbstractString = _EXCERPT_DOCS
   end
   println(io, ")")
   index = NamedTuple{(:title, :url, :kind, :text),Tuple{String,String,String,String}}[]
+  manuals = Dict{String,String}()
   for (page, constant, what, kind) in ((WEBUI_MANUAL_PAGE, "WEBUI_HELP_MANUAL", "user help", "help"), (WEBUI_REFERENCE_PAGE, "WEBUI_HELP_REFERENCE", "reference", "reference"))
     path = joinpath(docs_src, page * ".md")
     if !isfile(path)
@@ -284,6 +289,7 @@ function generate_webui_help_excerpts(; docs_src::AbstractString = _EXCERPT_DOCS
       continue
     end
     manual = extract_webui_help_manual(read(path, String); page = page)
+    manuals[page] = manual.markdown
     println(io)
     println(io, "# The Web UI ", what, " (docs/src/", page, ".md) and the ids of its labelled headings.")
     println(io, "const ", constant, " = ", repr(manual.markdown))
@@ -310,7 +316,47 @@ function generate_webui_help_excerpts(; docs_src::AbstractString = _EXCERPT_DOCS
     println(io, "  (title = ", repr(entry.title), ", url = ", repr(entry.url), ", kind = ", repr(entry.kind), ", text = ", repr(entry.text), "),")
   end
   println(io, "]")
+  append!(failures, _excerpt_math_failures(excerpts, manuals, index))
   return (source = String(take!(io)), failures = failures)
+end
+
+# What is left of the math in a text the Web UI shows, outside code: a `$`
+# (as such or as the entity the Markdown standard library writes) and every
+# backslash command. Formulas are converted when the help renders, so on
+# rendered HTML any hit is a formula the converter does not cover.
+function _excerpt_math_leftovers(text::AbstractString; plain::Bool = false)::Vector{String}
+  rest = replace(String(text), r"<pre\b.*?</pre>"s => " ", r"<code\b.*?</code>"s => " ")
+  found = String[]
+  # plain text (the search index) has lost its code marks, so a `$` or a
+  # backslash there may be code (`%LOCALAPPDATA%\Sparlectra`): only a pair
+  # of `$` counts; a command the converter missed shows in the rendered
+  # text it comes from
+  plain && return occursin(r"\$[^$]*\$", rest) ? ["\$"] : found
+  occursin(r"\$|&#36;", rest) && push!(found, "\$")
+  append!(found, [String(m.match) for m in eachmatch(r"\\(?:[A-Za-z]+|[^A-Za-z\s])", rest)])
+  return unique!(found)
+end
+
+# Every help text the Web UI serves, checked for leftover math: the topic
+# sections and the two help pages as rendered, the registry's labels and
+# hints, the search index.
+function _excerpt_math_failures(excerpts::AbstractDict, manuals::AbstractDict, index)::Vector{String}
+  failures = String[]
+  report(name, found) = isempty(found) || push!(failures, string(name, ": unconverted ", join(found, ", ")))
+  for (target, markdown) in sort!(collect(excerpts); by = first)
+    topics = sort!([String(t) for (t, meta) in SparlectraApp.WEBUI_HELP_TOPICS if String(meta.doc) == target])
+    report("$(target) (topics $(join(topics, ", ")))", _excerpt_math_leftovers(SparlectraApp._webui_render_markdown(markdown)))
+  end
+  for (page, markdown) in sort!(collect(manuals); by = first)
+    report("$(page).md ($(WEBUI_HELP_PAGE_ROUTES[page]))", _excerpt_math_leftovers(SparlectraApp._webui_render_markdown(markdown)))
+  end
+  for (topic, meta) in sort!(collect(SparlectraApp.WEBUI_HELP_TOPICS); by = first)
+    report("topic $(topic) (label and hint)", _excerpt_math_leftovers(string(meta.label, " ", meta.hint)))
+  end
+  for entry in index
+    report("search index $(entry.url)", _excerpt_math_leftovers(entry.text; plain = true))
+  end
+  return failures
 end
 
 # The sections of a help page for the search index: one entry per heading
@@ -341,8 +387,10 @@ end
 """
     check_webui_help_excerpts(; docs_src, io) -> Vector{String}
 
-Failures: a target without a section, or a committed `help_excerpts.jl` that
-differs from what the documentation sources generate now.
+Failures: a target without a section, a help text with a formula the
+Web UI cannot show (a `\$` or a TeX command left after the conversion,
+named with its topic), or a committed `help_excerpts.jl` that differs from
+what the documentation sources generate now.
 """
 function check_webui_help_excerpts(; docs_src::AbstractString = _EXCERPT_DOCS_SRC, io::IO = stdout)
   generated = generate_webui_help_excerpts(; docs_src)

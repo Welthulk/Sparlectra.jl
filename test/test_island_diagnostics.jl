@@ -178,11 +178,11 @@ function run_island_diagnostics_tests()
     # error and with their own note (the generator out of service, the
     # load not supplied; a bus without infeed is never promoted)
     net60 = Sparlectra.importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json"))
-    cases = [c for c in generateN1Branches(net60) if c.name in ("B_ACL_20_56_57", "B_ACL_20_53_54")]
+    cases = [c for c in generateN1Branches(net60) if c.name in ("Ostsee_Westhof", "Altfeld_Neudorf")]
     @test length(cases) == 2
     res = Dict(r.name => r for r in redirect_stdout(() -> runContingencies!(net60, cases), devnull))
-    gen_out = res["B_ACL_20_56_57"]
-    load_out = res["B_ACL_20_53_54"]
+    gen_out = res["Ostsee_Westhof"]
+    load_out = res["Altfeld_Neudorf"]
     @test gen_out.converged && load_out.converged
     @test occursin("generating unit(s)", something(gen_out.error, "")) && gen_out.shed_load_mw == 0.0
     @test occursin("load disconnected", something(load_out.error, "")) && load_out.shed_load_mw > 0.0

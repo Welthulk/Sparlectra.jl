@@ -164,8 +164,9 @@ s = summarizeCGMES(path = [microgrid_be, microgrid_bd])
 print(s)
 
 # Reading aid (Example 1.1): the summary names the files with their
-# profiles, the CGMES version, object counts per class, and the declared
-# model dependencies. Nothing is mapped yet; this is the "what did I just
+# profiles, the CGMES version, object counts per class, and the number of
+# unresolved references (zero here, because the boundary set is part of
+# the input). Nothing is mapped yet; this is the "what did I just
 # receive" view.
 #
 # ## Chapter 2: when an import cannot work
@@ -176,8 +177,8 @@ print(s)
 # explains the gap in plain language instead of a bare error:
 
 ## uses: microgrid_be (warm-up cell)
+## analyzeCGMES prints the report itself and returns it as a String
 a_report = analyzeCGMES(path = microgrid_be)
-print(a_report)
 
 # Reading aid (Example 2.1): the analysis lists the supplied models, the
 # declared dependencies (`md:Model.DependentOn`), which of them are
@@ -197,7 +198,7 @@ res = importCGMES(path = [microgrid_be, microgrid_bd], name = "microgrid_be")
 net = res.net
 println("imported: ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches, ", length(net.prosumpsVec), " injections")
 etime = @elapsed ((ite, erg) = runpf!(net, 30, 1e-8, 0; islands_enabled = true))
-println("solved: status ", erg, " in ", ite, " iterations")
+println("solved: status ", erg, " (0 = converged) in ", ite, " NR iterations")
 
 # The classical result tables, exactly as in the basic tour:
 # `calcNetLosses!` derives branch flows and losses from the converged
@@ -215,10 +216,12 @@ printACPFlowResults(net, etime, ite, 1e-8)
 ## uses: res (Example 3.1)
 @isdefined(res) || error("Run Example 3.1 first: it sets up res.")
 cmp = compareWithSV(res)
-println("compared ", cmp.n, " buses against the shipped SV: max |dVm| = ", round(cmp.max_dvm; sigdigits = 3), " pu, max |dVa| = ", round(cmp.max_dva; sigdigits = 3), " deg")
+println("Re-solved state against the shipped SV, ", cmp.n, " buses:")
+println("  largest voltage magnitude difference |dVm| [pu]:   ", round(cmp.max_dvm; sigdigits = 3))
+println("  largest voltage angle difference |dVa| [deg]:      ", round(cmp.max_dva; sigdigits = 3))
 
-# Reading aid (Example 3.1): agreement to a few 1e-4 pu means the model
-# mapped faithfully, the remaining difference is solver tolerance and
+# Reading aid (Example 3.1): agreement below 1e-4 pu (and about 1e-3 deg)
+# means the model mapped faithfully, the remaining difference is solver tolerance and
 # rounding in the shipped SV. A LARGE deviation would point at a mapping
 # or data problem; the per-bus table in the comparison names where.
 #
@@ -272,7 +275,8 @@ _, ea = runpf!(net_a, 40, 1e-8, 0; islands_enabled = true)
 _, eb = runpf!(net_b, 40, 1e-8, 0; islands_enabled = true)
 va = sort([n._vm_pu for n in net_a.nodeVec])
 vb = sort([n._vm_pu for n in net_b.nodeVec])
-println("both solve (", ea, "/", eb, "); max |Vm| difference across the sorted buses: ", maximum(abs.(va .- vb)))
+println("both solve: status ", ea, " without TP, ", eb, " with TP (0 = converged)")
+println("largest |Vm| difference between the twins, buses sorted by Vm [pu]: ", maximum(abs.(va .- vb)))
 
 # Reading aid (Example 4.2): the derived partition reproduces the
 # sender's TP bus for bus (up to naming: derived buses take their busbar
@@ -303,7 +307,8 @@ res2 = importCGMES(path = outdir, name = "roundtrip")
 ite2, erg2 = runpf!(res2.net, 30, 1e-8, 0; islands_enabled = true)
 vm1 = sort([n._vm_pu for n in net.nodeVec])
 vm2 = sort([n._vm_pu for n in res2.net.nodeVec])
-println("re-import solves (status ", erg2, "); max |Vm| difference to the original: ", maximum(abs.(vm1 .- vm2)))
+println("re-import solves: status ", erg2, " (0 = converged)")
+println("largest |Vm| difference re-import against the original, buses sorted by Vm [pu]: ", round(maximum(abs.(vm1 .- vm2)); sigdigits = 3))
 
 # Reading aid (Example 5.1): the export writes what the network IS, not
 # what the original files said; the shipped SV of the export carries the
@@ -376,13 +381,13 @@ for i in axes(ref, 1)
   dv = abs(pnet.nodeVec[pnet.busDict[bus]]._vm_pu - parse(Float64, ref[i, cols[:v_pu]]))
   global worst = max(worst, dv)
 end
-println("worst |dV| against OpenLoadFlow over ", size(ref, 1), " buses: ", round(worst; sigdigits = 3), " pu")
+println("largest bus voltage difference |dV| against OpenLoadFlow over ", size(ref, 1), " buses [pu]: ", round(worst; sigdigits = 3))
 @assert worst < 1e-5
 
 # Reading aid (Example 6.2): two load-flow programs with different
 # conventions (ratio at the from side against `rho` at side 1, the
-# magnetizing admittance placement, the slack distribution) agree to
-# 1e-9 pu once the conventions are mapped, which is what the PowSyBl
+# magnetizing admittance placement, the slack distribution) agree to a
+# few 1e-9 pu once the conventions are mapped, which is what the PowSyBl
 # import settled. The same comparison runs for any `.xiidm` of your own
 # next to a reference written with pypowsybl; without one, the file alone
 # imports just the same. Details: [PowSyBl Import](https://welthulk.github.io/Sparlectra.jl/powsybl_import/).
@@ -432,7 +437,7 @@ println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), "
 dite, derg = runpf!(dnet, 50, 1e-8, 0)
 @assert derg == 0
 calcNetLosses!(dnet)
-println("solved in ", dite, " iterations; losses ", round(dnet.totalLosses[end][1]; digits = 3), " MW")
+println("solved in ", dite, " NR iterations; network active power losses [MW], computed: ", round(dnet.totalLosses[end][1]; digits = 3))
 
 # Reading aid (Example 7.2): a deck of the legacy program comes with its
 # FOR002 report, the program's result for the same deck; the example
@@ -465,7 +470,7 @@ else
     oite, oerg = runpf!(onet, 50, 1e-8, 0; islands_enabled = true)
     @assert oerg == 0
     dv = maximum(abs(onet.nodeVec[i]._vm_pu - dnet.nodeVec[i]._vm_pu) for i in eachindex(dnet.nodeVec))
-    println("with the outage: solved in ", oite, " iterations, largest |Vm| change ", round(dv; sigdigits = 3), " pu")
+    println("with the outage: solved in ", oite, " NR iterations; largest bus voltage change |dVm| against the base case [pu]: ", round(dv; sigdigits = 3))
   end
 end
 

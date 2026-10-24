@@ -669,13 +669,22 @@ end
 # route while the user types, so there is one search and it needs neither
 # a network nor a library.
 
-# Markdown of a section as plain text for matching and for the snippet.
+# Markdown of a section as plain text for matching and for the snippet. A
+# formula becomes its plain text (`_webui_tex_plain`) and keeps its `|`; a
+# code span is matched first, so a `$` inside one is not a formula.
 function _webui_help_plain_text(markdown::AbstractString)::String
   text = replace(String(markdown), r"```.*?```"s => " ")
   text = replace(text, r"\[([^\]]*)\]\([^)]*\)" => s"\1")
   text = replace(text, r"^\s*\|?[-:| ]+\|?\s*$"m => " ")
-  text = replace(text, r"[`*|#>]" => " ")
-  return String(strip(replace(text, r"\s+" => " ")))
+  io = IOBuffer()
+  last = 1
+  for m in eachmatch(r"`[^`]*`|\$[^$]+\$", text)
+    print(io, replace(SubString(text, last, prevind(text, m.offset)), r"[`*|#>]" => " "))
+    print(io, startswith(m.match, "`") ? replace(m.match, r"[`*|#>]" => " ") : _webui_tex_plain(SubString(m.match, 2, prevind(m.match, lastindex(m.match)))))
+    last = m.offset + ncodeunits(m.match)
+  end
+  print(io, replace(SubString(text, last), r"[`*|#>]" => " "))
+  return String(strip(replace(String(take!(io)), r"\s+" => " ")))
 end
 
 # The words of a query: lowercase, at most eight, each at least two
@@ -4162,15 +4171,14 @@ end
     _webui_render_markdown(text) -> String
 
 Markdown rendered with the Markdown standard library, which escapes any HTML
-in the text. Formulas stay as their `\$...\$` source: the reports the service
-writes carry none, and the documentation viewer that bundled a formula
-renderer is gone (0.18.0). The `SPARLECTRADOCS/` placeholder of the generated help
-excerpts becomes the configured documentation base URL, and every absolute
-link opens in a new tab.
+in the text. Formulas (`\$...\$`, ```` ```math ````) become HTML text through
+`_webui_tex_html`, since the Web UI has no math renderer. The
+`SPARLECTRADOCS/` placeholder of the generated help excerpts becomes the
+configured documentation base URL, and every absolute link opens in a new tab.
 """
 function _webui_render_markdown(text::AbstractString)::String
   io = IOBuffer()
-  show(io, MIME"text/html"(), Markdown.parse(String(text)))
+  show(io, MIME"text/html"(), _webui_math_nodes!(Markdown.parse(String(text)), false))
   html = replace(String(take!(io)), "SPARLECTRADOCS/" => _webui_escape(_webui_docs_base_url()))
   return replace(html, "<a href=\"http" => "<a target=\"_blank\" rel=\"noopener noreferrer\" href=\"http")
 end
@@ -4917,7 +4925,7 @@ function _webui_se_topology_section(result::AbstractDict)::String
 end
 
 ## released-tap estimate table on the SE result page: one row per tap
-## regulator (0.60.0) with the estimate, the model and fixed steps on the
+## regulator (0.60.0) with the estimate, the transferred and estimated steps on the
 ## changer's own steps (never raw ratios as positions), the J change of the fixation,
 ## mRIDs for CGMES cases (MATPOWER/DTF rows are addressed by branch and
 ## name). Runs in the history from before 0.60.0 carry the old row keys
@@ -4933,7 +4941,7 @@ function _webui_se_tap_section(result::AbstractDict)::String
   # "not estimated (fallback not converged)" or "(fallback worse fit)"
   fallback_line = get(metadata, "se_tap_fallback_used", false) == true ? string("<p class=\"warning\">", esc(_se_tap_fallback_note(metadata)), "</p>") : ""
   (rows isa AbstractVector && !isempty(rows)) || return isempty(fallback_line) ? "" : string("<section class=\"panel\"><h2>Transformer tap estimates</h2>", fallback_line, "</section>")
-  head, body = any(t -> haskey(t, "s_est"), rows) ? _webui_se_tap_rows(rows) : _webui_se_tap_rows_pre060(rows)
+  head, body = any(t -> haskey(t, "step_estimated"), rows) ? _webui_se_tap_rows(rows) : _webui_se_tap_rows_pre060(rows)
   jb = get(metadata, "se_tap_j_before", nothing)
   ja = get(metadata, "se_tap_j_after", nothing)
   db = get(metadata, "se_tap_dof_before", "?")
@@ -4956,15 +4964,15 @@ const _WEBUI_TAP_NOTE_SUFFIX = Dict{String,String}(
 
 ## header and body rows of the tap table for regulator rows (0.60.0
 ## metadata keys, the columns of se_tap_estimates.csv): which changer, the
-## model step, the continuous estimate s with Delta U, ratio and angle at the
-## estimate, the fixed step, the deviation and the status with the notice
-## as tooltip
+## transferred step, the estimated step and the raw estimate before
+## rounding, Delta U, ratio and angle at the estimate, the deviation and
+## the status with the notice as tooltip
 function _webui_se_tap_rows(rows::AbstractVector)
   esc = _webui_escape
   anymrid = any(!isempty(String(something(get(t, "mrid", ""), ""))) for t in rows)
   num(v, f) = v isa Real ? string(f(Float64(v))) : "-"
   step(v) = v isa Integer ? string(v) : num(v, x -> round(x; digits = 2))
-  head = string("<tr><th>Branch</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Regulator</th><th>Model step</th><th>s</th><th>Delta U</th><th>Ratio</th><th>Angle (deg)</th><th>Fixed step</th><th>Deviation</th><th>Status</th></tr>")
+  head = string("<tr><th>Branch</th><th>Transformer</th>", anymrid ? "<th>mRID</th>" : "", "<th>Regulator</th><th>Transferred step</th><th>Estimated step</th><th>Estimated step (raw)</th><th>Delta U</th><th>Ratio</th><th>Angle (deg)</th><th>Deviation</th><th>Status</th></tr>")
   body = String[]
   for t in rows
     st = String(something(get(t, "status", "estimated"), "estimated"))
@@ -4979,12 +4987,16 @@ function _webui_se_tap_rows(rows::AbstractVector)
       "not released (no tap changer of the released kind)"
     elseif st == "not_estimated"
       "not estimated ($(replace(reason, "_" => " ")))"
-    elseif get(t, "out_of_range", false) == true
-      "out of range (clamped)"
+    elseif st == "out_of_range"
+      # estimated too far outside the band: not taken over
+      "out of range (transferred step kept)"
+    elseif get(t, "out_of_range", false) == true && get(t, "fixed", false) == true
+      # estimated outside the band within 2 sigma_s of its end
+      "fixed to the band end step"
     elseif get(t, "fixed", false) == true
       # a nonzero deviation means the model carried a wrong step and the
-      # run corrected it; "confirmed" says the model step was right
-      (dev isa Real && abs(dev) >= 0.01) ? "fixed (corrected)" : "fixed (model step confirmed)"
+      # run corrected it; "confirmed" says the transferred step was right
+      (dev isa Real && abs(dev) >= 0.01) ? "fixed (corrected)" : "fixed (transferred step confirmed)"
     else
       "not fixed"
     end
@@ -4999,7 +5011,7 @@ function _webui_se_tap_rows(rows::AbstractVector)
     push!(body, string(
       "<tr><td>", get(t, "branch", "?"), "</td><td>", esc(String(something(get(t, "name", ""), ""))), "</td>",
       anymrid ? string("<td>", esc(String(something(get(t, "mrid", ""), ""))), "</td>") : "",
-      "<td>", esc(reg), "</td><td>", step(get(t, "step_model", nothing)), "</td><td>", num(get(t, "s_est", nothing), x -> round(x; digits = 3)), "</td><td>", num(get(t, "du_est", nothing), x -> round(x; sigdigits = 4)), "</td><td>", num(get(t, "ratio_est", nothing), x -> round(x; digits = 5)), "</td><td>", num(get(t, "angle_est_deg", nothing), x -> round(x; digits = 3)), "</td><td>", step(get(t, "step_fixed", nothing)), "</td><td>", devtxt, "</td>",
+      "<td>", esc(reg), "</td><td>", step(get(t, "step_transferred", nothing)), "</td><td>", step(get(t, "step_estimated", nothing)), "</td><td>", num(get(t, "step_estimated_raw", nothing), x -> round(x; digits = 3)), "</td><td>", num(get(t, "du_est", nothing), x -> round(x; sigdigits = 4)), "</td><td>", num(get(t, "ratio_est", nothing), x -> round(x; digits = 5)), "</td><td>", num(get(t, "angle_est_deg", nothing), x -> round(x; digits = 3)), "</td><td>", devtxt, "</td>",
       "<td", isempty(notice) ? "" : string(" title=\"", esc(notice), "\""), ">", esc(status), "</td></tr>",
     ))
   end
@@ -5238,8 +5250,8 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"Where the truth state comes from: fresh solve solves the case now; from run adopts the solved voltages of a successful run of this case, nothing is re-solved.\">$(_webui_field_label("se_generator_truth", "truth state"))<select name=\"gen_truth_source\" id=\"gen-truth-source\"><option value=\"fresh_solve\"$(gv("gen_truth_source", "fresh_solve") == "from_run" ? "" : " selected")>fresh solve</option><option value=\"from_run\"$(gv("gen_truth_source", "fresh_solve") == "from_run" ? " selected" : "")>from run</option></select></label> ",
     "<label title=\"Source run for truth state 'from run': successful power-flow and state-estimation runs of the selected case, newest first\">$(_webui_field_label("se_generator_truth_run", "run"))<select name=\"gen_truth_run_id\" id=\"gen-truth-run\">$(isempty(truth_runs) ? "<option value=\"\">(no successful run of this case)</option>" : join(["<option value=\"$(esc(r.run_id))\"$(r.run_id == String(get(gen_values, "gen_truth_run_id", "")) ? " selected" : "")>$(esc(string(first(r.run_id, 8), "… (", r.kind, ", ", r.timestamp, ")")))</option>" for r in truth_runs], ""))</select></label> ",
     "<label title=\"Flows per branch. both ends: P/Q (and I) at from and to. one end: one flow group per branch, preferring the end at a bus with injection telemetry.\">$(_webui_field_label("se_generator_flow_ends", "flows per branch"))<select name=\"gen_flow_ends\"><option value=\"both\"$(gv("gen_flow_ends", "both") == "one_balance_aware" ? "" : " selected")>both ends</option><option value=\"one_balance_aware\"$(gv("gen_flow_ends", "both") == "one_balance_aware" ? " selected" : "")>one end (balance-aware)</option></select></label> ",
-    "<label title=\"Sigma (MW/MVar) of passive nodes: their Pinj/Qinj rows become zero balances at this sigma. It also binds the zero-injection constraints, floored at 1 kW.\">$(_webui_field_label("se_generator_passive_sigma", "passive σ (MW/MVar)"))<input type=\"number\" name=\"gen_passive_sigma\" value=\"$(gv("gen_passive_sigma", "0.05"))\" min=\"0.000001\" step=\"any\"></label> ",
-    "<label class=\"check\" title=\"How a passive node enters the set. Off: an ordinary balance row Pinj = Qinj = 0 at the sigma. On: a protected zero-injection constraint, floored at 1 kW.\"><input type=\"hidden\" name=\"gen_passive_as_zi\" value=\"false\"><input type=\"checkbox\" name=\"gen_passive_as_zi\" value=\"true\"$(gchk2("gen_passive_as_zi", "true"))>$(_webui_field_label("se_generator_passive_zi", "passive as zero-injection constraint"))</label> ",
+    "<label title=\"Sigma (MW/MVar) of passive nodes in the generated set: balance rows Pinj = Qinj = 0 at this sigma, or zero-injection rows at this sigma, at least zero_injection_sigma_mva.\">$(_webui_field_label("se_generator_passive_sigma", "passive σ (MW/MVar)"))<input type=\"number\" name=\"gen_passive_sigma\" value=\"$(gv("gen_passive_sigma", "0.05"))\" min=\"0.000001\" step=\"any\"></label> ",
+    "<label class=\"check\" title=\"How a passive node enters the generated set. Off: an ordinary balance row Pinj = Qinj = 0 at the sigma. On: a protected zero-injection row. Also sets state_estimation.zero_injection of the case.\"><input type=\"hidden\" name=\"gen_passive_as_zi\" value=\"false\"><input type=\"checkbox\" name=\"gen_passive_as_zi\" value=\"true\"$(gchk2("gen_passive_as_zi", "true"))>$(_webui_field_label("se_generator_passive_zi", "passive as zero-injection constraint"))</label> ",
     "<label title=\"Noise seed: the same seed regenerates the identical set (documented in the set comments), a different seed draws a fresh noise realization\">seed <input type=\"number\" name=\"gen_seed\" value=\"$(gv("gen_seed", "42"))\" min=\"0\" step=\"1\"></label> ",
     "<label title=\"Critical measurements (0 is off): the generator removes redundant rows until this many are critical, never past observability; named in the set comments.\">critical measurements <input type=\"number\" name=\"gen_critical_count\" value=\"$(gv("gen_critical_count", "0"))\" min=\"0\" step=\"1\"></label> ",
     "<fieldset class=\"se-options\"><legend>Measurement sigmas $(_webui_help_link("webui.se_generator_sigmas", "Measurement sigmas"))</legend>",
@@ -5249,6 +5261,18 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"Current-phasor angle accuracy in degrees; 0 writes no current-angle rows. They share the PMU reference offset with voltage angles, gated near zero current.\">&sigma; Ia (°) <input type=\"text\" name=\"sigma_ia_deg\" value=\"$(gv("sigma_ia_deg", "0"))\" size=\"6\"></label> ",
     "<label title=\"Active-power accuracy in percent of the measured value (injections and branch flows). Percent of reading stays meaningful across voltage levels.\">&sigma; P (%) <input type=\"text\" name=\"sigma_p_pct\" value=\"$(gv("sigma_p_pct", "1.0"))\" size=\"6\"></label> ",
     "<label title=\"Reactive-power accuracy in percent of the measured value (injections and branch flows)\">&sigma; Q (%) <input type=\"text\" name=\"sigma_q_pct\" value=\"$(gv("sigma_q_pct", "1.0"))\" size=\"6\"></label>",
+    # which sigma a generated row gets: the percent fields, unless the
+    # sigma table has a row for the level of the measuring bus and the type
+    "<p class=\"field-help\">These percent sigmas apply to every generated row, except where the measurement sigma by voltage level table has a value for the voltage level of the measuring bus and the quantity: there the table sigma is written and the noise is drawn with it.</p>",
+    "</fieldset>",
+    # display resolution of an online system; 0 keeps the generated value
+    "<fieldset class=\"se-options\"><legend>Measurement resolution $(_webui_help_link("webui.se_generator_resolution", "Measurement resolution"))</legend>",
+    "<label title=\"Round every voltage-magnitude value to this step in kV after noise, as an online system delivers it (for example 0.1). 0 is no rounding.\">U (kV) <input type=\"text\" name=\"gen_resolution_u_kv\" value=\"$(gv("gen_resolution_u_kv", "0"))\" size=\"6\"></label> ",
+    "<label title=\"Round every active-power value (injections and flows) to this step in MW. 0 is no rounding.\">P (MW) <input type=\"text\" name=\"gen_resolution_p_mw\" value=\"$(gv("gen_resolution_p_mw", "0"))\" size=\"6\"></label> ",
+    "<label title=\"Round every reactive-power value (injections and flows) to this step in Mvar. 0 is no rounding.\">Q (Mvar) <input type=\"text\" name=\"gen_resolution_q_mvar\" value=\"$(gv("gen_resolution_q_mvar", "0"))\" size=\"6\"></label> ",
+    "<label title=\"Round every current-magnitude value to this step in A. 0 is no rounding.\">I (A) <input type=\"text\" name=\"gen_resolution_i_a\" value=\"$(gv("gen_resolution_i_a", "0"))\" size=\"6\"></label> ",
+    "<label title=\"Round every voltage and current angle to this step in degrees. 0 is no rounding.\">angle (°) <input type=\"text\" name=\"gen_resolution_angle_deg\" value=\"$(gv("gen_resolution_angle_deg", "0"))\" size=\"6\"></label>",
+    "<p class=\"field-help\">The written sigma stays the configured one; the rounding is part of the measurement error. A step coarser than about sigma &times; &radic;12 adds visible error.</p>",
     "</fieldset>",
     "<button type=\"submit\">Generate synthetic measurements from a solved PF</button>",
     "<p class=\"field-help\">Truth state 'fresh solve' solves the case once (MATPOWER or CGMES); 'from run' adopts a run state unchanged. The measurement table lands next to the case and documents truth source, flow-end choices and passive handling in its comments.</p><p class=\"se-recommend\">Recommended: noise on, sigma U 0.5%, P/Q 1%, currents on with sigma I 1%; bad data 10 to exercise the elimination; tap deviation 1 to 2 steps to create a model discrepancy.</p>",
@@ -5440,7 +5464,7 @@ function _webui_tap_exclusion_fieldset(table)::String
     isempty(table.error) ? "" : string("<p class=\"alert warning\">", esc(table.error), "</p>"),
     body,
     keep_note,
-    "<p class=\"field-help\">Unchecked transformers keep their transferred step (reason excluded). Machine transformers are unchecked by default: their step is calculated after the estimation. <em>Save case options</em> writes the choice into the case configuration (<code>state_estimation.tap_estimation.exclude</code>, <code>include_machine_transformers</code>).</p>",
+    "<p class=\"field-help\">Unchecked transformers keep their transferred step (reason excluded). Machine transformers are unchecked by default: their step is calculated after the estimation when Q is measured on every bus of the machine node, otherwise they keep their step. <em>Save case options</em> writes the choice into the case configuration (<code>state_estimation.tap_estimation.exclude</code>, <code>include_machine_transformers</code>).</p>",
     "</fieldset>",
   )
 end

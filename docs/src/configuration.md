@@ -419,7 +419,10 @@ otherwise applying the entry fails with an `ArgumentError` naming it.
 Unknown types, unknown keys and missing required keys fail at configuration
 load; unresolvable references and invalid limits fail at apply time, naming
 the entry. An element that already carries a controller of the same type
-is skipped; only `tap_min`/`tap_max` of a `power_transformer` entry still
+is skipped (for a `power_transformer` entry: a tap controller on the same
+transformer that drives the same ratio or phase tap, so a voltage entry on
+the ratio tap and an active-power entry on the phase tap of one
+transformer are two controllers); only `tap_min`/`tap_max` of a `power_transformer` entry still
 reach the tap controller already on that transformer, so a configuration
 can narrow the range of a controller from the case file.
 `applyConfiguredControllers!` applies the block to a programmatically

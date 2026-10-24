@@ -17,7 +17,7 @@
 #          (docs/lit/workshop_state_estimation.jl): runs every path the
 #          chapters use once on throwaway nets, so the chapters do not stall
 #          on first-call compilation. Included by the first code cell of the
-#          notebook, which loads Sparlectra and LinearAlgebra.
+#          notebook, which loads Sparlectra, Random, LinearAlgebra and Printf.
 #          Not part of the library.
 
 """
@@ -38,7 +38,8 @@ function warmup()
   t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
   setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
   t_se = @elapsed with_state_estimation_config(() -> runse!(wnet); max_iter = 8, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false)
-  println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
+  @printf("warm-up time, first power flow (with compilation):   %6.2f s\n", t_pf)
+  @printf("warm-up time, first estimation (with compilation):   %6.2f s\n", t_se)
   @assert t_pf > 0.0 && t_se > 0.0
 
   ## every further path of the chapters once, output discarded
@@ -91,10 +92,11 @@ function warmup()
     wse = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
       runse!(ws)
     end
-    println("J / dof = ", round(wse.objectiveJ / wse.dof; digits = 3), ", dof ", wse.dof, ", ", wse.jWithin3Sigma)
+    @printf("J/dof of the estimate [-]:       %.3f   (healthy noise: approximately 1)\n", wse.objectiveJ / wse.dof)
+    @printf("  objective J of the estimate [-]:                      %.1e\n", wse.objectiveJ)
     for (name, idx) in sort(collect(ws.busDict); by = last)
       v = wse.voltages[idx]
-      println(rpad(name, 4), "  Vm = ", round(abs(v); digits = 4), " pu   Va = ", round(rad2deg(angle(v)); digits = 3), "°")
+      @printf("  %-4s %12.4f %13.4f %15.3f %14.3f\n", name, abs(v), abs(v), rad2deg(angle(v)), rad2deg(angle(v)))
     end
     ## the matrix examples: 3x3 and 5x3 literals, a single flow row with its
     ## null space
@@ -109,6 +111,6 @@ function warmup()
     println(vec(round.(nullspace(wflow); digits = 4)))
     isapprox(1.0, 1.0; atol = 1e-9)
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (observability, manual and zero-injection rows, Jacobian, PMU); everything warm")
+  @printf("warm-up time, all further paths (observability, manual and zero-injection rows, Jacobian, PMU): %.2f s\n", t_paths)
   return nothing
 end

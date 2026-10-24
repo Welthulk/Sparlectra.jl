@@ -141,9 +141,33 @@ reported result is that of the fixed run.
 | Write back to the model | `state_estimation.update_taps = true` (keyword `updateTaps`), off by default: ratio, shift and the stored steps of the fixed run, and r, x, g, b when an impedance source applied (see Impedance per step) |
 | Exclusion | `state_estimation.tap_estimation.exclude` (names or mRIDs): released changers of these transformers stay out, `reason = :excluded`, not calculated. Machine transformers stay out unless `include_machine_transformers = true`, see [Tap estimation per transformer](@ref se-tap-exclude) |
 | Machine transformers | `runse!` calculates the step of the first ratio changer of a machine transformer it kept out after a converged run with `update_net` (`status = :calculated`, `reason = :machine_transformer`; without a Q measurement on every bus of the machine node `:not_estimated` with `reason = :q_not_measured_in_group`, without a P measurement `note = :p_from_schedule`); `calcMachineTrafoTapFromSE(net; trafo, v_machine_pu, p_mw, q_mvar)` runs the same calculation for a transformer that is not released (`s_est`, the electrical and the nearest physical step, the reactive-power residual), writes nothing |
-| Result | `SEResult.tapEstimates`, one row per released tap changer: branch, `regulator` (index in the changer set), transformer name and mRID, `changer` and `changer_mrid`, `kind`, `role`, `side`, `alpha_deg`, `du`, `neutral_step`, the estimate `s_est` with `du_est`, `ratio_est`, `angle_est_deg`, `s_fixed` (the position of the fixed run), `step_model`, `step_fixed`, `deviation_steps`, `sigma_s` (standard deviation of the step from the covariance) with `round_distance_sigma` (distance to the rounded step in units of it), `step_from_target` (see Reasons), `out_of_range`, `fixed`, `reactance_source` (`:table`, `:analytic`, `:nominal`, see Impedance per step), `status` (`:estimated`, `:not_estimated`, or `:calculated` for a machine transformer) with its `reason`, `note`, `step_assumed` (the import carried no step, `step_model` is the middle position), `notice`, and `island` on multi-island nets. `SEResult.tapFixation`: `fixed` (false when the steps were not fixed), `fallback_used` with `fallback_reason` (the run with tap estimation did not converge and the result is the run without it, see [Tap estimation switch and fallback](@ref se-tap-fallback)), `j_before`/`dof_before` with the steps as states, `j_after`/`dof_after` with the steps fixed, the iterations of both runs, `offgrid_residual`, `k_removed`, `delta_j_notice`, and `j_rise_exceeds_quantile`, `sequential` and `j_simultaneous` for the sequential fixation (see Fixation) |
-| Artifact | `se_tap_estimates.csv`, one row per regulator: changer, kind, side, `alpha_deg`, `du`, the estimate `s_est` with `du_est`, `ratio_est`, `angle_est_deg`, the model step next to the fixed step and the deviation between them in steps, `sigma_s`, `round_distance_sigma`, `step_from_target`, `reactance_source`, `status` (`estimated`, `not_estimated`, `calculated`) with `reason`, and note |
-| Web UI | "estimate taps" (`state_estimation.tap_estimation.enabled`, on by default) releases every tap changer of every in-service transformer, in the mode its changers give; the Case page sets per transformer whether it is estimated. Result table: [Web UI](webui_reference.md#State-estimation) |
+| Result | `SEResult.tapEstimates`, one row per released tap changer: branch, `regulator` (index in the changer set), transformer name and mRID, `changer` and `changer_mrid`, `kind`, `role`, `side`, `alpha_deg`, `du`, `neutral_step`, the estimate `s_est` with `du_est`, `ratio_est`, `angle_est_deg`, `s_fixed` (the position of the fixed run), `step_model`, `step_fixed`, `deviation_steps`, `sigma_s` (standard deviation of the step from the covariance) with `round_distance_sigma` (distance to the rounded step in units of it), `step_from_target` (see Reasons), `out_of_range`, `fixed`, `reactance_source` (`:table`, `:analytic`, `:nominal`, see Impedance per step), `status` (`:estimated`, `:out_of_range` for an estimate too far outside the band, see Fixation, `:not_estimated`, or `:calculated` for a machine transformer) with its `reason`, `note`, `step_assumed` (the import carried no step, `step_model` is the middle position), `notice`, and `island` on multi-island nets. `SEResult.tapFixation`: `fixed` (false when the steps were not fixed), `fallback_used` with `fallback_reason` (the run with tap estimation did not converge and the result is the run without it, see [Tap estimation switch and fallback](@ref se-tap-fallback)), `j_before`/`dof_before` with the steps as states, `j_after`/`dof_after` with the steps fixed, the iterations of both runs, `offgrid_residual`, `k_removed`, `delta_j_notice`, and `j_rise_exceeds_quantile`, `sequential` and `j_simultaneous` for the sequential fixation (see Fixation) |
+| Artifact | `se_tap_estimates.csv`, one row per regulator, columns below; the metadata key `se_tap_out_of_range` counts the rows with status `out_of_range` |
+| Web UI | "estimate taps" (`state_estimation.tap_estimation.enabled`, on by default) releases every declared tap changer of every in-service transformer, in the mode its changers give; the Case page sets per transformer whether it is estimated. Result table: [Web UI](webui_reference.md#State-estimation) |
+
+**Columns of `se_tap_estimates.csv`.** Steps are the changer's own step
+numbers. A state of the row is given in `status`, `reason` and `notice`,
+never in a step column.
+
+| Column | Meaning |
+|---|---|
+| `branch`, `regulator` | branch index and index of the changer in the changer set |
+| `name`, `changer` | transformer name and changer name |
+| `mrid`, `changer_mrid` | mRID of the transformer and of the changer (CGMES) |
+| `step_transferred` | step of the input (SSH profile, case file, measurement file); the middle position where the import carried no step |
+| `step_estimated` | step after rounding the estimate, the step of the fixed run; the transferred step where the row was not estimated or is `out_of_range` |
+| `step_estimated_raw` | continuous estimate before rounding (neutral step plus `s`); the start position where the row was not estimated |
+| `kind`, `side`, `alpha_deg`, `du` | changer data from the import |
+| `du_est`, `ratio_est`, `angle_est_deg` | Delta U = `s du`, branch ratio and angle at the estimate |
+| `deviation_steps` | `step_estimated` minus `step_transferred` |
+| `sigma_s`, `round_distance_sigma` | standard deviation of the step, distance of the raw estimate from its nearest step in units of it |
+| `step_from_target` | step from the control target of a regulator kept out automatically, not applied |
+| `fixed` | the step was fixed for the final run |
+| `reactance_source` | impedance source: `table`, `analytic`, `nominal` |
+| `out_of_range` | estimate more than half a step outside the band; with status `estimated` it was fixed to the band end step |
+| `status` | `estimated`, `out_of_range` (too far outside the band, transferred step kept), `not_estimated`, `calculated` (machine transformer) |
+| `reason`, `note` | why a row was not estimated, and the note of an estimated row |
+| `notice` | the text of the row, for example a mesh without P measurement or the band check |
 
 **State and changer kinds.** The state of a tap changer is its electrical
 step `s`, continuous and relative to the neutral step; the additional
@@ -179,21 +203,29 @@ the size of one step, so `t` moves by about `jac_eps`. At most two tap
 changers of one transformer can be told apart, because the complex ratio
 has two real directions; a further changer, or one whose effect equals that
 of another (two ratio changers, ratio and asymmetrical at alpha 0), is
-not estimated, reason `not_separable`. A transformer without tap changer
-has an empty set and is never released.
+not estimated, reason `not_separable`. Only declared tap changers are
+released: a transformer without a tap changer model (a MATPOWER branch
+with a ratio only and no `mpc.sparlectra.tap_changers` row, a DTF
+transformer without changer data, a CGMES or PowSyBl transformer without
+`TapChanger`) has an empty set, is never released and has no tap row.
 
 **Fixation.** After convergence every estimated step is rounded to the
 nearest physical step (ties away from zero; not a regulator with note
-`relative_to_frozen`, see below) and clamped to the band of the
-changer, read absolutely from its data (`lowStep` to `highStep`), not
-relative to the import step. A phase table fixes on its nearest point, a
+`relative_to_frozen`, see below). The band of the changer is read
+absolutely from its data (`lowStep` to `highStep`), not relative to the
+import step; an estimate outside it is handled as below. A phase table fixes on its nearest point, a
 `RatioTapChangerTable` on its points inside the table and on whole steps of
 its formula outside. Then one run with the steps fixed follows.
 `out_of_range` marks an estimate more than half a step outside the band.
-Its notice names the band and, for an asymmetrical changer whose `|t|` has
-a turning point, the mirror step on the other side of it; `runse!` logs one
-warning per such changer with the same text. A frozen regulator keeps its
-start position exactly.
+Within 2 `sigma_s` of the band end step it is fixed to that end step and
+stays `estimated`; farther out, or without a `sigma_s`, it is not taken
+over: `status = out_of_range` (`reason = none`, `fixed = false`), the
+transferred step stays. The notice names the band, the distance from the
+band end in `sigma_s`, what the fixation did, and for an asymmetrical
+changer whose `|t|` has a turning point the mirror step on the other side
+of it; `runse!` logs one warning per such changer with the same text. The
+same rule applies to a changer estimated again by the recheck below. A
+frozen regulator keeps its start position exactly.
 `SEResult.voltages`/`objectiveJ`/`dof` are those of the fixed run.
 `tapFixation.delta_j_notice` gives `j_after - j_before` with `k` (the step
 states the fixed run removed) and the 95 % quantile of chi2(k); it is a
@@ -252,13 +284,37 @@ steps, over every fixed changer and every changer the start test kept out.
 A fixed changer that adds no rank there is withdrawn
 (`not_observable_at_estimate`); a kept-out changer that adds rank is
 estimated once more together with the other free changers of its
-transformer, then fixed (one more estimate, no loop). A fixed phase
+transformer, then fixed. A changer estimated this way is taken over only
+when its `sigma_s` is below 0.5 steps; otherwise the changer keeps its
+transferred step (`weak_at_estimate`), the final state is solved again
+with that step, the row keeps the estimate in `s_est` and `sigma_s`, and
+the re-estimate runs again without it while another newly determinable
+changer is left. The bound applies to this
+re-estimate only, not to the first estimate. A fixed phase
 changer without an angle anchor that has a mirror step is solved once at
 that step (`mirror_step_fits`). The angle anchors are judged at the
 converged state as well: an Ia row whose current is zero at a flat start
 anchors there. A run in which the start test keeps every changer out gets
-the same recheck on its converged state. Each withdrawal and re-estimate
-writes an info line.
+the same recheck on its converged state. When the recheck withdraws a
+changer, or the band verdict keeps one at its transferred step
+(`out_of_range`), the other changers of its transformer still carry steps
+from the joint estimate with it. They are estimated once more with it at
+its transferred step, then the band verdict, the fixation and the mirror
+check apply as before, and the final state is solved with the reported
+steps. If that run does not converge, they keep their transferred step
+(`not_converged_at_estimate`). Each withdrawal and re-estimate writes an
+info line.
+
+**Partner not determinable.** When the rank test or the recheck keeps one
+changer of a transformer out (`radial_no_voltage_pin`, `not_separable`,
+`no_angle_anchor`, `symmetric_start`, `not_observable`,
+`not_observable_at_estimate`, `weak_at_estimate`, `mirror_step_fits`,
+`not_converged_at_estimate`, see Reasons) or the band verdict does not
+take its estimate over (`status = out_of_range`), and another changer of the
+same transformer is estimated, the estimated row keeps
+`status = estimated` and its notice names the partner, its reason and its
+transferred step: the estimate holds only together with that step. A ratio
+changer next to a phase changer without an angle anchor is the usual case.
 
 **Reasons** of a changer with `status = not_estimated` (`reason`, with a
 `notice` text per row and a `notice:` line in the run log of the SE
@@ -291,10 +347,24 @@ test found; on their own they freeze nothing:
   every row (per row about `10 eps` times the size of the terms of the
   row, taken from its voltage derivatives, times the step size over
   `jac_eps`; a zero injection has terms of thousands of MW).
+- `rank_budget`: the number of released changers puts the rank test at
+  the start point above its work budget (`m k^2 + k^4/11` above `1e11` for
+  `m` rows and `k` changers, about one minute); no changer of the run is
+  estimated and the run is the run without tap states. It stays as a
+  safeguard; it was hit on case6495rte while every transformer with a
+  ratio was still released (8617 changers, the test would have run for
+  days).
 - `not_observable_at_estimate`: the changer was estimated and fixed, but
   the rank test at the converged state with the fixed steps drops its
   column (see the recheck above); the estimate is withdrawn and the
   transferred step stays.
+- `weak_at_estimate`: the changer was kept out at the start point and
+  became determinable at the converged state, but its re-estimate there
+  has `sigma_s` of 0.5 steps or more. The estimate is not taken over, the
+  transferred step stays (the state is solved with it), and `s_est`,
+  `sigma_s` and the notice give the estimate and its `sigma_s`. The case this catches: a bridge transformer without a voltage
+  measurement on its cut-off side, whose step gets rank only from the
+  losses of its load.
 - `mirror_step_fits`: a symmetrical or asymmetrical phase changer on a tree
   edge without an angle anchor whose mirror step (the sign of the step
   reversed about the neutral step, or about the turning point of `|t|`)
@@ -302,6 +372,10 @@ test found; on their own they freeze nothing:
   the mirror step differs by less than 9 (3 sigma of chi2 with one degree
   of freedom). The estimate is withdrawn, the transferred step stays, the
   notice gives both J.
+- `not_converged_at_estimate`: a partner of a withdrawn changer was
+  estimated again with that changer at its transferred step (see the
+  recheck above), and that run did not converge; the transferred step
+  stays.
 - `model_mismatch`: the branch ratio and angle do not lie on the curves of
   its changer data. The release is recorded, the regulator is frozen.
 - `disabled`: `state_estimation.tap_estimation.enabled = false`.
@@ -394,8 +468,15 @@ worse than that pre-solve (J above the pre-solve J by more than 1e-6
 relative, `worse_fit`), the service repeats the estimation without tap
 estimation, and that run is the result of the round: two lines in run.log,
 `se_tap_fallback_used = true` in the metadata, reason
-`fallback_not_converged` (or `fallback_worse_fit`) per changer. The
-bad-data diagnostics then run on the end steps of that result; an
+`fallback_not_converged` (or `fallback_worse_fit`) per changer. The repeat
+starts from the start state and configuration of the round, not from the
+pre-solve, so its result is the run with tap estimation switched off.
+When the pre-solve itself does not converge (also not on the second try of
+the start ladder from the case voltages), no released run is started: the
+result is the run without tap estimation (`se_tap_fallback_reason =
+staged_not_converged`, rows `fallback_not_converged`); with
+`tap_estimation.fallback = false` the pre-solve is the result and the run
+fails. The bad-data diagnostics then run on the end steps of that result; an
 eliminated row starts the next round with released taps on the cleaned
 set, see [Tap estimation switch and fallback](@ref se-tap-fallback).
 
@@ -450,6 +531,27 @@ current rows); whether a step is observable decides the rank test of
 cause. A changer that is not estimated keeps its transferred step and its
 exact model value.
 
+**Known limit: mesh without active power.** A mesh without an active power
+measurement can have a second converged solution with turned-over angle
+differences. Q, |I| and Vm rows fix the size of an angle difference better
+than its sign. On sp_casePST with no P flow, no |I| and no P injection in
+the mesh 2-3-4-5-7 (the P row of bus 9 is dropped because its link partner
+bus 2 is not measured), the WLS from the flat start converges with the
+angle differences on br1 and br3 turned over, J 15.4 at dof 33 on exact
+data, while the true state gives J near zero; br8 is then fixed one step
+off. The topology precheck warns in this case
+(`:mesh_without_p_measurement`, see Topology validation below). On
+MicroGrid BE the same kind of set fires the warning as well: without tap
+states the flat start still finds the true state there, with the four
+changers released br8 and br12 end on wrong steps. A P row in the mesh
+clears the warning but does not prove uniqueness: on sp_casePST a P
+injection at bus 3 alone still gives a second solution (J 16.2), one at
+bus 2 gives the true state. A different start value only changes which
+solution is found, so the remedy is a P measurement in the mesh. A released
+changer on a branch of such a mesh keeps its status and reason, its notice ends
+with "lies in a mesh without P measurement: the step may not be unique"
+(only with `state_estimation.topology_precheck = true`, the default).
+
 ## Topology validation
 
 A wrong service state (a breaker recorded closed that is open, or the
@@ -473,7 +575,14 @@ low severity), voltage measurements disagreeing across a closed link
 (`:closed_link_voltage_mismatch`), and the node balance at completely
 measured nodes (`:kcl_violation`; shunt term from the measured voltage,
 partially measured nodes skipped). Out-of-service elements enter only the
-status-contradiction check.
+status-contradiction check. One structural finding concerns uniqueness, not
+a topology error: `:mesh_without_p_measurement` names the branches of a
+mesh with no active power row on its branches or buses ("mesh without P
+measurement: solution may not be unique"); `runse!` warns with its own log
+line and the SE service lists it with the other findings. A P injection on
+a link cluster counts only when every member is measured, as in the
+estimator, and parallel branches count as one connection. See the known
+limit under Transformer tap estimation.
 
 Stage 2 takes a station as a closed-link contraction cluster; stage-1
 findings at the same station are noted as `precheck_agreement`, and with

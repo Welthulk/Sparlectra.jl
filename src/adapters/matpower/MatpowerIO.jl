@@ -186,7 +186,7 @@ end
 MATPOWER semantics:
 - column 9 (TAP) == 0 means "no transformer tap specified" and is treated electrically as 1.0 by Y-bus stamping and import code.
 
-This helper is kept for callers that explicitly want normalized data, but `read_case` preserves raw TAP values so import code can distinguish lines (`TAP == 0`) from explicit nominal-tap transformers (`TAP == 1`).
+This helper is kept for callers that explicitly want normalized data, but `read_case` preserves raw TAP values so import code can tell `TAP == 1` between two voltage levels (a transformer with ratio 1) from `TAP == 0`.
 """
 function normalize_branch_tap!(branch::AbstractMatrix{<:Real})
   ncol = size(branch, 2)

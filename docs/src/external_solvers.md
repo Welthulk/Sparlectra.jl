@@ -27,8 +27,12 @@ PFModel(
 
 Only active buses are included (isolated buses are removed), in the
 internal `BusData` ordering of `createYBUS`. `V0` is the initial state
-(flat start or case based). The reactive limits are optional; an external
-solver may ignore them.
+(flat start or case based). `Sspec` is generation minus load from the
+prosumers, the specification of the Newton solver; the node sums
+(`addBusLoadPower!`, `addBusGenPower!`) are not read. The reactive limits are
+optional; an external solver may ignore them. They bound the bus injection,
+in the terms of `Sspec`: the generator band of the bus minus its reactive
+load, `±Inf` for an unbounded side.
 
 ```julia
 model = buildPfModel(net; flatstart=net.flatstart)
@@ -172,7 +176,11 @@ rectangular path:
   voltage-dependent shunts are not applied, and their static setpoints are
   solved; one warning in the run log names how many of each were left out.
 - **Q-limits are simple PV→PQ only.** AnalyticLoadFlow switches PV↔PQ
-  against `Qmin`/`Qmax` inside the series solve; `power_flow.qlimits.guard`,
+  against `Qmin`/`Qmax` inside the series solve, with the band of each bus
+  given as injection (generator band minus bus load). After the solve the
+  limit status checks every regulated machine against its band as after a
+  Newton run; a machine outside it fails the run as
+  `converged_limits_failed`. `power_flow.qlimits.guard`,
   `enforcement_mode`, hysteresis and cooldown do not apply.
 - **No wrong-branch detection or rescue.** `power_flow.wrong_branch_detection`
   and the guarded current-iteration start pre-solve are rectangular only.

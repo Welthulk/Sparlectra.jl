@@ -3212,7 +3212,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   casefile = String(_webui_form_value(form, "casefile", ""))
   # sticky inputs: every generator value travels back in the redirect as a
   # g_* query key so the re-rendered form keeps what the user typed
-  gq = join(("&g_$(k)=$(_webui_urlencode(String(_webui_form_value(form, k, ""))))" for k in ("noise", "gross_error_k", "gross_error_count", "tap_error_steps", "tap_error_count", "sigma_u_pct", "include_currents", "sigma_i_pct", "sigma_ia_deg", "sigma_p_pct", "sigma_q_pct", "gen_truth_source", "gen_truth_run_id", "gen_flow_ends", "gen_passive_sigma", "gen_passive_as_zi", "gen_seed")), "")
+  gq = join(("&g_$(k)=$(_webui_urlencode(String(_webui_form_value(form, k, ""))))" for k in ("noise", "gross_error_k", "gross_error_count", "tap_error_steps", "tap_error_count", "sigma_u_pct", "include_currents", "sigma_i_pct", "sigma_ia_deg", "sigma_p_pct", "sigma_q_pct", "gen_truth_source", "gen_truth_run_id", "gen_flow_ends", "gen_passive_sigma", "gen_passive_as_zi", "gen_seed", "gen_resolution_u_kv", "gen_resolution_p_mw", "gen_resolution_q_mvar", "gen_resolution_i_a", "gen_resolution_angle_deg")), "")
   # every exit through here is a rejection; it goes into the operation log
   # with its reason, because the page shows the message once and a click
   # that wrote no file otherwise left no trace at all
@@ -3285,6 +3285,15 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   # the set until that many rows are critical, never past observability
   gen_critical = something(tryparse(Int, String(_webui_form_value(form, "gen_critical_count", "0"))), -1)
   gen_critical >= 0 || return redirectq("critical measurements must be zero or a positive integer")
+  # display resolution of an online system per quantity (U kV, P MW,
+  # Q Mvar, I A, angles deg); 0 or an empty field is no rounding
+  resolution = Dict{String,Float64}()
+  for (k, label) in (("gen_resolution_u_kv", "U"), ("gen_resolution_p_mw", "P"), ("gen_resolution_q_mvar", "Q"), ("gen_resolution_i_a", "I"), ("gen_resolution_angle_deg", "angle"))
+    raw = strip(String(_webui_form_value(form, k, "0")))
+    r = isempty(raw) ? 0.0 : something(tryparse(Float64, raw), NaN)
+    (isfinite(r) && r >= 0.0) || return redirectq("resolution $(label) must be zero (no rounding) or positive")
+    resolution[k] = r
+  end
   # every generation writes a NEW file, stamped with the wall-clock time,
   # so a fresh set never overwrites the one a run just used and the noisy
   # copy of a set keeps standing next to it
@@ -3301,7 +3310,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   gen = try
     # the options constructor validates the combination (the form checks
     # above cover the single fields); its ArgumentError text is the message
-    opts = MeasurementGeneratorOptions(; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = String(output_root), flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed, critical_count = gen_critical)
+    opts = MeasurementGeneratorOptions(; noise = noise, gross_k = gross_k, gross_count = gross_count, tap_steps = tap_steps, tap_count = tap_count, include_i = include_i, sigma_u_pct = sigma_u_pct, sigma_i_pct = sigma_i_pct, sigma_p_pct = sigma_p_pct, sigma_q_pct = sigma_q_pct, sigma_ia_deg = sigma_ia_deg, truth_source = truth_source, run_id = truth_run_id, run_root = String(output_root), flow_ends = flow_ends, passive_sigma = passive_sigma, passive_as_zi = passive_as_zi, seed = gen_seed, critical_count = gen_critical, resolution_u_kv = resolution["gen_resolution_u_kv"], resolution_p_mw = resolution["gen_resolution_p_mw"], resolution_q_mvar = resolution["gen_resolution_q_mvar"], resolution_i_a = resolution["gen_resolution_i_a"], resolution_angle_deg = resolution["gen_resolution_angle_deg"])
     _se_generate_measurement_set(case_path, out_path, opts; config_file = config_file)
   catch err
     _webui_case_release!(casefile)
@@ -3314,7 +3323,7 @@ function handle_se_generate_measurements(form::AbstractDict; output_root::Abstra
   # restores them (the run-based save path never sees this form)
   adopted_note = ""
   try
-    merged = _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical); config_file, case_directory = directory)
+    merged = _webui_merge_case_settings!(output_root, case_path, Dict{String,Any}("noise" => noise, "gross_error_k" => gross_k, "gross_error_count" => gross_count, "tap_error_steps" => tap_steps, "tap_error_count" => tap_count, "sigma_u_pct" => sigma_u_pct, "include_currents" => include_i, "sigma_i_pct" => sigma_i_pct, "sigma_ia_deg" => sigma_ia_deg, "sigma_p_pct" => sigma_p_pct, "sigma_q_pct" => sigma_q_pct, "gen_truth_source" => truth_source_raw, "gen_flow_ends" => flow_ends_raw, "gen_passive_sigma" => passive_sigma, "gen_seed" => gen_seed, "gen_critical_count" => gen_critical, resolution...); config_file, case_directory = directory)
     # a generation that created the case file names what variant A took over
     merged !== nothing && !isempty(merged.adopted) && (adopted_note = "; new case file, $(length(merged.adopted)) value(s) taken from $(basename(config_file)), where it differs from the packaged defaults")
     # the checkbox goes into the case configuration as

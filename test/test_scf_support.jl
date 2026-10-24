@@ -26,8 +26,8 @@
 #          use these helpers so they cannot drift apart. Also the bitwise
 #          net comparison the apply!/restore! tests share.
 
-"The provenance stamp an SCF file carries, whatever release wrote it."
-const SCF_PROVENANCE_STAMP = r"\"created_by\": \"Sparlectra [^\"]*\""
+"The provenance stamp an SCF file carries, whatever release or hand wrote it (sp_case6tap is hand-written)."
+const SCF_PROVENANCE_STAMP = r"\"created_by\": \"[^\"]*\""
 
 "An SCF document with its provenance stamp neutralized, for byte comparison."
 scf_without_stamp(text::AbstractString) = replace(String(text), SCF_PROVENANCE_STAMP => "\"created_by\": \"<provenance stamp>\"")

@@ -2050,6 +2050,10 @@ Validate the network configuration.
 
 # Returns
 A tuple `(valid::Bool, message::String)` where `valid` is a boolean indicating whether the network is valid, and `message` is a string containing an error message if the network is invalid.
+
+One slack bus per AC island is normal. An island with more than one slack
+bus gets a warning naming the buses (the power flow rejects it); with
+`log = true` the number of slack buses and islands is logged as well.
 """
 function validate!(; net = Net, log::Bool = false)::Tuple{Bool,String}
   if length(net.nodeVec) == 0
@@ -2057,9 +2061,6 @@ function validate!(; net = Net, log::Bool = false)::Tuple{Bool,String}
   end
   if length(net.slackVec) == 0
     return false, "No slack bus defined in the network"
-  end
-  if length(net.slackVec) > 1
-    @info "More than one slack bus defined in the network"
   end
   if length(net.branchVec) == 0
     return false, "No branches defined in the network"
@@ -2072,7 +2073,25 @@ function validate!(; net = Net, log::Bool = false)::Tuple{Bool,String}
     end
   end
   markIsolatedBuses!(net = net, log = log)
+  _validate_slacks_per_island(net; log = log)
   return true, "Network is valid"
+end
+
+# Several slack buses are normal when each sits in its own AC island (open
+# couplers, back-to-back HVDC). Two in one island (closed links merged) are
+# rejected by the solver (_validate_single_reference_per_island!), so that
+# case warns already here, naming the buses; the count per island is only
+# logged with log = true.
+function _validate_slacks_per_island(net::Net; log::Bool = false)
+  length(net.slackVec) > 1 || return nothing
+  islands, _, refs = _power_flow_islands(net)
+  for (k, r) in enumerate(refs)
+    length(r) > 1 || continue
+    names = join((getCompName(net.nodeVec[b].comp) for b in r), ", ")
+    @warn "validate!: AC island $(k) has $(length(r)) slack buses ($(names)); the power flow accepts one reference per island"
+  end
+  log && @info "validate!: $(length(net.slackVec)) slack buses in $(length(islands)) AC island(s)"
+  return nothing
 end
 
 """
@@ -2319,6 +2338,39 @@ function _isolated_buses(net::Net; links::Bool = false)::Vector{Int}
 
   return sort!(Int[bus.busIdx for bus in net.nodeVec if !(group(bus.busIdx) in connected)])
 end
+
+# markIsolatedBuses! counts branches only, so it also marks a bus that hangs
+# on the network through a closed switch alone (a unit or load node behind a
+# retained breaker). The solver does not leave such a bus out: it contracts
+# every closed-link group onto one node (`_merged_pf_net`), solves it with
+# the loads, shunts and units of all members and copies the group voltage
+# back to each member. Returns, for every such bus, the first member of its
+# group that is not isolated. That member carries the group voltage also
+# before a solve, where the marking has set the bus itself to zero. A group
+# without any branch is not in the result: the solver isolates its merged
+# node as well.
+function _linkFedIsolatedBuses(net::Net)::Dict{Int,Int}
+  fed = Dict{Int,Int}()
+  (isempty(net.isoNodes) || isempty(net.linkVec)) && return fed
+  reps = _active_link_representative_map(net)
+  iso = Set(net.isoNodes)
+  live = Dict{Int,Int}()   # group representative => first non-isolated member
+  for b in eachindex(reps)
+    b in iso && continue
+    haskey(live, reps[b]) || (live[reps[b]] = b)
+  end
+  for b in net.isoNodes
+    m = get(live, reps[b], 0)
+    m > 0 && (fed[b] = m)
+  end
+  return fed
+end
+
+# net.isoNodes without the link-fed buses (`_linkFedIsolatedBuses`): the
+# buses that are really dead. The measurement build of the estimator skips
+# these and only these; a link-fed bus is part of its fused node and keeps
+# its voltage, injection and zero-injection rows.
+_unfed_isolated_buses(net::Net)::Set{Int} = setdiff(Set{Int}(net.isoNodes), keys(_linkFedIsolatedBuses(net)))
 
 # Start values of the isolated buses in a closed-link group with a bus that
 # is not isolated (a fed group). _merged_pf_net contracts the group onto its
@@ -3113,13 +3165,17 @@ end
 # specification the solvers build (buildControlledSVec, buildComplexSVec),
 # with the opposite sign, so the generation of a bus whose generation the
 # solve sets (slack P and Q, PV Q) is the solved injection V conj(Y V) plus
-# this value. A bus without a stored voltage counts at 1 pu.
-function _bus_consumption_MVA(net::Net, nb::Int = length(net.nodeVec); controllers::Bool = true)
+# this value. A bus without a stored voltage counts at 1 pu, and every bus
+# does with `unit_voltage` set: the static specification of
+# buildComplexSVec, which the external-solver model (buildPfModel) hands
+# over, so its write-back (applyPfSolution!) adds back exactly the load
+# the solve saw.
+function _bus_consumption_MVA(net::Net, nb::Int = length(net.nodeVec); controllers::Bool = true, unit_voltage::Bool = false)
   base = net.baseMVA
   nodes = net.nodeVec
   p = zeros(Float64, nb)
   q = zeros(Float64, nb)
-  vm_of(bus) = nodes[bus]._vm_pu === nothing ? 1.0 : Float64(nodes[bus]._vm_pu)
+  vm_of(bus) = (unit_voltage || nodes[bus]._vm_pu === nothing) ? 1.0 : Float64(nodes[bus]._vm_pu)
   for ps in net.prosumpsVec
     isGenerator(ps) && continue
     bus = getPosumerBusIndex(ps)

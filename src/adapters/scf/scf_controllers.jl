@@ -148,11 +148,11 @@ end
 Instantiate the case file's controllers on `net`. The entries are the
 declarative `control.controllers` schema, so they go through
 `applyConfiguredControllers!` unchanged: one construction path, one
-validation, one vocabulary. `branch_by_name` maps the file's HUMAN branch
-names (extra block) to built branch indices: the importer regenerates
-in-memory component names, so a `trafo`/`followers` reference written with
-the case's own names would otherwise not resolve. References that already
-resolve (generated names, index strings) are passed through untouched.
+validation, one vocabulary. `branch_by_name` maps the file's branch names
+(extra block) to built branch indices, so a `trafo`/`followers` reference
+resolves to the branch of that id even where several branches share the
+name. Other references (index strings, component ids) are passed through
+untouched.
 """
 function _scf_apply_controllers!(net::Net, entries::AbstractDict; branch_by_name::AbstractDict{String,Int} = Dict{String,Int}())
   isempty(entries) && return 0

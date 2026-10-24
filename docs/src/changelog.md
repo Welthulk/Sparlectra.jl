@@ -1,25 +1,41 @@
-# Version 0.60.0 - 2026-10-24
+# Version 0.60.0 - 2026-10-25
 
-Quasi-stationary time series (QSTS), tap estimation per tap changer.
+Quasi-stationary time series (QSTS) and tap estimation per tap changer.
 
 ## Breaking
-- SCF 1.3: files written by 0.60.0, including the shipped cases, cannot be read by 0.50.0. 0.60.0 still reads 1.0 to 1.2.
-- Tap estimation is on by default (`state_estimation.tap_estimation.enabled`): SE results change on cases with tap changers. A run that fails falls back to the run without it.
-- Tap estimation results have one row per tap changer with `status` and `reason`; the old step columns and `frozen_reason` are gone.
+- SCF 1.3: files written by 0.60.0 (including the shipped cases) cannot be read by 0.50.0. 0.60.0 still reads 1.0 to 1.2.
+- Tap estimation is on by default (`state_estimation.tap_estimation.enabled`). SE results change on cases with tap changers. A failed run falls back to the run without it.
+- `se_tap_estimates.csv`: one row per tap changer with `status` and `reason`; columns renamed to `step_transferred`, `step_estimated`, `step_estimated_raw`, new column `notice`; `frozen_reason` removed.
+
 ## Added
-- QSTS on SCF time series and on CGMES snapshot series, with event lists and a chart per element in the Web UI. See [QSTS](qsts.md).
-- Tap estimation per tap changer from the CGMES, PowSyBl, SCF or DTF changer data; a changer the measurements cannot see keeps its step and names the reason.
-- Link flow measurements as WLS rows: a wrong coupler meter is found and eliminated like a branch flow.
+- QSTS on SCF time series and CGMES snapshot series, with event lists and a chart per element in the Web UI. See [QSTS](qsts.md).
+- Tap estimation per tap changer from CGMES, PowSyBl, SCF or DTF changer data. A changer the measurements cannot see keeps its step and names the reason.
+- Link flow measurements as WLS rows; a wrong coupler meter is eliminated like a branch flow.
 - Range check of voltage measurements: 0 kV at a dead bus takes the bus out, an implausible value at a live bus is replaced by the imported voltage with a wider sigma.
-- Zero injections: sigma `state_estimation.zero_injection_sigma_mva` (default 1e-3), condition number in the report and multipliers per bus under `constraint`.
+- Zero injections: `state_estimation.zero_injection_sigma_mva` (default 1e-3), condition number in the report, multipliers per bus under `constraint`.
+- Start ladder `state_estimation.start_ladder` (default on): if the flat start does not converge, the estimate restarts from the voltages stored in the case.
+- Warning for a mesh without an active power measurement (a second converged solution can exist).
+- Demo case `sp_case6tap`: ratio and phase tap changer on one transformer, three controllers. See [Demo cases](demo_cases.md).
+- Measurement generator rounds values to a resolution per quantity (`resolution_u_kv`, `resolution_p_mw`, `resolution_q_mvar`, `resolution_i_a`, `resolution_angle_deg`, default 0 = off).
+
 ## Changed
-- Elimination budget `state_estimation.max_eliminations` is 5 instead of 3.
+- Tap estimation releases only transformers with a declared tap changer model; a plain MATPOWER transformer keeps its ratio.
+- MATPOWER import: a branch with TAP 1, no shift and the same nominal voltage at both ends is a line.
+- A tap estimate far outside the band keeps the transferred step, status `out_of_range`.
+- `state_estimation.max_eliminations` default 5 (was 3).
+- SCF import keeps branch and appliance names from the file.
 - CGMES slack follows the SV angle reference also at an EquivalentInjection; a grid-following unit is not chosen as island slack.
-- Q-limit guard: a machine with a narrow Q band stays PV inside its band (`narrow_range_mode: prefer_pq` gives the old behaviour).
+- Q-limit guard: a machine with a narrow Q band stays PV inside its band (`narrow_range_mode: prefer_pq` restores the old behaviour).
+- Web UI: an abort stops the state estimation within seconds.
+- MATPOWER import: the missing `bus_name` warning (with `matpower_import.apply_bus_names`) comes once per case, not on every import.
+
 ## Fixed
 - CGMES import: P limits of injections, transformer magnetizing split, phase tap changer reactance with `xMin`/`xMax`, choice among boundary sets.
 - Reports: bus powers of coupler clusters, distributed slack shares, coupler flows next to a bus shunt.
-- State estimation: warm start, write-back and reported angles keep the model slack angle (CGMES SV angle reference); the estimate is unchanged.
+- State estimation: warm start, write-back and reported angles keep the model slack angle; the estimate is unchanged.
+- State estimation: a busbar fed only through couplers keeps its zero-injection and voltage rows and no longer splits into two islands.
+- State estimation: when the check withdraws one tap changer of a transformer, the other one is estimated again.
+- APSLF: injections from generators and loads as in the Newton solver, reactive limits compared in the same terms. A run that leaves a voltage-regulated machine outside its Q band fails its limit status and names the buses; before it was reported as converged.
 - Web UI: update check without the GitHub API, sysimage rebuild, window position on a missing monitor.
 
 # Version 0.50.0 - 2026-10-18

@@ -32,7 +32,9 @@ function warmup()
   println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
   t_first = @elapsed runpf!(load_case(), 30, 1e-8, 0)
   t_dslack = @elapsed runpf!(load_case(), 30, 1e-8, 0; distributed_slack_enabled = true)
-  println("warm: classical ", round(t_first; digits = 2), " s, distributed ", round(t_dslack; digits = 2), " s (first calls compile)")
+  println("warm-up wall time, first calls include compilation:")
+  println("  classical single slack [s]:       ", round(t_first; digits = 2))
+  println("  distributed slack [s]:            ", round(t_dslack; digits = 2))
 
   ## every further path of the chapters once, output discarded: the weight
   ## modes with their keyword forms and both print helpers
@@ -50,6 +52,6 @@ function warmup()
     runpf!(wn, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :explicit, distributed_slack_weights = Dict("2" => 1.0))
     print_participation(wn)
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (weight modes, participation tables); everything warm")
+  println("  further paths [s]:                ", round(t_paths; digits = 2), " (weight modes, participation tables)")
   return nothing
 end

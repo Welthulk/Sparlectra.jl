@@ -329,11 +329,29 @@ function run_webui_state_estimation_tests()
       @test read(gen2_file, String) != plain   # noise + gross error changed values
       @test read(mfile, String) == plain
       rm(gen2_file)
-      # regenerate the clean set: another new file with the same content
-      gen3 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m"); output_root=root, runtime=rt)
+      # regenerate the clean set: another new file with the same content;
+      # the resolution fields at 0 (the default, no rounding) leave every
+      # byte as it is
+      gen3 = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_resolution_u_kv" => "0", "gen_resolution_p_mw" => "0", "gen_resolution_q_mvar" => "", "gen_resolution_i_a" => "0", "gen_resolution_angle_deg" => "0"); output_root=root, runtime=rt)
       gen3_file = joinpath(cases, written_set(gen3))
       @test read(gen3_file, String) == plain   # seeded generator is reproducible
       rm(gen3_file)
+      # with a resolution every telemetry value (after noise and bad data)
+      # is a multiple of its step, in table units, and the header names the
+      # steps; zero-injection rows keep their value
+      steps = Dict("U" => 0.1, "P" => 0.5, "Q" => 0.2, "I" => 1.0, "Ia" => 0.01)
+      genr = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "noise" => "true", "gross_error_k" => "8", "include_currents" => "true", "sigma_ia_deg" => "0.1", "gen_resolution_u_kv" => "0.1", "gen_resolution_p_mw" => "0.5", "gen_resolution_q_mvar" => "0.2", "gen_resolution_i_a" => "1", "gen_resolution_angle_deg" => "0.01"); output_root=root, runtime=rt)
+      @test genr.status == 303
+      genr_file = joinpath(cases, written_set(genr))
+      rtxt = read(genr_file, String)
+      @test occursin("# resolution: U 0.1 kV, P 0.5 MW, Q 0.2 Mvar, I 1.0 A, angle 0.01 deg", rtxt)
+      rrows = [split(l, ",") for l in split(rtxt, "\n") if !isempty(l) && !startswith(l, "#") && !startswith(l, "timestamp")]
+      tele = [r for r in rrows if !occursin("zero_injection", r[8])]
+      @test count(r -> r[5] == "Ia", tele) > 0 && count(r -> r[5] == "I", tele) > 0
+      @test all(r -> (k = parse(Float64, r[6]) / steps[r[5]]; abs(k - round(k)) < 1e-6), tele)
+      rm(genr_file)
+      genrbad = SparlectraApp.route_sparlectra_webui("POST", "/stateestimation/generate-measurements", Dict{String,Any}("casefile" => "warmup_casePST.m", "gen_resolution_p_mw" => "-0.1"); output_root=root, runtime=rt)
+      @test occursin("resolution%20P", Dict(genrbad.headers)["Location"])
 
       # per-quantity sigmas are PERCENT OF THE MEASURED VALUE with the
       # per-type floors (voltage-level independent); the currents checkbox
@@ -548,12 +566,12 @@ function run_webui_state_estimation_tests()
       fake["metadata"]["se_tap_regulators"] = 3
       @test occursin("tap estimation: 2 transformer(s), 3 regulator(s)", SparlectraApp._webui_se_summary(fake))
       fake["metadata"]["se_tap_estimates"] = [
-          Dict{String,Any}("branch" => 3, "regulator" => 1, "name" => "T1", "changer" => "ratio", "mrid" => "", "kind" => "ratio", "alpha_deg" => nothing, "s_est" => 2.03, "du_est" => 0.0127, "ratio_est" => 0.975, "angle_est_deg" => 0.0, "step_model" => 0, "step_fixed" => 2, "deviation_steps" => 2, "out_of_range" => false, "fixed" => true, "status" => "estimated", "reason" => "none", "note" => "none", "notice" => ""),
-          Dict{String,Any}("branch" => 4, "regulator" => 2, "name" => "T2", "changer" => "phase", "mrid" => "", "kind" => "asymmetrical", "alpha_deg" => 90.0, "s_est" => -0.98, "du_est" => -0.0098, "ratio_est" => 1.0, "angle_est_deg" => -0.56, "step_model" => -1, "step_fixed" => -1, "deviation_steps" => 0, "out_of_range" => false, "fixed" => true, "status" => "estimated", "reason" => "none", "note" => "relative_only", "notice" => "parallel member: estimated only relative to the other member"),
+          Dict{String,Any}("branch" => 3, "regulator" => 1, "name" => "T1", "changer" => "ratio", "mrid" => "", "kind" => "ratio", "alpha_deg" => nothing, "step_estimated_raw" => 2.03, "du_est" => 0.0127, "ratio_est" => 0.975, "angle_est_deg" => 0.0, "step_transferred" => 0, "step_estimated" => 2, "deviation_steps" => 2, "out_of_range" => false, "fixed" => true, "status" => "estimated", "reason" => "none", "note" => "none", "notice" => ""),
+          Dict{String,Any}("branch" => 4, "regulator" => 2, "name" => "T2", "changer" => "phase", "mrid" => "", "kind" => "asymmetrical", "alpha_deg" => 90.0, "step_estimated_raw" => -0.98, "du_est" => -0.0098, "ratio_est" => 1.0, "angle_est_deg" => -0.56, "step_transferred" => -1, "step_estimated" => -1, "deviation_steps" => 0, "out_of_range" => false, "fixed" => true, "status" => "estimated", "reason" => "none", "note" => "relative_only", "notice" => "parallel member: estimated only relative to the other member"),
       ]
       tsec2 = SparlectraApp._webui_se_tap_section(fake)
       @test occursin("fixed (corrected)", tsec2)
-      @test occursin("fixed (model step confirmed), relative only", tsec2)
+      @test occursin("fixed (transferred step confirmed), relative only", tsec2)
       @test occursin("<td>+2</td>", tsec2)              # deviation in steps
 
       # case binding lives IN the file: the generated set records its case,
@@ -682,10 +700,12 @@ function run_webui_state_estimation_tests()
       tapcsv = joinpath(root, idtap, "se_tap_estimates.csv")
       @test isfile(tapcsv)
       taps = run_csv(tapcsv)
-      # one row per tap regulator (0.60.0): the columns name the changer,
-      # its estimate and the model and fixed steps
+      # one row per tap regulator (0.60.0): the identification first, then
+      # the transferred, estimated and raw estimated step; every step cell
+      # is a number (a state stands in status, reason and notice)
       @test taps.header == SparlectraApp._SE_TAP_CSV_COLUMNS
-      @test taps.header[1:7] == ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "kind"]
+      @test taps.header[1:9] == ["branch", "regulator", "name", "changer", "mrid", "changer_mrid", "step_transferred", "step_estimated", "step_estimated_raw"]
+      @test all(f -> all(c -> taps.number(f[c]) isa Real, 7:9), taps.rows)
       # warmup_casePST: two transformers, the PST (one phase regulator)
       # estimated, the machine transformer calculated
       @test length(taps.rows) == 2
@@ -704,7 +724,7 @@ function run_webui_state_estimation_tests()
       # the deviated PST lands on a nonzero mechanical step; on this case
       # the Delta-u deviation is a step of the phase regulator
       header_cols = taps.header
-      fixed_col = findfirst(==("step_fixed"), header_cols)
+      fixed_col = findfirst(==("step_estimated"), header_cols)
       kind_col = findfirst(==("kind"), header_cols)
       @test any(f -> f[kind_col] == "asymmetrical" && taps.number(f[fixed_col]) != 0, taps.rows)
       # the injected deviation is a DEVIATION against the model step:
@@ -714,8 +734,24 @@ function run_webui_state_estimation_tests()
       tapPage = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(idtap)", Dict{String,String}(); output_root=root, runtime=rt).body)
       @test occursin("Transformer tap estimates", tapPage)
       @test occursin("fixed (corrected)", tapPage)
-      @test occursin("<th>Model step</th>", tapPage)
+      @test occursin("<th>Transferred step</th>", tapPage)
       @test occursin("tap estimation: 1 transformer(s)", tapPage)
+
+      # only declared tap changers are released (0.60.0): the same case
+      # without its mpc.sparlectra.tap_changers block keeps both
+      # transformers with their ratio only, so the same set gets no tap
+      # state and no tap row, and run.log names the documented deviation
+      # on branch 8 as one the run cannot release
+      plain_dir = mkpath(joinpath(root, "plain"))
+      plain_case = joinpath(plain_dir, "warmup_casePST.m")
+      write(plain_case, replace(read(case_path, String), r"mpc\.sparlectra\.tap_changers = \[.*?\];"s => ""))
+      @test !occursin("tap_changers", read(plain_case, String))
+      rplain = start_powerflow_run(Dict{String,Any}("casefile" => plain_case, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      @test rplain["status"] == "succeeded"
+      @test get(rplain["metadata"], "se_tap_count", 0) == 0 && get(rplain["metadata"], "se_tap_regulators", 0) == 0
+      plaincsv = joinpath(root, rplain["run_id"], "se_tap_estimates.csv")
+      @test !isfile(plaincsv) || isempty(run_csv(plaincsv).rows)
+      @test occursin("deviation of 3.0 step(s) on branch 8, which has no tap changer the run can release", read(joinpath(root, rplain["run_id"], "run.log"), String))
 
       # "estimate taps" off (the key state_estimation.tap_estimation.enabled,
       # here as the override the form posts): every changer keeps its
@@ -1112,8 +1148,8 @@ function run_webui_state_estimation_tests()
       # neutral step 0, so s and the step coincide)
       pstrow = only(t for t in rpst["metadata"]["se_tap_estimates"] if t["branch"] == 8 && t["role"] == "phase")
       @test pstrow["kind"] == "asymmetrical"
-      @test pstrow["step_fixed"] == 2
-      @test abs(pstrow["s_est"] - 2.0) < 0.3
+      @test pstrow["step_estimated"] == 2
+      @test abs(pstrow["step_estimated_raw"] - 2.0) < 0.3
       gsurow = only(t for t in rpst["metadata"]["se_tap_estimates"] if t["branch"] == 7)
       @test gsurow["status"] == "calculated" && gsurow["reason"] == "machine_transformer"
     end)() end

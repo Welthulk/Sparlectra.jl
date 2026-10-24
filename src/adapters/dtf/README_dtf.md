@@ -19,7 +19,7 @@ the file as a network); `case_format = :dtf_for001` names the format.
   which rejects DC-line-like content before parsing and stamps the configured
   network parameters afterwards.
 - Tap conversion and shunt modeling follow the configured
-  `transformer.tap_changer_model` and `matpower.bus_shunt_model`; the format
+  `model.tap_changer_model` and `model.bus_shunt_model`; the format
   itself carries no such settings.
 
 ## Reference

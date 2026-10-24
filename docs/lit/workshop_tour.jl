@@ -340,7 +340,7 @@ printACPFlowResults(net1, etime, ite, 1e-8)
 
 ## uses: net1 (Example 1.1)
 @isdefined(net1) || error("Run Example 1.1 first: it sets up net1.")
-println("ring network: kappa = ", round(condestJacobian(net1), sigdigits = 3))
+println("ring (Example 1.1), Jacobian condition number kappa_1 [-], estimated: ", round(condestJacobian(net1), sigdigits = 3))
 
 # Reading aid (Example 2.1): around 45, excellent. Rule of thumb: below
 # about $10^6$ well conditioned, around $10^{10}$ borderline, beyond
@@ -358,6 +358,8 @@ println("ring network: kappa = ", round(condestJacobian(net1), sigdigits = 3))
 # ```
 
 ## uses: solve! (warm-up cell)
+println("stub line B2-B3 per round: x set in the model, the rest computed")
+println("  x B2-B3 [pu]   NR iterations   Vm B3 [pu]   kappa_1 [-] (estimated)")
 for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
   net = Net(name = "tour_cond", baseMVA = 100.0)
   addBus!(net = net, busName = "B1", vn_kV = 110.0)
@@ -369,7 +371,7 @@ for x_weak in (0.08, 800.0, 8.0e6, 8.0e10)
   addPIModelACLine!(net = net, fromBus = "B2", toBus = "B3", r_pu = x_weak / 8, x_pu = x_weak, b_pu = 0.0, status = 1)
   _, ite_weak = solve!(net)
   vm3 = round(something(net.nodeVec[3]._vm_pu, NaN); digits = 4)
-  println("x = ", lpad(x_weak, 8), " pu:  ", ite_weak, " iterations,  Vm(B3) = ", vm3, ",  kappa = ", round(condestJacobian(net), sigdigits = 3))
+  println("  ", lpad(x_weak, 12), "   ", lpad(ite_weak, 13), "   ", lpad(vm3, 10), "   ", lpad(round(condestJacobian(net), sigdigits = 3), 11))
 end
 
 # Reading aid (Example 2.2): the solver converges in 4 iterations in
@@ -411,11 +413,12 @@ markIsolatedBuses!(net = net_edit, log = false)
 ok_e, msg_e = validate!(net = net_edit)
 ok_e || error("edit round left the net invalid: $msg_e")
 _, ite_e = solve!(net_edit)
-println("edited net solves in ", ite_e, " iterations; branches now: ", length(net_edit.branchVec))
+println("edited ring: power flow converged in ", ite_e, " NR iterations")
+println("  branches in the model: ", length(net_edit.branchVec), " (9 built, B2-B5 removed, B3-B6 kept but out of service)")
 ## the edited model exports as a MATPOWER case file
 case_out = joinpath(mktempdir(), "tour_edit.m")
 writeMatpowerCasefile(net_edit, case_out)
-println("exported: ", case_out, " (", filesize(case_out), " bytes)")
+println("MATPOWER export: ", case_out, ", file size ", filesize(case_out), " bytes")
 
 # Reading aid (Example 2.3): removal helpers (`removeACLine!`, `removeTrafo!`,
 # `removeProsumer!`, ...) mutate the net and can leave isolated buses
@@ -434,10 +437,13 @@ println("exported: ", case_out, " (", filesize(case_out), " bytes)")
 vm_before = get_bus_vm_pu(net_edit, "B4")
 addBusLoadPower!(net = net_edit, busName = "B4", p = 25.0, q = 5.0)  ## report layer only!
 solve!(net_edit)
-println("after addBusLoadPower!(+25 MW): Vm(B4) = ", round(get_bus_vm_pu(net_edit, "B4"); digits = 4), " pu (before: ", round(vm_before; digits = 4), " pu, unchanged)")
+vm_node_helper = get_bus_vm_pu(net_edit, "B4")
 addProsumer!(net = net_edit, busName = "B4", type = "LOAD", p = 25.0, q = 5.0)  ## THIS is a load
 solve!(net_edit)
-println("after addProsumer!(LOAD, 25 MW): Vm(B4) = ", round(get_bus_vm_pu(net_edit, "B4"); digits = 4), " pu (sags, the solver saw it)")
+println("Bus B4, voltage Vm [pu], computed:")
+println("  before the edit:                                 ", round(vm_before; digits = 4))
+println("  after addBusLoadPower!(25 MW / 5 MVAr):          ", round(vm_node_helper; digits = 4), "   unchanged, report layer only")
+println("  after addProsumer!(LOAD, 25 MW / 5 MVAr):        ", round(get_bus_vm_pu(net_edit, "B4"); digits = 4), "   sags, the solver saw the load")
 #
 # ### Reactive-power limits (PV to PQ switching)
 #
@@ -468,7 +474,9 @@ addPIModelACLine!(net = net_q, fromBus = "Q1", toBus = "Q2", r_pu = 0.01, x_pu =
 addPIModelACLine!(net = net_q, fromBus = "Q2", toBus = "Q3", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
 validate!(net = net_q)
 solve!(net_q)
-println("Vm(Q2) = ", round(get_bus_vm_pu(net_q, "Q2"); digits = 4), " pu (setpoint was 1.05)")
+println("Generator bus Q2, voltage Vm [pu]:")
+println("  setpoint of the generator:            1.05")
+println("  computed, Q held at qMax 5 MVAr:      ", round(get_bus_vm_pu(net_q, "Q2"); digits = 4))
 printQLimitLog(net_q)
 distributeBusResults!(net_q)
 
@@ -516,7 +524,8 @@ addPIModelACLine!(net = net_open, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu 
 addPIModelACLine!(net = net_open, fromBus = "A", toBus = "C", r_pu = 0.01, x_pu = 0.08, b_pu = 0.02, status = 1)
 validate!(net = net_open)
 solve!(net_open)
-println("state 1, closed : line A=B carries ", round(get_branch_p_from_to_mw(net_open, "A", "B"); digits = 1), " MW to the load")
+println("State 1, line A=B closed, computed:")
+println("  line A=B, active power P at terminal A [MW]:          ", round(get_branch_p_from_to_mw(net_open, "A", "B"); digits = 1))
 
 ## Example 2.6, state 2 (open@to): open the breaker at the B end and
 ## re-solve; the classical result tables below show the consequences
@@ -525,9 +534,13 @@ markIsolatedBuses!(net = net_open, log = false)
 etime_open, ite_open = solve!(net_open)
 br_open = net_open.branchVec[1]
 q_slack_open = get_branch_q_from_to_mvar(net_open, "A", "B") + get_branch_q_from_to_mvar(net_open, "A", "C")
-println("state 2, open@to: charging draw ", round(br_open.fBranchFlow.qFlow; digits = 1), " MVAr, active loss ", round(br_open.fBranchFlow.pFlow; digits = 3), " MW")
-println("         voltage at the OPEN end: ", round(br_open.open_end_vm_pu; digits = 4), " pu, HIGHER than the ", round(get_bus_vm_pu(net_open, "A"); digits = 2), " pu at the feeding bus A")
-println("         (Ferranti effect: the charging current flowing through the line reactance lifts the voltage toward the open end)")
+println("State 2, breaker at the B end open, computed:")
+println("  line A=B, reactive power Q at terminal A [MVAr]:      ", round(br_open.fBranchFlow.qFlow; digits = 1), "   negative: the line charging feeds Q into A")
+println("  line A=B, active power P at terminal A [MW]:          ", round(br_open.fBranchFlow.pFlow; digits = 3), "   ohmic loss of the charging current")
+println("  slack A, reactive power supplied [MVAr]:              ", round(q_slack_open; digits = 1))
+println("  line A=B, voltage Vm at the open end B [pu]:          ", round(br_open.open_end_vm_pu; digits = 4))
+println("  bus A, voltage Vm [pu], slack setpoint:               ", round(get_bus_vm_pu(net_open, "A"); digits = 4))
+println("  (Ferranti effect: the charging current flowing through the line reactance lifts the voltage toward the open end)")
 
 ## the classical result print of state 2: the branch row carries the
 ## open@to marker, the header counts one open terminal, and the isolated
@@ -542,8 +555,10 @@ setBranchTerminalStatus!(net_open.branchVec[1]; from = false)
 markIsolatedBuses!(net = net_open, log = false)
 solve!(net_open)
 q_slack_off = get_branch_q_from_to_mvar(net_open, "A", "C")
-println("state 3, fully disconnected: open-end voltage ", br_open.open_end_vm_pu === nothing ? "gone" : "?", ", slack reactive supply now ", round(q_slack_off; digits = 1), " MVAr")
-println("reactive balance shift state 2 -> state 3: ", round(q_slack_off - q_slack_open; digits = 1), " MVAr of charging draw silently vanished")
+println("State 3, line A=B fully disconnected, computed:")
+println("  line A=B, voltage Vm at the open end B [pu]:          ", br_open.open_end_vm_pu === nothing ? "none (no branch result)" : "?")
+println("  slack A, reactive power supplied [MVAr]:              ", round(q_slack_off; digits = 1))
+println("  change of the slack Q, state 2 -> state 3 [MVAr]:     ", round(q_slack_off - q_slack_open; digits = 1), "   charging draw gone from the balance")
 
 # Reading aid (Example 2.6): in state 2 the classical tables carry the
 # whole story: the branch row is marked `open@to` with the open-end
@@ -610,10 +625,12 @@ validate!(net = net_ring)
 solve!(net_ring)
 calcLinkFlowsKCL!(net_ring)
 
-println("one voltage for the whole ring: Vm(R1/R2/R3) = ", join((round(get_bus_vm_pu(net_ring, b); digits = 5) for b in ("R1", "R2", "R3")), " / "), " pu")
+println("Ring buses, voltage Vm [pu], computed (one node): ", join(("$(b) $(round(get_bus_vm_pu(net_ring, b); digits = 5))" for b in ("R1", "R2", "R3")), ", "))
 ring_bus_name = Dict(v => k for (k, v) in net_ring.busDict)   ## BusLink stores bus INDICES
+println("Link active power P [MW], from KCL after the solve (minimum-norm split):")
+println("  link        P [MW]")
 for l in net_ring.linkVec
-  println("link ", ring_bus_name[l.fromBus], " -> ", ring_bus_name[l.toBus], ": ", lpad(round(l.pFlow_MW; digits = 2), 7), " MW")
+  println("  ", ring_bus_name[l.fromBus], " -> ", ring_bus_name[l.toBus], "  ", lpad(round(l.pFlow_MW; digits = 2), 8))
 end
 
 # Reading aid (Example 2.7): 50 MW enter the ring at `R1`. The
@@ -686,14 +703,15 @@ printACPFlowResults(net_dist, etime, ite, 1e-8)
 @isdefined(net_dist) || error("Run Example 3.3 first: it sets up net_dist.")
 @isdefined(net_slack) || error("Run Example 3.1 first: it sets up net_slack.")
 @isdefined(net_source) || error("Run Example 3.2 first: it sets up net_source.")
-println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
+println("Bus B1 voltage and network losses per connection model, computed:")
+println(rpad("model", 20), lpad("Vm B1 [pu]", 11), lpad("P loss [MW]", 13), lpad("Q loss [MVAr]", 15), "   balanced by")
 for (label, net, by) in (
   ("ideal slack", net_slack, "slack bus B1"),
   ("non-ideal source", net_source, "hidden source bus"),
   ("distributed slack", net_dist, "B3 (α=0.6) + B6 (α=0.4)"),
 )
   pl, ql = getTotalLosses(net = net)
-  println(rpad(label, 20), lpad(string(round(get_bus_vm_pu(net, "B1"); digits = 4)), 11), lpad(string(round(pl; digits = 3)), 11), lpad(string(round(ql; digits = 3)), 13), "   ", by)
+  println(rpad(label, 20), lpad(string(round(get_bus_vm_pu(net, "B1"); digits = 4)), 11), lpad(string(round(pl; digits = 3)), 13), lpad(string(round(ql; digits = 3)), 15), "   ", by)
 end
 
 # **Example 3.4: the IEC 60909 fault sweep.** The feeder data declared in
@@ -725,7 +743,7 @@ printShortCircuitResult(runShortCircuit!(net_slack; case = :min))
 ## uses: build_oltc (warm-up cell)
 net_oltc = build_oltc()
 run_sparlectra(net = net_oltc)
-println("uncontrolled: Vm(Load) = ", round(get_bus_vm_pu(net_oltc, "Load"); digits = 4), " pu")
+println("Bus Load, voltage Vm [pu], computed without tap control: ", round(get_bus_vm_pu(net_oltc, "Load"); digits = 4))
 
 # Now attach the controller (voltage mode, discrete steps) and rerun.
 # `run_sparlectra` executes the outer control loop automatically when
@@ -745,7 +763,9 @@ addTapController!(
   deadband_vm_pu = 5e-3,
 )
 run_sparlectra(net = net_oltc)
-println("controlled:   Vm(Load) = ", round(get_bus_vm_pu(net_oltc, "Load"); digits = 4), " pu")
+println("Bus Load, voltage Vm [pu]:")
+println("  target of the tap controller:     1.0 (deadband +/- 0.005)")
+println("  computed with tap control:        ", round(get_bus_vm_pu(net_oltc, "Load"); digits = 4))
 printTapControllerSummary(stdout, net_oltc)
 
 # Reading aid (Example 4.1): the summary shows the chosen tap position

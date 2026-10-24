@@ -379,6 +379,23 @@ end
 
 ## --- building the net through the existing constructors ---------------------
 
+# The name and source id of a built branch, appliance, shunt or link, taken
+# back from its extra record. The constructors generate both (B_ACL_110_1_2,
+# #B_ACL_110_1_2#1); the format defines extra.name as the reference name of
+# every component, so a hand-written case keeps its own names in the net,
+# its reports and its measurement keys. A record without the key keeps the
+# generated value (a PGM dataset has no extra block). An external_id marked
+# `source_id_kind: cgmes_mrid` is the delivery's mRID, which the writer put
+# in place of the component id; it lives in the restored mRID registry and
+# is not a component id, so the generated id stays.
+function _scf_restore_comp_identity!(comp, e::AbstractDict)
+  haskey(e, "name") && (comp.cName = String(e["name"]))
+  if haskey(e, "external_id") && get(e, "source_id_kind", "") != "cgmes_mrid"
+    comp.cID = String(e["external_id"])
+  end
+  return comp
+end
+
 # reference name of an id: extra[<id>].name is mandatory wherever anything
 # refers to an object by name, and it is what the writer always emits
 function _scf_case_names(extra::AbstractDict, ids::AbstractDict)
@@ -632,6 +649,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     # i_n/sn is "no limit", and the namespaced meta says which of the two it
     # is), plus the neutral ratio/shift of a transformer
     be_all = _scf_get(extra, string(id), Dict{String,Any}())
+    _scf_restore_comp_identity!(net.branchVec[end].comp, be_all)
     meta_e = _scf_get(be_all, "meta", Dict{String,Any}())
     if meta_e isa AbstractDict && !isempty(meta_e)
       br = net.branchVec[end]
@@ -678,12 +696,14 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   end
   for row in sort(data.link; by = r -> r.id)
     addLink!(net = net, fromBus = bus_by_id[row.from_node], toBus = bus_by_id[row.to_node], status = something(row.from_status, 1))
+    _scf_restore_comp_identity!(net.linkVec[end], _scf_get(extra, string(row.id), Dict{String,Any}()))
   end
 
   # --- tap-changer nameplates (shared application path) -----------------
   comps = spar.components
-  # changers whose entry carries no step (no pos, no step key): they sit at
-  # the middle position, named once per import below
+  # changers whose entry carries no step (no pos, no step key) or the mark
+  # step_assumed: they sit at the middle position, named once per import
+  # below
   assumed_steps = Tuple{String,Int}[]
   for row in comps.tap_changer
     bidx = branch_index_by_id[row.branch]
@@ -706,6 +726,10 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     tgrid = :fraction
     pdeclared = true
     rdeclared = true
+    # the mark of a written middle position, and that position
+    rmark = false
+    pmark = false
+    mid = 0
     for ctrl in row.controllers
       idx = ctrl.index
       if idx == 1
@@ -718,6 +742,11 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
         # no pos: NaN, the nameplate application puts the changer on its
         # neutral position 0 and marks the step as assumed
         tcur = ctrl.pos === nothing ? NaN : Float64(ctrl.pos)
+        # step_assumed: the writer put the middle position into pos
+        if ctrl.step_assumed === true && ctrl.pos !== nothing
+          rmark = true
+          mid = Int(round(ctrl.pos))
+        end
         # the grid the positions count on; absent is the fraction grid
         # every file before the key was written on
         g = something(ctrl.grid, "fraction")
@@ -734,6 +763,10 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
         pmin = Float64(something(ctrl.pos_min, 0.0))
         pmax = Float64(something(ctrl.pos_max, 0.0))
         pcur = ctrl.pos === nothing ? NaN : Float64(ctrl.pos)
+        if ctrl.step_assumed === true && ctrl.pos !== nothing
+          pmark = true
+          rmark || (mid = Int(round(ctrl.pos)))
+        end
         if ctrl.step_deg !== nothing
           pstep = ctrl.step_deg
         else
@@ -766,13 +799,39 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     _apply_tap_nameplate!(br, psi; tap_step = tstep, tap_min_step = widened ? min(tmin, 0.0) : tmin, tap_max_step = widened ? max(tmax, 0.0) : tmax, tap_current_step = tcur, phase_step_deg = pstep, phase_min_step = pmin, phase_max_step = pmax, phase_current_step = pcur, phase_du_step = dustep, tap_ratio_grid = tgrid, context = "sparlectra.components.tap_changer for branch $(row.branch)")
     pdeclared || (br.phase_tap_declared = false)
     rdeclared || (br.ratio_tap_declared = false)
-    (br.ratio_step_assumed || br.phase_step_assumed) && push!(assumed_steps, ("branch $(row.branch)", 0))
+    (rmark && tstep > 0.0) && (br.ratio_step_assumed = true)
+    (pmark && (pstep > 0.0 || dustep > 0.0)) && (br.phase_step_assumed = true)
+    (br.ratio_step_assumed || br.phase_step_assumed) && push!(assumed_steps, ("branch $(row.branch)", mid))
     if widened
       # the band ends on the grid of the file (_tap_r1_at gives the cascade
       # fraction of a position on either grid)
       br.tap_min = br.ratio / (1.0 + _tap_r1_at(br, tmax))
       br.tap_max = br.ratio / (1.0 + _tap_r1_at(br, tmin))
     end
+  end
+
+  # --- transformers the file declares without a tap changer -------------
+  # The branch constructor gives every transformer a default ratio and
+  # phase grid (0.9 to 1.1 in 0.00625 steps, +-30 deg), not declared. The
+  # writer states every changer a net carries as a tap_changer row (the
+  # default grid with declared = false), so a generic_branch with neither a
+  # row nor a typed model is a transformer without a changer, as in a
+  # hand-written case or a PGM dataset. Keeping the default grid gave such a
+  # branch a ratio changer of -14..17 positions (0.9 to 1.1 on the fraction
+  # grid) that a tap controller could move and the tap estimation listed.
+  # A branch whose taps the 0.19 extra.phase_taps model derived keeps them.
+  with_changer = Set{Int}(row.branch for row in comps.tap_changer)
+  for sid in keys(spar.tap_changer_models)
+    # a key that is no integer is refused with its message further down
+    bid = tryparse(Int, String(sid))
+    bid === nothing || push!(with_changer, bid)
+  end
+  for row in data.generic_branch
+    row.id in with_changer && continue
+    br = net.branchVec[branch_index_by_id[row.id]]
+    br.taps_derived && continue
+    br.has_ratio_tap = false
+    br.has_phase_tap = false
   end
 
   # --- asymmetric branch shunt split (0.20.0) ---------------------------
@@ -993,6 +1052,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
       # from the bus type and the voltage setpoint); restore them on the
       # created prosumer so the round trip keeps the nameplate
       ps = net.prosumpsVec[end]
+      _scf_restore_comp_identity!(ps.comp, e)
       haskey(e, "rated_s_mva") && (ps.ratedS = scf_number_or_sentinel(e["rated_s_mva"], "extra.rated_s_mva"))
       haskey(e, "rated_u_kv") && (ps.ratedU = scf_number_or_sentinel(e["rated_u_kv"], "extra.rated_u_kv"))
       # the APU flag is derived from the bus type AT CONSTRUCTION time, and the
@@ -1026,7 +1086,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   for row in data.shunt
     se = _scf_get(extra, string(row.id), Dict{String,Any}())
     order = haskey(se, "shunt_index") ? _scf_int(se["shunt_index"], "extra.shunt_index") : row.id
-    push!(shunt_rows, (order = order, row = row, id = row.id, external_id = get(se, "external_id", nothing)))
+    push!(shunt_rows, (order = order, row = row, id = row.id))
   end
   sort!(shunt_rows; by = r -> (r.order, r.id))
   for entry in shunt_rows
@@ -1054,7 +1114,7 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     # the generated id carries the net index; a file written from a net
     # whose controller shunt sat before a plain one has a different index
     # here, so the file's external_id is restored (same rule as for nodes)
-    entry.external_id === nothing || (net.shuntVec[end].comp.cID = String(entry.external_id))
+    _scf_restore_comp_identity!(net.shuntVec[end].comp, _scf_get(extra, string(entry.id), Dict{String,Any}()))
     shunt_index_by_id[entry.id] = length(net.shuntVec)
   end
 
@@ -1211,10 +1271,9 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   # --- controllers (FACTS and regulation) --------------------------------
   # the entries are the declarative control.controllers schema, so they go
   # through applyConfiguredControllers! unchanged. Transformer references
-  # may use the file's HUMAN branch names (extra block); the built net
-  # regenerates component names, so those references are translated to
-  # branch indices first (demo-case task: a self-built case says
-  # trafo = "Moorau_110_20", not a generated name).
+  # use the file's branch names (extra block); they are translated to
+  # branch indices first, so a name two branches share still resolves to
+  # the branch of that id (a self-built case says trafo = "Moorau_110_20").
   ctrl_entries = comps.controllers
   if !isempty(ctrl_entries)
     branch_by_extra_name = Dict{String,Int}()
@@ -1952,7 +2011,7 @@ end
 # of one changer in it, of its reactance curve and of one table point. An
 # unknown key is refused by name, a misspelt field would otherwise vanish.
 const _SCF_SE_TAP_SET_KEYS = ["origin", "ratio_n", "shift_n_deg", "changers"]
-const _SCF_SE_TAP_CHANGER_KEYS = ["name", "mrid", "kind", "role", "side", "neutral", "low", "high", "step", "impedance", "additive", "du", "alpha_deg", "dphi_deg", "step_abs", "outside_du", "x_curve", "rx_correction", "table"]
+const _SCF_SE_TAP_CHANGER_KEYS = ["name", "mrid", "kind", "role", "side", "neutral", "low", "high", "step", "step_assumed", "impedance", "additive", "du", "alpha_deg", "dphi_deg", "step_abs", "outside_du", "x_curve", "rx_correction", "table"]
 const _SCF_SE_TAP_X_CURVE_KEYS = ["x_min", "x_max", "a_max_deg", "form"]
 const _SCF_SE_TAP_POINT_KEYS = ["step", "ratio", "angle_deg", "r", "x", "g", "b"]
 
@@ -2005,9 +2064,10 @@ function _scf_read_se_tap_changers(e, bid::Int)::SETapChangerSet
         push!(table, SETapPoint(_scf_int(_scf_require(pt, "step", pc), "$(pc).step"), num("ratio"), num("angle_deg"), num("r"), num("x"), num("g"), num("b")))
       end
     end
-    # no step key: the changer sits at its middle position, the neutral step
+    # no step key: the changer sits at its middle position, the neutral
+    # step; step_assumed true: the written step is that middle position
     neutral = _scf_int(req("neutral"), "$(cc).neutral")
-    assumed = !haskey(c, "step")
+    assumed = !haskey(c, "step") || (haskey(c, "step_assumed") && _scf_flag(c["step_assumed"], "$(cc).step_assumed"))
     kw = (
       name = _scf_str(req("name"), "$(cc).name"),
       mrid = _scf_str(req("mrid"), "$(cc).mrid"),
@@ -2022,7 +2082,7 @@ function _scf_read_se_tap_changers(e, bid::Int)::SETapChangerSet
       neutral = neutral,
       low = _scf_int(req("low"), "$(cc).low"),
       high = _scf_int(req("high"), "$(cc).high"),
-      step = assumed ? Float64(neutral) : _scf_num(c["step"], "$(cc).step"),
+      step = haskey(c, "step") ? _scf_num(c["step"], "$(cc).step") : Float64(neutral),
       step_assumed = assumed,
       table = table,
       outside_du = opt("outside_du"),
@@ -2062,8 +2122,9 @@ end
 # inputs) and `phase` (a PhaseTapChangerModel with kind, steps, the formula
 # parameters and the table for :tabular); a key that is absent stays
 # absent on the winding. A model without `step` sits at its middle
-# position, its `neutral_step`. Returns whether the ratio
-# and the phase model had no step.
+# position, its `neutral_step`; `step_assumed: true` marks a written step
+# as that middle position. Returns whether the step of the ratio and of
+# the phase model is assumed.
 function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid::Int)
   if haskey(d, "ratio")
     r = d["ratio"]
@@ -2109,5 +2170,6 @@ function _scf_apply_tap_models!(w::PowerTransformerWinding, d::AbstractDict, bid
   # the winding keeps k and theta as before.
   haskey(d, "base_ratio") && (w.ratio = _scf_num(d["base_ratio"], "tap_changer_models $(bid) base_ratio"))
   haskey(d, "base_shift_deg") && (w.shift_degree = _scf_num(d["base_shift_deg"], "tap_changer_models $(bid) base_shift_deg"))
-  return (haskey(d, "ratio") && !haskey(d["ratio"], "step"), haskey(d, "phase") && !haskey(d["phase"], "step"))
+  assumed(m) = !haskey(m, "step") || (haskey(m, "step_assumed") && _scf_flag(m["step_assumed"], "tap_changer_models $(bid) step_assumed"))
+  return (haskey(d, "ratio") && assumed(d["ratio"]), haskey(d, "phase") && assumed(d["phase"]))
 end

@@ -17,7 +17,7 @@
 #          (docs/lit/workshop_se_diagnostics.jl): runs every path the
 #          chapters use once on throwaway nets, so the chapters do not stall
 #          on first-call compilation. Included by the first code cell of the
-#          notebook, which loads Sparlectra and Random.
+#          notebook, which loads Sparlectra, Random and Printf.
 #          Not part of the library.
 
 """
@@ -38,7 +38,8 @@ function warmup()
   t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
   setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
   t_dg = @elapsed validate_measurements(wnet)
-  println("warm: power flow ", round(t_pf; digits = 2), " s, diagnostics ", round(t_dg; digits = 2), " s (first calls compile)")
+  @printf("warm-up time, first power flow (with compilation):    %6.2f s\n", t_pf)
+  @printf("warm-up time, first diagnostics (with compilation):   %6.2f s\n", t_dg)
 
   ## every further path of the chapters once, output discarded
   t_paths = @elapsed redirect_stdout(devnull) do
@@ -66,8 +67,8 @@ function warmup()
     ## a meshed throwaway net with a gross flow error, so the report, the
     ## elimination loop and the robust weights take their bad-data branches
     ## (the healthy two-bus set above never leaves the band), plus the result
-    ## lines the chapters print from them; the precheck and tolerance notices
-    ## of this throwaway net are formatted into devnull (a console logger,
+    ## lines the chapters print from them; the precheck notice
+    ## of this throwaway net is formatted into devnull (a console logger,
     ## so the notice display compiles too)
     Base.CoreLogging.with_logger(Base.CoreLogging.ConsoleLogger(devnull)) do
       wr = Net(name = "warmup_ring", baseMVA = 100.0)
@@ -92,35 +93,32 @@ function warmup()
       wbad = findfirst(m -> m.typ == Sparlectra.PflowMeas, wr.measurements)
       m0 = wr.measurements[wbad]
       wr.measurements[wbad] = Measurement(typ = m0.typ, value = m0.value + 25.0, sigma = m0.sigma, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx)
-      println("corrupted ", m0.id, ": ", round(m0.value; digits = 2), " -> ", round(m0.value + 25.0; digits = 2), " MW (sigma ", m0.sigma, ")")
+      @printf("  measured after corruption:        %6.2f   (+25 MW)\n", m0.value + 25.0)
       wrep = validate_measurements(wr)
-      println("J/dof now: ", round(wrep.objective.value / wrep.objective.dof; digits = 1), ", z_wh = ", round(wrep.objective.z_wh; digits = 1), " (reason = ", wrep.objective.reason, ")")
-      top = wrep.largest_normalized_residual
-      println("prime suspect: ", top.id, "  |r_N| = ", round(top.abs_normalized_residual; digits = 1), ", w_ii = ", round(top.wii; digits = 2), ", localizable = ", top.localizable)
-      println("suspicious rows (|r_N| >= 3): ", length(wrep.suspicious_measurements))
+      @printf("  z_wh [-]:                         %6.1f   reason = %s\n", wrep.objective.z_wh, wrep.objective.reason)
+      println("  suspicious rows (|r_N| >= 3):     ", length(wrep.suspicious_measurements))
       for row in wrep.measurement_ranking[1:2]
-        println("  ", rpad(row.id, 22), " |r_N| = ", lpad(round(row.abs_normalized_residual; digits = 1), 6), "   w_ii = ", round(row.wii; digits = 2))
+        @printf("  %-22s %9.1f %10.2f   %s\n", row.id, row.abs_normalized_residual, row.wii, row.localizable)
       end
       wdiag = with_state_estimation_config(max_eliminations = 3) do
         runse_diagnostics(wr)
       end
-      println("eliminations: ", length(wdiag.eliminations), ", stop reason: ", wdiag.stop_reason)
       for e in wdiag.eliminations
-        println("  step ", e.elimination, ": removed ", e.id, " (|r_N| before = ", round(abs(e.normalized_residual_before); digits = 1), ")")
+        @printf("  %4d   %-22s %8.1f\n", e.elimination, e.id, abs(e.normalized_residual_before))
       end
       fin = wdiag.final_diagnostics
-      println("after elimination: J/dof = ", round(fin.objective.value / fin.objective.dof; digits = 3), ", z_wh = ", round(fin.objective.z_wh; digits = 3), ", reason = ", fin.objective.reason)
+      @printf("  z_wh [-]:                         %6.3f   reason = %s\n", fin.objective.z_wh, fin.objective.reason)
       wbadm = Measurement[m for m in wr.measurements]
-      wplain = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false) do
+      wplain = with_state_estimation_config(max_iter = 20, tol = 1e-6, update_net = false) do
         runse!(wr, wbadm)
       end
-      wrob = with_state_estimation_config(max_iter = 20, tol = 1e-8, update_net = false, robust = true) do
+      wrob = with_state_estimation_config(max_iter = 20, tol = 1e-6, update_net = false, robust = true) do
         runse!(wr, wbadm)
       end
       werr = maximum(abs.(abs.(wplain.voltages) .- wvm))
-      println("max |Vm_est - Vm_true|: plain = ", round(werr; sigdigits = 3), " pu, robust = ", round(maximum(abs.(abs.(wrob.voltages) .- wvm)); sigdigits = 3), " pu")
+      @printf("  plain WLS, corrupted row at full weight:    %.5f\n", werr)
       for rw in wrob.robustRows
-        println("  robust row: ", rw.id, "  stage ", rw.stage, ", t = ", round(rw.t; digits = 1), ", sigma widened by ", round(rw.sigma_factor; digits = 1), "x")
+        @printf("  %-22s %5d %7.1f %12.1f\n", rw.id, rw.stage, rw.t, rw.sigma_factor)
       end
     end
     wsh = Net(name = "warmup_shunt", baseMVA = 100.0)
@@ -129,15 +127,17 @@ function warmup()
     addProsumer!(net = wsh, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
     addProsumer!(net = wsh, busName = "B", type = "ENERGYCONSUMER", p = 10.0, q = 3.0)
     addPIModelACLine!(net = wsh, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
-    addShunt!(net = wsh, busName = "B", pShunt = 0.0, qShunt = 10.0)
+    addShunt!(net = wsh, busName = "B", pShunt = 0.0, qShunt = -10.0)
     validate!(net = wsh)
     runpf!(wsh, 40, 1e-10, 0)
     wmsh = generateMeasurementsFromPF(wsh; includeShuntQ = true, noise = false, stddev = measurementStdDevs(vm = 1e-3, pinj = 0.1, qinj = 0.1, pflow = 0.1, qflow = 0.1, shuntq = 0.1))
     setShuntEstimation!(wsh; busName = "B")
-    with_state_estimation_config(max_iter = 30, tol = 1e-6, update_net = false, update_shunts = true) do
+    wres = with_state_estimation_config(max_iter = 30, tol = 1e-6, update_net = false, update_shunts = true) do
       runse!(wsh, wmsh)
     end
+    @printf("  estimated by SE:                               %.2f\n", only(wres.shuntEstimates).B_est)
+    @printf("SE quality: J = %.1e, dof = %d\n", wres.objectiveJ, wres.dof)
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (elimination, robust SE, observability, current rows, shunt estimation); everything warm")
+  @printf("warm-up time, all further paths (elimination, robust SE, observability, current rows, shunt estimation): %.2f s\n", t_paths)
   return nothing
 end

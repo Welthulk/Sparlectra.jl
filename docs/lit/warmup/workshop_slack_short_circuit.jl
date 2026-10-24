@@ -38,7 +38,9 @@ function warmup()
   addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
   t_pf = @elapsed solve!(wnet)
   t_sc = @elapsed runShortCircuit!(wnet; case = :max)
-  println("warm: power flow ", round(t_pf; digits = 2), " s, short circuit ", round(t_sc; digits = 2), " s (first calls compile)")
+  println("warm-up wall time, first calls include compilation:")
+  println("  power flow [s]:                   ", round(t_pf; digits = 2))
+  println("  short circuit [s]:                ", round(t_sc; digits = 2))
 
   ## every further path of the notebook once, output discarded: the three
   ## slack models with their result tables, the loss summary, and both
@@ -56,6 +58,6 @@ function warmup()
     printShortCircuitResult(runShortCircuit!(wg; case = :max))
     printShortCircuitResult(runShortCircuit!(wg; case = :min))
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (result tables, three slack models, short circuit max/min); everything warm")
+  println("  further paths [s]:                ", round(t_paths; digits = 2), " (result tables, three slack models, short circuit max/min)")
   return nothing
 end

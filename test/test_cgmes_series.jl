@@ -1118,7 +1118,7 @@ function run_cgmes_union_tests()
     cfg = Sparlectra.SparlectraConfig(Dict{String,Any}())
     rk = redirect_stdout(() -> importCGMES(cfg; path = s1, name = "base"), devnull)
     jx = only(rk.net.isoNodes)
-    @test haskey(C._linkFedIsolatedBuses(rk.net), jx)
+    @test haskey(Sparlectra._linkFedIsolatedBuses(rk.net), jx)
     # the two sides as the branch-only electrical view splits them
     sides = Sparlectra.electricalIslandComponents(rk.net)
     far = only(c for c in sides if !any(b -> Sparlectra.getNodeType(rk.net.nodeVec[b]) == Sparlectra.Slack, c))

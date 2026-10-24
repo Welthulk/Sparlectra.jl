@@ -65,6 +65,7 @@ compile pauses.
 
 ````@example workshop_slack_short_circuit
 using Sparlectra
+using Printf
 
 # solve helper used by every scenario (25 iterations, tolerance 1e-8)
 function solve!(net; kwargs...)
@@ -229,14 +230,15 @@ charging produces more reactive power than the flows consume.)
 @isdefined(net_dist) || error("Run Example 3 first: it sets up net_dist.")
 @isdefined(net_slack) || error("Run Example 1 first: it sets up net_slack.")
 @isdefined(net_source) || error("Run Example 2 first: it sets up net_source.")
-println(rpad("scenario", 20), lpad("Vm(B1) pu", 11), lpad("P loss MW", 11), lpad("Q loss MVAr", 13), "   balanced by")
+println("solved state per grid-connection model:")
+println(rpad("  scenario", 22), lpad("Vm at B1 [pu]", 14), lpad("total P losses [MW]", 21), lpad("total Q losses [MVAr]", 23), "   balanced by")
 for (label, net, by) in (
   ("ideal slack", net_slack, "slack bus B1"),
   ("non-ideal source", net_source, "hidden source bus"),
   ("distributed slack", net_dist, "B3 (α=0.6) + B6 (α=0.4)"),
 )
   pl, ql = getTotalLosses(net = net)
-  println(rpad(label, 20), lpad(string(round(get_bus_vm_pu(net, "B1"); digits = 4)), 11), lpad(string(round(pl; digits = 3)), 11), lpad(string(round(ql; digits = 3)), 13), "   ", by)
+  println(rpad("  " * label, 22), lpad(@sprintf("%.4f", get_bus_vm_pu(net, "B1")), 14), lpad(@sprintf("%.3f", pl), 21), lpad(@sprintf("%.3f", ql), 23), "   ", by)
 end
 ````
 

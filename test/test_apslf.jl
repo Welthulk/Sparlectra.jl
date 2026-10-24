@@ -15,7 +15,9 @@
 # file: test/test_apslf.jl
 # purpose: tests the APSLF (AnalyticLoadFlow.jl) solver integration: a run
 #          with a declared controller, and agreement with Newton-Raphson
-#          without polish on small shipped cases
+#          without polish on small shipped cases, the reactive limits
+#          (clamp set and band check against Newton on sp_case118, both
+#          sides) and the injection source (node-only edits move no solver)
 #
 # AnalyticLoadFlow.jl is a required dependency, so nothing here is
 # conditional. The config value domains of power_flow.apslf live in
@@ -237,6 +239,119 @@ function run_apslf_tests()
             Vg10, sg10 = Sparlectra._run_guarded_apslf_start(m10.Ybus, m10.V0, m10.Sspec, m10.busType, m10.Vset, m10.slack_idx; enabled=true, order=40, baseMVA=m10.baseMVA)
             @test sg10.apslf_start_accepted
             @test maximum(abs.(Vg10 .- V_nr10[m10.busIdx_net])) < 1e-5
+        end)() end
+
+        @testset "APSLF reactive limits: same clamps as Newton, band checked (sp_case118)" begin (function ()
+            # 0.60.0: AnalyticLoadFlow compares the bus injection with the
+            # band, and buildPfModel handed it the generator band. On
+            # sp_case118 the PV machines at buses 4 and 85 (Q load 23 and 11
+            # MVAr) ended above Qmax, other machines were clamped away from
+            # their limit, and the run reported the limits as ok. With the
+            # band in injection terms APSLF ends on Newton's clamp set and
+            # voltages; the Q-limit stability check of both runs passes.
+            case118 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+            r_nr, r_ap = redirect_stdout(devnull) do
+                (run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_nr),
+                 run_sparlectra(casefile=basename(case118), path=dirname(case118), config=cfg_ap))
+            end
+            clamps(r) = sort!(collect(keys(r.net.qLimitEvents)))
+            @test r_nr.final_converged && r_ap.final_converged
+            @test clamps(r_ap) == clamps(r_nr)
+            @test 4 in clamps(r_ap) && 85 in clamps(r_ap)
+            @test r_ap.limit_validation_status === :ok
+            @test Sparlectra.rectangular_pf_status(r_ap.net).q_limit_active_set_ok
+            @test r_ap.diagnostics.qlimit_stability_status === :ok
+            # same clamp set, same solution: measured 1.8e-15 pu
+            @test maximum(abs.(getfield.(r_ap.net.nodeVec, :_vm_pu) .- getfield.(r_nr.net.nodeVec, :_vm_pu))) <= 1e-12
+            # The limit status is checked on the solved net, not taken from
+            # the convergence flag: the same case solved with the generator
+            # band (the fix bypassed in a local model) fails the check with
+            # buses 4 and 85 among the machines outside their band.
+            net = Sparlectra.createNetFromMatPowerFile(filename=case118)
+            m = Sparlectra.buildPfModel(net)
+            ql = [something(net.nodeVec[b]._qƩLoad, 0.0) / net.baseMVA for b in m.busIdx_net]
+            m_gen = Sparlectra.PFModel(Ybus=m.Ybus, baseMVA=m.baseMVA, busIdx_net=m.busIdx_net, busType=m.busType, slack_idx=m.slack_idx, Vset=m.Vset, Sspec=m.Sspec, V0=m.V0, qmin_pu=m.qmin_pu .+ ql, qmax_pu=m.qmax_pu .+ ql)
+            sol = Sparlectra.solvePf(apslf_solver(), m_gen)
+            @test sol.converged
+            Sparlectra.applyPfSolution!(net, m_gen, sol)
+            Sparlectra._apslf_record_clamps!(net, sol, sol.iters)
+            band = Sparlectra._apslf_qband_status(net, true, true)
+            st_bad = Sparlectra._apslf_pf_status(true, sol.residual_inf, sol.iters; extra=band)
+            @test !st_bad.q_limit_active_set_ok
+            @test Sparlectra._rectangular_run_status(st_bad).limit_validation_status === :fail
+            @test occursin("4 (PV outside its band", st_bad.reason_text) && occursin("85 (PV outside its band", st_bad.reason_text)
+            # A fixed-Q generator next to the regulating machine: its Q is in
+            # the bus band at both ends (buildQLimits!), the node Q load is
+            # the only shift. B2: machine band -5..5 MVAr, fixed 3 MVAr, load
+            # 20 MVAr; the voltage set point 1.03 pu needs more than 8 MVAr,
+            # so both solvers clamp the bus at 5 + 3 = 8 MVAr generation.
+            function ring3_fixed_q()
+                net = Net(name="apslf_ring3_fixed_q", baseMVA=100.0)
+                foreach(b -> addBus!(net=net, busName=b, vn_kV=110.0), ("B1", "B2", "B3"))
+                addPIModelACLine!(net=net, fromBus="B1", toBus="B2", r_pu=0.010, x_pu=0.080, b_pu=0.0, status=1)
+                addPIModelACLine!(net=net, fromBus="B2", toBus="B3", r_pu=0.011, x_pu=0.085, b_pu=0.0, status=1)
+                addPIModelACLine!(net=net, fromBus="B3", toBus="B1", r_pu=0.012, x_pu=0.090, b_pu=0.0, status=1)
+                addProsumer!(net=net, busName="B1", type="EXTERNALNETWORKINJECTION", referencePri="B1", vm_pu=1.0, va_deg=0.0)
+                addProsumer!(net=net, busName="B2", type="SYNCHRONOUSMACHINE", p=20.0, vm_pu=1.03, qMin=-5.0, qMax=5.0)
+                addProsumer!(net=net, busName="B2", type="GENERATOR", p=5.0, q=3.0)
+                addProsumer!(net=net, busName="B2", type="LOAD", p=10.0, q=20.0)
+                addProsumer!(net=net, busName="B3", type="LOAD", p=30.0, q=10.0)
+                return net
+            end
+            r3_nr = run_sparlectra(net=ring3_fixed_q(), config=cfg_nr)
+            r3_ap = run_sparlectra(net=ring3_fixed_q(), config=cfg_ap)
+            for r in (r3_nr, r3_ap)
+                @test r.final_converged && r.limit_validation_status === :ok
+                @test get(r.net.qLimitEvents, 2, :none) === :max
+                @test r.net.nodeVec[2]._qƩGen ≈ 8.0 atol = 1e-6
+            end
+            @test abs(r3_ap.net.nodeVec[2]._vm_pu - r3_nr.net.nodeVec[2]._vm_pu) < 1e-6
+            # The Qmin side: the machine at bus 46 (Q load 21 MVAr) runs at
+            # -1.26 MVAr under Newton. With its band narrowed to 5..10 MVAr
+            # it falls below Qmin; both solvers clamp it at 5 MVAr, with
+            # the same clamp set and voltages and the limit status ok.
+            # Measured 8.9e-16 pu.
+            name_of(net, bus) = only(k for (k, v) in net.busDict if v == bus)
+            function case118_qmin()
+                net = Sparlectra.createNetFromMatPowerFile(filename=case118)
+                Sparlectra.setQLimits!(net=net, qmin_MVar=5.0, qmax_MVar=10.0, busName=name_of(net, 46))
+                return net
+            end
+            rq_nr, rq_ap = redirect_stdout(devnull) do
+                (run_sparlectra(net=case118_qmin(), config=cfg_nr), run_sparlectra(net=case118_qmin(), config=cfg_ap))
+            end
+            for r in (rq_nr, rq_ap)
+                @test r.final_converged && r.limit_validation_status === :ok
+                @test get(r.net.qLimitEvents, 46, :none) === :min
+                @test r.net.nodeVec[46]._qƩGen ≈ 5.0 atol = 1e-6
+            end
+            @test clamps(rq_ap) == clamps(rq_nr)
+            @test rq_ap.diagnostics.qlimit_stability_status === :ok
+            @test maximum(abs.(getfield.(rq_ap.net.nodeVec, :_vm_pu) .- getfield.(rq_nr.net.nodeVec, :_vm_pu))) <= 1e-12
+            # One source of the injections: buildPfModel builds them from the
+            # prosumers like Newton (buildComplexSVec), not from the node
+            # sums. A node-only edit (addBusLoadPower!, read by no solver)
+            # moved APSLF and nothing else: ring3 with 4 MVAr added at B2
+            # that way gave Vm 0.988093 pu against Newton's 0.990335. Here
+            # node-only loads at the clamped PV bus 4 and the PQ bus 2 leave
+            # both solvers on the result of the unedited case.
+            function case118_nodeonly()
+                net = Sparlectra.createNetFromMatPowerFile(filename=case118)
+                addBusLoadPower!(net=net, busName=name_of(net, 4), p=10.0, q=10.0)
+                addBusLoadPower!(net=net, busName=name_of(net, 2), p=10.0, q=10.0)
+                return net
+            end
+            rn_nr, rn_ap = redirect_stdout(devnull) do
+                (run_sparlectra(net=case118_nodeonly(), config=cfg_nr), run_sparlectra(net=case118_nodeonly(), config=cfg_ap))
+            end
+            @test rn_nr.final_converged && rn_ap.final_converged && rn_ap.limit_validation_status === :ok
+            @test clamps(rn_ap) == clamps(rn_nr) == clamps(r_nr)
+            @test maximum(abs.(getfield.(rn_ap.net.nodeVec, :_vm_pu) .- getfield.(rn_nr.net.nodeVec, :_vm_pu))) <= 1e-12
+            @test maximum(abs.(getfield.(rn_ap.net.nodeVec, :_vm_pu) .- getfield.(r_ap.net.nodeVec, :_vm_pu))) <= 1e-12
+            # the write-back adds the load the solve saw: slack generation as Newton's
+            slack = findfirst(Sparlectra.isSlack, rn_ap.net.nodeVec)
+            @test rn_ap.net.nodeVec[slack]._pƩGen ≈ rn_nr.net.nodeVec[slack]._pƩGen atol = 1e-6
+            @test rn_ap.net.nodeVec[slack]._qƩGen ≈ rn_nr.net.nodeVec[slack]._qƩGen atol = 1e-6
         end)() end
 
 

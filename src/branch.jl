@@ -461,9 +461,9 @@ mutable struct Branch <: AbstractBranch
   # the same for the ratio changer of the fields: true when a nameplate row
   # with tap_step > 0 applied it. The constructor sets has_ratio_tap and a
   # default grid for every transformer, so has_ratio_tap alone cannot tell
-  # a declared changer from that grid. Read by _case_has_tap_changers (the
-  # Web UI default of "estimate taps", 0.60.0); the release itself does not
-  # read it.
+  # a declared changer from that grid. Only a declared ratio changer joins
+  # the changer set of the fields (_field_tap_changers), so a transformer
+  # without one is never released for the tap estimation (0.60.0).
   ratio_tap_declared::Bool
   # true when the import carried no current step for the ratio changer
   # (phase changer) of the fields above or of the typed models: it sits at
@@ -978,6 +978,20 @@ function getBranchComp(Vn_kV::Float64, from::Int, to::Int, idx::Int, kind::Strin
   return ImpPGMComp(cID, name, cTyp, Vn_kV, from, to)
 end
 
+# The element a branch was built from: :line (ACLineSegment), :transformer
+# (PowerTransformer) or :pi (BranchModel). getBranchComp writes the kind
+# into the generated name (B_ACL_, B_2WT_, B_PI_), and the component type is
+# the generic Branch for all three. A branch that carries a name of its own
+# (an SCF case restores extra.name) is told by the line marker instead: only
+# the line constructor stores ratio 0.0, a transformer asserts ratio != 0.0.
+function _branch_build_kind(br::Branch)::Symbol
+  name = br.comp.cName
+  occursin("_ACL_", name) && return :line
+  occursin("_2WT_", name) && return :transformer
+  occursin("_PI_", name) && return :pi
+  return br.ratio == 0.0 ? :line : :transformer
+end
+
 """
     applyTapNameplate!(branch; tap_step, tap_min_step, tap_max_step,
                        tap_current_step, phase_step_deg, phase_min_step,
@@ -1014,7 +1028,9 @@ changer starts at its middle position, the neutral position 0 the steps
 count from, and `ratio_step_assumed` (`phase_step_assumed`) is set. A phase
 changer applied here is declared nameplate data
 (`phase_tap_declared`), which releases it for the tap estimation whatever
-its psi. `context` prefixes the error messages, so a MATPOWER
+its psi; a ratio changer applied here (`tap_step > 0`) is declared in the
+same way (`ratio_tap_declared`). The tap estimation releases declared
+changers only, never the constructor's default grid. `context` prefixes the error messages, so a MATPOWER
 `mpc.sparlectra.tap_changers` row and an SCF `tap_changer` entry report in
 their own vocabulary. This is the single tap-nameplate application path;
 every importer routes through it.
@@ -1161,6 +1177,39 @@ function _tap_step_assumed_lines(items::AbstractVector)::Vector{String}
   fmt(x) = isinteger(x) ? string(Int(x)) : string(x)
   length(items) <= _TAP_STEP_ASSUMED_LIST_MAX && return String["tap changer $(n): step not transferred, middle position $(fmt(s)) assumed" for (n, s) in items]
   return String[string(length(items), " tap changers: step not transferred, middle position assumed: ", join((string(n, " (", fmt(s), ")") for (n, s) in items), ", "))]
+end
+
+# The changers of branch `br` that still sit at the assumed middle position,
+# as a text for the export warnings ("ratio", "phase", "ratio and phase"),
+# or nothing. Both places an import marks are read: the branch flags of the
+# nameplate and the typed models, and the changers of a stored set.
+function _tap_step_assumed_text(br::Branch)::Union{Nothing,String}
+  set = br.se_tap_changers
+  ratio = br.ratio_step_assumed || (set !== nothing && any(ch -> ch.step_assumed && ch.role === :ratio, set.changers))
+  phase = br.phase_step_assumed || (set !== nothing && any(ch -> ch.step_assumed && ch.role === :phase, set.changers))
+  (ratio || phase) || return nothing
+  return ratio && phase ? "ratio and phase" : (ratio ? "ratio" : "phase")
+end
+
+# The export warning for a transformer whose step was not transferred: the
+# writers that have no mark for it (MATPOWER, CGMES) write the assumed
+# middle position as the step (or in the ratio and shift), and the file
+# then states it as a real one.
+_tap_step_assumed_export_text(name::AbstractString, which::AbstractString)::String = "transformer $(name): $(which) step not transferred, the export writes the assumed middle position"
+
+# Take the mark of an assumed step off the `which` changer (:ratio or
+# :phase) of branch `br`: the branch flag and the changers of that role in
+# a stored set. A tap controller or a QSTS carry that moves the changer
+# calls it, so the step it reaches is a step, not the middle position, and
+# the writers do not mark it (the tap estimation does the same in
+# _tap_apply_position!). The stored set keeps its steps.
+function _clear_tap_step_assumed!(br::Branch, which::Symbol)
+  which === :ratio ? (br.ratio_step_assumed = false) : (br.phase_step_assumed = false)
+  set = br.se_tap_changers
+  (set !== nothing && any(ch -> ch.step_assumed && ch.role === which, set.changers)) || return nothing
+  chs = SETapChanger[(ch.step_assumed && ch.role === which) ? SETapChanger(ch.name, ch.mrid, ch.kind, ch.role, ch.side, ch.additive, ch.du, ch.alpha_deg, ch.dphi_deg, ch.step_abs, ch.neutral, ch.low, ch.high, ch.step, ch.table, ch.outside_du, ch.x_curve, ch.x_curve_form, ch.impedance, ch.rx_correction, false) : ch for ch in set.changers]
+  br.se_tap_changers = SETapChangerSet(set.ratio_n, set.shift_n_deg, chs, set.origin)
+  return nothing
 end
 
 # Live positions of a Delta-u phase changer (phase_du_step > 0) from the

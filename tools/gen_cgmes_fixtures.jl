@@ -71,7 +71,9 @@ const CGMES_FIXTURE_CASES = [
 # as a TapChangerControl. Transformer branches and net.trafos pair
 # positionally, the same pairing the exporter relies on.
 function _winding_taps_from_nameplate!(net::Net)
-  trafo_branches = [br for br in net.branchVec if occursin("_2WT_", br.comp.cName)]
+  # by build kind, not by the B_2WT_ name marker: SCF cases restore their
+  # own branch names, so the marker is missing on sp_case14's transformers
+  trafo_branches = [br for br in net.branchVec if Sparlectra._branch_build_kind(br) === :transformer]
   length(trafo_branches) == length(net.trafos) || return 0
   applied = 0
   for (tf, br) in zip(net.trafos, trafo_branches)

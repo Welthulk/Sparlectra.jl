@@ -313,7 +313,7 @@ function _powsybl_add_pi_line!(ctx::_PowsyblBuildContext, b1::AbstractString, b2
     _addPIModelTrafo_by_idx!(net = ctx.net, from = ctx.idx[b1], to = ctx.idx[b2], r_pu = pu.r_pu, x_pu = pu.x_pu, b_pu = pu.b_pu, g_pu = pu.g_pu, status = st.status, ratedS = rating, ratio = pu.ratio, shift_deg = 0.0, from_status = st.from_status, to_status = st.to_status, g_from_pu = pu.g_from_pu, b_from_pu = pu.b_from_pu, g_to_pu = pu.g_to_pu, b_to_pu = pu.b_to_pu)
     # a line has no tap changer: the empty set keeps the ratio branch out
     # of the tap estimation (the constructor gives every transformer branch
-    # a default ratio grid, which the mass release would otherwise take)
+    # a default ratio grid, which is no changer model)
     br = ctx.net.branchVec[end]
     br.se_tap_changers = SETapChangerSet(ratio_n = br.ratio, shift_n_deg = br.angle, changers = SETapChanger[], origin = :powsybl)
   end

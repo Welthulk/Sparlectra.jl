@@ -1053,12 +1053,15 @@ end
 # The typed tap-changer models of a winding as plain JSON objects: `ratio`
 # with the PowerTransformerTaps constructor inputs, `phase` with the
 # PhaseTapChangerModel fields (kind as a string, the table for :tabular),
-# and the impedance-correction option the resolver applied.
+# the impedance-correction option the resolver applied, and `step_assumed`
+# on a model whose step was not transferred.
 function _scf_tap_model_dict(br::Branch, w::PowerTransformerWinding)
   d = Dict{String,Any}()
   if w.taps !== nothing
     t = w.taps
     d["ratio"] = Dict{String,Any}("vn_kv" => w.Vn, "step" => t.step, "low_step" => t.lowStep, "high_step" => t.highStep, "neutral_step" => t.neutralStep, "voltage_increment_kv" => t.voltageIncrement_kV, "neutral_u_kv" => t.neutralU, "convention" => String(t.convention))
+    # the step was not transferred: the written step is the middle position
+    br.ratio_step_assumed && (d["ratio"]["step_assumed"] = true)
   end
   if w.phase_taps !== nothing
     m = w.phase_taps
@@ -1069,6 +1072,7 @@ function _scf_tap_model_dict(br::Branch, w::PowerTransformerWinding)
     m.x_min === nothing || (p["x_min"] = m.x_min)
     m.x_max === nothing || (p["x_max"] = m.x_max)
     m.table === nothing || (p["table"] = Any[_scf_table_point_dict(r) for r in m.table])
+    br.phase_step_assumed && (p["step_assumed"] = true)
     d["phase"] = p
   end
   br.tap_correction === :ideal || (d["tap_changer_model"] = String(br.tap_correction))
@@ -1107,6 +1111,7 @@ function _scf_se_tap_changers_dict(set::SETapChangerSet, bid)
       c["x_curve"] = Dict{String,Any}("x_min" => ch.x_curve[1], "x_max" => ch.x_curve[2], "a_max_deg" => ch.x_curve[3], "form" => String(ch.x_curve_form))
     end
     ch.rx_correction && (c["rx_correction"] = true)
+    ch.step_assumed && (c["step_assumed"] = true)
     ch.table === nothing || (c["table"] = Any[Dict{String,Any}("step" => p.step, "ratio" => p.ratio, "angle_deg" => p.angle_deg, "r" => p.r, "x" => p.x, "g" => p.g, "b" => p.b) for p in ch.table])
     push!(chs, c)
   end
@@ -1221,6 +1226,11 @@ function _scf_tap_changers(net::Net, ids::ScfIdMap)
     # counts as a case with tap changers (_case_has_tap_changers)
     if !br.ratio_tap_declared && !isempty(controllers) && controllers[1]["index"] == 1
       controllers[1]["declared"] = false
+    end
+    # a changer whose step was not transferred keeps its mark: the written
+    # pos is the assumed middle position, not a step of the source
+    for c in controllers
+      (c["index"] == 1 ? br.ratio_step_assumed : br.phase_step_assumed) && (c["step_assumed"] = true)
     end
     isempty(controllers) && continue
     row = Dict{String,Any}(

@@ -185,6 +185,24 @@ also keeps zero-injection buses from stiffening the flat-start solve. A
 healthy noisy set lands near `J = dof`; sigmas too pessimistic against the
 noise push the band test to `:low`, too optimistic ones to `:high`.
 
+Where `state_estimation.sigma_by_voltage_level` has a value for the voltage
+level of the measuring bus and the quantity, that sigma is written instead
+of the percent field and the noise is drawn with it.
+
+#### [Measurement resolution (U, P, Q, I, angle)](@id se-generator-resolution)
+
+Rounds each generated value after noise and bad data to the step an online
+system delivers. Default off (`0`, no rounding) for every quantity; steps in
+U kV, P MW, Q Mvar, I A and angles in degrees (form fields
+`gen_resolution_u_kv`, `gen_resolution_p_mw`, `gen_resolution_q_mvar`,
+`gen_resolution_i_a`, `gen_resolution_angle_deg`; library keyword
+`resolution` of `generateMeasurementsFromPF`). The written sigma stays the
+configured one: the rounding is part of the measurement error (standard
+deviation step / sqrt(12)), so a step coarser than about sigma times
+sqrt(12) adds visible error. A rounded set names the steps in a
+`# resolution:` comment line; zero-injection and passive balance rows are
+not rounded.
+
 ### [Measurement generator v2](@id se-generator-v2)
 
 Truth state, flow placement, passive-node handling and a target number of

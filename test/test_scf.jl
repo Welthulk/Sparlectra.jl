@@ -209,6 +209,34 @@ function run_scf_tests()
     # no component_name rows appear: reference name and component name
     # agree on purpose in the shipped files
     @test all(!haskey(v, "component_name") for v in node_extra)
+
+    # branches, appliances and links keep the name of the file as well, not
+    # the generated one (B_2WT_110_4_5 before 0.60.0), and the external_id
+    # as their component id; the kind of a named branch still reads from its
+    # build (Trafo, Line), and the re-export writes the names back
+    tr = net.branchVec[5]
+    @test tr.comp.cName == "Lindhof_110_20" && tr.comp.cID == "#B_2WT_110_4_5#5"
+    @test Sparlectra._branch_kind_label(net, tr) == "Trafo"
+    @test net.branchVec[1].comp.cName == "Sandau_Borntal" && Sparlectra._branch_kind_label(net, net.branchVec[1]) == "Line"
+    br_extra = Dict(Int(v["branch_index"]) => String(v["name"]) for v in values(root["sparlectra"]["extra"]) if haskey(v, "branch_index"))
+    @test br_extra[5] == "Lindhof_110_20" && br_extra[1] == "Sandau_Borntal"
+    f6 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case6tap.scf.json")
+    net6 = Sparlectra.importSCF(f6)
+    @test [b.comp.cName for b in net6.branchVec[5:7]] == ["T1_Nordwerk_Kreuzau", "T2_Suedfeld_Ostheim", "T3_Mittelbach_Lindenau"]
+    @test [p.comp.cName for p in net6.prosumpsVec] == ["Gen_Nordwerk", "Gen_Suedfeld", "Ld_Mittelbach", "Ld_Ostheim", "Ld_Lindenau"]
+
+    # a generic_branch without a tap_changer row has no changer: the
+    # constructor's default grid (0.9 to 1.1, read as positions -14..17)
+    # was kept before 0.60.0. T2 of sp_case6tap declares one (+-12 steps of
+    # 1.25 %); with its row taken out of the file it has none
+    t2 = net6.branchVec[6]
+    @test t2.has_ratio_tap && !t2.has_phase_tap && t2.tap_step == 0.0125
+    @test t2.tap_min ≈ 1 / 1.15 && t2.tap_max ≈ 1 / 0.85
+    root6 = Sparlectra.scf_json_parse(read(f6, String))
+    filter!(r -> r["branch"] != 12, root6["sparlectra"]["components"]["tap_changer"])
+    bare = Sparlectra.scf_to_net(root6)
+    @test !bare.branchVec[6].has_ratio_tap && !bare.branchVec[6].has_phase_tap
+    @test bare.branchVec[7].has_ratio_tap && !bare.branchVec[7].has_phase_tap
   end)() end
 
   @testset "deterministic ids and byte-identical repeat export" begin (function ()
@@ -728,6 +756,32 @@ function run_scf_tests()
     @test nb.branchVec[8].ratio_step_assumed && nb.branchVec[8].phase_step_assumed
     @test nb.branchVec[4].ratio_step_assumed && nb.branchVec[4].tap_ratio == nb.branchVec[4].ratio
     @test !any(br -> br.ratio_step_assumed || br.phase_step_assumed, back.branchVec) && !back.branchVec[3].se_tap_changers.changers[1].step_assumed
+    # the writer puts the middle position into the file with the mark
+    # step_assumed next to it; the re-read marks the same changers at the
+    # same steps, names them again, and a second write is the first byte
+    # for byte
+    ma = exportSCF(nb; file = joinpath(d, "assumed_a.scf.json"))
+    mroot = S.scf_json_parse(read(ma, String))
+    mm = mroot["sparlectra"]["tap_changer_models"]
+    c3w = mm[ids[3]]["estimation"]["changers"][1]
+    @test c3w["step_assumed"] === true && c3w["step"] == 13
+    @test mm[ids[8]]["ratio"]["step_assumed"] === true && mm[ids[8]]["phase"]["step_assumed"] === true && mm[ids[8]]["ratio"]["step"] == 0
+    mrow4 = only(t for t in mroot["sparlectra"]["components"]["tap_changer"] if t["branch"] == parse(Int, ids[4]))
+    @test all(c -> get(c, "step_assumed", false) === true && c["pos"] == 0, mrow4["controllers"])
+    @test !occursin("step_assumed", read(a, String))
+    mb = @test_logs (:info, "SCF: tap changer branch $(ids[3])/asym: step not transferred, middle position 13 assumed") (:info, "SCF: tap changer branch $(ids[8]): step not transferred, middle position 0 assumed") (:info, "SCF: tap changer branch $(ids[4]): step not transferred, middle position 0 assumed") match_mode = :any importSCF(ma)
+    marks(n) = [(br.ratio_step_assumed, br.phase_step_assumed, br.se_tap_changers === nothing ? Bool[] : [c.step_assumed for c in br.se_tap_changers.changers]) for br in n.branchVec]
+    @test marks(mb) == marks(nb)
+    @test live(mb) == live(nb)
+    @test mb.branchVec[3].se_tap_changers.changers[1].step == 13.0
+    @test read(exportSCF(mb; file = joinpath(d, "assumed_b.scf.json")), String) == read(ma, String)
+    # the write path of a QSTS carry moves the typed ratio model off its
+    # middle position: its mark goes, the phase model keeps it
+    nc = deepcopy(nb)
+    @test S._set_model_tap_steps!(nc.branchVec[8], 1, typemin(Int))
+    @test !nc.branchVec[8].ratio_step_assumed && nc.branchVec[8].phase_step_assumed
+    mc = S.scf_json_parse(read(exportSCF(nc; file = joinpath(d, "assumed_c.scf.json")), String))["sparlectra"]["tap_changer_models"][ids[8]]
+    @test (mc["ratio"]["step"], haskey(mc["ratio"], "step_assumed"), get(mc["phase"], "step_assumed", false)) == (1, false, true)
     e1 = ids[1]
     @test occursin("tap_changer_models $(e1) estimation.changers[1] has the unknown key \"dU\"", refused(t -> t[e1]["estimation"]["changers"][1]["dU"] = 0.01))
     @test occursin("tap_changer_models $(e1) estimation.changers[1]: SETapChanger rtc: kind must be one of", refused(t -> t[e1]["estimation"]["changers"][1]["kind"] = "rotary"))
@@ -1294,6 +1348,27 @@ mpc.branch = [
     mback = importSCF(mf)
     @test count(has_qu_controller, mback.prosumpsVec) == 1
     @test read(exportSCF(mback; file = joinpath(d, "pq2.scf.json")), String) == read(mf, String)
+
+    # two entries on one transformer with disjoint actuators (ratio for U,
+    # phase for P) are two controllers: the existence check of the
+    # declarative path took the second for a repeat of the first. sp_case6tap
+    # holds U Kreuzau_110 and P over T1 with T1 and U Lindenau_20 with T3; a
+    # second apply adds nothing, the outer loop settles inside the deadbands
+    # and the controllers survive a write and read
+    c6 = importSCF(abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case6tap.scf.json")))
+    @test length(Sparlectra._tap_controllers(c6)) == 3
+    entries6 = Sparlectra.scf_json_parse(read(joinpath(dirname(@__DIR__), "data", "scf", "sp_case6tap.scf.json"), String))["sparlectra"]["components"]["controllers"]
+    @test Sparlectra._scf_apply_controllers!(c6, entries6; branch_by_name = Dict("T1_Nordwerk_Kreuzau" => 5, "T3_Mittelbach_Lindenau" => 7)) == 0
+    f6c = exportSCF(c6; file = joinpath(d, "case6tap.scf.json"))
+    c6b = importSCF(f6c)
+    @test length(Sparlectra._tap_controllers(c6b)) == 3
+    @test read(exportSCF(c6b; file = joinpath(d, "case6tap2.scf.json")), String) == read(f6c, String)
+    res6 = redirect_stdout(() -> run_control!(c6), devnull)
+    @test res6.status === :converged
+    row(n) = only(r for r in res6.controllers if r.controller_name == n)
+    @test abs(row("T1_Nordwerk_Kreuzau OLTC").achieved_vm_pu - 1.0) <= 0.01
+    @test abs(row("T3_Mittelbach_Lindenau OLTC").achieved_vm_pu - 1.0) <= 0.01
+    @test abs(row("T1_Nordwerk_Kreuzau PST").achieved_p_mw - 60.0) <= 4.0
   end)() end
 
   @testset "power-grid-model interoperability" begin (function ()

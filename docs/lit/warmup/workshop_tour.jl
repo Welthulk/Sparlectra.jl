@@ -38,7 +38,9 @@ function warmup()
 
   t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
   t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
-  println("power flow     : first solve ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
+  println("warm-up wall time, first calls include compilation:")
+  println("  power flow, first solve [s]:      ", round(t_first; digits = 2))
+  println("  power flow, second solve [ms]:    ", round(t_second * 1000; digits = 2))
 
   ## every further path of the tour once, output discarded: the result
   ## tables, the model edits with the MATPOWER export, bus links, the short
@@ -71,7 +73,11 @@ function warmup()
     printShortCircuitResult(runShortCircuit!(wg; case = :max))
     wo = build_oltc()
     addTapController!(wo; trafo = "T1", mode = :voltage, target_bus = "Load", target_vm_pu = 1.0, control_ratio = true, control_phase = false, is_discrete = true, deadband_vm_pu = 5e-3)
-    run_sparlectra(net = wo)
+    ## the first run_sparlectra of the process; this warm-up is the compile
+    ## step the startup hint talks about, so the hint is switched off here
+    with_sparlectra_config(SparlectraConfig(output = OutputConfig(startup_latency_hint = false))) do
+      run_sparlectra(net = wo)
+    end
     printTapControllerSummary(stdout, wo)
     solve!(build_qu(5.0, 1.0))
     # a machine that hits its Q limit (PV to PQ switching, the Q-limit log)
@@ -91,6 +97,6 @@ function warmup()
     # the distributed slack of chapter 3
     solve!(build_grid(:slack); distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (tables, edits, export, links, Q limits, distributed slack, short circuit, taps, Q(U)); everything warm")
+  println("  further paths [s]:                ", round(t_paths; digits = 2), " (tables, edits, export, links, Q limits, distributed slack, short circuit, taps, Q(U))")
   return nothing
 end

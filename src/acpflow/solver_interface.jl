@@ -44,9 +44,14 @@ Fields:
 - `busType`: :Slack/:PV/:PQ per bus (length n)
 - `slack_idx`: slack index in PF-ordering (1..n)
 - `Vset`: voltage magnitude setpoints for PV/Slack buses (length n; dummy 1.0 for PQ)
-- `Sspec`: specified complex injections in per-unit (length n), P + jQ (net injection)
+- `Sspec`: specified complex injections in per-unit (length n), P + jQ (net injection),
+  built from the prosumers like the Newton solver's specification (`buildComplexSVec`),
+  not from the node sums
 - `V0`: initial complex voltages in per-unit (length n)
-- `qmin_pu`, `qmax_pu`: optional PV reactive limits in per-unit (length n, may be empty)
+- `qmin_pu`, `qmax_pu`: optional reactive limits of the bus injection in per-unit
+  (length n, may be empty): the generator band of the bus (`getQLimits_pu`) minus
+  its reactive prosumer load (`build_qload_pu`), in the terms of `Sspec`; `±Inf`
+  where a side is unbounded
 """
 Base.@kwdef struct PFModel{TY<:AbstractMatrix{ComplexF64}}
   Ybus::TY
@@ -182,8 +187,15 @@ Build a canonical PF model from `net`:
 - the voltage setpoint `Vset` of a slack or PV bus is the setpoint of its
   regulating generator, with the node voltage and 1.0 pu as fallbacks, the
   same lookup the rectangular solver uses.
+- the specified injections `Sspec` come from the prosumers (`buildComplexSVec`),
+  the source of the Newton and DC solvers: generators minus loads, a
+  voltage-dependent shunt at 1 pu. The node sums (`addBusLoadPower!`,
+  `addBusGenPower!`) are not read.
 
-`include_limits=true` attaches qmin/qmax in per-unit as used by your NR-with-limits code.
+`include_limits=true` attaches `qmin_pu`/`qmax_pu`: the generator band of each
+bus (`getQLimits_pu`) shifted by the reactive prosumer load (`build_qload_pu`)
+into injection terms, the terms of `Sspec`, so a solver can compare its bus
+injection with them directly. An unbounded side stays `±Inf`.
 """
 function buildPfModel(
   net::Net;
@@ -218,6 +230,13 @@ function buildPfModel(
   Vset = ones(Float64, n)
   # per-bus setpoints in net bus order (all nodes, isolated ones included)
   vset_net = _bus_voltage_setpoints_from_prosumers(net)
+  # Specified injections per bus of the net, from the prosumers as in the
+  # Newton solver (runpf_rectangular!) and the DC solver. The node sums of
+  # getBusData were read here before 0.60.0: after a node-only edit
+  # (addBusLoadPower!, documented as read by no solver) APSLF solved
+  # another problem than Newton (ring3 with 4 MVAr added at B2 that way:
+  # Vm 0.988093 pu against 0.990335 pu).
+  S_net = buildComplexSVec(net)
 
   @inbounds for k in 1:n
     b = busVec[k]
@@ -237,8 +256,7 @@ function buildPfModel(
     # Initial V0 from BusData (already respects flatstart)
     V0[k] = ComplexF64(b.vm_pu * cos(b.va_rad), b.vm_pu * sin(b.va_rad))
 
-    # Specified injections in p.u. from BusData
-    Sspec[k] = ComplexF64(b.pƩ, b.qƩ)
+    Sspec[k] = S_net[b.nodeIdx]
 
     # PV/Slack voltage magnitude setpoint: the setpoint of the regulating
     # generator, with the node voltage and then 1.0 pu as fallbacks, the
@@ -283,8 +301,19 @@ function buildPfModel(
     # reactive limit.
     nnet = length(net.nodeVec)
     (length(qmin_pu) == nnet && length(qmax_pu) == nnet) || throw(DimensionMismatch("buildPfModel: the per-bus Q limits have $(length(qmin_pu)) (qmin_pu) and $(length(qmax_pu)) (qmax_pu) entries for $(nnet) buses of the net."))
-    qmin_pu = qmin_pu[busIdx_net]
-    qmax_pu = qmax_pu[busIdx_net]
+    # getQLimits_pu bounds the generation of a bus (regulating units plus
+    # the fixed Q of the other generators, buildQLimits!), while Sspec is
+    # the injection, generation minus load. A solver compares its injection
+    # with the band (AnalyticLoadFlow does), so the band goes over in the
+    # same terms: minus the prosumer Q load (build_qload_pu), the load term
+    # of Sspec and the one the rectangular active set adds to the solved
+    # injection. With the generator band APSLF left two PV machines of
+    # sp_case118 above Qmax (buses 4 and 85, Q load 23 and 11 MVAr) and
+    # clamped eight others away from their limit, reported as converged
+    # with the limits ok.
+    qload_pu = build_qload_pu(net)[busIdx_net]
+    qmin_pu = qmin_pu[busIdx_net] .- qload_pu
+    qmax_pu = qmax_pu[busIdx_net] .- qload_pu
   end
 
   return PFModel(
@@ -328,8 +357,9 @@ end
 
 Write the external solution back into `net`:
 - updates node Vm/Va on all active buses
-- optionally writes Slack P/Q and PV Q generation (solved injection plus the bus
-  load, same policy as the rectangular solver)
+- optionally writes Slack P/Q and PV Q generation (solved injection plus the load
+  of the bus as `buildPfModel` specified it, from the prosumers; same policy as the
+  rectangular solver)
 
 Notes:
 - Isolated buses (not in model) are left untouched.
@@ -365,16 +395,19 @@ function applyPfSolution!(
   Sbus_MVA = Sbus_pu .* model.baseMVA
 
   # 3) Write back Slack P/Q and PV Q generation (policy as in rectangular_network_solver.jl)
-  # The model's specification is node generation minus node load
-  # (getBusData), so the generation is the solved injection plus the node
-  # load; the injection alone would show a slack or PV bus with a load
-  # reduced by that load.
+  # The model's specification is generation minus load from the prosumers
+  # (buildComplexSVec in buildPfModel), so the generation is the solved
+  # injection plus that load: the static schedule, a voltage-dependent
+  # shunt at 1 pu, no Q(U)/P(U) characteristic. The injection alone would
+  # show a slack or PV bus with a load reduced by that load; the node load
+  # sum would add a node-only edit the solve never saw.
+  p_cons, q_cons = _bus_consumption_MVA(net; controllers = false, unit_voltage = true)
   @inbounds for k in 1:n
     busIdx = model.busIdx_net[k]
     node = net.nodeVec[busIdx]
     S_MVA = Sbus_MVA[k]
-    Pbus = real(S_MVA) + something(node._pƩLoad, 0.0)
-    Qbus = imag(S_MVA) + something(node._qƩLoad, 0.0)
+    Pbus = real(S_MVA) + p_cons[busIdx]
+    Qbus = imag(S_MVA) + q_cons[busIdx]
 
     if getNodeType(node) == Slack
       node._pƩGen = Pbus

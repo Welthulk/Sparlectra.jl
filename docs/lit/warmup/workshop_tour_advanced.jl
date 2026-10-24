@@ -39,10 +39,12 @@ function warmup()
 
   t_first = @elapsed runpf!(wnet, 10, 1e-8, 0)
   t_second = @elapsed runpf!(wnet, 10, 1e-8, 0)
-  println("power flow     : first solve ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
+  println("warm-up wall time, first calls include compilation:")
+  println("  power flow, first solve [s]:      ", round(t_first; digits = 2))
+  println("  power flow, second solve [ms]:    ", round(t_second * 1000; digits = 2))
 
   t_sc = @elapsed runShortCircuit!(wnet; case = :max)
-  println("short circuit  : ", round(t_sc; digits = 2), " s")
+  println("  short circuit [s]:                ", round(t_sc; digits = 2))
 
   ## HVDC pair path: two 2-bus islands coupled by a controller
   whv = Net(name = "warmup_hvdc", baseMVA = 100.0)
@@ -59,16 +61,16 @@ function warmup()
   addProsumer!(net = whv, busName = "W4", type = "GENERATOR", p = 5.0, q = 0.0)
   addHvdcPairControl!(whv; from_bus = "W2", to_bus = "W4", p_transfer_mw = 5.0)
   t_hvdc = @elapsed run_control!(whv; controllers = collect_outer_controllers(whv), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 15, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 4, trace = false))
-  println("HVDC control   : ", round(t_hvdc; digits = 2), " s")
+  println("  HVDC control [s]:                 ", round(t_hvdc; digits = 2))
 
   ## state-estimation path: synthetic measurements plus one WLS run
   setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
   t_se = @elapsed with_state_estimation_config(() -> runse!(wnet); max_iter = 8, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false)
-  println("state estimator: ", round(t_se; digits = 2), " s")
+  println("  state estimator [s]:              ", round(t_se; digits = 2))
 
   ## chapter-5 path: one single-case contingency batch on the warm-up net
   t_n1 = @elapsed runContingencies!(wnet, generateN1Branches(wnet))
-  println("contingency    : ", round(t_n1; digits = 2), " s")
+  println("  contingency batch [s]:            ", round(t_n1; digits = 2))
 
   ## every further path of the tour once, output discarded: remote voltage
   ## control, the HVDC variants with their result tables, the noisy SE with
@@ -193,6 +195,6 @@ function warmup()
     wsc_par = runShortCircuit!(wp; case = :max, parallel_min_work_items = 2)
     println(isequal(wsc_ser.rows, wsc_par.rows))
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (control loops, HVDC, SE, FACTS, N-1 report, result tables); everything warm")
+  println("  further paths [s]:                ", round(t_paths; digits = 2), " (control loops, HVDC, SE, FACTS, N-1 report, result tables)")
   return nothing
 end

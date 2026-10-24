@@ -227,6 +227,9 @@ Base.@kwdef mutable struct SCFTapControllerRow
   # false when no nameplate row declared the changer (the constructor
   # grid); absent means declared, as every file before the key
   declared::Union{Nothing,Bool} = nothing
+  # true when the step was not transferred and pos is the assumed middle
+  # position; absent means pos is the step of the source
+  step_assumed::Union{Nothing,Bool} = nothing
 end
 
 Base.@kwdef mutable struct SCFTapChangerRow
@@ -571,6 +574,7 @@ function _scfcase_tap_controller(row)::SCFTapControllerRow
     pos_max = _scf_opt_gridpos(row, "pos_max", "controller.pos_max"),
     grid = _scfcase_opt_str(row, "grid"),
     declared = _scfcase_opt_bool(row, "declared"),
+    step_assumed = _scfcase_opt_bool(row, "step_assumed"),
   )
 end
 

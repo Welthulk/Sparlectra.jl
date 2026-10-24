@@ -47,7 +47,9 @@ function run_legacy_demo_cases_tests()
         original = joinpath(_DEMO_CASE_DIR, "$(name).scf.json")
         # the case config next to the file pins the tolerance; it has to
         # travel with the copy or the comparison resolves differently
-        cp(Sparlectra.case_config_path(original), joinpath(d, basename(Sparlectra.case_config_path(original))); force = true)
+        # (sp_case6tap ships without one and runs on the defaults)
+        cfg = Sparlectra.case_config_path(original)
+        isfile(cfg) && cp(cfg, joinpath(d, basename(cfg)); force = true)
         foreign = scf_with_foreign_stamp(original, d)
         @test occursin("Sparlectra 0.0.0-nonexistent", read(foreign, String))
         # and it is the ONLY difference

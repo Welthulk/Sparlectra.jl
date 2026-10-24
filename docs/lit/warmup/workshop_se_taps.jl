@@ -39,7 +39,7 @@ function warmup()
   t_pf = @elapsed runpf!(wnet, 10, 1e-8, 0)
   setMeasurementsFromPF!(wnet; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
   t_se = @elapsed runse!(wnet)
-  println("warm: power flow ", round(t_pf; digits = 2), " s, estimator ", round(t_se; digits = 2), " s (first calls compile)")
+  println("warm-up time, first power flow: ", round(t_pf; digits = 2), " s, first estimation: ", round(t_se; digits = 2), " s (both compile)")
 
   ## every further path of the examples once on the study network, output
   ## and log notices discarded
@@ -55,7 +55,7 @@ function warmup()
       for mode in (:ratio, :pst, :both)
         wm = build_net()
         setTapEstimation!(wm; trafo = 3, mode = mode)
-        wr = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+        wr = with_state_estimation_config(max_iter = 40, tol = 1e-6, update_taps = false) do
           runse!(wm, deepcopy(wmeas))
         end
         filter(r -> r.role === :ratio, wr.tapEstimates)
@@ -63,7 +63,7 @@ function warmup()
       ## the radial transformer of Example 6 (frozen, with its notice)
       wb = build_net()
       setTapEstimation!(wb; trafo = 5, mode = :ratio)
-      with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      with_state_estimation_config(max_iter = 40, tol = 1e-6) do
         runse!(wb, filter(m -> m.id != "Vm_bus_5", deepcopy(wmeas)))
       end
       wo = build_net()
@@ -86,7 +86,7 @@ function warmup()
       runpf!(wi, 40, 1e-10, 0; islands_enabled = true)
       calcNetLosses!(wi)
       wmi = generateMeasurementsFromPF(wi; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = true, stddev = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7), rng = MersenneTwister(1))
-      with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+      with_state_estimation_config(max_iter = 40, tol = 1e-6) do
         runse!(wi, wmi)
       end
       @printf("%d %.2f %s\n", 1, 1.0, "warm")
@@ -96,25 +96,45 @@ function warmup()
       wvm = [getNodeVm(n) for n in wtruth.nodeVec]
       werr = maximum(abs.([getNodeVm(n) for n in wtruth.nodeVec] .- wvm))
       wload = wtruth.nodeVec[3]._pƩLoad === nothing ? 0.0 : wtruth.nodeVec[3]._pƩLoad
-      j, d, k, b, s, q = 1.0, 2, 3, true, "warm", :good
-      @printf("exactly determined: m = %d, states = %d, dof = %d, J = %.6f\n", k, k, d, j)
-      @printf("redundant:          m = %d, dof = %d, J = %.3f, J/dof = %.3f\n", k, d, j, j)
-      @printf("m = %2d  dof = %2d  J = %7.3f  J/dof = %6.3f  max_err = %.2e  added: %s\n", k, d, j, j, werr, s)
-      @printf("tap not released: J = %.1f, dof = %d, inside band: %s\n", j, d, b)
-      @printf("released: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), out of range: %s\n", j, d, j, k, 4, b)
-      @printf("PST (%s): J = %.2f | step = %+.3f -> fixed to %+d (truth %+d)\n", q, j, j, k, 3)
-      @printf("both: J = %.2f | ratio %+.3f -> %+d (truth %+d), phase %+.3f -> %+d (truth %+d)\n", j, j, k, -2, j, k, 2)
-      @printf("radial T3: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), status: %s (%s)\n", j, d, j, k, 3, q, q)
-      @printf("switched off: J = %.1f, dof = %d | status %s, reason %s\n", j, d, q, q)
-      @printf("complete set:  m = %d -> %d, J/dof = %.3f -> %.3f, state moves by %.1e pu\n", k, k, j, j, wload)
-      @printf("no flows on the tie:      m = %d, observability = %s, dof = %d, max_err = %.2e\n", k, q, d, werr)
-      @printf("PMU set: m = %d, J = %.2f, dof = %d, estimated reference offset = %+.3f deg (injected %+.1f)\n", k, j, d, j, 4.0)
-      @printf("wrong status:  J = %.1f, dof = %d, inside band: %s\n", j, d, b)
-      @printf("total: J = %.2f, dof = %d, islands = %d\n", j, d, k)
-      @printf("  island %d: %d buses, converged = %s, J = %.2f, dof = %d, band = %s\n", k, k, b, j, d, q)
-      @printf("replacement:  J = %.1f (honest), J_active = %.2f over dof = %d, suppressed rows = %d\n", j, j, d, k)
+      j, d, k, b, s, q, f = 1.0, 2, 3, true, "warm", :good, 1.0
+      @printf("exactly determined set: %d measurements, %d states\n", k, k)
+      @printf("SE quality: J = %.6f, dof = %d\n", j, d)
+      @printf("redundant set (%d Qinj rows added): %d measurements, %d states\n", k, k, k)
+      @printf("SE quality: J = %.3f, dof = %d, J/dof = %.3f\n", j, d, j)
+      @printf("%-20s  %2d  %3d  %7.3f  %6.3f   %.2e\n", s, k, d, j, j, werr)
+      @printf("T1 ratio tap not released: model at step %+d, truth at step %+d\n", 0, 4)
+      @printf("SE quality: J = %.1f, dof = %d, J inside its 3-sigma band: %s\n", j, d, b)
+      @printf("  true value (used to generate measurements):  %+7.0f\n", f)
+      @printf("  model before estimation:                     %+7.0f\n", f)
+      @printf("  estimated by SE (continuous):                %+7.3f   sigma_s = %.3f steps\n", f, f)
+      @printf("  fixed to the nearest step:                   %+7.0f   %.2f sigma_s from the estimate, out of range: %s\n", f, f, b)
+      @printf("  model after run (update_taps = false):       %+7.0f   %s\n", f, s)
+      @printf("SE quality: J = %.2f, dof = %d\n", j, d)
+      @printf("tap estimation switched off, T1 ratio tap at its model step %+.0f: status %s, reason %s\n", f, q, q)
+      @printf("SE quality: J = %.1f, dof = %d\n", j, d)
+      @printf("T1 phase tap (%s), position [steps, 0 = neutral]:\n", q)
+      @printf("  estimated by SE (continuous):                %+7.3f\n", f)
+      @printf("  fixed to the nearest step:                   %+7.0f\n", f)
+      @printf("  %-7s  %+5.0f  %+13.0f  %+16.3f  %+9.0f\n", q, f, f, f, f)
+      @printf("  SE result:                                   %+7.0f   status %s, reason %s\n", f, q, q)
+      @printf("  without currents   %12d   %5.3f\n", k, j)
+      @printf("  with currents      %12d   %5.3f\n", k, j)
+      @printf("largest change of the estimated |V| between the two runs: %.1e pu\n", wload)
+      @printf("  without currents       %12d   %-13s   %3d   %.2e\n", k, q, d, werr)
+      @printf("  with all currents      %12d   %-13s   %3d   %.2e\n", k, q, d, werr)
+      @printf("  true value (added to the PMU angles):  %+7.3f\n", f)
+      @printf("  estimated by SE:                       %+7.3f\n", f)
+      @printf("SE quality: J = %.2f, dof = %d (%d measurements)\n", j, d, k)
+      @printf("tie closed in the model (wrong):   SE quality J = %.1f, dof = %d, J inside its 3-sigma band: %s\n", j, d, b)
+      @printf("tie open in the model (corrected): SE quality J = %.1f, dof = %d, J inside its 3-sigma band: %s\n", j, d, b)
+      @printf("  %6d  %5d  %-9s  %7.3f  %3d  %s\n", k, k, b, j, d, q)
+      @printf("  %6s  %5d  %-9s  %7.3f  %3d\n", s, k, s, j, d)
+      @printf("plain WLS, P flow H1-H2 at H1 off by %+.0f MW: SE quality J = %.1f, dof = %d, J inside its 3-sigma band: %s\n", f, j, d, b)
+      @printf("  J over all rows, original sigma (honest):   %8.2f, dof = %d\n", j, d)
+      @printf("  J_active over the rows the solve trusted:   %8.2f, dof = %d\n", j, d)
+      @printf("  rows suppressed:                            %5d\n", k)
     end
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (tap estimation, currents, PMU, observability, topology, islands, robust); everything warm")
+  println("warm-up time, further paths: ", round(t_paths; digits = 2), " s (tap estimation, currents, PMU, observability, topology, islands, robust); everything warm")
   return nothing
 end

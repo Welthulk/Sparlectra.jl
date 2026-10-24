@@ -485,10 +485,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
   recs = NamedTuple[]
   recs3 = NamedTuple[]
   starAux = Set{Int}()
-  # PowerTransformer-built branches carry the "2WT" kind marker in their
-  # component name (the Branch constructor names lines "ACL" and generic
-  # PI models "PI"); the comp cTyp is the generic BranchC for all of them
-  branch_idx = [bi for (bi, br) in enumerate(net.branchVec) if occursin("_2WT_", br.comp.cName)]
+  # PowerTransformer-built branches (Sparlectra._branch_build_kind: the
+  # "2WT" marker of a generated name, or the transformer ratio of a branch
+  # with a name of its own); the comp cTyp is the generic BranchC for all
+  branch_idx = [bi for (bi, br) in enumerate(net.branchVec) if Sparlectra._branch_build_kind(br) === :transformer]
   branches = [net.branchVec[bi] for bi in branch_idx]
   if length(branches) != length(net.trafos)
     # branch/trafo pairing is positional; a mismatch means an unknown
@@ -568,6 +568,13 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
           branchIdx = Int(br.branchIdx),
         ),
       )
+    end
+    # the 3W unit carries no tap machinery: an assumed middle position goes
+    # out in the end ratios, named once for the unit
+    which3 = filter(!isnothing, [Sparlectra._tap_step_assumed_text(br) for br in lbrs])
+    if !isempty(which3)
+      r3, p3 = any(w -> occursin("ratio", w), which3), any(w -> occursin("phase", w), which3)
+      push!(notices, Sparlectra._tap_step_assumed_export_text(name, r3 && p3 ? "ratio and phase" : (r3 ? "ratio" : "phase")))
     end
     push!(recs3, (pt3Id = claim(pt3Key), ends = ends, name = name))
     push!(starAux, aux)
@@ -699,6 +706,10 @@ function _collectTrafoRecs(net::Sparlectra.Net, idx2busName::Dict{Int,String}, c
         rtc = (rtcId = claim(string(ptKey, "|RTC")), side = side, low = taps.lowStep, high = taps.highStep, neutral = taps.neutralStep, step = taps.step, pct = taps.tapStepPercent, neutralU = taps.neutralU)
       end
     end
+    # CGMES has no mark for a step that was not transferred: SSH carries the
+    # assumed middle position as TapChanger.step, one notice per transformer
+    which = Sparlectra._tap_step_assumed_text(br)
+    which === nothing || push!(notices, Sparlectra._tap_step_assumed_export_text(name, which))
     push!(
       recs,
       (
@@ -908,7 +919,7 @@ function _cgmesLineBranchIdx(net::Sparlectra.Net, idx2busName::Dict{Int,String})
   last = 0
   for (i, line) in enumerate(net.linesAC)
     from, to = Int(line.comp.cFrom_bus), Int(line.comp.cTo_bus)
-    k = findnext(br -> Int(br.fromBus) == from && Int(br.toBus) == to && !occursin("_2WT_", br.comp.cName), net.branchVec, last + 1)
+    k = findnext(br -> Int(br.fromBus) == from && Int(br.toBus) == to && Sparlectra._branch_build_kind(br) !== :transformer, net.branchVec, last + 1)
     k === nothing && error("CGMES export: line $(i) ($(line.comp.cName), $(_exportBusName(idx2busName, from)) to $(_exportBusName(idx2busName, to))) has no branch in the network after branch $(last); lines and branches do not line up, export aborted, no files written")
     push!(idx, k)
     last = k

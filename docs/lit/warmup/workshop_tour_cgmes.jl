@@ -41,7 +41,9 @@ function warmup()
   t_first = @elapsed runpf!(wnet, 10, 1e-8, 0; islands_enabled = true)
   t_second = @elapsed runpf!(wnet, 10, 1e-8, 0; islands_enabled = true)
   calcNetLosses!(wnet)
-  println("warm-up solve: first ", round(t_first; digits = 2), " s (compiles), second ", round(t_second * 1000; digits = 2), " ms")
+  println("warm-up wall time, first calls include compilation:")
+  println("  power flow, first solve [s]:      ", round(t_first; digits = 2))
+  println("  power flow, second solve [ms]:    ", round(t_second * 1000; digits = 2))
 
   ## every further path of the chapters once, output discarded
   t_paths = @elapsed redirect_stdout(devnull) do
@@ -89,6 +91,6 @@ function warmup()
       end
     end
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (CGMES summary, analysis, import, export, IIDM, DTF); everything warm")
+  println("  further paths [s]:                ", round(t_paths; digits = 2), " (CGMES summary, analysis, import, export, IIDM, DTF)")
   return nothing
 end
