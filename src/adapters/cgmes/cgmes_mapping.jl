@@ -841,7 +841,7 @@ end
 # EquivalentBranch across voltage levels, or for a phase-stamped
 # EquivalentBranch, has no tap changer: an empty set keeps it out of the tap
 # estimation (the constructor marks every transformer branch with a default
-# ratio grid, which the mass release would otherwise take).
+# ratio grid, which is no changer model).
 function _attachNoSETapChangers!(br)
   br.se_tap_changers = Sparlectra.SETapChangerSet(ratio_n = br.ratio, shift_n_deg = br.angle, changers = Sparlectra.SETapChanger[], origin = :cgmes)
   return br
@@ -2809,7 +2809,7 @@ function _slackForIslandsWithoutReference!(net, store::CGMESStore, ctx::_MapCtx)
   islands, held, _ = Sparlectra._power_flow_islands(net)
   # a switch-only bus is at 0 pu after the marking; its group voltage sits
   # on the first member that is not isolated
-  fed = _linkFedIsolatedBuses(net)
+  fed = Sparlectra._linkFedIsolatedBuses(net)
   n_off = 0
   for (buses, has_ref) in zip(islands, held)
     has_ref && continue
@@ -4872,7 +4872,7 @@ function importCGMES(;
   # steps and the short circuit apply the same branch-only rule (QSTS mode A
   # marks its own steps again with links = true).
   n_iso = length(Sparlectra.markIsolatedBuses!(net = net))
-  n_fed = length(_linkFedIsolatedBuses(net))
+  n_fed = length(Sparlectra._linkFedIsolatedBuses(net))
   n_iso > n_fed && push!(ctx.messages, "notice: $(n_iso - n_fed) isolated bus(es) without any in-service branch: marked isolated, excluded from the power flow")
   n_fed > 0 && push!(ctx.messages, "notice: $(n_fed) bus(es) without an in-service branch marked isolated, but a closed switch joins each to a bus with one: solved with that bus")
   # islands with a source but without reference get a slack; needs the final

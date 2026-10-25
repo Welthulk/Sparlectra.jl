@@ -105,7 +105,7 @@ function compareWithSV(result::CGMESImportResult)
   topo = result.topo
   raw_rows = NamedTuple{(:bus, :vm_pu, :sv_vm_pu, :dvm, :va_deg, :sv_va_deg, :dva),Tuple{String,Float64,Float64,Float64,Float64,Float64,Float64}}[]
   iso = Set(net.isoNodes)
-  fed = _linkFedIsolatedBuses(net)
+  fed = Sparlectra._linkFedIsolatedBuses(net)
   row_bus = Int[]   # bus whose state a row reads (the switch group's for a link-fed bus)
   for sv in objectsOf(store, :SvVoltage)
     tn = get(sv.refs, :TopologicalNode, nothing)
@@ -170,33 +170,6 @@ function compareWithSV(result::CGMESImportResult)
   return (n = length(aligned_rows), max_dvm = maximum(dvm), rms_dvm = sqrt(sum(abs2, dvm) / length(dvm)), max_dva = maximum(dva), rms_dva = sqrt(sum(abs2, dva) / length(dva)), va_ref_offset_deg = va_ref_offset_deg, rows = aligned_rows, flows = flows)
 end
 
-# markIsolatedBuses! counts branches only, so it also marks a bus that hangs
-# on the network through a closed switch alone (a unit or load node behind a
-# retained breaker). The solver does not leave such a bus out: it contracts
-# every closed-link group onto one node (`_merged_pf_net`), solves it with
-# the loads, shunts and units of all members and copies the group voltage
-# back to each member. Returns, for every such bus, the first member of its
-# group that is not isolated. That member carries the group voltage also
-# before a solve, where the marking has set the bus itself to zero. A group
-# without any branch is not in the result: the solver isolates its merged
-# node as well.
-function _linkFedIsolatedBuses(net)::Dict{Int,Int}
-  fed = Dict{Int,Int}()
-  (isempty(net.isoNodes) || isempty(net.linkVec)) && return fed
-  reps = Sparlectra._active_link_representative_map(net)
-  iso = Set(net.isoNodes)
-  live = Dict{Int,Int}()   # group representative => first non-isolated member
-  for b in eachindex(reps)
-    b in iso && continue
-    haskey(live, reps[b]) || (live[reps[b]] = b)
-  end
-  for b in net.isoNodes
-    m = get(live, reps[b], 0)
-    m > 0 && (fed[b] = m)
-  end
-  return fed
-end
-
 # Bus voltages and bus injections S = V conj(Y V) in MVA (load sign) of the
 # current state, as compareWithSV and the SV export read them. createYBUS
 # leaves isolated buses out and returns the matrix in active-bus space, so it
@@ -206,7 +179,7 @@ end
 # admittance it has without a branch. Returns `(V, S, fed)`.
 function _svBusState(net)
   n_bus = length(net.nodeVec)
-  fed = _linkFedIsolatedBuses(net)
+  fed = Sparlectra._linkFedIsolatedBuses(net)
   V = ComplexF64[something(nd._vm_pu, 1.0) * cis(deg2rad(something(nd._va_deg, 0.0))) for nd in net.nodeVec]
   for (b, m) in fed
     V[b] = V[m]

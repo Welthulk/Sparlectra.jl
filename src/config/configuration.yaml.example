@@ -421,6 +421,11 @@ state_estimation:
   # stored state against the stored slack angle. Results and the write-back
   # keep the stored slack angle.
   flatstart: true
+  # Start ladder: a WLS from the flat start that does not converge is solved
+  # once more from the voltages stored in the case (MATPOWER Vm/Va, CGMES
+  # SV, SCF start state); the result names the start that converged. No
+  # second try when the case stores no voltages. false: one try only.
+  start_ladder: true
   start_mode:
     # Flat start behind phase shifters: a bus the slack reaches only across
     # phase-shifting transformers starts at their shift sum, the angles of
@@ -781,7 +786,7 @@ matpower_import:
 model:
   # Allowed values: admittance, voltage_dependent_injection
   bus_shunt_model: admittance
-  # Tap-changer model used by all network importers.
+  # Tap-changer model of the MATPOWER and DTF importers.
   # Allowed values: ideal, impedance_correction
   # - ideal: tap steps only change the complex winding ratio; transformer R/X
   #   keep their neutral-position values (no impedance feedback).

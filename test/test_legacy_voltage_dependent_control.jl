@@ -267,7 +267,9 @@ function run_legacy_voltage_dependent_control_tests()
       # Birkkamp_110 reported 0.0 MVAr against 7.258 MVAr with the coupler
       # resolved, and the generation of the slack Altau_220 differed by
       # 19.99 (MW or MVAr, the larger of the two). At Birkkamp_110 and
-      # Westtal_110 the node carries the solved Q (7.258 and 5.711 MVAr);
+      # Westtal_110 the node carries the solved Q (8.228 and 6.118 MVAr; 7.258
+      # and 5.711 before APSLF took its injections like Newton, which brings
+      # the voltage-dependent shunt of sp_case60 in at its 1 pu value);
       # the report evaluates their Q(U) characteristic at the held voltage
       # there (0 MVAr at U_set), which APSLF never applied, on the resolved
       # net as well, so the report rows are compared for the other buses.
@@ -280,7 +282,7 @@ function run_legacy_voltage_dependent_control_tests()
       gen_buses = unique(getPosumerBusIndex(p) for p in ap[2].prosumpsVec if Sparlectra.isGenerator(p))
       @test geNetBusIdx(net = ap[1], busName = "Altau_220") in gen_buses
       qu_buses = [geNetBusIdx(net = ap[1], busName = name) for name in ("Birkkamp_110", "Westtal_110")]
-      for (b, q_exp) in zip(qu_buses, (7.258, 5.711))
+      for (b, q_exp) in zip(qu_buses, (8.228, 6.118))
         @test isapprox(ap[1].nodeVec[b]._qƩGen, imag(s_ap[b]) + q_draw_ap[b]; atol = 1e-6)
         @test isapprox(ap[1].nodeVec[b]._qƩGen, q_exp; atol = 1e-3)
       end

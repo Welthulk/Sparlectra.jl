@@ -305,12 +305,14 @@ pf = PowerFlowConfig(max_iter = 30, tol = 1e-9)
 
 net_rvc = build_rvc(-50.0, 50.0)
 runpf!(net_rvc; config = pf, verbose = 0)
-println("uncontrolled: Vm(Load) = ", round(get_bus_vm_pu(net_rvc, "Load"); digits = 4), " pu")
+println("Bus Load, voltage Vm [pu], computed without control: ", round(get_bus_vm_pu(net_rvc, "Load"); digits = 4))
 
 addMachineVoltageControl!(net_rvc; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05, deadband_vm_pu = 5e-4)
 result = run_control!(net_rvc; controllers = collect_outer_controllers(net_rvc), pf_config = pf, control_config = ControlConfig(max_outer_iterations = 15), verbose = 0)
-println("controlled:   Vm(Load) = ", round(get_bus_vm_pu(net_rvc, "Load"); digits = 4), " pu (target 1.05)")
-println("loop: status = ", result.status, ", outer iterations = ", result.outer_iterations, ", pf solves = ", result.powerflow_solves)
+println("Bus Load, voltage Vm [pu], machine Q range +/-50 MVAr:")
+println("  target of the machine control:    1.05")
+println("  computed with control:            ", round(get_bus_vm_pu(net_rvc, "Load"); digits = 4))
+println("control loop: status = ", result.status, ", outer iterations = ", result.outer_iterations, ", power-flow solves = ", result.powerflow_solves)
 printMachineControllerSummary(stdout, net_rvc)
 ````
 
@@ -326,7 +328,9 @@ net_rvc2 = build_rvc(-2.0, 2.0)
 runpf!(net_rvc2; config = pf, verbose = 0)
 addMachineVoltageControl!(net_rvc2; bus = "GenBus", target_bus = "Load", target_vm_pu = 1.05, deadband_vm_pu = 5e-4)
 result2 = run_control!(net_rvc2; controllers = collect_outer_controllers(net_rvc2), pf_config = pf, control_config = ControlConfig(max_outer_iterations = 15), verbose = 0)
-println("limited:      Vm(Load) = ", round(get_bus_vm_pu(net_rvc2, "Load"); digits = 4), " pu (target 1.05)")
+println("Bus Load, voltage Vm [pu], machine Q range +/-2 MVAr:")
+println("  target of the machine control:    1.05")
+println("  computed with control (at limit): ", round(get_bus_vm_pu(net_rvc2, "Load"); digits = 4))
 printMachineControllerSummary(stdout, net_rvc2)
 ````
 
@@ -361,7 +365,7 @@ net6 = build_b2b("tour_b2b")
 # and addHvdcPairControl! do this automatically)
 addHvdcLink!(net6; from_bus = "A2", to_bus = "C2")
 etime, ite = solve!(net6; islands_enabled = true)
-println("two islands solved in ", ite, " iteration(s)")
+println("two islands solved in ", ite, " NR iteration(s)")
 printACPFlowResults(net6, etime, ite, 1e-8)
 ````
 
@@ -373,12 +377,12 @@ $P_\text{to} = P_\text{transfer} - P_\text{loss}$ exactly and lets you
 retarget the transfer.
 
 ````@example workshop_tour_advanced
-# uses: etime, net6 (Example 2.1)
-(@isdefined(etime) && @isdefined(net6)) || error("Run Example 2.1 first: it sets up etime, net6.")
+# uses: net6 (Example 2.1)
+@isdefined(net6) || error("Run Example 2.1 first: it sets up net6.")
 addHvdcPairControl!(net6; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
-result6 = run_control!(net6; controllers = collect_outer_controllers(net6), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+etime6 = @elapsed result6 = run_control!(net6; controllers = collect_outer_controllers(net6), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
 calcNetLosses!(net6)
-printACPFlowResults(net6, etime, result6.last_pf_iterations, 1e-8)
+printACPFlowResults(net6, etime6, result6.last_pf_iterations, 1e-8)
 ````
 
 Reading aid (Example 2.2): the HVDC pair reports inside the `Control`
@@ -393,9 +397,11 @@ the LAST row of the branch table: the link appears there too, typed
 table; it looks like a branch (two buses, power moves), but no Y-bus
 element exists behind it, Q is zero, and its Pv column is the converter
 loss. The link now carries 120 MW instead of 80: the line A1 -> A2
-supplies 40 MW more (area A's reference generates the export), while
-C1 -> C2 turns around and carries the received power away from the
-converter bus.
+supplies about 41 MW more at A1 (40 MW more export plus the higher line
+loss; area A's reference generates the export), and on C1 -> C2 the flow
+keeps its direction from C2 toward C1 (negative P at C1) but grows from
+about 26 to 66 MW: the received power leaves the converter bus and C1's
+reference absorbs it.
 
 **Why does the solver still report two islands?** An AC voltage angle is
 only defined *within* one synchronous island, relative to that island's
@@ -411,8 +417,10 @@ against a different zero.
 ````@example workshop_tour_advanced
 # uses: bus_va_deg (warm-up cell); net6 (Example 2.1, Example 2.2)
 @isdefined(net6) || error("Run Example 2.1, Example 2.2 first: they set up net6.")
+println("Bus voltages after the paired control, computed (Va against the reference of the own island):")
+println("  bus  role                          Vm [pu]   Va [deg]")
 for (bus, role) in (("A1", "reference of island A"), ("A2", "converter, exports 120 MW"), ("C1", "reference of island C"), ("C2", "converter, receives 116 MW"))
-  println(rpad(bus, 4), rpad(role, 27), ": Vm = ", round(get_bus_vm_pu(net6, bus); digits = 4), " pu, Va = ", round(bus_va_deg(net6, bus); digits = 3), " deg")
+  println("  ", rpad(bus, 4), " ", rpad(role, 28), lpad(round(get_bus_vm_pu(net6, bus); digits = 4), 8), lpad(round(bus_va_deg(net6, bus); digits = 3), 11))
 end
 ````
 
@@ -471,9 +479,11 @@ variant of Example 2.1):
 net7 = build_b2b_source("tour_b2b_source")
 solve!(net7; islands_enabled = true)
 p_island_c = get_branch_p_from_to_mw(net7, "C2", "C1")
-println("grid-forming converter at C2 delivers ", round(p_island_c; digits = 3), " MW (island C load + line loss)")
-for bus in ("C2", "C1")
-  println("  ", bus, ": Vm = ", round(get_bus_vm_pu(net7, bus); digits = 4), " pu, Va = ", round(bus_va_deg(net7, bus); digits = 3), " deg")
+println("grid-forming converter at C2, active power delivered into island C [MW], computed: ", round(p_island_c; digits = 3), " (island C load + line loss)")
+println("Island C bus voltages, computed:")
+println("  bus  role                          Vm [pu]   Va [deg]")
+for (bus, role) in (("C2", "converter, island reference"), ("C1", "load 50 MW"))
+  println("  ", rpad(bus, 4), " ", rpad(role, 28), lpad(round(get_bus_vm_pu(net7, bus); digits = 4), 8), lpad(round(bus_va_deg(net7, bus); digits = 3), 11))
 end
 ````
 
@@ -490,7 +500,9 @@ sending side must now *mirror* the island draw plus the converter loss:
 net8 = build_b2b_source("tour_b2b_mirrored"; sending_mw = -(p_island_c + 4.0))
 addHvdcLink!(net8; from_bus = "A2", to_bus = "C2")  ## Stage-0 record for the result tables
 etime8, ite8 = solve!(net8; islands_enabled = true)
-println("sending side A1 -> A2 carries ", round(get_branch_p_from_to_mw(net8, "A1", "A2"); digits = 3), " MW (40 MW local load + ", round(p_island_c + 4.0; digits = 3), " MW export + line loss)")
+println("Sending side, active power [MW]:")
+println("  export setpoint at A2 (island draw + 4 MW converter loss): ", round(p_island_c + 4.0; digits = 3))
+println("  line A1 -> A2 at terminal A1, computed:                     ", round(get_branch_p_from_to_mw(net8, "A1", "A2"); digits = 3), " (40 MW local load + export + line loss)")
 printACPFlowResults(net8, etime8, ite8, 1e-8)
 ````
 
@@ -522,13 +534,12 @@ exceeds `p_rating_mw`. No transfer setpoint is given, the island
 decides:
 
 ````@example workshop_tour_advanced
-# uses: build_b2b_source (warm-up cell); etime (Example 2.1)
-@isdefined(etime) || error("Run Example 2.1 first: it sets up etime.")
+# uses: build_b2b_source (warm-up cell)
 net9 = build_b2b_source("tour_b2b_grid_forming")
 addHvdcPairControl!(net9; from_bus = "A2", to_bus = "C2", mode = :island_feed, loss_mw = 4.0, p_rating_mw = 150.0)
-result9 = run_control!(net9; controllers = collect_outer_controllers(net9), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+etime9 = @elapsed result9 = run_control!(net9; controllers = collect_outer_controllers(net9), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
 calcNetLosses!(net9)
-printACPFlowResults(net9, etime, result9.last_pf_iterations, 1e-8)
+printACPFlowResults(net9, etime9, result9.last_pf_iterations, 1e-8)
 ````
 
 Reading aid (Example 2.6), and the direct comparison with the setpoint
@@ -624,13 +635,12 @@ generator and the meshed net solves (same topology, diagram above); the
 pair keeps its setpoint and the tie carries the balance:
 
 ````@example workshop_tour_advanced
-# uses: build_meshed (warm-up cell); etime (Example 2.1)
-@isdefined(etime) || error("Run Example 2.1 first: it sets up etime.")
+# uses: build_meshed (warm-up cell)
 netm2 = build_meshed("tour_meshed"; c1_model = :pv)
 addHvdcPairControl!(netm2; from_bus = "A2", to_bus = "C2", p_transfer_mw = 120.0, loss_mw = 4.0, p_rating_mw = 150.0)
-resultm = run_control!(netm2; controllers = collect_outer_controllers(netm2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
+etimem = @elapsed resultm = run_control!(netm2; controllers = collect_outer_controllers(netm2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
 calcNetLosses!(netm2)
-printACPFlowResults(netm2, etime, resultm.last_pf_iterations, 1e-8)
+printACPFlowResults(netm2, etimem, resultm.last_pf_iterations, 1e-8)
 ````
 
 Reading aid (Example 2.9): ONE island, ONE `SLACK` row (`A1`), `C1` is
@@ -651,13 +661,15 @@ for target in (120.0, 40.0)
   ctrlm.p_applied = false
   run_control!(netm2; controllers = collect_outer_controllers(netm2), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 25, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 8, trace = false))
   calcNetLosses!(netm2)
-  println("transfer ", target, " MW ordered: AC tie A1 -> C1 carries ", round(get_branch_p_from_to_mw(netm2, "A1", "C1"); digits = 3), " MW")
+  println("HVDC transfer setpoint ", lpad(target, 5), " MW: AC tie A1 -> C1, active power P at terminal A1 [MW], computed: ", round(get_branch_p_from_to_mw(netm2, "A1", "C1"); digits = 3))
 end
 ````
 
 Reading aid (Example 2.9): the pair keeps its order exactly (that is
 what a setpoint
-means), so every retarget shows up one-to-one in the tie flow. And
+means), so a retarget shows up almost one-to-one in the tie flow: 80 MW
+less transfer, about 78 MW less on the tie; the rest is the change of
+the line losses. And
 `mode = :island_feed`? A grid-forming converter inside a synchronous
 grid is a different device model and out of scope: with the tie closed
 the registration is rejected by the same one-reference rule, and a
@@ -678,6 +690,9 @@ the WLS estimator reconstruct the state. The full narrative is the
 net_se = build_ring7("tour_se")
 ite_pf, status_pf = runpf!(net_se, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")
+# keep the reference state: runse! with update_net = true overwrites the bus voltages
+vm_true_se = [n._vm_pu for n in net_se.nodeVec]
+va_true_se = [n._va_deg for n in net_se.nodeVec]
 
 std = measurementStdDevs(vm = 1e-3, pinj = 1.0, qinj = 1.0, pflow = 0.7, qflow = 0.7)
 setMeasurementsFromPF!(
@@ -695,23 +710,26 @@ setMeasurementsFromPF!(
 gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net_se)
 end
-println("observability: ", gobs.quality, " (", gobs.n_measurements, " measurements, ", gobs.n_states, " states)")
+println("observability: ", gobs.quality, " (", gobs.n_measurements, " measurements, ", gobs.n_states, " state variables)")
 
 se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true) do
   runse!(net_se)
 end
 println("SE converged: ", se.converged, " in ", se.iterations, " iterations")
-println("objective J:  ", round(se.objectiveJ; digits = 2), " (dof ", se.dof, ", within 3σ: ", se.jWithin3Sigma, ")")
+println("SE quality: J = ", round(se.objectiveJ; digits = 2), ", dof = ", se.dof, ", J within 3 sigma of dof: ", se.jWithin3Sigma)
+println("Bus voltages: true = reference power flow, est = estimated by SE")
+println("  bus   Vm true [pu]   Vm est [pu]   Va true [deg]   Va est [deg]")
 for (name, idx) in sort(collect(net_se.busDict); by = last)
   v = se.voltages[idx]
-  println(rpad(name, 4), "  Vm = ", round(abs(v); digits = 4), " pu   Va = ", round(rad2deg(angle(v)); digits = 3), "°")
+  println("  ", rpad(name, 4), lpad(round(vm_true_se[idx]; digits = 4), 13), lpad(round(abs(v); digits = 4), 14), lpad(round(va_true_se[idx]; digits = 3), 16), lpad(round(rad2deg(angle(v)); digits = 3), 15))
 end
 ````
 
 Reading aid (Example 3.1): with mild noise the estimate reproduces the
 reference state
-to a few 1e-3 pu, and $J$ lands near the degrees of freedom, the
-textbook health check for a WLS estimator.
+to better than 1e-3 pu in Vm and a few 1e-2 degrees in Va, and $J$ lands
+near the degrees of freedom, the textbook health check for a WLS
+estimator.
 
 ## Chapter 4: FACTS devices and their limits
 
@@ -770,10 +788,11 @@ run_control!(svc_net)
 svc_ctrl = only([c for c in svc_net.machineControls if c isa ShuntVoltageControl])
 v_svc = get_bus_vm_pu(svc_net, "Mid")
 
-println("all three at their capacitive limit, rated ", facts_rating, " MVAr at 1.0 pu:")
-println("  machine box : Q = ", round(box_ctrl.q_mvar; digits = 2), " MVAr (constant)")
-println("  STATCOM     : Q = ", round(st_ctrl.q_mvar; digits = 2), " MVAr = V*S_max at V = ", round(v_st; digits = 4), " pu (", round(100 * st_ctrl.q_mvar / facts_rating; digits = 1), " % of rating)")
-println("  SVC         : Q = ", round(v_svc^2 * svc_ctrl.bs_mvar; digits = 2), " MVAr = V^2*B at V = ", round(v_svc; digits = 4), " pu (", round(100 * v_svc^2 * svc_ctrl.bs_mvar / facts_rating; digits = 1), " % of rating)")
+println("Compensator at Mid, all three at their capacitive limit, rating ", facts_rating, " MVAr at 1.0 pu, computed:")
+println("  device        Q delivered [MVAr]   Vm Mid [pu]   share of rating [%]   limit law")
+println("  machine box   ", lpad(round(box_ctrl.q_mvar; digits = 2), 18), lpad("-", 14), lpad(round(100 * box_ctrl.q_mvar / facts_rating; digits = 1), 22), "   constant Q")
+println("  STATCOM       ", lpad(round(st_ctrl.q_mvar; digits = 2), 18), lpad(round(v_st; digits = 4), 14), lpad(round(100 * st_ctrl.q_mvar / facts_rating; digits = 1), 22), "   Q = V * S_max")
+println("  SVC           ", lpad(round(v_svc^2 * svc_ctrl.bs_mvar; digits = 2), 18), lpad(round(v_svc; digits = 4), 14), lpad(round(100 * v_svc^2 * svc_ctrl.bs_mvar / facts_rating; digits = 1), 22), "   Q = V^2 * B")
 ````
 
 Most voltage control in real grids is not an SVC but a mechanically
@@ -795,14 +814,15 @@ cont_net = build_sag_corridor("tour_facts_cont"; with_machine = false)
 addShuntVoltageControl!(cont_net; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0)
 run_control!(cont_net)
 cont_ctrl = only([c for c in cont_net.machineControls if c isa ShuntVoltageControl])
-println("continuous SVC: Bs = ", round(cont_ctrl.bs_mvar; digits = 2), " MVAr, Vm(Mid) = ", round(get_bus_vm_pu(cont_net, "Mid"); digits = 4), " pu, status = ", cont_ctrl.status)
+println("Shunt at Mid, target Vm 0.95 pu, computed:")
+println("  device                          Bs [MVAr at 1 pu]   Vm Mid [pu]   status")
+println("  continuous SVC                  ", lpad(round(cont_ctrl.bs_mvar; digits = 2), 17), lpad(round(get_bus_vm_pu(cont_net, "Mid"); digits = 4), 14), "   ", cont_ctrl.status)
 
 msc_net = build_sag_corridor("tour_facts_msc"; with_machine = false)
 addShuntVoltageControl!(msc_net; bus = "Mid", target_vm_pu = 0.95, bs_min_mvar = -40.0, bs_max_mvar = 40.0, step_mvar = 10.0)
 msc_res = run_control!(msc_net)
 msc_ctrl = only([c for c in msc_net.machineControls if c isa ShuntVoltageControl])
-println("MSC bank (4 x 10 MVAr blocks): Bs = ", msc_ctrl.bs_mvar, " MVAr (block ", round(Int, msc_ctrl.bs_mvar / 10.0), " of 4), Vm(Mid) = ", round(get_bus_vm_pu(msc_net, "Mid"); digits = 4), " pu")
-println("  status = ", msc_ctrl.status, " after ", msc_res.outer_iterations, " outer iterations (parked on the step grid, no hunting)")
+println("  MSC bank, block ", round(Int, msc_ctrl.bs_mvar / 10.0), " of 4 x 10    ", lpad(msc_ctrl.bs_mvar, 17), lpad(round(get_bus_vm_pu(msc_net, "Mid"); digits = 4), 14), "   ", msc_ctrl.status, " after ", msc_res.outer_iterations, " outer iterations")
 ````
 
 Reading aid (Example 4.2): the continuous SVC settles wherever the
@@ -833,21 +853,26 @@ same 35-MW target, once per device:
 tcsc_net = build_facts_loop("tour_facts_tcsc")
 tcsc_ctrl = addSeriesReactanceControl!(tcsc_net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, x_min_pu = 0.02, x_max_pu = 0.30)
 run_control!(tcsc_net)
-println("TCSC window 0.02..0.30 pu : P = ", round(tcsc_ctrl.achieved_p_mw; digits = 2), " MW at x = ", round(tcsc_ctrl.x_pu; digits = 4), " pu, converged = ", tcsc_ctrl.converged)
+println("Series device in A-M2, target P 35 MW, computed:")
+println("  device                       P A->M2 [MW]   x set [pu]   converged   at_limit")
+println("  TCSC, window 0.02..0.30 pu   ", lpad(round(tcsc_ctrl.achieved_p_mw; digits = 2), 12), lpad(round(tcsc_ctrl.x_pu; digits = 4), 13), lpad(tcsc_ctrl.converged, 12), lpad(tcsc_ctrl.at_limit, 11))
 
 sssc_net = build_facts_loop("tour_facts_sssc")
 sssc_ctrl = addSeriesReactanceControl!(sssc_net; fromBus = "A", toBus = "M2", p_target_mw = 35.0, v_inj_max_pu = 0.01)
 run_control!(sssc_net)
-println("SSSC V_inj,max 0.01 pu    : P = ", round(sssc_ctrl.achieved_p_mw; digits = 2), " MW at x = ", round(sssc_ctrl.x_pu; digits = 4), " pu, at_limit = ", sssc_ctrl.at_limit)
-println("  live window [", round(sssc_ctrl.x_min_pu; digits = 4), ", ", round(sssc_ctrl.x_max_pu; digits = 4), "] pu around x_base ", sssc_ctrl.x_base_pu, ", injected voltage ", round(abs(sssc_ctrl.x_pu - sssc_ctrl.x_base_pu) * sssc_ctrl.i_pu; digits = 4), " pu of 0.01 available")
+println("  SSSC, V_inj,max 0.01 pu      ", lpad(round(sssc_ctrl.achieved_p_mw; digits = 2), 12), lpad(round(sssc_ctrl.x_pu; digits = 4), 13), lpad(sssc_ctrl.converged, 12), lpad(sssc_ctrl.at_limit, 11))
+println("SSSC at this loading:")
+println("  line reactance x_base [pu], model:        ", sssc_ctrl.x_base_pu)
+println("  live window of x [pu], computed:          ", round(sssc_ctrl.x_min_pu; digits = 4), " .. ", round(sssc_ctrl.x_max_pu; digits = 4))
+println("  injected series voltage [pu], computed:   ", round(abs(sssc_ctrl.x_pu - sssc_ctrl.x_base_pu) * sssc_ctrl.i_pu; digits = 4), " (limit 0.01)")
 ````
 
-Reading aid (Example 4.3): the TCSC reaches the 35-MW target (x moves
-from 0.20 down
-to about 0.07 pu), the SSSC pins at its injectable voltage with the flow
-stuck near 28.6 MW: its whole window is $\pm 0.033$ pu at this loading.
-Both devices report the miss honestly as `at_limit` instead of
-pretending convergence.
+Reading aid (Example 4.3): the TCSC reaches the 35-MW target within its
+deadband (x moves from 0.20 down to about 0.07 pu, `converged = true`),
+the SSSC pins at its injectable voltage with the flow stuck near
+28.6 MW: its whole window is $\pm 0.033$ pu at this loading. The SSSC
+reports the miss honestly as `at_limit` instead of pretending
+convergence.
 
 **Example 4.4: in range, with the generic element view.** IN range, the
 converter devices are ordinary voltage/flow controllers: with a rating
@@ -865,9 +890,11 @@ ok_net = build_sag_corridor("tour_facts_inrange"; with_machine = true)
 addMachineVoltageControl!(ok_net; bus = "Mid", target_bus = "Load", target_vm_pu = 0.95, s_max_mva = 200.0)
 run_control!(ok_net)
 for e in controllableElements(ok_net)
-  println(e.device, " on ", e.element, ": ", e.actuator, " in [", round(e.actuator_min; digits = 2), ", ", round(e.actuator_max; digits = 2), "], status = ", e.status)
+  println(e.device, " on ", e.element, ": actuator ", e.actuator, ", live range [", round(e.actuator_min; digits = 2), ", ", round(e.actuator_max; digits = 2), "] (+/- V * S_max at the solved point), status = ", e.status)
 end
-println("in range: Vm(Load) = ", round(get_bus_vm_pu(ok_net, "Load"); digits = 4), " pu (target 0.95)")
+println("Bus Load, voltage Vm [pu]:")
+println("  target of the STATCOM:            0.95 (deadband +/- 0.001, the default)")
+println("  computed with control:            ", round(get_bus_vm_pu(ok_net, "Load"); digits = 4))
 ````
 
 **Example 4.5: the combined device, a UPFC in one call.** A UPFC couples
@@ -886,8 +913,9 @@ addProsumer!(net = upfc_net, busName = "M2", type = "GENERATOR", p = 0.0, q = 0.
 upfc = addUpfcControl!(upfc_net; fromBus = "A", toBus = "M2", shunt_bus = "M2", target_bus = "B", target_vm_pu = 0.99, p_target_mw = 35.0, v_inj_max_pu = 0.08, s_max_mva = 40.0)
 run_control!(upfc_net)
 println("UPFC ", upfc.name, ":")
-println("  series: P(A->M2) = ", round(upfc.series.achieved_p_mw; digits = 2), " MW toward 35, converged = ", upfc.series.converged)
-println("  shunt : Vm(B) = ", round(upfc.shunt.achieved_vm_pu; digits = 4), " pu toward 0.99, Q = ", round(upfc.shunt.q_mvar; digits = 2), " MVAr, at_limit = ", upfc.shunt.at_limit)
+println("  series side, line A->M2, active power P [MW]:   target 35.0, computed ", round(upfc.series.achieved_p_mw; digits = 2), ", converged = ", upfc.series.converged)
+println("  shunt side, bus B, voltage Vm [pu]:             target 0.99, computed ", round(upfc.shunt.achieved_vm_pu; digits = 4), ", at_limit = ", upfc.shunt.at_limit)
+println("  shunt converter at M2, Q delivered [MVAr]:      limit ", round(upfc.shunt.qmax_mvar; digits = 2), " (V * S_max, S_max 40 MVA), computed ", round(upfc.shunt.q_mvar; digits = 2))
 for e in controllableElements(upfc_net)
   println("  row: ", e.device, " (", e.actuator, "), at_limit = ", e.at_limit)
 end
@@ -925,22 +953,25 @@ full = addUpfcControl!(full_net; model = :full, fromBus = "I", toBus = "J", shun
                        p_target_mw = 40.0, q_target_mvar = 10.0, q_shunt_mvar = 0.0,
                        v_inj_max_pu = 0.30, s_max_mva = 120.0,
                        deadband_p_mw = 1e-2, deadband_q_mvar = 1e-2, max_outer_iters = 80)
-run_control!(full_net; control_config = ControlConfig(max_outer_iterations = 80))
+etime_full = @elapsed result_full = run_control!(full_net; control_config = ControlConfig(max_outer_iterations = 80))
 u = full.upfc
-println("FULL UPFC on I->J:")
-println("  line P = ", round(u.achieved_p_mw; digits = 2), " MW (target 40), Q = ", round(u.achieved_q_mvar; digits = 2), " MVAr (target 10) -- both, at once")
-println("  series V_se = ", round(abs(u.v_se_pu); digits = 4), " pu at ", round(rad2deg(angle(u.v_se_pu)); digits = 1), " deg, P_se = ", round(u.p_se_mw; digits = 3), " MW")
-println("  DC-link balance: P_se + P_sh = ", round(u.p_se_mw + u.p_sh_mw; digits = 4), " MW (residual ", round(u.dc_residual_mw; digits = 4), ")")
+println("FULL UPFC on line I->J:")
+println("  line I->J, active power P [MW]:                 target 40.0, computed ", round(u.achieved_p_mw; digits = 2))
+println("  line I->J, reactive power Q [MVAr]:             target 10.0, computed ", round(u.achieved_q_mvar; digits = 2))
+println("  series voltage V_se, magnitude [pu]:            ", round(abs(u.v_se_pu); digits = 4), " (limit 0.30)")
+println("  series voltage V_se, angle [deg]:               ", round(rad2deg(angle(u.v_se_pu)); digits = 1), " (network reference, slack S at 0)")
+println("  series converter active power P_se [MW]:        ", round(u.p_se_mw; digits = 3), " (into the line)")
+println("  DC link, P_se + P_sh [MW]:                      ", round(u.p_se_mw + u.p_sh_mw; digits = 4), " (residual ", round(u.dc_residual_mw; digits = 4), ")")
 ````
 
 the classical result tables report the UPFC too: the "Controllers" line
 counts it and the "UPFC Control Summary" block shows its state
 
 ````@example workshop_tour_advanced
-# uses: full_net (Example 4.6)
-@isdefined(full_net) || error("Run Example 4.6 first: it sets up full_net.")
+# uses: etime_full, full_net, result_full (Example 4.6)
+(@isdefined(etime_full) && @isdefined(full_net) && @isdefined(result_full)) || error("Run Example 4.6 first: it sets up etime_full, full_net, result_full.")
 calcNetLosses!(full_net)
-printACPFlowResults(full_net, 0.0, 1, 1e-8)
+printACPFlowResults(full_net, etime_full, result_full.last_pf_iterations, 1e-8)
 ````
 
 Forcing the series phase back to quadrature collapses onto Example 4.5's
@@ -953,7 +984,7 @@ quad = addUpfcControl!(quad_net; model = :full, series_phase = :quadrature, from
                        shunt_bus = "I", p_target_mw = 40.0, q_target_mvar = 0.0, q_shunt_mvar = 0.0,
                        v_inj_max_pu = 0.30, s_max_mva = 120.0, deadband_p_mw = 1e-2, max_outer_iters = 80)
 run_control!(quad_net; control_config = ControlConfig(max_outer_iterations = 80))
-println("quadrature-forced: P_se = ", round(quad.upfc.p_se_mw; digits = 4), " MW (zero: no phase-shifter DOF)")
+println("quadrature-forced UPFC, series converter active power P_se [MW], computed: ", round(quad.upfc.p_se_mw; digits = 4), " (zero: no phase-shifter DOF)")
 ````
 
 Reading aid (Example 4.6): the number that makes independent P and Q
@@ -1022,8 +1053,9 @@ printContingencyResults(results)
 Reading aid (Example 5.1), three things to check in the table:
 
 - the `B_ACL_110_4_8` outage (the B4-B8 spur line) reports
-  `islanded without reference`: the B8-B9 pair loses its only feed and
-  the case is a reported failure, not a crash;
+  `converged NO` with `islanded: load-only, 10.0 MW load disconnected`:
+  the B8-B9 pair loses its only feed and the case is a reported
+  failure, not a crash;
 - the ring outages converge, and the tight 0.95-pu floor flags the
   voltage sags an outage causes (the `V-viol` column counts the buses
   outside the band per case; the B1-B2 outage sags the ring to 0.86 pu);
@@ -1038,13 +1070,14 @@ CSV for a report or a spreadsheet:
 # uses: results (Example 5.1)
 @isdefined(results) || error("Run Example 5.1 first: it sets up results.")
 ranked = sort([r for r in results if r.converged]; by = r -> r.min_vm_pu)
-println("worst three outages by post-outage Vmin:")
+println("worst three outages, lowest bus voltage after the outage, computed (band 0.95..1.05 pu):")
+println("  outage             Vmin [pu]   buses outside the band")
 for r in ranked[1:3]
-  println("  ", rpad(r.name, 16), " Vmin = ", round(r.min_vm_pu; digits = 4), " pu, ", length(r.voltage_violations), " bus(es) below the band")
+  println("  ", rpad(r.name, 16), lpad(round(r.min_vm_pu; digits = 4), 11), lpad(length(r.voltage_violations), 25))
 end
 csv_n1 = joinpath(mktempdir(), "n1_results.csv")
 writeContingencyResultsCSV(csv_n1, results)
-println("exported: ", csv_n1, " (", filesize(csv_n1), " bytes)")
+println("CSV export: ", csv_n1, ", file size ", filesize(csv_n1), " bytes")
 ````
 
 Two knobs worth knowing: `rescue_ladder = [:warm, :flat]` grants one
@@ -1102,14 +1135,19 @@ runShortCircuit!(net_par; case = :max, parallel_enabled = false)      ## warm bo
 runShortCircuit!(net_par; case = :max, parallel_min_work_items = 2)
 t_ser = @elapsed sc_ser = runShortCircuit!(net_par; case = :max, parallel_enabled = false)
 t_par = @elapsed sc_par = runShortCircuit!(net_par; case = :max, parallel_min_work_items = 2)
-println("fault sweep over ", length(sc_ser.rows), " buses: serial ", round(t_ser * 1000; digits = 1), " ms, parallel ", round(t_par * 1000; digits = 1), " ms (", round(t_ser / t_par; digits = 2), "x)")
-println("rows identical: ", isequal(sc_ser.rows, sc_par.rows))
+println("fault sweep over ", length(sc_ser.rows), " buses, wall time [ms]:")
+println("  serial:                           ", round(t_ser * 1000; digits = 1))
+println("  parallel:                         ", round(t_par * 1000; digits = 1))
+println("  speed-up serial / parallel [-]:   ", round(t_ser / t_par; digits = 2))
+println("result rows identical: ", isequal(sc_ser.rows, sc_par.rows))
 ````
 
 Reading aid (Example 6.1): on Colab's free tier you usually get 1-2
 vCPUs, so the
-factor here stays modest (with one thread the parallel call falls back
-to the very same serial function). The real effect wants your local
+factor here stays modest. With one thread the parallel call falls back
+to the very same serial function, so the two times differ only by
+measurement noise (garbage collection, caches), in either direction. The
+real effect wants your local
 machine: `julia --threads=auto --project=.
 examples/run_parallel_suite.jl` runs the three dedicated demos, island
 solving (islands of 200 buses or more on their own threads), this fault sweep at

@@ -1425,6 +1425,18 @@ form:
       @test !isempty(SparlectraApp.WEBUI_HELP_MANUAL)
       @test haskey(SparlectraApp.WEBUI_HELP_MANUAL_ANCHORS, "Case formats at a glance")
       @test haskey(SparlectraApp.WEBUI_HELP_REFERENCE_ANCHORS, "Form options")
+      # formulas: the Web UI has no math renderer, so every help page it
+      # serves shows them converted, without a `$` or a TeX command outside
+      # code (the Bad-data topic showed `$r_{n,i} = r_i / \sqrt{\Omega_{ii}}$`
+      # raw); a command the converter does not cover stays visible and the
+      # excerpt check names it
+      @test SparlectraApp._webui_tex_html("r_{n,i} = r_i / \\sqrt{\\Omega_{ii}}") == "r<sub>n,i</sub> = r<sub>i</sub> / √Ω<sub>ii</sub>"
+      leftovers = Base.invokelatest(getfield, Main, :_excerpt_math_leftovers)
+      @test Base.invokelatest(leftovers, SparlectraApp._webui_render_markdown("a \$\\foo{x} \\le 1\$ b")) == ["\\foo"]
+      help_section(path) = match(r"<section class=\"panel help-page rendered-markdown\">.*?</section>"s, String(SparlectraApp.route_sparlectra_webui("GET", path).body)).match
+      served = Dict(path => help_section(path) for path in vcat(["/help", "/help/reference"], ["/help/" * t for t in keys(SparlectraApp.WEBUI_HELP_TOPICS)]))
+      @test [path for (path, html) in served if !isempty(Base.invokelatest(leftovers, html))] == String[]
+      @test occursin("<span class=\"math\">r<sub>n,i</sub> = r<sub>i</sub> / √Ω<sub>ii</sub></span>", served["/help/state_estimation.robust_mode"])
       # every visible control on the Runs, Case and Settings pages carries
       # its help link, and every help link there points at a registered
       # topic (hidden inputs such as config_file carry no link)

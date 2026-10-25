@@ -244,10 +244,16 @@ function run_scenario_patch_tests()
         tap_id = first(id for (id, k) in index.kind_by_id if k === :transformer && get(index.internal_by_id, id, 0) == tapped)
         br = net.branchVec[tapped]
         before_ratio = Sparlectra.calcBranchRatio(br)
+        # a step marked as the assumed middle position: the stated tap_pos
+        # takes the mark off, restore! puts it back
+        br.ratio_step_assumed = true
         undo = apply!(net, [PatchOp(op = :set, target = :transformer, id = tap_id, field = :tap_pos, value = 2.0)], index)
         @test Sparlectra.calcBranchRatio(net.branchVec[tapped]) != before_ratio
+        cleared = !br.ratio_step_assumed
         restore!(net, undo)
         @test Sparlectra.calcBranchRatio(net.branchVec[tapped]) == before_ratio
+        @test cleared && br.ratio_step_assumed
+        br.ratio_step_assumed = false
         # a CGMES changer (tap_ratio_grid :linear) steps ratio + n * step;
         # the fraction rule moved its ratio the other way (3W CGMES fixture,
         # 8 steps of 1 % from 1.0: 0.926 instead of 1.08)

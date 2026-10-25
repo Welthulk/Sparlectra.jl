@@ -69,7 +69,8 @@ arguments. The run pipeline applies the declarations before the outer
 loop; `applyConfiguredControllers!` does the same for a programmatically
 built net. Schema, types and validation: [Configuration](configuration.md).
 An element that already carries a controller of the declared type is
-skipped, so repeated runs do not stack duplicates; to change it, rebuild
+skipped, so repeated runs do not stack duplicates (a transformer counts per
+actuator: entries on its ratio and on its phase tap are two controllers); to change it, rebuild
 the net or adjust it programmatically. There is no generic
 `addController!`: attachment is device-specific (transformer controllers
 live on the winding in `side.controls`, the others in

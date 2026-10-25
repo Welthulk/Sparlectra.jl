@@ -40,14 +40,19 @@ function warmup()
   addPIModelACLine!(net = wnet, fromBus = "A", toBus = "B", r_pu = 0.02, x_pu = 0.20, b_pu = 0.0, status = 1)
   addSeriesReactanceControl!(wnet; fromBus = "A", toBus = "M", p_target_mw = 6.0, x_min_pu = 0.05, x_max_pu = 0.2)
   t_ctrl = @elapsed run_control!(wnet; controllers = collect_outer_controllers(wnet), pf_config = PowerFlowConfig(method = :rectangular, max_iter = 15, tol = 1e-8), control_config = ControlConfig(max_outer_iterations = 4, trace = false))
-  println("warm: power flow plus series-reactance control ", round(t_ctrl; digits = 2), " s (first calls compile)")
+  println("warm-up wall time, first calls include compilation:")
+  println("  power flow with TCSC control [s]: ", round(t_ctrl; digits = 2))
 
   ## every further path of the examples once, output discarded: the
   ## run_sparlectra control loop, the control result and element views, the
   ## result tables, the quadrature and the full UPFC
   t_paths = @elapsed redirect_stdout(devnull) do
     wl = build_loop()
-    run_sparlectra(net = wl)
+    ## the first run_sparlectra of the process; this warm-up is the compile
+    ## step the startup hint talks about, so the hint is switched off here
+    with_sparlectra_config(SparlectraConfig(output = OutputConfig(startup_latency_hint = false))) do
+      run_sparlectra(net = wl)
+    end
     addSeriesReactanceControl!(wl; fromBus = "A", toBus = "M2", p_target_mw = 30.0, x_min_pu = 0.02, x_max_pu = 0.30)
     run_sparlectra(net = wl)
     println(latest_control_result(wl).status, get_branch_p_from_to_mw(wl, "A", "M2"))
@@ -66,6 +71,6 @@ function warmup()
     calcNetLosses!(wf)
     printACPFlowResults(wf, 0.0, 1, 1e-8)
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (control runs, result tables, both UPFC models); everything warm")
+  println("  further paths [s]:                ", round(t_paths; digits = 2), " (control runs, result tables, both UPFC models)")
   return nothing
 end

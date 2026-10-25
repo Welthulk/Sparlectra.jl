@@ -209,8 +209,8 @@ println("study network: ", length(truth.nodeVec), " buses, ", length(truth.branc
 # will reproduce them exactly, because it CAN: nine equations, nine
 # unknowns, no room left for a residual.
 #
-# The values below are deliberately biased (every voltage is 4 mV too high,
-# every injection 0.9 MW off). Watch $J$ anyway.
+# The values below are deliberately biased (every voltage is 0.004 pu too
+# high, every injection 0.9 MW off). Watch $J$ anyway.
 
 ## uses: build_net (warm-up cell); truth (The study network)
 @isdefined(truth) || error("Run the section \"The study network\" first: it sets up truth.")
@@ -225,11 +225,11 @@ for (i, b) in enumerate(names)
   addPinjMeasurement!(minimal; net = truth, busName = b, value = -load_p + 0.9, sigma = 1.0)
 end
 
-res_min = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_min = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(build_net(), minimal)
 end
-@printf("exactly determined: m = %d, states = %d, dof = %d, J = %.6f\n",
-        length(minimal), 2 * length(truth.nodeVec) - 1, res_min.dof, res_min.objectiveJ)
+@printf("exactly determined set: %d measurements, %d states\n", length(minimal), 2 * length(truth.nodeVec) - 1)
+@printf("SE quality: J = %.6f, dof = %d\n", res_min.objectiveJ, res_min.dof)
 
 # $J = 0$ with garbage input. This is the single most misread number in
 # state estimation: **$J$ measures the CONTRADICTION between measurements,
@@ -247,11 +247,12 @@ for (i, b) in enumerate(names)
   load_q = truth.nodeVec[i]._qƩLoad === nothing ? 0.0 : truth.nodeVec[i]._qƩLoad
   addQinjMeasurement!(redundant; net = truth, busName = b, value = -load_q + 0.7, sigma = 1.0)
 end
-res_red = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_red = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(build_net(), redundant)
 end
-@printf("redundant:          m = %d, dof = %d, J = %.3f, J/dof = %.3f\n",
-        length(redundant), res_red.dof, res_red.objectiveJ, res_red.objectiveJ / res_red.dof)
+@printf("redundant set (%d Qinj rows added): %d measurements, %d states\n",
+        length(redundant) - length(minimal), length(redundant), 2 * length(truth.nodeVec) - 1)
+@printf("SE quality: J = %.3f, dof = %d, J/dof = %.3f\n", res_red.objectiveJ, res_red.dof, res_red.objectiveJ / res_red.dof)
 
 # Reading aid: only now is $J$ a statement about the data. The rule of
 # thumb $J/\mathrm{dof} \approx 1$ needs a denominator, and the denominator
@@ -261,25 +262,27 @@ end
 #
 # **Example 2.** Starting from the exactly determined core, one row is
 # added at a time. Two columns matter: `J/dof`, the statistical health, and
-# `max_err`, the largest deviation of the estimated voltage from the truth
-# (a number only this notebook can compute, because only here the truth is
-# known).
+# the last one, the largest deviation of the estimated voltage magnitude
+# from the truth (a number only this notebook can compute, because only
+# here the truth is known).
 
 ## uses: build_net (warm-up cell); full_set, vm_true (The study network)
 (@isdefined(full_set) && @isdefined(vm_true)) || error("Run the section \"The study network\" first: it sets up full_set, vm_true.")
 core = filter(m -> startswith(m.id, "Vm_") || startswith(m.id, "Pinj_"), deepcopy(full_set))
 extra = filter(m -> !(startswith(m.id, "Vm_") || startswith(m.id, "Pinj_")), deepcopy(full_set))
 growing = deepcopy(core)
+println("SE quality and largest voltage error against the truth, one row added per line (m = measurements):")
+println(rpad("row added", 20), "   m  dof        J   J/dof   max |V_est - V_true| [pu]")
 for step in 0:6
   step > 0 && push!(growing, extra[step])
   net = build_net()
-  res = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+  res = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
     runse!(net, deepcopy(growing))
   end
   err = maximum(abs.([getNodeVm(n) for n in net.nodeVec] .- vm_true))
-  @printf("m = %2d  dof = %2d  J = %7.3f  J/dof = %6.3f  max_err = %.2e  added: %s\n",
-          length(growing), res.dof, res.objectiveJ, res.dof > 0 ? res.objectiveJ / res.dof : NaN, err,
-          step == 0 ? "(core)" : extra[step].id)
+  @printf("%-20s  %2d  %3d  %7.3f  %6.3f   %.2e\n",
+          step == 0 ? "(core: Vm, Pinj)" : extra[step].id, length(growing), res.dof, res.objectiveJ,
+          res.dof > 0 ? res.objectiveJ / res.dof : NaN, err)
 end
 
 # Reading aid: the accuracy jump comes with the THIRD reactive injection,
@@ -299,13 +302,15 @@ end
 
 ## uses: build_net, truth_measurements (warm-up cell)
 truth_oltc, meas_oltc = truth_measurements(ratio_step = 4.0)
-res_blind = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_blind = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(build_net(), deepcopy(meas_oltc))
 end
-@printf("tap not released: J = %.1f, dof = %d, inside band: %s\n",
+@printf("T1 ratio tap not released: model at step %+d, truth at step %+d\n", 0, 4)
+@printf("SE quality: J = %.1f, dof = %d, J inside its 3-sigma band: %s\n",
         res_blind.objectiveJ, res_blind.dof, res_blind.jWithin3Sigma)
 
-# A four-step error on one transformer inflates $J$ by a factor of fifty.
+# A four-step error on one transformer inflates $J$ by a factor of about
+# fifty against the run with the tap released below.
 # The band test fires, the residuals point everywhere at once, and no
 # amount of bad-data elimination will help: **the data is fine, the model
 # is wrong.**
@@ -319,12 +324,22 @@ end
 @isdefined(meas_oltc) || error("Run Example 3 first: it sets up meas_oltc.")
 model_oltc = build_net()
 release = setTapEstimation!(model_oltc; trafo = 3, mode = :ratio)
-res_oltc = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+t1_ratio_before = model_oltc.branchVec[3].tap_ratio
+res_oltc = with_state_estimation_config(max_iter = 40, tol = 1e-6, update_taps = false) do
   runse!(model_oltc, deepcopy(meas_oltc))
 end
 est = only(res_oltc.tapEstimates)                 ## one row per released changer
-@printf("released: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), out of range: %s\n",
-        res_oltc.objectiveJ, res_oltc.dof, est.s_est, round(Int, est.step_fixed), 4, est.out_of_range)
+## the model keeps its step unless update_taps writes the fixed one back
+step_after = model_oltc.branchVec[3].tap_ratio == t1_ratio_before ? est.step_model : est.step_fixed
+println("T1 ratio tap, position [steps, 0 = neutral]:")
+@printf("  true value (used to generate measurements):  %+7.0f\n", 4.0)
+@printf("  model before estimation:                     %+7.0f\n", est.step_model)
+@printf("  estimated by SE (continuous):                %+7.3f   sigma_s = %.3f steps\n", est.s_est, est.sigma_s)
+@printf("  fixed to the nearest step:                   %+7.0f   %.2f sigma_s from the estimate, out of range: %s\n",
+        est.step_fixed, est.round_distance_sigma, est.out_of_range)
+@printf("  model after run (update_taps = false):       %+7.0f   %s\n",
+        step_after, step_after == est.step_model ? "unchanged" : "written back")
+@printf("SE quality: J = %.2f, dof = %d\n", res_oltc.objectiveJ, res_oltc.dof)
 
 # The `runse!` info line above the result reports what the fixation cost:
 # the free estimate fits marginally better than the grid position (it has
@@ -338,23 +353,34 @@ est = only(res_oltc.tapEstimates)                 ## one row per released change
 # mechanical position, +4. The fixation is the point. A tap changer is a
 # discrete device; an estimate of "4.03 steps" is not a physical answer,
 # and reporting it as one would invite an operator to chase a position that
-# does not exist. The continuous value stays visible next to it, because
-# its distance from the grid is the honest uncertainty statement: 0.03
-# steps means the data agrees with position 4, and 0.5 would mean the data
-# cannot tell 4 from 5.
+# does not exist. The continuous value stays visible next to it. Its
+# uncertainty is `sigma_s`, the standard deviation of the step from the
+# covariance of the estimate. The row field `round_distance_sigma` is the
+# distance from the estimate to that step in units of `sigma_s` (0.31
+# above). A value well below 1 means the data agrees with position 4. A
+# `sigma_s` of half a step or more means the data cannot tell 4 from 5.
+# The model itself stays at step 0:
+# `update_taps` (default `false`, set explicitly above) decides whether the
+# fixed step is written back to the branch.
 #
-# The tap estimation has one switch, `state_estimation.tap_estimation.enabled`
-# (the Web UI box "estimate taps"). Off, no changer becomes a state, even a
-# released one: it keeps its transferred step, and its row says
-# `status = not_estimated`, `reason = disabled`.
+# The main switch of the tap estimation is
+# `state_estimation.tap_estimation.enabled` (the Web UI box "estimate
+# taps"). Off, no changer becomes a state, even a released one: it keeps
+# its transferred step, and its row says `status = not_estimated`,
+# `reason = disabled`. The same block holds `exclude` (transformers that
+# never become states), `include_machine_transformers`, `fallback` and
+# `impedance_correction`. See
+# [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).
 
 ## uses: meas_oltc, model_oltc (Example 3)
 (@isdefined(meas_oltc) && @isdefined(model_oltc)) || error("Run Example 3 first: it sets up meas_oltc, model_oltc.")
-res_off = with_state_estimation_config(max_iter = 40, tol = 1e-10, tap_estimation = TapEstimationConfig(enabled = false)) do
+res_off = with_state_estimation_config(max_iter = 40, tol = 1e-6, tap_estimation = TapEstimationConfig(enabled = false)) do
   runse!(model_oltc, deepcopy(meas_oltc))
 end
 est_off = only(res_off.tapEstimates)
-@printf("switched off: J = %.1f, dof = %d | status %s, reason %s\n", res_off.objectiveJ, res_off.dof, est_off.status, est_off.reason)
+@printf("tap estimation switched off, T1 ratio tap at its model step %+.0f: status %s, reason %s\n",
+        est_off.step_model, est_off.status, est_off.reason)
+@printf("SE quality: J = %.1f, dof = %d\n", res_off.objectiveJ, res_off.dof)
 
 # ## Example 4: the phase shifter
 #
@@ -371,12 +397,16 @@ est_off = only(res_off.tapEstimates)
 truth_pst, meas_pst = truth_measurements(phase_step = 3.0, seed = 11)
 model_pst = build_net()
 setTapEstimation!(model_pst; trafo = 3, mode = :pst)
-res_pst = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_pst = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(model_pst, deepcopy(meas_pst))
 end
 est_pst = only(res_pst.tapEstimates)
-@printf("PST (%s): J = %.2f | step = %+.3f -> fixed to %+d (truth %+d)\n",
-        est_pst.kind, res_pst.objectiveJ, est_pst.s_est, round(Int, est_pst.step_fixed), 3)
+@printf("T1 phase tap (%s), position [steps, 0 = neutral]:\n", est_pst.kind)
+@printf("  true value (used to generate measurements):  %+7.0f\n", 3.0)
+@printf("  model before estimation:                     %+7.0f\n", est_pst.step_model)
+@printf("  estimated by SE (continuous):                %+7.3f\n", est_pst.s_est)
+@printf("  fixed to the nearest step:                   %+7.0f\n", est_pst.step_fixed)
+@printf("SE quality: J = %.2f, dof = %d\n", res_pst.objectiveJ, res_pst.dof)
 
 # ## Example 5: both changers at once
 #
@@ -394,20 +424,23 @@ est_pst = only(res_pst.tapEstimates)
 truth_both, meas_both = truth_measurements(ratio_step = -2.0, phase_step = 2.0, seed = 13)
 model_both = build_net()
 setTapEstimation!(model_both; trafo = 3, mode = :both)
-res_both = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_both = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(model_both, deepcopy(meas_both))
 end
 est_ratio = only(filter(r -> r.role === :ratio, res_both.tapEstimates))
 est_phase = only(filter(r -> r.role === :phase, res_both.tapEstimates))
-@printf("both: J = %.2f | ratio %+.3f -> %+d (truth %+d), phase %+.3f -> %+d (truth %+d)\n",
-        res_both.objectiveJ, est_ratio.s_est, round(Int, est_ratio.step_fixed), -2,
-        est_phase.s_est, round(Int, est_phase.step_fixed), 2)
+println("T1 changer positions [steps, 0 = neutral]:")
+println("  changer   true   model before   estimated by SE   fixed to")
+for (row, truth_step) in ((est_ratio, -2.0), (est_phase, 2.0))
+  @printf("  %-7s  %+5.0f  %+13.0f  %+16.3f  %+9.0f\n", row.role, truth_step, row.step_model, row.s_est, row.step_fixed)
+end
+@printf("SE quality: J = %.2f, dof = %d\n", res_both.objectiveJ, res_both.dof)
 
 # Reading aid: both positions come back within 0.1 steps of the truth. They
 # are separable because they act differently: the ratio changer moves the
 # voltage magnitude across the transformer, the phase changer moves the
-# active flow through the loop. Take the loop away (open T2's path) and the
-# separation collapses, which is the subject of the next example.
+# active flow through the loop. Without a loop, as on a radial transformer,
+# the flows no longer pin the tap, which is the subject of the next example.
 
 # ## Example 6: the tap that cannot be estimated
 #
@@ -435,12 +468,16 @@ filter!(m -> m.id != "Vm_bus_5", meas_bridge)   ## L3 is bus 5: no voltage behin
 
 model_bridge = build_net()
 setTapEstimation!(model_bridge; trafo = 5, mode = :ratio)
-res_bridge = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_bridge = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(model_bridge, meas_bridge)
 end
 est_bridge = only(res_bridge.tapEstimates)
-@printf("radial T3: J = %.2f, dof = %d | step = %+.3f -> fixed to %+d (truth %+d), status: %s (%s)\n",
-        res_bridge.objectiveJ, res_bridge.dof, est_bridge.s_est, round(Int, est_bridge.step_fixed), 3, est_bridge.status, est_bridge.reason)
+println("T3 ratio tap (radial, no voltage measurement at L3), position [steps, 0 = neutral]:")
+@printf("  true value (used to generate measurements):  %+7.0f\n", 3.0)
+@printf("  model before estimation:                     %+7.0f\n", est_bridge.step_model)
+@printf("  SE result:                                   %+7.0f   status %s, reason %s\n",
+        est_bridge.step_fixed, est_bridge.status, est_bridge.reason)
+@printf("SE quality: J = %.2f, dof = %d\n", res_bridge.objectiveJ, res_bridge.dof)
 println("notice: ", est_bridge.notice)
 
 # Reading aid: the estimator does NOT return 3, and it does not return a
@@ -471,19 +508,21 @@ println("notice: ", est_bridge.notice)
 ## uses: build_net, truth_measurements (warm-up cell); full_set (The study network)
 @isdefined(full_set) || error("Run the section \"The study network\" first: it sets up full_set.")
 _, with_currents = truth_measurements(seed = 3, includeImag = true)
-net_plain = build_net(); res_plain = with_state_estimation_config(() -> runse!(net_plain, deepcopy(full_set)); max_iter = 40, tol = 1e-10)
-net_curr = build_net(); res_curr = with_state_estimation_config(() -> runse!(net_curr, deepcopy(with_currents)); max_iter = 40, tol = 1e-10)
+net_plain = build_net(); res_plain = with_state_estimation_config(() -> runse!(net_plain, deepcopy(full_set)); max_iter = 40, tol = 1e-6)
+net_curr = build_net(); res_curr = with_state_estimation_config(() -> runse!(net_curr, deepcopy(with_currents)); max_iter = 40, tol = 1e-6)
 dvm = maximum(abs.([getNodeVm(n) for n in net_plain.nodeVec] .- [getNodeVm(n) for n in net_curr.nodeVec]))
-@printf("complete set:  m = %d -> %d, J/dof = %.3f -> %.3f, state moves by %.1e pu\n",
-        length(full_set), length(with_currents), res_plain.objectiveJ / res_plain.dof,
-        res_curr.objectiveJ / res_curr.dof, dvm)
+println("complete set, without and with current magnitudes:")
+println("  set                measurements   J/dof")
+@printf("  without currents   %12d   %5.3f\n", length(full_set), res_plain.objectiveJ / res_plain.dof)
+@printf("  with currents      %12d   %5.3f\n", length(with_currents), res_curr.objectiveJ / res_curr.dof)
+@printf("largest change of the estimated |V| between the two runs: %.1e pu\n", dvm)
 
 # Ten extra rows, and the state barely moves. Where the power flows are
 # already measured, currents are redundancy, not information.
 #
 # Now take the flow measurements off one line and see what is left. The
-# sparse set has no P/Q on the 20 kV tie; the second set replaces them with
-# current magnitudes on the same bay:
+# sparse set has no P/Q on the 20 kV tie; the second set adds the current
+# magnitudes of all five branches, the two of the tie included:
 
 ## uses: build_net (warm-up cell); full_set, vm_true (The study network); with_currents (Example 7)
 (@isdefined(full_set) && @isdefined(vm_true)) || error("Run the section \"The study network\" first: it sets up full_set, vm_true.")
@@ -493,7 +532,7 @@ net_sparse = build_net(); append!(net_sparse.measurements, deepcopy(sparse_set))
 obs_sparse = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net_sparse)
 end
-res_sparse = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_sparse = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(net_sparse)
 end
 err_sparse = maximum(abs.([getNodeVm(n) for n in net_sparse.nodeVec] .- vm_true))
@@ -503,15 +542,15 @@ net_sc = build_net(); append!(net_sc.measurements, deepcopy(sparse_curr))
 obs_sc = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net_sc)
 end
-res_sc = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_sc = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(net_sc)
 end
 err_sc = maximum(abs.([getNodeVm(n) for n in net_sc.nodeVec] .- vm_true))
 
-@printf("no flows on the tie:      m = %d, observability = %s, dof = %d, max_err = %.2e\n",
-        length(sparse_set), obs_sparse.quality, res_sparse.dof, err_sparse)
-@printf("currents instead:         m = %d, observability = %s, dof = %d, max_err = %.2e\n",
-        length(sparse_curr), obs_sc.quality, res_sc.dof, err_sc)
+println("no P/Q flow rows on the 20 kV tie L1-L2:")
+println("  set                    measurements   observability   dof   max |V_est - V_true| [pu]")
+@printf("  without currents       %12d   %-13s   %3d   %.2e\n", length(sparse_set), obs_sparse.quality, res_sparse.dof, err_sparse)
+@printf("  with all currents      %12d   %-13s   %3d   %.2e\n", length(sparse_curr), obs_sc.quality, res_sc.dof, err_sc)
 
 # Reading aid, and this is the "for and against" in two numbers: the
 # currents do NOT change the observability verdict (they are excluded from
@@ -540,12 +579,13 @@ err_sc = maximum(abs.([getNodeVm(n) for n in net_sc.nodeVec] .- vm_true))
 _, pmu_set = truth_measurements(
   seed = 21, includeVa = true, vaBusIdxs = [2, 3], vaRefOffsetDeg = 4.0,
 )
-res_pmu = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_pmu = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(build_net(), pmu_set)
 end
-@printf("PMU set: m = %d, J = %.2f, dof = %d, estimated reference offset = %+.3f deg (injected %+.1f)\n",
-        length(pmu_set), res_pmu.objectiveJ, res_pmu.dof,
-        res_pmu.vaRefOffsetDeg === nothing ? NaN : res_pmu.vaRefOffsetDeg, 4.0)
+println("reference offset of the PMU angles at H2 and L1 [deg]:")
+@printf("  true value (added to the PMU angles):  %+7.3f\n", 4.0)
+@printf("  estimated by SE:                       %+7.3f\n", res_pmu.vaRefOffsetDeg === nothing ? NaN : res_pmu.vaRefOffsetDeg)
+@printf("SE quality: J = %.2f, dof = %d (%d measurements)\n", res_pmu.objectiveJ, res_pmu.dof, length(pmu_set))
 
 # Reading aid: the offset comes back as 4.0°, and the state is unaffected
 # by it. The cost is one degree of freedom, which is the cheapest possible
@@ -555,7 +595,9 @@ end
 #
 # A breaker was opened in the field and the status never reached the model.
 # The estimator now believes in a line that carries nothing. The bay's
-# transducers report what they see, about zero, on all four rows.
+# transducers report what they see, about zero, on all four rows. The model
+# carries its own power flow, solved on the wrong topology, as an EMS model
+# does.
 
 ## uses: build_net (warm-up cell)
 truth_topo = build_net()
@@ -578,14 +620,18 @@ for (dir, val) in ((:from, 0.05), (:to, -0.04))
   addQflowMeasurement!(meas_topo; net = model_topo, fromBus = "L1", toBus = "L2", value = val / 3, sigma = 0.7, direction = dir)
 end
 
+## the model's own power flow: it gives the pre-check the flow the model
+## expects on the tie (a flat start expects none and gives no verdict)
+runpf!(model_topo, 40, 1e-10, 0)
 pre = validate_topology(model_topo, meas_topo)
 for f in pre.findings
-  println(f.kind, " at ", f.location, " (", f.severity, "): ", f.evidence)
+  println("pre-check: ", f.kind, " at ", f.location, " (", f.severity, "): ", f.evidence)
 end
-res_topo = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_topo = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(model_topo, meas_topo)
 end
-@printf("wrong status:  J = %.1f, dof = %d, inside band: %s\n", res_topo.objectiveJ, res_topo.dof, res_topo.jWithin3Sigma)
+@printf("tie closed in the model (wrong):   SE quality J = %.1f, dof = %d, J inside its 3-sigma band: %s\n",
+        res_topo.objectiveJ, res_topo.dof, res_topo.jWithin3Sigma)
 
 model_fixed = build_net()
 for br in (model_fixed.branchVec[2],)
@@ -593,13 +639,19 @@ for br in (model_fixed.branchVec[2],)
   br.from_status = 0
   br.to_status = 0
 end
-res_fixed = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_fixed = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(model_fixed, deepcopy(meas_topo))
 end
-@printf("status corrected: J = %.1f, dof = %d, inside band: %s\n", res_fixed.objectiveJ, res_fixed.dof, res_fixed.jWithin3Sigma)
+@printf("tie open in the model (corrected): SE quality J = %.1f, dof = %d, J inside its 3-sigma band: %s\n",
+        res_fixed.objectiveJ, res_fixed.dof, res_fixed.jWithin3Sigma)
 
 # Reading aid: the pre-check names the element and the evidence BEFORE the
-# estimation runs, and the estimation still runs. That is deliberate: the
+# estimation runs: the tie L1-L2 is closed in the model, its power flow
+# expects about 5.7 MW on it, and all four rows read near zero.
+# `runse!` runs the same pre-check and repeats the finding as a warning
+# above its result. Without the model's power flow (a flat start) the
+# check expects no flow anywhere and gives no verdict. The estimation
+# still runs. That is deliberate: the
 # findings are advisory, and **Sparlectra never switches an element by
 # itself.** A topology error looks like bad data in the residuals, so a
 # sequential elimination would happily throw away four healthy
@@ -639,14 +691,15 @@ for b in (1, 2)
   model_iso.branchVec[b].to_status = 0
 end
 validate!(net = model_iso)
-res_iso = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_iso = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(model_iso, meas_iso)
 end
-@printf("total: J = %.2f, dof = %d, islands = %d\n", res_iso.objectiveJ, res_iso.dof, length(res_iso.islands))
+println("SE quality per AC island:")
+println("  island  buses  converged        J  dof  J band")
 for isl in res_iso.islands
-  @printf("  island %d: %d buses, converged = %s, J = %.2f, dof = %d, band = %s\n",
-          isl.island, isl.n_bus, isl.converged, isl.objectiveJ, isl.dof, isl.band_reason)
+  @printf("  %6d  %5d  %-9s  %7.3f  %3d  %s\n", isl.island, isl.n_bus, isl.converged, isl.objectiveJ, isl.dof, isl.band_reason)
 end
+@printf("  %6s  %5d  %-9s  %7.3f  %3d\n", "total", sum(isl.n_bus for isl in res_iso.islands), "", res_iso.objectiveJ, res_iso.dof)
 
 # Reading aid: the totals are sums over the islands, and each island
 # carries its own verdict. That matters when one island is well measured
@@ -666,10 +719,11 @@ bad_set[k] = Measurement(
   typ = bad_set[k].typ, value = bad_set[k].value + 25.0, sigma = bad_set[k].sigma,
   branchIdx = bad_set[k].branchIdx, direction = bad_set[k].direction, id = bad_set[k].id,
 )
-res_bad = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+res_bad = with_state_estimation_config(max_iter = 40, tol = 1e-6) do
   runse!(build_net(), deepcopy(bad_set))
 end
-@printf("plain WLS:    J = %.1f, dof = %d, inside band: %s\n", res_bad.objectiveJ, res_bad.dof, res_bad.jWithin3Sigma)
+@printf("plain WLS, P flow H1-H2 at H1 off by %+.0f MW: SE quality J = %.1f, dof = %d, J inside its 3-sigma band: %s\n",
+        bad_set[k].value - full_set[k].value, res_bad.objectiveJ, res_bad.dof, res_bad.jWithin3Sigma)
 
 # In replacement mode the estimator keeps the row in the set but pins it to
 # a large sigma during the solve, the way an EMS suppression list does. The
@@ -681,14 +735,22 @@ res_repl = with_state_estimation_config(robust_mode = :replacement, k_suppress =
   runse!(build_net(), deepcopy(bad_set))
 end
 act = res_repl.activeObjective
-@printf("replacement:  J = %.1f (honest), J_active = %.2f over dof = %d, suppressed rows = %d\n",
-        res_repl.objectiveJ, act.j, act.dof, act.suppressed)
+println("replacement mode:")
+@printf("  J over all rows, original sigma (honest):   %8.2f, dof = %d\n", res_repl.objectiveJ, res_repl.dof)
+@printf("  J_active over the rows the solve trusted:   %8.2f, dof = %d\n", act.j, act.dof)
+@printf("  rows suppressed:                            %5d\n", act.suppressed)
 
 # Note the warning above both runs: the topology pre-check flags a KCL
 # violation at H1, because a 25 MW error on one branch flow does not
 # balance against the injections either. A gross measurement error and a
 # wrong breaker status look similar from the outside, which is precisely
 # why the pre-check reports and never switches.
+#
+# The three `down-weighting` info lines come from the replacement mode
+# itself. It runs up to three rounds; each round takes the residuals of
+# the current state and picks anew every row at or above `k_suppress`. On
+# the plain WLS state, bent by the bad row, six rows pass that limit; in
+# the second round three, in the third one row (`rows suppressed` 1).
 #
 # Reading aid: two numbers, two jobs. $J$ answers "is my data healthy?"
 # and must stay loud, because a suppressed row is still a broken

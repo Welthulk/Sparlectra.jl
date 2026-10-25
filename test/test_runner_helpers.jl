@@ -132,10 +132,12 @@ function quiet_test_output(f::Function; verbose::Bool = sparlectra_test_verbose(
     # forbid (a gated testset states SKIPPED, but nobody saw it here)
     # the same for the report line of every parallel-vs-serial comparison
     # (parallel_comparison_report): RAN or SKIPPED, it is shown under the
-    # group, so a run says which comparisons were threaded
+    # group, so a run says which comparisons were threaded; and the RAN line
+    # of an availability-gated testset, so a run with the cache says that the
+    # gated check ran, not only a run without it that it skipped
     skipped_out === nothing || open(path, "r") do io
       for line in eachline(io)
-        (occursin("SKIPPED", line) || startswith(strip(line), PARALLEL_COMPARISON_TAG)) && push!(skipped_out, String(strip(line)))
+        (occursin("SKIPPED", line) || occursin(r"\bRAN\b", line) || startswith(strip(line), PARALLEL_COMPARISON_TAG)) && push!(skipped_out, String(strip(line)))
       end
     end
     # surface @test failures NOW instead of at the suite's end (they throw
@@ -273,9 +275,9 @@ on whatever configuration a previous testset installed) and every call
 returns a deepcopy, so testsets can mutate their copy freely.
 
 Since load_fixture_net the first-choice names are the SHIPPED
-demo cases sp_case5, sp_case14, sp_case60, sp_case188: a fresh install
-loads them without any download. The legacy names case9, case14, case57
-resolve against the LOCAL data/mpower cache only and exist for the
+demo cases sp_case5, sp_case6tap, sp_case14, sp_case60, sp_case188: a
+fresh install loads them without any download. The legacy names case9,
+case14, case57 resolve against the LOCAL data/mpower cache only and exist for the
 testsets that guard externally anchored MATPOWER reference values; their
 callers must gate on `fixture_net_available` and speak their skip. CGMES
 deliveries are not fixtures here on purpose: their imports exercise
@@ -338,10 +340,10 @@ fixture_net_available(name::AbstractString) = startswith(String(name), "sp_case"
 function _import_fixture_net(name::String)
   if startswith(name, "sp_case")
     path = joinpath(dirname(Sparlectra.MPOWER_DIR), "scf", string(name, ".scf.json"))
-    isfile(path) || error(string("unknown fixture net: ", name, " (shipped cases: sp_case5, sp_case14, sp_case60, sp_case188)"))
+    isfile(path) || error(string("unknown fixture net: ", name, " (shipped cases: sp_case5, sp_case6tap, sp_case14, sp_case60, sp_case188)"))
     return Sparlectra.importSCF(path)
   end
-  name in ("warmup_casePST", "case9", "case14", "case57") || error(string("unknown fixture net: ", name, " (known: sp_case5, sp_case14, sp_case60, sp_case188 and warmup_casePST shipped; case9, case14, case57 from SPARLECTRA_LARGE_CASES_DIR)"))
+  name in ("warmup_casePST", "case9", "case14", "case57") || error(string("unknown fixture net: ", name, " (known: sp_case5, sp_case6tap, sp_case14, sp_case60, sp_case188 and warmup_casePST shipped; case9, case14, case57 from SPARLECTRA_LARGE_CASES_DIR)"))
   # warmup_casePST is TRACKED and lives in the checkout; the legacy cases are
   # not shipped and come from SPARLECTRA_LARGE_CASES_DIR
   path = name == "warmup_casePST" ? joinpath(Sparlectra.MPOWER_DIR, string(name, ".m")) : large_case_path(string(name, ".m"))

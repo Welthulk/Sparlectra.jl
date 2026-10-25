@@ -152,8 +152,11 @@ t0 = [br for br in net0.branchVec if br.ratio != 0.0]
 ## the controllers of chapters 3 and 4 address T1 and T2 by the branch ids
 ## the warm-up read from its own substation; the same builder gives the same ids
 @assert [string(br.branchIdx) for br in t0] == trafo_ids "trafo_ids of the warm-up do not match this substation"
-println("aligned taps: T1 carries ", round(t0[1].fBranchFlow.pFlow; digits = 2), " MW / ", round(t0[1].fBranchFlow.qFlow; digits = 2), " MVAr, ",
-        "T2 carries ", round(t0[2].fBranchFlow.pFlow; digits = 2), " MW / ", round(t0[2].fBranchFlow.qFlow; digits = 2), " MVAr")
+println("Aligned taps (both units at ratio 1.0), flow at the HV terminal, computed:")
+println("  ", rpad("unit", 5), lpad("P [MW]", 8), lpad("Q [MVAr]", 11))
+for (k, br) in enumerate(t0)
+  println("  ", rpad("T$(k)", 5), lpad(round(br.fBranchFlow.pFlow; digits = 2), 8), lpad(round(br.fBranchFlow.qFlow; digits = 2), 11))
+end
 
 # Reading aid (Example 1.1): identical units, identical taps, so the load
 # splits evenly. This is the healthy state every coordination scheme
@@ -175,8 +178,14 @@ t1 = [br for br in net1.branchVec if br.ratio != 0.0]
 t1[1].tap_ratio = 1.05; t1[1].ratio = 1.05
 t1[2].tap_ratio = 0.95; t1[2].ratio = 0.95
 solve!(net1)
-println("misaligned taps: T1 carries ", round(t1[1].fBranchFlow.qFlow; digits = 2), " MVAr, T2 carries ", round(t1[2].fBranchFlow.qFlow; digits = 2), " MVAr")
-println("LV busbar voltage: ", round(get_bus_vm_pu(net1, "LV"); digits = 4), " pu (vs ", round(get_bus_vm_pu(net0, "LV"); digits = 4), " pu aligned)")
+println("Misaligned taps, flow at the HV terminal, computed:")
+println("  ", rpad("unit", 5), lpad("tap ratio [-]", 15), lpad("Q [MVAr]", 11))
+for (k, br) in enumerate(t1)
+  println("  ", rpad("T$(k)", 5), lpad(br.tap_ratio, 15), lpad(round(br.fBranchFlow.qFlow; digits = 2), 11))
+end
+println("LV busbar voltage Vm [pu], computed:")
+println("  aligned taps (Example 1.1):   ", round(get_bus_vm_pu(net0, "LV"); digits = 4))
+println("  misaligned taps:              ", round(get_bus_vm_pu(net1, "LV"); digits = 4))
 
 # Reading aid (Example 2.1): the load still needs only 12 MVAr, but the
 # loop now pushes
@@ -234,11 +243,18 @@ res = run_control!(net3)
 b1 = Sparlectra._find_trafo_branch(net3, trafo_ids[1])
 b2 = Sparlectra._find_trafo_branch(net3, trafo_ids[2])
 calcNetLosses!(net3)
-println("group: status = ", res.status, ", Vm(Feeder) = ", round(get_bus_vm_pu(net3, "Feeder"); digits = 4), " pu (target 1.03)")
-println("  taps: master ", round(b1.tap_ratio; digits = 4), ", follower ", round(b2.tap_ratio; digits = 4), " (aligned)")
-println("  reactive split: T1 ", round(b1.fBranchFlow.qFlow; digits = 2), " MVAr, T2 ", round(b2.fBranchFlow.qFlow; digits = 2), " MVAr (no circulation)")
+println("group control loop: status = ", res.status)
+println("Feeder voltage Vm [pu]:")
+println("  target of the master:            1.0300 (deadband +/- 0.005)")
+println("  computed after control:          ", round(get_bus_vm_pu(net3, "Feeder"); digits = 4))
+println("Tap ratio [-] after control:")
+println("  T1 (master):                     ", round(b1.tap_ratio; digits = 4))
+println("  T2 (follower):                   ", round(b2.tap_ratio; digits = 4))
+println("Reactive power Q at the HV terminal [MVAr] after control, computed:")
+println("  T1:                              ", round(b1.fBranchFlow.qFlow; digits = 2))
+println("  T2:                              ", round(b2.fBranchFlow.qFlow; digits = 2))
 for e in controllableElements(net3)
-  println("  element view: ", e.element, " -> ", e.quantity, " @ ", e.target, ", status = ", e.status)
+  println("element view: ", e.element, " -> ", e.quantity, " @ ", e.target, ", status = ", e.status)
 end
 
 # Reading aid (Example 4.1): the master stepped, the follower mirrored,

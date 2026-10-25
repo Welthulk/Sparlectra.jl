@@ -167,7 +167,13 @@ function _configured_controller_exists(net::Net, typ::String, entry::Dict{String
   elseif typ == "hvdc_pair"
     return any(c -> c isa HvdcPairControl && c.from_bus == string(entry["from_bus"]) && c.to_bus == string(entry["to_bus"]), net.machineControls)
   elseif typ == "power_transformer"
-    return any(c -> c.trafo == string(entry["trafo"]), _tap_controllers(net))
+    # the same transformer AND an actuator in common: an entry on the other
+    # actuator (ratio for a voltage, phase for an active power, the split
+    # combined regulation of control_framework.md) is a controller of its
+    # own, not a repeat; the defaults are those of the add call below
+    ratio = haskey(entry, "control_ratio") ? _controller_cfg_bool(entry["control_ratio"], "control_ratio") : true
+    phase = haskey(entry, "control_phase") ? _controller_cfg_bool(entry["control_phase"], "control_phase") : false
+    return any(c -> c.trafo == string(entry["trafo"]) && ((ratio && c.control_ratio) || (phase && c.control_phase)), _tap_controllers(net))
   end
   return false
 end
@@ -206,7 +212,9 @@ onto `net` by calling the matching device function
 of controllers added.
 
 Entries whose controlled element already carries a controller of the same
-type are skipped, so repeated runs on the same `Net` stay idempotent; edit
+type are skipped, so repeated runs on the same `Net` stay idempotent (a
+`power_transformer` entry counts as present when a tap controller on that
+transformer drives one of its actuators, ratio or phase tap); edit
 programmatically or rebuild the net to change an already-applied
 controller. One exception: `tap_min`/`tap_max` of a `power_transformer`
 entry set the control range of the tap controller already on that

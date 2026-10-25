@@ -42,6 +42,7 @@ pauses.
 
 ````@example workshop_transformers
 using Sparlectra
+using Printf
 
 # solve helper: converged power flow or an error
 function solve!(net)
@@ -155,11 +156,13 @@ load-side voltage follow:
 
 ````@example workshop_transformers
 # uses: bus_vm, feeder (warm-up cell)
+println("OLTC A-B: ratio tau from the device formula, voltage at load bus B from the power flow")
+println("  tap step   tau [pu]   Vm(B) [pu]")
 for step in (-5, 0, 5)
   taps = PowerTransformerTaps(Vn_kV = 380.0, step = step, lowStep = -9, highStep = 9, neutralStep = 0, voltageIncrement_kV = 3.8)
   tau = calcRatioTapCorrection(taps)
   net = feeder(tau)
-  println("step ", lpad(step, 3), ": tau = ", round(tau; digits = 4), "  ->  Vm(B) = ", bus_vm(net, "B"), " pu")
+  @printf("  %8d   %8.4f   %10.4f\n", step, tau, bus_vm(net, "B"))
 end
 ````
 
@@ -194,19 +197,27 @@ returns the effective pair for a given step:
 ````@example workshop_transformers
 # uses: pst_loop (warm-up cell)
 pst = step -> PhaseTapChangerModel(kind = :asymmetrical, step = step, lowStep = -8, highStep = 8, neutralStep = 0, voltage_step_increment = 0.0125, winding_connection_angle_deg = 60.0)
+println("PST S-M: phi and tau from the device formula, active power S->M from the power flow (load at L: 70 MW)")
+println("  tap step   phi [deg]   tau [pu]   P PST [MW]   P line [MW]")
 for step in (-6, 0, 6)
   tap = calcPhaseTapAngleRatio(pst(step))
   net = pst_loop(tap.effective_ratio, tap.effective_shift_deg)
-  println("step ", lpad(step, 3), ": phi = ", lpad(round(tap.effective_shift_deg; digits = 2), 6), " deg, tau = ", round(tap.effective_ratio; digits = 4), "  ->  P(trafo) = ", round(get_branch_p_from_to_mw(net, "S", "M"); digits = 1), " MW of 70")
+  # branch 2 is the line S-M in parallel to the PST (branch 1)
+  @printf("  %8d   %9.2f   %8.4f   %10.1f   %11.1f\n", step, tap.effective_shift_deg + 0.0, tap.effective_ratio, get_branch_p_from_to_mw(net, "S", "M"), net.branchVec[2].fBranchFlow.pFlow)
 end
 ````
 
 Reading aid (Example 2): at neutral the transformer takes the larger share (it has
-the lower reactance). Six steps of phase shift swing tens of MW from
-one parallel path to the other while the total delivery stays 70 MW
-plus losses: the PST does not produce power, it REROUTES it. The
+the lower reactance). Six steps of phase shift swing about 25 MW from
+one parallel path to the other while the sum of both paths stays 70 MW
+plus losses: the PST does not produce power, it REROUTES it. At step 6
+the PST carries more than the load and the line carries a few MW back
+from M to S (negative P line). The
 `:symmetrical` kind does the same with tau pinned to exactly 1.0 (pure
-angle, no voltage side effect), which is the in-line quadrature booster.
+angle, no voltage side effect). A quadrature booster is the
+`:asymmetrical` kind with a winding angle of 90 degrees. Its ratio is
+not 1.0 either: it drops slightly below 1.0 as the step moves away from
+neutral in either direction.
 
 ## Chapter 3: closing the loop, and the X(alpha) subtlety
 
@@ -246,8 +257,13 @@ run_sparlectra(net = net)
 p0 = get_branch_p_from_to_mw(net, "S", "M")
 addPowerTransformerControl!(net; trafo = string(tbr.branchIdx), mode = :branch_active_power, target_branch = ("S", "M"), p_target_mw = p0 - 8.0, control_ratio = false, control_phase = true, deadband_p_mw = 4.0)
 run_sparlectra(net = net)
-println("controller: P(trafo) ", round(p0; digits = 1), " -> ", round(get_branch_p_from_to_mw(net, "S", "M"); digits = 1), " MW (target ", round(p0 - 8.0; digits = 1), ")")
-println("            settled at phi = ", tbr.phase_shift_deg, " deg with x_pu = ", round(tbr.x_pu; digits = 4), " (device characteristic, not the 0.08 import value)")
+println("PST S-M, active power S->M [MW]:")
+@printf("  before control (neutral):        %6.1f\n", p0)
+@printf("  target of the controller:        %6.1f   (deadband +-4.0)\n", p0 - 8.0)
+@printf("  after control (power flow):      %6.1f\n", get_branch_p_from_to_mw(net, "S", "M"))
+println("PST S-M, settled tap:")
+@printf("  phase shift phi [deg]:           %6.1f\n", tbr.phase_shift_deg)
+@printf("  series reactance x [pu]:         %6.4f   (from X(alpha); import value 0.08)\n", tbr.x_pu)
 ````
 
 Reading aid (Example 3): the converged reactance sits ABOVE the import-time 0.08 pu
@@ -280,14 +296,19 @@ network hangs the star between a slack feeder and an MV load:
 
 ````@example workshop_transformers
 # uses: build_3wt, bus_vm (warm-up cell)
+println("3WT, OLTC on the HV leg, voltage Vm [pu] from the power flow:")
+println("  tap step   B3 (110 kV)   B4 (20 kV)")
 for step in (0, 5)
   net3wt = build_3wt(oltc_step = step)
-  println("OLTC step ", step, " on the HV leg: Vm(B3) = ", bus_vm(net3wt, "B3"), " pu, Vm(B4) = ", bus_vm(net3wt, "B4"), " pu")
+  @printf("  %8d   %11.4f   %10.4f\n", step, bus_vm(net3wt, "B3"), bus_vm(net3wt, "B4"))
 end
 ````
 
 Reading aid (Example 4): the tap sits on the HV leg, so BOTH output windings move
-together; a tap on the MV leg would move only B3. One honest note: the
+together, by about 5 percent for five steps; a tap on the MV leg would
+move only B3. Here a positive step RAISES the voltage, unlike Example 1:
+the leg runs from AUX to B2, so the ratio sits on the star-point side
+and lifts AUX against the HV bus. One honest note: the
 tap objects that `create3WTWindings!` can carry are not yet wired into
 the Net-building 3WT path, so this notebook computes the correction
 with the device formula and applies it to the leg explicitly, which is
@@ -297,10 +318,10 @@ the same arithmetic the wiring would do. The full three-case study
 
 ## Where to go next
 
-- [Transformer Control](https://welthulk.github.io/Sparlectra.jl/control_framework/):
+- [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/):
   the OLTC and phase-tap controllers, targets, deadbands, and limits.
 - [Branch Model](https://welthulk.github.io/Sparlectra.jl/branchmodel/):
   how tau and phi enter the admittance stamp.
 - [Workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb),
-  chapter 3: the closed-loop OLTC holding a bus voltage.
+  chapter 4: the closed-loop OLTC holding a bus voltage.
 

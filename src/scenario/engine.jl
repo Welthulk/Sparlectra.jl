@@ -186,6 +186,8 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
   # carry over, and one line says so.
   if warm_active_set
     qlimits_on = get(pf_kwargs, :qlimits_enabled, true) === true
+    # number of carried machine buses, -1 when the set is not applied
+    n_warm = -1
     note = if !base_converged
       "Warm active set: not applied, the base case did not converge."
     elseif !qlimits_on
@@ -199,11 +201,18 @@ function ScenarioEngine(net::Net; vm_min_pu::Float64 = 0.9, vm_max_pu::Float64 =
         name === nothing || (warm[name] = side)
       end
       pf_kwargs = (; pf_kwargs..., qlimit_warm_clamps = warm)
+      n_warm = length(warm)
       "Warm active set: $(length(warm)) clamped machine bus(es) of the base case carried into every outage."
     end
     # the service passes a Ref and writes the line into run.log; a library
-    # call without one sees it on the console
-    warm_note === nothing ? println(note) : (warm_note[] = note)
+    # call without one sees it on the console, the engine's only output
+    # channel (println, as the rescue lines above), but not for an empty
+    # set: nothing is carried over, the line would tell the caller nothing
+    if warm_note !== nothing
+      warm_note[] = note
+    elseif n_warm != 0
+      println(note)
+    end
   end
   # template hygiene: the workers need the solved VOLTAGES, not the base
   # solver status or its Q-limit event logs

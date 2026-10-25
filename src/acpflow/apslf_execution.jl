@@ -140,7 +140,9 @@ end
 # re-enable events, start-current-iteration, ...) do not apply to APSLF and
 # are left to their generic defaults there. The PV->PQ count
 # (pv_pq_switching_events) does apply: the callers pass the clamps of the
-# solve through `extra`.
+# solve through `extra`. q_limit_active_set_ok starts as `converged`; the
+# callers pass the band check of the solved net (_apslf_qband_status)
+# through `extra`, which sets it false when a machine ended outside its band.
 function _apslf_pf_status(converged::Bool, final_mismatch::Float64, iterations::Int; extra::NamedTuple = NamedTuple())
   base = (
     numerical_converged = converged,
@@ -161,6 +163,29 @@ function _apslf_pf_status(converged::Bool, final_mismatch::Float64, iterations::
     stacktrace_top = "",
   )
   return merge(base, extra)
+end
+
+# The limit check of a converged APSLF run, on the solved net after the
+# write-back: every voltage-regulated machine inside its reactive band, read
+# from the rows of the Q-limit stability check (qlimitStabilityReport, the
+# generator Q of the result against the bus band of getQLimits_pu). It
+# judges the result, not the band AnalyticLoadFlow was given: with the
+# generator band handed over against the bus injection, sp_case118 ended
+# with the PV machines at buses 4 and 85 above Qmax and four clamped
+# machines beyond their band, and the run reported the limits as ok. The
+# same failure now shows as a failed limit status, as in the rectangular
+# solver (remaining PV Q-limit violations: converged_limits_failed, erg 1).
+# `buses`, when given, restricts the check to these buses of `net` (one
+# island). Returns `extra` fields for _apslf_pf_status: empty when the run
+# did not converge, ran without Q-limits, or every machine is in its band.
+function _apslf_qband_status(net::Net, converged::Bool, include_limits::Bool; rows = nothing, buses = nothing)::NamedTuple
+  (converged && include_limits) || return NamedTuple()
+  rows === nothing && (rows = qlimitStabilityReport(net))
+  bad = [r for r in rows if !r.in_band && (buses === nothing || r.bus in buses)]
+  isempty(bad) && return NamedTuple()
+  text = string("APSLF solution leaves ", length(bad), " voltage-regulated machine(s) outside their reactive band: ", join((_qlimit_stability_row_text(r) for r in bad), "; "))
+  return (q_limit_active_set_ok = false, active_set_converged = false, final_converged = false, status = :converged_limits_failed,
+    reason = :remaining_pv_q_limit_violations, reason_text = text, pv_q_limit_violations = length(bad))
 end
 
 """
@@ -193,7 +218,8 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
   include_limits = !pf_cfg.qlimits.ignore_q_limits
 
   # The merged copy carries the static set points of every unit, as an
-  # unmerged net does: buildPfModel reads the node powers and the Y-bus and
+  # unmerged net does: buildPfModel reads the prosumer schedules (the
+  # prosumers follow their bus onto the representative) and the Y-bus and
   # never a Q(U)/P(U) characteristic, on any net. The refusal of
   # voltage-dependent injections on a merged net that stood here (a391e34f)
   # outlived the caller's own refusal, which became a warning in 0.40.0, so
@@ -237,9 +263,16 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
     iters, status, sol = runpf_external!(wnet, solver; tol = pf_cfg.tol, flatstart = wnet.flatstart, include_limits = include_limits, verbose = verbose)
     switches = _apslf_record_clamps!(wnet, sol, iters)
     diag = _apslf_diagnosis_status(sol, wnet)
-    _set_rectangular_pf_status!(net, _apslf_pf_status(status == 0, sol.residual_inf, iters; extra = merge(_apslf_radius_status(sol, wnet), diag, (pv_pq_switching_events = switches,))))
+    run_status = _apslf_pf_status(status == 0, sol.residual_inf, iters; extra = merge(_apslf_radius_status(sol, wnet), diag, (pv_pq_switching_events = switches,)))
+    # set before the merged copy goes back: the split reads the status of
+    # the net (distributed slack shares)
+    _set_rectangular_pf_status!(net, run_status)
     has_merges && sync_merges_back!()
-    return iters, status
+    # the band check reads the generator Q of the net after the split
+    band = _apslf_qband_status(net, status == 0, include_limits)
+    isempty(band) && return iters, status
+    _set_rectangular_pf_status!(net, merge(run_status, band))
+    return iters, 1
   end
 
   # the run's output directory only (see the rectangular solver)
@@ -342,5 +375,21 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
       net.nodeVec[i]._va_deg = wnet.nodeVec[i]._va_deg
     end
   end
-  return total_iters, 0
+
+  # the band check on the net with the results of every island, once; each
+  # island status gets the rows of its own buses (row.buses are buses of
+  # the merged copy, reps maps a bus of the net onto them)
+  band_rows = include_limits ? qlimitStabilityReport(net) : NamedTuple[]
+  for row in island_report.rows
+    id = Int(row.island_id)
+    haskey(island_statuses, id) || continue
+    row_buses = Set{Int}(row.buses)
+    island_buses = Set{Int}(b for b in eachindex(net.nodeVec) if reps[b] in row_buses)
+    island_band = _apslf_qband_status(net, Bool(island_statuses[id].final_converged), include_limits; rows = band_rows, buses = island_buses)
+    isempty(island_band) || (island_statuses[id] = merge(island_statuses[id], island_band))
+  end
+  band = _apslf_qband_status(net, true, include_limits; rows = band_rows)
+  isempty(band) && return total_iters, 0
+  _set_rectangular_pf_status!(net, merge(aggregate_status, band))
+  return total_iters, 1
 end

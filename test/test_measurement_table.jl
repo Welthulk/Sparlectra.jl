@@ -372,15 +372,21 @@ function run_measurement_table_tests()
       # the keys: bus names, <branch name>:from/:to, prosumer names; a name
       # several prosumers share is qualified with the bus
       @test all(haskey(index.nodes, n) for n in keys(net.busDict))
-      # the generated names of the two parallel lines repeat: the branch
-      # number qualifies them, a unique name stays plain
+      # the file names the two parallel lines Ostheim_Neuwiese_1 and _2, so
+      # every branch key is plain. A name two branches share (the generated
+      # names of parallel MATPOWER lines repeat) is qualified with the
+      # branch number, a unique name stays plain
       bkey(k) = (n = net.branchVec[k].comp.cName; count(b -> b.comp.cName == n, net.branchVec) > 1 ? string(n, "#", k) : n)
-      @test net.branchVec[1].comp.cName == net.branchVec[2].comp.cName
-      @test bkey(1) == net.branchVec[1].comp.cName * "#1" && bkey(3) == net.branchVec[3].comp.cName
-      for k in (1, 2, 3)
-        t = index.terminals[bkey(k) * ":to"]
+      @test all(k -> bkey(k) == net.branchVec[k].comp.cName, eachindex(net.branchVec))
+      dup = deepcopy(net)
+      dup.branchVec[2].comp.cName = dup.branchVec[1].comp.cName
+      dindex = nameMeasurementKeys(dup)
+      shared_name = dup.branchVec[1].comp.cName
+      for (k, key) in ((1, shared_name * "#1"), (2, shared_name * "#2"), (3, dup.branchVec[3].comp.cName))
+        t = dindex.terminals[key * ":to"]
         @test t.kind === :branch && t.branchIdx == k && t.direction === :to
       end
+      @test !haskey(dindex.terminals, shared_name * ":to")
       shared = [ps for ps in net.prosumpsVec if count(q -> q.comp.cName == ps.comp.cName, net.prosumpsVec) > 1]
       @test !isempty(shared)
       ps = first(shared)
@@ -579,7 +585,7 @@ function run_measurement_table_tests()
       @test Sparlectra._sigma_from_level(lv, 20.0, "P", 300.0) === nothing
 
       # sp_case14 has two levels, 110 kV and 20 kV; transformer
-      # B_2WT_110_3_10 runs from Moorau_110 to Moorau_20
+      # Moorau_110_20 runs from Moorau_110 to Moorau_20
       net = load_fixture_net("sp_case14")
       _, erg = runpf!(net, 40, 1e-10, 0)
       @test erg == 0
@@ -588,9 +594,9 @@ function run_measurement_table_tests()
       two = [L(vn_kv = 110, p_mw = 1.5, q_mvar = 2.5, u_kv = 0.4, rel_pct = 0.5), L(vn_kv = 20, p_mw = 0.3, q_mvar = 0.4, u_kv = 0.08)]
       # hand rows: (key, node?, type, value, own sigma)
       hand = [("Moorau_110", true, "U", 115.5, nothing), ("Moorau_20", true, "U", 20.5, nothing),
-        ("B_2WT_110_3_10:from", false, "P", 400.0, nothing), ("B_2WT_110_3_10:to", false, "P", -40.0, nothing),
-        ("B_ACL_110_2_3:from", false, "Q", 100.0, nothing), ("B_ACL_20_10_11:from", false, "Q", 5.0, nothing),
-        ("B_ACL_110_3_4:from", false, "P", 50.0, 0.7), ("Ld_20.0@Hassel_20", false, "P", -2.0, nothing)]
+        ("Moorau_110_20:from", false, "P", 400.0, nothing), ("Moorau_110_20:to", false, "P", -40.0, nothing),
+        ("Neuwiese_Moorau:from", false, "Q", 100.0, nothing), ("Moorau_Hassel:from", false, "Q", 5.0, nothing),
+        ("Moorau_Dallwitz:from", false, "P", 50.0, 0.7), ("Ld_20.0@Hassel_20", false, "P", -2.0, nothing)]
       hrows = [MeasurementRow(i, "", "", node ? "" : key, node ? key : "", typ, v, s, "test", true, :none, "") for (i, (key, node, typ, v, s)) in enumerate(hand)]
       hset(levels) = (s = only(importMeasurementTable(hrows, index; sigma_by_voltage_level = levels).sets); @test isempty(s.problems); (Dict(m.id => m.sigma for m in s.measurements), s.sigma_origin))
       h, ho = hset(two)
@@ -600,10 +606,10 @@ function run_measurement_table_tests()
       @test h["U@Moorau_20"] ≈ 0.004 rtol = 1e-14
       # P and Q at the bus of the branch end: the 110 kV end of the
       # transformer max(1.5, 0.5 % of 400 MW) = 2 MW, its 20 kV end 0.3 MW
-      @test h["P@B_2WT_110_3_10:from"] == 2.0 && h["P@B_2WT_110_3_10:to"] == 0.3
-      @test h["Q@B_ACL_110_2_3:from"] == 2.5 && h["Q@B_ACL_20_10_11:from"] == 0.4
+      @test h["P@Moorau_110_20:from"] == 2.0 && h["P@Moorau_110_20:to"] == 0.3
+      @test h["Q@Neuwiese_Moorau:from"] == 2.5 && h["Q@Moorau_Hassel:from"] == 0.4
       # the row's own sigma wins
-      @test h["P@B_ACL_110_3_4:from"] == 0.7 && ho["P@B_ACL_110_3_4:from"] === :row
+      @test h["P@Moorau_Dallwitz:from"] == 0.7 && ho["P@Moorau_Dallwitz:from"] === :row
       # a bus sum of one member carries the member sigma
       @test h["PinjMeas@bus11"] == 0.3 && ho["PinjMeas@bus11"] === :level && ho["U@Moorau_20"] === :level
       # the bus sum is the root sum of its members: four injections at B2
@@ -622,8 +628,8 @@ function run_measurement_table_tests()
       h1, ho1 = hset(one)
       defaults = measurementStdDevs()
       @test h1["U@Moorau_20"] == defaults[Sparlectra.VmMeas] && ho1["U@Moorau_20"] === :default
-      @test h1["P@B_2WT_110_3_10:to"] == defaults[Sparlectra.PflowMeas] && ho1["P@B_2WT_110_3_10:to"] === :default
-      @test h1["P@B_2WT_110_3_10:from"] == 1.5 && ho1["P@B_2WT_110_3_10:from"] === :level
+      @test h1["P@Moorau_110_20:to"] == defaults[Sparlectra.PflowMeas] && ho1["P@Moorau_110_20:to"] === :default
+      @test h1["P@Moorau_110_20:from"] == 1.5 && ho1["P@Moorau_110_20:from"] === :level
 
       # the summary of the generated table, every sigma cell emptied except
       # one P row, under the 110 kV row alone: the 20 kV measurements count
@@ -694,8 +700,8 @@ function run_measurement_table_tests()
       gen = generateMeasurementTableFromPF(net; noise = false, include_injections = true, sigma_by_voltage_level = two)
       u110 = only(filter(r -> r.type == "U" && r.node_mrid == "Moorau_110", gen))
       @test u110.sigma == max(0.4, 0.005 * u110.value)
-      @test only(filter(r -> r.type == "P" && r.terminal_mrid == "B_2WT_110_3_10:to", gen)).sigma == 0.3
-      @test only(filter(r -> r.type == "Q" && r.terminal_mrid == "B_ACL_20_10_11:from", gen)).sigma == 0.4
+      @test only(filter(r -> r.type == "P" && r.terminal_mrid == "Moorau_110_20:to", gen)).sigma == 0.3
+      @test only(filter(r -> r.type == "Q" && r.terminal_mrid == "Moorau_Hassel:from", gen)).sigma == 0.4
       for table in (gen, exact)
         _, se_g = _estimate_table(net, table)
         @test se_g.converged && maximum(abs.(se_g.voltages .- Vpf)) < 1e-6

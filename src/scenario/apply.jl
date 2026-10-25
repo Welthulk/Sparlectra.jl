@@ -64,6 +64,17 @@ function _undo_deleteat!(log::UndoLog, vec::AbstractVector, idx::Int)
   return nothing
 end
 
+# A scenario that sets the tap position or the angle states the step, so
+# the mark of an assumed middle position goes, as when a tap controller
+# moves the changer (_clear_tap_step_assumed!). The two fields it writes
+# go through the undo log first, so restore! brings the mark back.
+function _scenario_clear_step_assumed!(log::UndoLog, br::Branch, which::Symbol)
+  _undo_field!(log, br, which === :ratio ? :ratio_step_assumed : :phase_step_assumed)
+  _undo_field!(log, br, :se_tap_changers)
+  _clear_tap_step_assumed!(br, which)
+  return nothing
+end
+
 function _scenario_branch!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
   1 <= internal <= length(net.branchVec) || throw(ArgumentError(string("branch index ", internal, " out of range")))
   br = net.branchVec[internal]
@@ -95,8 +106,10 @@ function _scenario_branch!(log::UndoLog, net::Net, internal::Int, op::PatchOp)
     else
       _undo_set!(log, br, :tap_ratio, br.ratio / (1.0 + op.value * br.tap_step))
     end
+    _scenario_clear_step_assumed!(log, br, :ratio)
   elseif op.op === :set && op.field === :angle_deg
     _undo_set!(log, br, :phase_shift_deg, Float64(op.value))
+    _scenario_clear_step_assumed!(log, br, :phase)
   else
     throw(ArgumentError(string("op ", op.op, " field ", op.field, " does not apply to a branch")))
   end

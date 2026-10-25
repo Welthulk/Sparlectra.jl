@@ -169,6 +169,14 @@ hand-built), keeps the single-step `PhaseTapChangerLinear` that carries
 the solved shift exactly. Ratio tap changers export as `RatioTapChanger`
 without a table.
 
+A transformer whose step was not transferred (its changer sits at the
+assumed middle position) has no mark in CGMES: the export writes the
+middle position as the SSH `step` (or in the ratio and shift where no tap
+changer object is written) and adds one notice per transformer, logged as
+a warning. Read back, the step counts as transferred. The SCF export keeps
+the mark. A changer that a tap controller or a QSTS carry moved has no
+mark and gets no notice.
+
 ## Converter units
 
 CGMES 2.4.15 has no `PowerElectronicsConnection`. A prosumer of that

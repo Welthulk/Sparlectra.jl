@@ -42,6 +42,19 @@ function test_state_estimation_wls_first_version()::Bool
 
     @test !isempty(meas)
     @test all(m -> m.active, meas)
+    # resolution: the same rows rounded to the step in table units (U in kV
+    # through the bus Vn, P in MW), each within half a step of the unrounded
+    # value, the sigma unchanged, other types untouched
+    res = Dict(Sparlectra.VmMeas => 0.1, Sparlectra.PflowMeas => 0.5)
+    mr = generateMeasurementsFromPF(net; noise = false, stddev = std, resolution = res)
+    @test length(mr) == length(meas)
+    for (a, b) in zip(meas, mr)
+      @test a.id == b.id && a.sigma == b.sigma
+      step = get(res, a.typ, 0.0)
+      scale = a.typ == Sparlectra.VmMeas ? net.nodeVec[a.busIdx].comp.cVN : 1.0
+      k = b.value * scale / step
+      @test step == 0.0 ? a.value == b.value : (abs(k - round(k)) < 1e-9 && abs(b.value - a.value) * scale <= step / 2 + 1e-9)
+    end
 
     result = with_state_estimation_config(max_iter = 12, tol = 1e-8, flatstart = true, jac_eps = 1e-6, update_net = true) do
       runse!(net, meas)
@@ -65,6 +78,60 @@ function test_state_estimation_wls_first_version()::Bool
     end
   end)() end
 
+  return true
+end
+
+## The start ladder (state_estimation.start_ladder, 0.60.0): a WLS from the
+## flat start that does not converge is solved once more from the voltages
+## stored in the net. sp_case14 with its shipped set (measured): 4
+## iterations from the flat start, 3 from the stored state of the case, so a
+## cap of 3 fails flat and converges on the second try. The second try
+## restores the stored voltages the failed try overwrote (update_net) and
+## is the run with flatstart = false bit for bit; a net without stored
+## voltages gets no second try. Also the abort point of the rank test of the
+## tap columns, the loop a Web UI abort of case6495rte could not stop.
+function test_state_estimation_start_ladder()::Bool
+  @testset "State estimation start ladder" begin (function ()
+    data = joinpath(dirname(@__DIR__), "data", "scf")
+    net0 = Sparlectra.import_case(joinpath(data, "sp_case14.scf.json"), Sparlectra.SparlectraConfig()).net
+    readMeasurementTable!(net0; file = joinpath(data, "sp_case14.measurements.csv"))
+    @test Sparlectra._se_has_stored_state(net0)
+    solve(net; kw...) = with_state_estimation_config(() -> runse!(net); merge((max_iter = 3,), kw)...)
+    lad = solve(deepcopy(net0))
+    @test lad.converged && lad.start === :stored_after_flat
+    warm = solve(deepcopy(net0); flatstart = false)
+    @test warm.converged && warm.start === :stored
+    @test lad.voltages == warm.voltages && lad.objectiveJ == warm.objectiveJ && lad.iterations == warm.iterations
+    off = solve(deepcopy(net0); start_ladder = false)
+    @test !off.converged && off.start === :flat
+    flat = solve(deepcopy(net0); max_iter = 50)
+    @test flat.converged && flat.start === :flat
+    # no stored voltages: the second try would start where the first did
+    bare = deepcopy(net0)
+    for nd in bare.nodeVec
+      nd._vm_pu = 1.0
+      nd._va_deg = 0.0
+    end
+    @test !Sparlectra._se_has_stored_state(bare)
+    nb = solve(bare)
+    @test !nb.converged && nb.start === :flat
+
+    # a set abort token stops the rank test of the tap columns
+    H = SparseArrays.sparse([1.0 0.0 1.0; 0.0 1.0 1.0; 1.0 1.0 0.0; 0.5 0.0 1.0])
+    @test Sparlectra._tap_rank_kept(H, [1, 2], [3]) == [true]
+    tok = Threads.Atomic{Bool}(true)
+    err = fetch(@async begin
+      Sparlectra.sparlectra_arm_abort_token!(tok)
+      try
+        Sparlectra._tap_rank_kept(H, [1, 2], [3])
+      catch e
+        e
+      finally
+        Sparlectra.sparlectra_disarm_abort_token!()
+      end
+    end)
+    @test err isa Sparlectra.PowerFlowAborted
+  end)() end
   return true
 end
 
@@ -1504,6 +1571,60 @@ function test_state_estimation_link_contraction()::Bool
     end
     @test errS2 !== nothing
     @test occursin("same (fused) bus", sprint(showerror, errS2))
+
+    # --- 6) link-fed passive bus: M has couplers only, no branch, so the
+    # branch-only marking of a CGMES import types it Isolated. It is a member of its fused node: its
+    # zero-injection rows belong to the cluster, otherwise the estimator
+    # drops the ZI rows of every member as a partial sum. Truth: M is
+    # passive, the link flows into M add up to 0. :chain is A = M = C with
+    # lines S-A and C-L (the estimator split it at M into two islands, J
+    # 2.6e4 on exact data); :parallel is A = M by two couplers with lines
+    # S-A, A-C, C-L (the link flows into M did not add up to 0 on noisy
+    # data). dof: states 2 * buses - 1 of the contracted net, rows Vm at
+    # all five buses, Pinj/Qinj at S and L, P/Q flows at both ends of each
+    # line, the LINKAGG pair, the ZI pair of C where C is outside the
+    # cluster. :chain 5 + 4 + 8 + 2 - 5 = 14, :parallel 5 + 4 + 12 + 2 + 2 - 7 = 18.
+    for (topo, dofExpected) in ((:chain, 14), (:parallel, 18))
+      netF = Net(name = "se_link_fed", baseMVA = 100.0)
+      for b in ("S", "A", "M", "C", "L")
+        addBus!(net = netF, busName = b, vn_kV = 110.0)
+      end
+      addPIModelACLine!(net = netF, fromBus = "S", toBus = "A", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+      topo == :parallel && addPIModelACLine!(net = netF, fromBus = "A", toBus = "C", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+      addPIModelACLine!(net = netF, fromBus = "C", toBus = "L", r_pu = 0.02, x_pu = 0.2, b_pu = 0.0, status = 1)
+      addProsumer!(net = netF, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "S")
+      addProsumer!(net = netF, busName = "L", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
+      addLink!(net = netF, fromBus = "A", toBus = "M", status = 1)
+      addLink!(net = netF, fromBus = "M", toBus = topo == :chain ? "C" : "A", status = 1)
+      @test last(runpf!(netF, 40, 1e-10, 0; method = :rectangular)) == 0
+      calcNetLosses!(netF)
+      # the marking of a CGMES import counts branches only
+      markIsolatedBuses!(net = netF)
+      bM = geNetBusIdx(net = netF, busName = "M")
+      @test netF.isoNodes == [bM]
+      measF = generateMeasurementsFromPF(netF; noise = true, rng = MersenneTwister(3), stddev = measurementStdDevs(vm = 1e-3, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5))
+      @test count(m -> m.typ == Sparlectra.VmMeas && m.busIdx == bM, measF) == 1
+      passive = Set(findPassiveBuses(netF))
+      filter!(m -> !(m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) && m.busIdx in passive), measF)
+      @test Sparlectra._add_missing_zero_injections!(measF, netF) == 6   # A, M, C
+      @test count(m -> m.zero_injection && m.busIdx == bM, measF) == 2
+      prepF = Sparlectra._se_prepare(netF, measF)
+      @test !any(n -> n.reason == :partial_cluster_injection, prepF.notes)
+      append!(netF.measurements, measF)
+      # bound of the sum: round-off under constraint, the ZI sigma
+      # (1e-3 MVA) under on, where the sum was 0.084 MVA on :parallel
+      # without the rows at M
+      for (mode, bound) in ((:constraint, 1e-8), (:on, 1e-3))
+        resF = with_state_estimation_config(zero_injection = mode, max_iter = 30, update_net = true) do
+          runse!(netF, measF)
+        end
+        @test resF.converged
+        @test resF.islands === nothing
+        @test resF.dof == dofExpected
+        intoM = sum((Int(netF.linkVec[r.linkIdx].toBus) == bM ? 1.0 : -1.0) * complex(r.pFlow_MW, r.qFlow_MVar) for r in calcLinkFlowsSE!(netF))
+        @test abs(intoM) < bound
+      end
+    end
   end)() end
 
   return true
@@ -1572,6 +1693,15 @@ function test_state_estimation_robust_r()::Bool
     @test isapprox(s2[2], 8.0 * σ / 3.0; rtol = 1e-12)
     # virtual measurements are exempt regardless of t
     @test Sparlectra._robust_stage(100.0, 1e-7) == (0, 1e-7)
+    # the row-level method exempts what elimination protects: a
+    # zero-injection row and a derived shunt row with a real sigma stay at
+    # stage 0 at t = 200, a plain row with the same sigma reaches stage 2
+    ziRow = Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "ZI_PINJ_bus_1", zero_injection = true)
+    shRow = Measurement(typ = Sparlectra.QinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "SHDERIV_bus_1")
+    plainRow = Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "Pinj_bus_1")
+    @test Sparlectra._robust_stage(ziRow, 100.0, 3.0, 6.0) == (0, σ)
+    @test Sparlectra._robust_stage(shRow, 100.0, 3.0, 6.0) == (0, σ)
+    @test Sparlectra._robust_stage(plainRow, 100.0, 3.0, 6.0) === Sparlectra._robust_stage(100.0, σ, 3.0, 6.0)
 
     # --- integration: one 10 sigma gross error on a meshed case
     std = measurementStdDevs(vm = 0.002, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5)
@@ -1659,6 +1789,19 @@ function test_state_estimation_robust_r()::Bool
     @test resStaged.objectiveJ == resRobust.objectiveJ
     @test Sparlectra._se_effective_robust_mode(Sparlectra.StateEstimationConfig(robust = true)) === :staged
     @test Sparlectra._se_effective_robust_mode(Sparlectra.StateEstimationConfig(robust = true, robust_mode = :replacement)) === :replacement
+
+    # --- staged leaves zero-injection rows alone: a ZI row with a real
+    # sigma at a bus that injects about 30 MW (t near 60) is the row the
+    # knees would widen most; it must not appear among the modified rows
+    measZI = copy(meas)
+    ziBus = meas[findlast(m -> m.typ == Sparlectra.PinjMeas, meas)].busIdx
+    push!(measZI, Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = 0.5, busIdx = ziBus, id = "ZI_PINJ_bus_$(ziBus)", zero_injection = true))
+    resZI = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust_mode = :staged, topology_precheck = false) do
+      runse!(net, measZI)
+    end
+    @test resZI.converged
+    @test resZI.robustRows !== nothing
+    @test !any(r -> r.id == "ZI_PINJ_bus_$(ziBus)", resZI.robustRows)
 
     # --- replacement mode (0.10.0): judged on the CONVERGED state, it
     # suppresses exactly the corrupted row (stage 3, fixed suppression
@@ -1934,6 +2077,7 @@ function _se_two_island_tap_net(step::Float64)::Net
   for br in net.branchVec
     br.ratio == 0.0 && continue
     br.has_ratio_tap = true
+    br.ratio_tap_declared = true
     br.tap_step = step
   end
   return net
@@ -2151,6 +2295,7 @@ function _tap_gate_net(; taps::Union{Nothing,PowerTransformerTaps} = nothing, ph
   addPIModelTrafo!(net = net, fromBus = "H1", toBus = "L1", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1, taps = taps, phase_taps = phase_taps, tap_changer_model = model)
   addPIModelTrafo!(net = net, fromBus = "H2", toBus = "L2", r_pu = 0.002, x_pu = 0.06, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
   net.branchVec[3].has_ratio_tap = true
+  net.branchVec[3].ratio_tap_declared = true
   taps === nothing && (net.branchVec[3].tap_step = 0.00625)
   return net
 end
@@ -2495,14 +2640,50 @@ function test_tap_changer_data()::Bool
       @test rs(set, [2.5])[1] === 1.032
     end
 
-    # --- constructor defaults: the fraction grid 0.9/1.1 of 0.00625, no undeclared phase changer
+    # --- constructor defaults (0.60.0): the default ratio grid is no
+    # declared changer, so a transformer that only carries a ratio has an
+    # empty set, no release and setTapEstimation! refuses it; declared, the
+    # same fields give the fraction grid 0.9/1.1 of 0.00625
     let net = _tap_gate_net()
+      @test isempty(S._effective_tap_changers(net.branchVec[4]).changers) && S._tap_release_mode(net.branchVec[4]) === nothing
+      @test_throws ArgumentError setTapEstimation!(net; trafo = 4, mode = :ratio)
+      @test S._effective_tap_changers(net.branchVec[1]) === nothing && S._tap_release_mode(net.branchVec[1]) === nothing
+      net.branchVec[4].ratio_tap_declared = true
       set = S._effective_tap_changers(net.branchVec[4])
       @test length(set.changers) == 1 && set.changers[1].side === :to && (set.changers[1].low, set.changers[1].high) == (-14, 17)
       @test S._tap_release_mode(net.branchVec[4]) === :ratio
-      @test S._effective_tap_changers(net.branchVec[1]) === nothing && S._tap_release_mode(net.branchVec[1]) === nothing
       net.branchVec[4].has_ratio_tap = false
       @test isempty(S._effective_tap_changers(net.branchVec[4]).changers) && S._tap_release_mode(net.branchVec[4]) === nothing
+    end
+    # --- plain MATPOWER (shipped sp_case118.m, no mpc.sparlectra.tap_changers):
+    # its transformers keep their ratio and none is released; the same
+    # file with a declared row on one transformer releases exactly that one
+    let path = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m")
+      net = Sparlectra.createNetFromMatPowerFile(filename = path)
+      trafos = [k for (k, br) in enumerate(net.branchVec) if br.ratio != 0.0]
+      @test !isempty(trafos) && all(k -> S._tap_release_mode(net.branchVec[k]) === nothing, trafos)
+      @test !S._case_has_tap_changers(net)
+      @test_throws ArgumentError setTapEstimation!(net; trafo = trafos[1], mode = :ratio)
+      applyTapNameplate!(net.branchVec[trafos[1]]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0)
+      @test [k for k in trafos if S._tap_release_mode(net.branchVec[k]) !== nothing] == [trafos[1]]
+      @test setTapEstimation!(net; trafo = trafos[1], mode = :ratio).s0 == [0.0]
+    end
+    # --- case6495rte (not shipped; read from the large-case directory, the
+    # Web UI case cache under the user's home, so a gate worktree finds it
+    # too): TAP 1 on all 9019 branches, which made every branch a
+    # transformer before the MATPOWER line rule; 1603 transformers after it.
+    # The file has no mpc.sparlectra.tap_changers block, so the import of
+    # the SE service releases none of them.
+    let path = large_case_path("case6495rte.m")
+      if path === nothing
+        println("      tap changer data: case6495rte SKIPPED (case6495rte not in the MATPOWER cache)")
+      else
+        net = Sparlectra.import_case(path, SparlectraConfig(); run_kind = :state_estimation).net
+        @test length(net.branchVec) == 9019
+        @test length(net.trafos) == 1603
+        @test count(br -> S._tap_release_mode(br) !== nothing, net.branchVec) == 0
+        println("      tap changer data: case6495rte RAN (", path, ")")
+      end
     end
 
     # --- typed windings against resolve_winding_taps at every step
@@ -3553,6 +3734,9 @@ function test_state_estimation_tap_completion()::Bool
     addProsumer!(net = gnet, busName = "G1", type = "SYNCHRONOUSMACHINE", p = 20.0, q = 5.0, vm_pu = 1.02)
     addPIModelTrafo!(net = gnet, fromBus = "H2", toBus = "G1", r_pu = 0.001, x_pu = 0.09, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
     gnet.branchVec[5].has_ratio_tap = true
+    gnet.branchVec[5].ratio_tap_declared = true
+    # the second gate transformer is released below as well: declared too
+    gnet.branchVec[4].ratio_tap_declared = true
     gnet.branchVec[5].tap_step = step
     # TRUE machine tap: 2 steps on the fraction grid; the machine holds
     # 1.02 pu at G1
@@ -3679,6 +3863,8 @@ function test_state_estimation_tap_completion()::Bool
     addPIModelTrafo!(net = lnet, fromBus = "H2", toBus = "G1T", r_pu = 0.001, x_pu = 0.09, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
     brl = lnet.branchVec[5]
     brl.has_ratio_tap = true
+    brl.ratio_tap_declared = true
+    lnet.branchVec[4].ratio_tap_declared = true
     brl.tap_step = step
     brl.tap_ratio = brl.ratio / (1.0 + 2 * step)
     ite, erg = runpf!(lnet, 40, 1e-12, 0; method = :rectangular)
@@ -4337,23 +4523,29 @@ function test_tap_estimation_ladder()::Bool
     nopf(ks) = t -> (m -> !(m.typ == S.PflowMeas && m.branchIdx in ks))
     keep = t -> (m -> true)
     variants = [
-      # the 3-bus net has one transformer and no mesh: without Va the phase
-      # changer of a pair has no angle anchor; a transformer without
-      # measurements at its terminals would leave bus T unobservable
+      # no angle anchor: a phase changer on a bridge has none, the radial
+      # counterpart of the mesh without P flow. The 3-bus net has one
+      # transformer and no mesh: without Va the phase changer of a pair has
+      # no angle anchor; a transformer without measurements at its
+      # terminals would leave bus T unobservable
       ("3-bus pair a + d, no angle anchor", :n3ad, Dict(2 => [4.0, 5.0]), false, keep, (2, 2)),
       ("3-bus pair a + b60, no angle anchor", :n3ab60, Dict(2 => [4.0, -4.0]), false, keep, (2, 2)),
       ("sp_case14, no measurement at br16", :case14, Dict(16 => [2.0, NaN], 17 => [-3.0, NaN]), false, nomeas(16), (16, 1)),
       # no mesh runs through a transformer of sp_case14 (the 20 kV sides hang
       # radially on br16 and br17), so no mesh variant exists there; without
-      # Va the phase changer has no angle anchor
+      # Va the phase changer has no angle anchor (it sits on a bridge)
       ("sp_case14, no angle anchor", :case14, Dict(16 => [2.0, 2.0], 17 => [-3.0, NaN]), false, keep, (16, 2)),
       ("sp_casePST, no measurement at br8", :pst, Dict(7 => [2.0], 8 => [-3.0]), false, nomeas(8), (8, 1)),
       # br8 lies in the mesh 2-3-4-5-7 (br8, br6, br3, br5, br1). Without the
       # P flow rows of the mesh nothing drops out and br8 is estimated at the
       # true step. The P injections at the mesh buses carry it: it stays at
       # the truth without the |I| rows of the mesh as well, and as a
-      # symmetrical changer without magnitude share; with the P injections
-      # gone too it ends at a wrong step without dropping out
+      # symmetrical changer without magnitude share. With the P injections
+      # of the mesh gone too, no active power row is left at the mesh (bus 2
+      # has none, and the P row of bus 9, linked to bus 2, is dropped as a
+      # partial cluster sum); the WLS from the flat start then converges to
+      # a second solution with the angle differences on br1 and br3 turned
+      # over, and br8 ends at a wrong step: set C, tested below.
       ("sp_casePST, mesh of br8 without P flow", :pst, Dict(7 => [2.0], 8 => [-3.0]), false, nopf([1, 3, 5, 6, 8]), nothing),
       ("warmup_casePST, no measurement at br8", :wpst, Dict(7 => [2.0], 8 => [-3.0]), false, nomeas(8), (8, 1)),
       ("warmup_casePST, mesh of br8 without P flow", :wpst, Dict(7 => [2.0], 8 => [-3.0]), false, nopf([1, 3, 5, 6, 8]), nothing),
@@ -4362,6 +4554,7 @@ function test_tap_estimation_ladder()::Bool
       # as on sp_casePST
       ("MicroGrid BE, mesh of br8 without P flow", :mg, Dict(8 => [2.0], 9 => [2.0], 10 => [2.0], 12 => [2.0]), false, nopf([8, 9, 11, 12]), nothing),
     ]
+    npartner = 0
     for (name, key, moves, va, filt, drop) in variants
       base = nets[key]
       base === nothing && continue
@@ -4377,14 +4570,144 @@ function test_tap_estimation_ladder()::Bool
       # with the frozen phase position of its transformer carries the note
       # :conditional and is not compared with the truth
       ok &= all(t -> t.status === :estimated && (t.note === :conditional || t.step_fixed == tr.steps[(t.branch, t.regulator)]), rest)
+      # an estimated partner on the transformer of the dropped changer
+      # (the pairs on the 3-bus net and the ratio changer of sp_case14 br16
+      # without Va) names it: the estimate holds for its transferred step
+      for o in out, t in rest
+        t.branch == o.branch || continue
+        npartner += 1
+        ok &= occursin(string(" of this transformer is not determinable (", o.reason, "), this estimate depends on its transferred step ", S._tap_notice_step(o.step_model)), t.notice)
+      end
       @test ok
       ok || println("      ladder stage 4 ", name, ": converged ", res.converged, ", ", [(t.branch, t.regulator, t.status, t.reason, t.note, t.s_est, t.step_fixed, t.step_model, get(tr.steps, (t.branch, t.regulator), NaN)) for t in res.tapEstimates])
+    end
+    # the partner notice ran on the three pairs (3-bus a + d, a + b60,
+    # sp_case14 br16)
+    @test npartner == 3
+
+    # Set C: the mesh of br8 without any active power row (no P flow and no
+    # |I| on its branches, no P injection at its buses). On sp_casePST and
+    # warmup_casePST bus 2 is linked to bus 9; the P row of bus 9 is dropped
+    # as a partial cluster sum, so no P row the estimator uses is left in the
+    # mesh 2-3-4-5-7. The precheck names that mesh (kind
+    # :mesh_without_p_measurement), on the result of runse! as well. With
+    # the P injection at bus 2 kept, the cluster 2-9 is fully measured, the
+    # warning stays off and both changers end at the true step. A P row at
+    # bus 3 or 4 alone also clears the warning, but the WLS from the flat
+    # start still finds a second solution there (J 16.2 and 2.4 at dof 34):
+    # the check is a necessary condition, not a proof of uniqueness.
+    setc_mesh = Dict(:pst => [1, 3, 5, 6, 8], :wpst => [1, 3, 5, 6, 8], :mg => [8, 9, 11, 12])
+    setc_moves = Dict(:pst => Dict(7 => [2.0], 8 => [-3.0]), :wpst => Dict(7 => [2.0], 8 => [-3.0]), :mg => Dict(8 => [2.0], 9 => [2.0], 10 => [2.0], 12 => [2.0]))
+    meshbranches(fs) = [[parse(Int, x.captures[1]) for x in eachmatch(r"(\d+) \(", f.location)] for f in something(fs, NamedTuple[]) if f.kind === :mesh_without_p_measurement]
+    for key in (:pst, :wpst, :mg)
+      base = nets[key]
+      base === nothing && continue
+      tr = _lad_truth(base, setc_moves[key], false)
+      mesh = setc_mesh[key]
+      mbus = Set(b for k in mesh for b in (Int(tr.net.branchVec[k].fromBus), Int(tr.net.branchVec[k].toBus)))
+      setc(kept) = filter(m -> !(m.typ in (S.PflowMeas, S.ImagMeas) && m.branchIdx in mesh) && !(m.typ == S.PinjMeas && m.busIdx in setdiff(mbus, kept)), tr.meas)
+      # the warning fires on set C (MicroGrid BE as well) and names the mesh
+      @test meshbranches(_lad_with(() -> validate_topology(tr.net, setc(Int[])).findings, base.config)) == [mesh]
+      # the full set has a P row in every mesh
+      @test isempty(meshbranches(_lad_with(() -> validate_topology(tr.net, tr.meas).findings, base.config)))
+      key === :mg && continue
+      C = setc(Int[])
+      res = _lad_se(_lad_release!(deepcopy(base.net), setc_moves[key]), C, base.config)
+      @test res.converged && meshbranches(res.topologyFindings) == [mesh]
+      # the changer row of br8 (in the mesh) carries the mesh notice with
+      # status and reason unchanged, br7 (outside) does not
+      meshnote(t) = occursin("mesh without P measurement: the step may not be unique", t.notice)
+      rows = [t for t in res.tapEstimates if haskey(tr.steps, (t.branch, t.regulator))]
+      @test length(rows) == 2 && all(t -> meshnote(t) == (t.branch in mesh), rows)
+      @test all(t -> t.status === :estimated && t.reason === :none, rows)
+      # regression case: P at bus 2 kept, no warning, both changers at the
+      # true step (exact data, J after the fixation at round-off level)
+      res = _lad_se(_lad_release!(deepcopy(base.net), setc_moves[key]), setc([2]), base.config)
+      rows = [t for t in res.tapEstimates if haskey(tr.steps, (t.branch, t.regulator))]
+      @test isempty(meshbranches(res.topologyFindings))
+      @test !any(meshnote, res.tapEstimates)
+      @test res.converged && length(rows) == 2 && res.tapFixation.j_after < 1e-8
+      @test all(t -> t.status === :estimated && t.step_fixed == tr.steps[(t.branch, t.regulator)], rows)
+      # documented case, set C on the truth net, nothing released. Started
+      # at the truth (the power-flow state the truth net holds) the WLS stays
+      # there: exact data, J 9.3e-26. From the flat start it converges to a
+      # second solution with the angle differences on br1 (truth +0.86 deg)
+      # and br3 (+1.50 deg) turned over (-1.08 and -0.96 deg), J 15.42 at
+      # dof 33 (flat start, tol 1e-10).
+      for fs in (false, true)
+        net = deepcopy(tr.net)
+        r = _lad_with(base.config) do
+          Logging.with_logger(Logging.NullLogger()) do
+            with_state_estimation_config(() -> runse!(net, C); max_iter = 50, tol = 1e-10, update_net = false, flatstart = fs)
+          end
+        end
+        dva(k) = (b = tr.net.branchVec[k]; (angle(r.voltages[Int(b.fromBus)]) - angle(r.voltages[Int(b.toBus)]), deg2rad(tr.net.nodeVec[Int(b.fromBus)]._va_deg - tr.net.nodeVec[Int(b.toBus)]._va_deg)))
+        @test r.converged && r.dof == 33
+        if fs
+          @test isapprox(r.objectiveJ, 15.42; atol = 0.05)
+          @test all(k -> (d = dva(k); sign(d[1]) == -sign(d[2])), (1, 3))
+        else
+          @test r.objectiveJ < 1e-20
+        end
+      end
     end
     # the conditional ratio changer of the pair a + b60 without Va: the
     # magnitude of the frozen b60 (truth -4) goes into the ratio step
     let base = nets[:n3ab60], tr = _lad_truth(base, Dict(2 => [4.0, -4.0]), false)
       row = first(t for t in _lad_se(_lad_release!(deepcopy(base.net), Dict(2 => [4.0, -4.0])), tr.meas, nothing).tapEstimates if t.regulator == 1)
       @test row.note === :conditional && occursin("frozen phase position", row.notice)
+    end
+    # The partner of a changer the recheck withdraws is estimated again with
+    # it at its transferred step. 3-bus net, ratio changer a and a
+    # quadrature changer q (2 % per step) whose reactance follows its angle
+    # (x_curve, factor 1 to 2), so the pair is separable without an angle
+    # row; truth (2, 4), start (0, 4), no Va, noisy rows (seed 4). The joint
+    # estimate gives a -1.56 and q 14.86 (fixed at the band end 10); the
+    # mirror step -10 fits as well, so q is withdrawn to its transferred 4.
+    # Until 0.60.0 a kept the -2 of the joint estimate (sigma_s 3.43), J
+    # 98.39 against 15.21 at the truth. Estimated again with q at 4 it is
+    # 2.41 with sigma_s 0.5, fixed at the truth 2, and the state is the
+    # state of the net at (2, 4) without a release
+    let
+      S = Sparlectra
+      pq(r, q) = _lad_net3([S.SETapChanger(name = "a", kind = :ratio, role = :ratio, side = :from, du = 0.0125, neutral = 0, low = -10, high = 10, step = r), S.SETapChanger(name = "q", kind = :asymmetrical, role = :phase, side = :from, du = 0.02, alpha_deg = 90.0, neutral = 0, low = -10, high = 10, step = q, x_curve = (1.0, 2.0, atand(0.2)), x_curve_form = :tan2, impedance = :x_curve)])
+      tn = pq(2, 4)
+      @test _lad_pf!(tn, nothing) == 0
+      meas = generateMeasurementsFromPF(tn; includeImag = true, noise = true, rng = Random.MersenneTwister(4))
+      res = _lad_se(_lad_release!(pq(0, 4), Dict(2 => [2.0, 0.0])), meas, nothing)
+      ra = only(t for t in res.tapEstimates if t.changer == "a")
+      rq = only(t for t in res.tapEstimates if t.changer == "q")
+      @test res.converged && rq.status === :not_estimated && rq.reason === :mirror_step_fits && rq.step_fixed == 4.0
+      @test ra.status === :estimated && ra.step_fixed == 2.0 && occursin("changer q of this transformer is not determinable (mirror_step_fits), this estimate depends on its transferred step 4", ra.notice)
+      # the row of a is the estimate with q held at 4: the run that releases
+      # a alone gives the same value and sigma_s
+      alone = only(_lad_se(_lad_release!(pq(0, 4), Dict(2 => [2.0, NaN])), meas, nothing).tapEstimates)
+      @test isapprox(ra.s_est, alone.s_est; atol = 1e-6) && isapprox(ra.sigma_s, alone.sigma_s; rtol = 1e-4)
+      ref = _lad_se(pq(2, 4), meas, nothing)
+      @test isapprox(res.voltages, ref.voltages; atol = 1e-6) && isapprox(res.objectiveJ, ref.objectiveJ; rtol = 1e-9)
+      # A partner with status out_of_range: ratio changer a (band -10 to
+      # 10, the truth net -15 to 15) at the truth 13 and a symmetrical
+      # changer d at 3, start (0, 0), exact rows with Va. The estimate of a
+      # is 13 with sigma_s 0.6, 5 sigma_s beyond the band end, so a keeps
+      # its transferred 0. Until 0.60.0 d kept the joint estimate 3.000 and
+      # its row had no notice; now d is estimated again with a at 0 (3.126,
+      # fixed at 3) and its notice names a
+      ad(r, d; lo = -10, hi = 10) = _lad_net3([S.SETapChanger(name = "a", kind = :ratio, role = :ratio, side = :from, du = 0.0125, neutral = 0, low = lo, high = hi, step = r), _lad_changer(:d)])
+      tn = ad(13, 0; lo = -15, hi = 15)
+      _lad_move!(tn, Dict(2 => [NaN, 3.0]), :auto)
+      @test _lad_pf!(tn, nothing) == 0
+      meas = generateMeasurementsFromPF(tn; includeImag = true, includeVa = true)
+      res = _lad_se(_lad_release!(ad(0, 0), Dict(2 => [13.0, 3.0])), meas, nothing)
+      ra = only(t for t in res.tapEstimates if t.changer == "a")
+      rd = only(t for t in res.tapEstimates if t.changer == "d")
+      @test res.converged && ra.status === :out_of_range && ra.step_fixed == 0.0 && isapprox(ra.s_est, 13.0; atol = 1e-6)
+      @test rd.status === :estimated && rd.step_fixed == 3.0 && occursin("changer a of this transformer is not determinable (out_of_range), this estimate depends on its transferred step 0", rd.notice)
+      alone = only(_lad_se(_lad_release!(ad(0, 0), Dict(2 => [NaN, 3.0])), meas, nothing).tapEstimates)
+      @test isapprox(rd.s_est, alone.s_est; atol = 1e-6) && isapprox(rd.sigma_s, alone.sigma_s; rtol = 1e-4)
+      dn = ad(0, 0)
+      _lad_move!(dn, Dict(2 => [NaN, 3.0]), :auto)
+      ref = _lad_se(dn, meas, nothing)
+      @test isapprox(res.voltages, ref.voltages; atol = 1e-6) && isapprox(res.objectiveJ, ref.objectiveJ; rtol = 1e-9)
     end
   end)() end
   return true
@@ -4757,7 +5080,7 @@ function test_state_estimation_tap_fallback_diagnostics_consistent()::Bool
       @test get(dd["metadata"], "se_tap_j_rise_exceeds_quantile", false) == true && get(dd["metadata"], "se_tap_sequential_fixation", false) == true
       @test occursin("kept the sequential result", log)
       legs = [t for t in dd["metadata"]["se_tap_estimates"] if get(t, "status", "") == "estimated"]
-      @test length(legs) == 2 && all(t -> t["fixed"] == true && abs(t["deviation_steps"]) <= 1, legs) && legs[1]["step_fixed"] == legs[2]["step_fixed"]
+      @test length(legs) == 2 && all(t -> t["fixed"] == true && abs(t["deviation_steps"]) <= 1, legs) && legs[1]["step_estimated"] == legs[2]["step_estimated"]
       # J of the kept pair against the solve at the model steps of the staged start
       jm = match(r"staged start, one solve with the 2 released tap\(s\) frozen \(\d+ iteration\(s\), J = ([0-9.eE+-]+)", log)
       @test jm !== nothing && dd["metadata"]["se_tap_j_after"] <= parse(Float64, jm.captures[1]) * (1.0 + 1e-6)
@@ -4850,6 +5173,7 @@ function test_state_estimation_tap_step_from_target()::Bool
       addPIModelTrafo!(net = net, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
       br = net.branchVec[5]
       br.has_ratio_tap = true
+      br.ratio_tap_declared = true
       br.tap_step = step
       br.tap_ratio = br.ratio / (1.0 + n * step)
       return net
@@ -4943,8 +5267,10 @@ function test_state_estimation_tap_fallback()::Bool
       # and start step -8, exact measurements. Pinned only by |t|, the
       # estimate goes to the mirror point across the turning point of |t|
       # at s* = -cos(60)/0.05 = -10, so s = 2 s* - (-8) = -12 gives the same
-      # |t| (|t|^2 = (s du + cos psi)^2 + sin(psi)^2). The fixation clamps it
-      # to -10, the turning point itself; the row notice and one runse!
+      # |t| (|t|^2 = (s du + cos psi)^2 + sin(psi)^2). It lies within 2
+      # sigma_s of the band end (else the status would be out_of_range), so
+      # the fixation takes the end step -10, the turning point itself; the
+      # row notice and one runse!
       # warning name the band and the mirror step -8. At -10 the step column
       # has no rank (d|t|/ds = 0, the angle has no anchor), so the recheck at
       # the estimate (0.60.0) withdraws the changer
@@ -4963,6 +5289,38 @@ function test_state_estimation_tap_fallback()::Bool
       rowM = only(t for t in resM.tapEstimates if t.role === :phase)
       @test rowM.out_of_range && rowM.status === :not_estimated && rowM.reason === :not_observable_at_estimate && rowM.step_fixed == -8.0 && isapprox(rowM.s_est, -12.0; atol = 1e-6)
       @test occursin(oorText, rowM.notice) && occursin(oorText, S._tap_out_of_range_line(rowM)) && resM.objectiveJ < 1e-8
+      # Estimate outside the band, the two verdicts of the fixation, on a
+      # ratio changer of 1.25 % on br5 whose model band -10 to 10 is too
+      # small for the truth (the truth net carries -15 to 15), start 0,
+      # exact measurements. The estimate is the truth; sigma_s scales with
+      # the row sigmas. Truth 11 with the row sigmas times 5: sigma_s 2.54,
+      # 1 step beyond the band end is 0.39 sigma_s, within 2 sigma_s, so the
+      # fixation takes the end step 10, status estimated with the notice.
+      # Truth 13 with the default sigmas: sigma_s 0.51, 3 steps are 5.9
+      # sigma_s, so the estimate is not taken over: status out_of_range,
+      # the transferred step 0 stays, not fixed, and the J of the fixed run
+      # rises (warned)
+      rat5(n, lo, hi) = (tn = deepcopy(m5.net); applyTapNameplate!(tn.branchVec[5]; tap_step = 0.0125, tap_min_step = lo, tap_max_step = hi, tap_current_step = Float64(n)); tn)
+      for (truth, f, verdict) in ((11, 5.0, :band_end), (13, 1.0, :out_of_range))
+        tr = rat5(truth, -15.0, 15.0)
+        redirect_stdout(() -> runpf!(tr; config = S._copy_powerflow_with(m5.config.powerflow; tol = 1e-10, max_iter = 40)), devnull)
+        measR = [Measurement(typ = m.typ, value = m.value, sigma = m.sigma * f, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id) for m in generateMeasurementsFromPF(tr; includeImag = true)]
+        nr = rat5(0, -10.0, 10.0)
+        setTapEstimation!(nr; trafo = 5, mode = :ratio)
+        resR = @test_logs (:warn, Regex("^runse!: tap regulator .* estimated outside its band: estimate at step $(truth) lies outside the band -10 to 10, ")) match_mode = :any S.with_sparlectra_config(m5.config) do
+          with_state_estimation_config(() -> runse!(nr, measR); max_iter = 40, tol = 1e-6, update_net = false, tap_estimation = TapEstimationConfig(fallback = false))
+        end
+        rowR = only(resR.tapEstimates)
+        @test resR.converged && rowR.out_of_range && isapprox(rowR.s_est, Float64(truth); atol = 1e-6) && rowR.sigma_s !== nothing
+        if verdict === :band_end
+          @test rowR.status === :estimated && rowR.fixed && rowR.step_fixed == 10.0 && 1.0 / rowR.sigma_s <= 2.0
+          @test occursin(r"lies outside the band -10 to 10, 0\.394 sigma_s beyond the band end step 10, fixed to the end step 10", rowR.notice)
+        else
+          @test rowR.status === :out_of_range && rowR.reason === :none && !rowR.fixed && rowR.step_fixed == 0.0 && 3.0 / rowR.sigma_s > 2.0
+          @test occursin(r"lies outside the band -10 to 10, 5\.9 sigma_s beyond the band end step 10, not taken over, the transferred step 0 stays", rowR.notice)
+          @test resR.tapFixation.j_rise_exceeds_quantile
+        end
+      end
       # Recheck at the estimate, the other two paths on the same bridge br5.
       # Mirror pair: a Delta-u
       # changer at psi 90 (1 % per step, turning point of |t| at neutral),
@@ -4992,35 +5350,108 @@ function test_state_estimation_tap_fallback()::Bool
       # (:no_angle_anchor) and the ratio changer alone absorbs the magnitude.
       # At the converged state the current flows, the Ia row anchors the
       # angle, the phase changer adds rank and is estimated again together
-      # with the ratio changer: both on the truth, J at rounding level, the
-      # :conditional note of the ratio changer is gone. The anchor is judged
-      # at the converged state too: with 1 % per phase step the mirror step
-      # -3 gives J 2.2 only, but the edge is anchored, so no mirror check
-      # runs (with the anchors of the start the changer was withdrawn there
-      # to step 0). Only
-      # the phase changer released, start 0: the start test keeps it out and
-      # the run has no tap state at all; the recheck runs on that converged
-      # run as well and estimates it at the truth
+      # with the ratio changer. That re-estimate is taken over only with
+      # sigma_s below 0.5 steps. With the default sigmas it is weak (5 % per
+      # phase step: sigma_s 0.85, 1 %: 4.16, both estimates on the truth 3),
+      # so the row sigmas here are 0.05 times the defaults: sigma_s scales
+      # with them (0.04 and 0.21), both changers on the truth, J at rounding
+      # level, the :conditional note of the ratio changer is gone. With the
+      # default sigmas at 1 % the phase changer is not taken over
+      # (:weak_at_estimate, transferred step 0) and the ratio changer keeps
+      # its first estimate, which absorbed the phase effect (step 2 here),
+      # with the :conditional note. Only the phase changer released, start
+      # 0, tight rows: the start test keeps it out and the run has no tap
+      # state at all; the recheck runs on that converged run as well and
+      # estimates it at the truth
       pair5(r, p; du) = (tn = deepcopy(m5.net); applyTapNameplate!(tn.branchVec[5]; tap_step = 0.0125, tap_min_step = -8.0, tap_max_step = 8.0, tap_current_step = Float64(r), phase_du_step = du, phase_min_step = -10.0, phase_max_step = 10.0, phase_current_step = Float64(p), psi_deg = 90.0); tn)
-      pmu5(tm) = (far = Int(tm.branchVec[5].toBus); [m for m in generateMeasurementsFromPF(tm; includeImag = true, includeVa = true, includeIa = true) if !(m.typ == S.VaMeas && m.busIdx != far) && !(m.typ == S.IaMeas && !(m.branchIdx == 5 && m.direction == :from))])
+      pmu5(tm; f = 1.0) = (far = Int(tm.branchVec[5].toBus); [m for m in generateMeasurementsFromPF(tm; includeImag = true, includeVa = true, includeIa = true, stddev = Dict(k => f * v for (k, v) in measurementStdDevs())) if !(m.typ == S.VaMeas && m.busIdx != far) && !(m.typ == S.IaMeas && !(m.branchIdx == 5 && m.direction == :from))])
       for du in (0.05, 0.01)
         tm = pair5(2, 3; du = du)
         redirect_stdout(() -> runpf!(tm; config = S._copy_powerflow_with(m5.config.powerflow; tol = 1e-10, max_iter = 40)), devnull)
         nm = pair5(0, 0; du = du)
         setTapEstimation!(nm; trafo = 5, mode = :both)
-        resB = se5(nm, pmu5(tm))
+        # with the tight rows the first round (ratio changer alone) rounds
+        # far from its continuous value: one warning about the J rise
+        resB = @test_logs (:warn, r"the simultaneous fixation raised J") match_mode = :any se5(nm, pmu5(tm; f = 0.05))
         rr = only(t for t in resB.tapEstimates if t.role === :ratio)
         rp = only(t for t in resB.tapEstimates if t.role === :phase)
         @test resB.converged && rr.status === :estimated && rr.step_fixed == 2.0 && rr.note === :none
-        @test rp.status === :estimated && rp.fixed && rp.step_fixed == 3.0 && resB.objectiveJ < 1e-8
+        @test rp.status === :estimated && rp.fixed && rp.step_fixed == 3.0 && resB.objectiveJ < 1e-8 && rp.sigma_s < 0.5
+        du == 0.01 || continue
+        nm = pair5(0, 0; du = du)
+        setTapEstimation!(nm; trafo = 5, mode = :both)
+        resW = se5(nm, pmu5(tm))
+        rr = only(t for t in resW.tapEstimates if t.role === :ratio)
+        rp = only(t for t in resW.tapEstimates if t.role === :phase)
+        @test resW.converged && rp.status === :not_estimated && rp.reason === :weak_at_estimate && rp.step_fixed == 0.0 && occursin("estimated again at step 3 with sigma_s 4.16 steps", rp.notice)
+        @test rr.status === :estimated && rr.step_fixed == 2.0 && rr.note === :conditional
+        # the phase row shows its weak re-estimate and sigma_s; ratio_est and
+        # angle_est_deg of both rows stay the composite at the steps the
+        # state was solved with (ratio estimate, phase at its transferred step)
+        sv = zeros(2)
+        sv[rr.regulator] = rr.s_est
+        sv[rp.regulator] = rp.s_fixed
+        Rw, Pw = S._tap_set_ratio_shift(S._effective_tap_changers(nm.branchVec[5]), sv)
+        @test isapprox(rp.s_est + rp.neutral_step, 3.0; atol = 0.05) && isapprox(rp.sigma_s, 4.16; atol = 0.005)
+        @test all(t -> isapprox(t.ratio_est, Rw; rtol = 1e-12) && isapprox(t.angle_est_deg, Pw; atol = 1e-10), (rr, rp))
       end
       tm = d90(3)
       redirect_stdout(() -> runpf!(tm; config = S._copy_powerflow_with(m5.config.powerflow; tol = 1e-10, max_iter = 40)), devnull)
       nm = d90(0)
       setTapEstimation!(nm; trafo = 5, mode = :pst)
-      resC = se5(nm, pmu5(tm))
+      resC = se5(nm, pmu5(tm; f = 0.05))
       rowC = only(resC.tapEstimates)
-      @test resC.converged && resC.tapFixation !== nothing && resC.tapFixation.fixed && rowC.status === :estimated && rowC.step_fixed == 3.0 && resC.objectiveJ < 1e-8
+      @test resC.converged && resC.tapFixation !== nothing && resC.tapFixation.fixed && rowC.status === :estimated && rowC.step_fixed == 3.0 && resC.objectiveJ < 1e-8 && rowC.sigma_s < 0.5
+      # The angle anchor of a first-round fixed changer is judged at the
+      # converged state: the psi 90 changer alone, truth 3, start 1, exact
+      # rows with the Va row at the far bus and the Ia row at br5, default
+      # sigmas. At the flat start the edge has no anchor: the start test
+      # gives the changer the :sign_from_start note of an unanchored phase
+      # changer, it is pinned by its magnitude effect alone and estimated
+      # (sigma_s about 3.8, no bound in the first round; from start 2 the
+      # edge is anchored already at the start). At the converged state the Ia row
+      # anchors the edge, so no mirror check runs and the changer stays
+      # fixed at 3. The mirror step -3 fits within the J difference of 9
+      # (the run with the net at -3 gives J 2.2), so a mirror check with
+      # the anchors of the start would have withdrawn it
+      nm = d90(1)
+      setTapEstimation!(nm; trafo = 5, mode = :pst)
+      measK = pmu5(tm)
+      resK = se5(nm, measK)
+      rowK = only(resK.tapEstimates)
+      @test resK.converged && rowK.status === :estimated && rowK.fixed && rowK.step_fixed == 3.0 && rowK.reason === :none && rowK.note === :sign_from_start && resK.objectiveJ < 1e-8
+      @test se5(d90(-3), measK).objectiveJ < S._TAP_MIRROR_DJ
+    end
+    # A weak re-estimate is not taken over: the gate net with a 10 kV bus
+    # behind a bridge transformer (ratio changer of 0.625 %, truth step 2,
+    # start 0, 8 MW load), noisy rows (seed 11) without the voltage of the
+    # cut-off bus. The start test keeps the changer out
+    # (:radial_no_voltage_pin); at the converged state the losses of the
+    # load give its column rank, and the joint estimate puts it at step
+    # 6.33 with sigma_s 6.76 steps, above the bound of 0.5. The changer
+    # keeps its transferred step 0 with :weak_at_estimate, the notice names
+    # the estimate and sigma_s. Before the bound it was fixed at 6 (J 49.6)
+    begin
+      radial() = (tn = _tap_gate_net(); addBus!(net = tn, busName = "L3", vn_kV = 10.0); addProsumer!(net = tn, busName = "L3", type = "ENERGYCONSUMER", p = 8.0, q = 2.0); addPIModelTrafo!(net = tn, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1); tn.branchVec[5].has_ratio_tap = true; tn.branchVec[5].ratio_tap_declared = true; tn.branchVec[5].tap_step = 0.00625; tn)
+      tw = radial()
+      tw.branchVec[5].tap_ratio = tw.branchVec[5].ratio / (1.0 + 2 * 0.00625)
+      measW = [m for m in _tap_truth_meas(tw; noise = true) if !(m.typ == Sparlectra.VmMeas && m.busIdx == 5)]
+      nw = radial()
+      setTapEstimation!(nw; trafo = 5, mode = :ratio)
+      resW = @test_logs (:info, r"^runse!: recheck at the estimate: tap regulator .* estimated again at step 6\.33\d with sigma_s 6\.76 steps \(bound 0\.5\), not taken over \(weak_at_estimate\), the transferred step 0 stays$") match_mode = :any with_state_estimation_config(max_iter = 40, tol = 1e-10) do
+        runse!(nw, measW)
+      end
+      rowW = only(resW.tapEstimates)
+      @test resW.converged && rowW.status === :not_estimated && rowW.reason === :weak_at_estimate && rowW.step_fixed == 0.0 && !rowW.fixed
+      @test occursin("estimated again at step 6.33", rowW.notice) && occursin("sigma_s 6.76 steps", rowW.notice)
+      # the row keeps the continuous estimate and its sigma_s; the final
+      # state comes from a new solve with the transferred step, so it is the
+      # state of the same net with the changer not released, within the
+      # tolerance of the solves (1e-6, the floor at jac_eps; the two runs
+      # stop after different iterations, max |dV| 1.1e-8)
+      @test isapprox(rowW.s_est, 6.33; atol = 0.005) && isapprox(rowW.sigma_s, 6.76; atol = 0.005) && rowW.s_fixed == 0.0
+      resN = with_state_estimation_config(() -> runse!(radial(), measW); max_iter = 40, tol = 1e-10)
+      @test isapprox(resW.voltages, resN.voltages; atol = 1e-6) && isapprox(resW.objectiveJ, resN.objectiveJ; rtol = 1e-9)
     end
 
     # The bad-data rounds of the SE service (0.60.0) on a
@@ -5074,8 +5505,11 @@ function test_state_estimation_tap_fallback()::Bool
       SparlectraApp._se_generate_measurement_set(case, set, SparlectraApp.MeasurementGeneratorOptions(; noise = true, gross_k = 0.0, tap_steps = 0.0,
         include_i = false, sigma_u_pct = 0.5, sigma_i_pct = 1.0, sigma_p_pct = 1.0, sigma_q_pct = 1.0,
         sigma_ia_deg = 0.0, seed = 42))
-      # one iteration is not enough for anything: run 1 and run 2 both fail,
-      # and the status names both
+      # one iteration is not enough for anything: the staged start with the
+      # taps frozen fails (the case file stores no voltages, so the start
+      # ladder has no second try), the released run is not started (on
+      # case6495rte it sat in the rank test for hours), the run without tap
+      # estimation fails too, and the status names both
       res = Logging.with_logger(Logging.NullLogger()) do
         redirect_stdout(devnull) do
           SparlectraApp._run_state_estimation_service(case, cfg, joinpath(d, "run"), "tapfb", set; max_iter = 1)
@@ -5084,9 +5518,10 @@ function test_state_estimation_tap_fallback()::Bool
       dd = SparlectraApp.to_dict(res)
       log = read(joinpath(d, "run", "run.log"), String)
       @test dd["status"] == "failed" && get(dd["metadata"], "se_tap_fallback_used", false) == true
-      @test occursin("tap estimation: run 1 not converged (estimation_not_converged, 1 iterations), falling back", log)
-      @test occursin("run 2 without tap estimation: not converged (not_converged, 1 iterations)", log)
-      @test occursin("run 1 with tap estimation (estimation_not_converged, 1 iterations), run 2 without tap estimation (not_converged, 1 iterations)", dd["message"])
+      @test dd["metadata"]["se_tap_fallback_reason"] == "staged_not_converged" && dd["metadata"]["se_tap_staged_start_from"] == "flat"
+      @test occursin("tap estimation: the staged start did not converge with the taps frozen (1 iteration(s)); the released run is not started", log)
+      @test occursin("run 2 without tap estimation: not converged (not_converged, 1 iterations)", log) && !occursin("run 1 not converged", log)
+      @test occursin("the staged start with the taps frozen (1 iterations), run 2 without tap estimation (not_converged, 1 iterations)", dd["message"])
       # the same with the fallback switched off: the first run only
       resNo = Logging.with_logger(Logging.NullLogger()) do
         redirect_stdout(devnull) do
@@ -5257,6 +5692,22 @@ function test_state_estimation_tap_fallback()::Bool
       # and the run history must not call a state estimation "rectangular"
       # (as seen): the method comes from the run kind
       @test SparlectraApp._powerflow_run_index_solver(res) == "wls"
+
+      # The start ladder through the service, cap 2 from the flat start:
+      # the staged start converges from the case voltages, the released run
+      # fails at cap 2 and falls back, and that run converges on its second
+      # try from the case voltages (without the ladder the staged start
+      # fails here, the warmup_casePST block below)
+      res_sl = redirect_stdout(devnull) do
+        SparlectraApp._run_state_estimation_service(shipped, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "sl"), "tapsl188", set; max_iter = 2, flatstart = true)
+      end
+      dsl = SparlectraApp.to_dict(res_sl)
+      logsl = read(joinpath(d, "sl", "run.log"), String)
+      @test dsl["status"] == "succeeded"
+      @test dsl["metadata"]["se_tap_staged_start_from"] == "stored_after_flat" && dsl["metadata"]["se_start"] == "stored_after_flat"
+      @test occursin("tap estimation: staged start: the WLS from the flat start did not converge; second try from the voltages stored in the case", logsl)
+      @test occursin(r"staged start, one solve with the \d+ released tap\(s\) frozen \(\d+ iteration\(s\) from the case voltages", logsl)
+      @test occursin("start: the WLS from the flat start did not converge; second try from the voltages stored in the case (state_estimation.start_ladder); the result run starts from the case voltages", logsl)
     end
 
     # The acceptance rule of the staged start (worse_fit), the second
@@ -5295,6 +5746,18 @@ function test_state_estimation_tap_fallback()::Bool
       @test occursin(SparlectraApp._SE_TAP_REJECTED_NOTE, SparlectraApp._webui_se_summary(dd))
       @test occursin(SparlectraApp._webui_escape(SparlectraApp._SE_TAP_REJECTED_NOTE), SparlectraApp._webui_se_tap_section(dd))
       @test occursin("not estimated (fallback worse fit)", SparlectraApp._webui_se_tap_section(dd))
+      # the result is the run without tap estimation, bit for bit: J,
+      # dof, iterations and the state file equal those of the same run with
+      # tap estimation switched off (the repeat starts from the start state
+      # and configuration of the round, not from the staged pre-solve).
+      resOff = redirect_stdout(devnull) do
+        SparlectraApp._run_state_estimation_service(offgrid, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
+          joinpath(d, "off"), "offgrid_off", set; max_iter = 50, config_overrides = Dict{String,Any}("state_estimation.tap_estimation.enabled" => false))
+      end
+      ddOff = SparlectraApp.to_dict(resOff)
+      @test ddOff["status"] == "succeeded" && get(ddOff["metadata"], "se_tap_fallback_used", false) == false
+      @test dd["metadata"]["se_objective"] === ddOff["metadata"]["se_objective"] && dd["metadata"]["se_dof"] == ddOff["metadata"]["se_dof"] && dd["metadata"]["se_iterations"] == ddOff["metadata"]["se_iterations"]
+      @test read(joinpath(d, "rej", "se_state.csv"), String) == read(joinpath(d, "off", "se_state.csv"), String)
       # fallback off: the first run unvarnished, the fixed estimate
       resNo = redirect_stdout(devnull) do
         SparlectraApp._run_state_estimation_service(offgrid, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH,
@@ -5348,7 +5811,7 @@ function test_state_estimation_tap_fallback()::Bool
       reg16(m) = only(t for t in m["se_tap_estimates"] if t["branch"] == 16 && t["role"] == "ratio")
       @test (reg16(mg)["status"], reg16(mg)["fixed"], reg16(mg)["deviation_steps"]) == ("estimated", true, 2)
       @test isapprox(mg["se_objective"], mw["se_objective"]; rtol = 1e-8) && mg["se_dof"] == mw["se_dof"]
-      @test [(t["branch"], t["regulator"], t["step_fixed"]) for t in mg["se_tap_estimates"]] == [(t["branch"], t["regulator"], t["step_fixed"]) for t in mw["se_tap_estimates"]]
+      @test [(t["branch"], t["regulator"], t["step_estimated"]) for t in mg["se_tap_estimates"]] == [(t["branch"], t["regulator"], t["step_estimated"]) for t in mw["se_tap_estimates"]]
     end
 
     # the helpers the fallback is built from
@@ -5362,6 +5825,7 @@ end
   @testset "State estimation" begin (function ()
     tests = [
       ("WLS", test_state_estimation_wls_first_version),
+      ("Start ladder", test_state_estimation_start_ladder),
       ("Measurement add helpers", test_state_estimation_measurement_add_helpers),
       ("Passive bus zero injection helpers", test_state_estimation_passive_bus_zero_injection_helpers),
       ("Zero injection as equality constraint", test_state_estimation_zero_injection_constraint),

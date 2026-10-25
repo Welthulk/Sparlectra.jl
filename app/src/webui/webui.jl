@@ -151,6 +151,7 @@ include("options.jl")
 include("forms.jl")
 include("docs.jl")
 include("help_excerpts.jl")  # generated from docs/src by tools/generate_webui_help_excerpts.jl
+include("help_math.jl")  # formulas of the help texts as HTML text
 include("operations.jl")
 include("views.jl")
 include("handlers.jl")

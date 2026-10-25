@@ -62,6 +62,13 @@ Fields:
 - `seed`: RNG seed; the same seed regenerates the identical set.
 - `critical_count`: number of rows to make critical by targeted thinning
   (`0` = off; must be zero or positive).
+- `resolution_u_kv`, `resolution_p_mw`, `resolution_q_mvar`,
+  `resolution_i_a`, `resolution_angle_deg`: display resolution of the
+  generated values, as an online system delivers them (U in kV, P in MW,
+  Q in Mvar, I in A, voltage and current angles in degrees). `0.0` (the
+  default) keeps the value unrounded; a positive step rounds each telemetry
+  value after noise and bad data to a multiple of the step. Written sigmas
+  stay as configured. Must be zero or positive.
 """
 Base.@kwdef struct MeasurementGeneratorOptions
   noise::Bool
@@ -83,13 +90,41 @@ Base.@kwdef struct MeasurementGeneratorOptions
   passive_as_zi::Union{Nothing,Bool} = nothing
   seed::Int = 42
   critical_count::Int = 0
+  resolution_u_kv::Float64 = 0.0
+  resolution_p_mw::Float64 = 0.0
+  resolution_q_mvar::Float64 = 0.0
+  resolution_i_a::Float64 = 0.0
+  resolution_angle_deg::Float64 = 0.0
   # the positional inner constructor is the one @kwdef's keyword constructor
   # calls, so the validation below runs for every construction path
-  function MeasurementGeneratorOptions(noise, gross_k, gross_count, tap_steps, tap_count, include_i, sigma_u_pct, sigma_i_pct, sigma_p_pct, sigma_q_pct, sigma_ia_deg, truth_source, run_id, run_root, flow_ends, passive_sigma, passive_as_zi, seed, critical_count)
-    opts = new(noise, gross_k, gross_count, tap_steps, tap_count, include_i, sigma_u_pct, sigma_i_pct, sigma_p_pct, sigma_q_pct, sigma_ia_deg, truth_source, run_id, run_root, flow_ends, passive_sigma, passive_as_zi, seed, critical_count)
+  function MeasurementGeneratorOptions(noise, gross_k, gross_count, tap_steps, tap_count, include_i, sigma_u_pct, sigma_i_pct, sigma_p_pct, sigma_q_pct, sigma_ia_deg, truth_source, run_id, run_root, flow_ends, passive_sigma, passive_as_zi, seed, critical_count, resolution_u_kv, resolution_p_mw, resolution_q_mvar, resolution_i_a, resolution_angle_deg)
+    opts = new(noise, gross_k, gross_count, tap_steps, tap_count, include_i, sigma_u_pct, sigma_i_pct, sigma_p_pct, sigma_q_pct, sigma_ia_deg, truth_source, run_id, run_root, flow_ends, passive_sigma, passive_as_zi, seed, critical_count, resolution_u_kv, resolution_p_mw, resolution_q_mvar, resolution_i_a, resolution_angle_deg)
     _validate_generator_options(opts)
     return opts
   end
+end
+
+## The resolution of the generator options as the steps per measurement
+## type that _round_measurement_to_resolution reads; empty without rounding.
+function _generator_resolution(opts::MeasurementGeneratorOptions)::Dict{MeasurementType,Float64}
+  r = Dict{MeasurementType,Float64}()
+  for (types, step) in (((VmMeas,), opts.resolution_u_kv), ((PinjMeas, PflowMeas), opts.resolution_p_mw), ((QinjMeas, QflowMeas, ShuntQMeas), opts.resolution_q_mvar), ((ImagMeas,), opts.resolution_i_a), ((VaMeas, IaMeas), opts.resolution_angle_deg))
+    step > 0.0 || continue
+    for t in types
+      r[t] = step
+    end
+  end
+  return r
+end
+
+## The provenance line of a rounded set, next to the noise line: the steps
+## that are set, and that the sigma column was not widened.
+function _generator_resolution_comment(opts::MeasurementGeneratorOptions)::String
+  parts = String[]
+  for (label, step, unit) in (("U", opts.resolution_u_kv, "kV"), ("P", opts.resolution_p_mw, "MW"), ("Q", opts.resolution_q_mvar, "Mvar"), ("I", opts.resolution_i_a, "A"), ("angle", opts.resolution_angle_deg, "deg"))
+    step > 0.0 && push!(parts, "$(label) $(step) $(unit)")
+  end
+  return string("resolution: ", join(parts, ", "), " (values rounded after noise, sigma as configured)")
 end
 
 ## The argument checks of the generator, run at construction of the options:
@@ -101,6 +136,9 @@ function _validate_generator_options(opts::MeasurementGeneratorOptions)::Nothing
   opts.passive_sigma > 0.0 || throw(ArgumentError("passive-node balance sigma must be positive"))
   opts.gross_count >= 1 || throw(ArgumentError("bad data count must be at least 1"))
   opts.tap_count >= 1 || throw(ArgumentError("tap deviation transformer count must be at least 1"))
+  for (name, r) in (("U", opts.resolution_u_kv), ("P", opts.resolution_p_mw), ("Q", opts.resolution_q_mvar), ("I", opts.resolution_i_a), ("angle", opts.resolution_angle_deg))
+    (isfinite(r) && r >= 0.0) || throw(ArgumentError("resolution $(name) must be zero (no rounding) or positive"))
+  end
   if opts.truth_source === :from_run
     # a run state is a finished snapshot: the generator never re-solves it,
     # so a tap deviation (which needs a fresh solve of the shifted model)
@@ -172,6 +210,7 @@ itself is already validated by the constructor of `opts`.
 """
 function _se_generate_measurement_set(case_path::AbstractString, out_path::AbstractString, opts::MeasurementGeneratorOptions; config_file::AbstractString = DEFAULT_SPARLECTRA_CONFIG_PATH)
   (; noise, gross_k, gross_count, tap_steps, tap_count, include_i, sigma_u_pct, sigma_i_pct, sigma_p_pct, sigma_q_pct, sigma_ia_deg, truth_source, run_id, run_root, flow_ends, passive_sigma, passive_as_zi, seed, critical_count) = opts
+  resolution = _generator_resolution(opts)
   # the generator honors the configuration file of the session and the
   # case's own settings the same way a run does (the Web UI passes its
   # provisioned file, so output.csv_format set there reaches the set)
@@ -200,7 +239,8 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     # release (a non-empty changer set, _tap_release_mode) fill first, then
     # releasable machine transformers, then any transformer at all. A
     # transformer of the last class has no tap changer (an empty set, for
-    # example a CGMES transformer without changer), so it is skipped with a
+    # example a CGMES transformer without changer or a MATPOWER transformer
+    # without mpc.sparlectra.tap_changers row), so it is skipped with a
     # note and the set carries no deviation there
     estimable(br) = _tap_release_mode(br) !== nothing
     pool1 = [k for k in eachindex(net.branchVec) if (br = net.branchVec[k]; br.ratio != 0.0 && estimable(br) && _branch_terminal_state(br) == :closed && !_is_machine_transformer(net, k))]
@@ -551,6 +591,20 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       gross_note = ", bad data +$(gross_k) sigma on $(length(gross_ids)) row(s): $(join(gross_ids, " "))"
     end
   end
+  # display resolution of an online system: every telemetry value is
+  # rounded after noise and bad data (a wrong reading is delivered in the
+  # same steps). Zero-injection constraints and passive balance rows are no
+  # telemetry and stay as they are; the sigma stays the configured one.
+  # Without a resolution nothing is touched, so the set is the same bit
+  # for bit as before the option existed.
+  if !isempty(resolution)
+    passiveRound = passive_as_zi ? Set{Int}() : Set(passiveBuses)
+    for (ri, m) in enumerate(meas)
+      m.zero_injection && continue
+      (m.busIdx !== nothing && m.busIdx in passiveRound && m.typ in (PinjMeas, QinjMeas)) && continue
+      meas[ri] = _round_measurement_to_resolution(net, m, resolution)
+    end
+  end
   append!(net.measurements, meas)
   level_rows = count(m -> get(level_sigma, m.id, NaN) == m.sigma, meas)
   # record the tap positions the set was generated from as a structured
@@ -575,6 +629,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   # to guess from a suspiciously small J.
   noise_comment = noise ? "noise: gaussian (sigma U $(sigma_u_pct)%, P $(sigma_p_pct)%, Q $(sigma_q_pct)% of reading)" : "noise: none (ideal values, J is 0 by construction)"
   gencomments = String["generator: v2", "seed: $(seed)", noise_comment, truth_comment, "flow_ends: $(flow_ends)"]
+  isempty(resolution) || push!(gencomments, _generator_resolution_comment(opts))
   level_rows > 0 && push!(gencomments, "sigma by voltage level: $(level_rows) row(s) take the sigma of state_estimation.sigma_by_voltage_level")
   isempty(passive_comment) || push!(gencomments, passive_comment)
   append!(gencomments, critical_comments)

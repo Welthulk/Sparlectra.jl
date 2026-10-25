@@ -325,6 +325,8 @@ function _move_model_step!(br::Branch, which::Symbol, target::Float64; window::T
   end
   best == m.step && return false
   m.step = best
+  # the controller set this step: no longer the assumed middle position
+  _clear_tap_step_assumed!(br, which)
   resolve_branch_taps!(br, br.tap_winding; tap_changer_model = br.tap_correction)
   return true
 end
@@ -534,13 +536,18 @@ end
 # of the controller's phase tap model where it has one (the next solve
 # re-stamps the Y-bus from x_pu). A modelled branch moves its model steps
 # instead (_set_model_tap_steps!). control_apply_update! and the carry of a
-# sequential QSTS run (qsts_sequential.jl) write through these.
+# sequential QSTS run (qsts_sequential.jl) write through these. A write
+# that moves the tap takes the mark of an assumed step off the changer
+# (_clear_tap_step_assumed!); the probes write the fields directly and put
+# them back, so they keep it.
 function _set_ratio_tap!(br::Branch, ratio::Float64)
+  ratio == br.tap_ratio || _clear_tap_step_assumed!(br, :ratio)
   br.tap_ratio = ratio
   br.ratio = ratio
   return nothing
 end
 function _set_phase_shift!(net::Net, ctrl::PowerTransformerControl, br::Branch, shift_deg::Float64)
+  shift_deg == br.phase_shift_deg || _clear_tap_step_assumed!(br, :phase)
   br.phase_shift_deg = shift_deg
   br.angle = shift_deg
   x_new = _phase_tap_reactance_at(net, ctrl, shift_deg)
@@ -555,6 +562,7 @@ function _set_model_tap_steps!(br::Branch, ratio_step::Int, phase_step::Int)
     step == typemin(Int) && continue
     m = _derived_tap_model(br, which)
     m === nothing && continue
+    m.step == step || _clear_tap_step_assumed!(br, which)
     m.step = step
     changed = true
   end
@@ -583,7 +591,9 @@ function control_apply_update!(ctrl::PowerTransformerControl, net::Net, ::Abstra
         # a modelled follower moves the same number of steps in the
         # direction of the master's ratio change on its own step sign
         nsteps = _ratio_steps_moved(br, update.old_ratio, update.new_ratio)
-        _shift_model_steps!(fbr, :ratio, nsteps * Int(sign(fmodel.tapStepPercent == 0.0 ? 1.0 : fmodel.tapStepPercent)))
+        # the probes shift and shift back through the same helper, so the
+        # mark of an assumed step comes off here, not in the helper
+        _shift_model_steps!(fbr, :ratio, nsteps * Int(sign(fmodel.tapStepPercent == 0.0 ? 1.0 : fmodel.tapStepPercent))) && _clear_tap_step_assumed!(fbr, :ratio)
         continue
       end
       if br.tap_ratio_points !== nothing || fbr.tap_ratio_points !== nothing

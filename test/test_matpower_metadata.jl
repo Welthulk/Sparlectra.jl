@@ -222,6 +222,61 @@ mpc.dcline = [
     @test length(net_kind.linesAC) == 0
     @test length(net_kind.trafos) == 1
 
+    # missing bus_name with apply_bus_names (0.60.0): the fallback warns once
+    # per case and process, a repeated import of the same case logs it at
+    # debug level only (the Web UI imports a case for the start page and for
+    # every run), a different case warns again. Case names unique to this
+    # check, so no earlier import has used up the warning.
+    nobus(case) = Sparlectra.MatpowerIO.MatpowerCase(case, mpc.baseMVA, mpc.bus, mpc.gen, mpc.branch, nothing, nothing)
+    fallback = (:warn, r"bus_name metadata missing")
+    @test_logs fallback match_mode = :any Sparlectra.createNetFromMatPowerCase(mpc = nobus("bus_name_once_a"), apply_bus_names = true)
+    @test_logs min_level = Logging.Warn Sparlectra.createNetFromMatPowerCase(mpc = nobus("bus_name_once_a"), apply_bus_names = true)
+    @test_logs (:debug, r"bus_name metadata missing") match_mode = :any min_level = Logging.Debug Sparlectra.createNetFromMatPowerCase(mpc = nobus("bus_name_once_a"), apply_bus_names = true)
+    @test_logs fallback match_mode = :any Sparlectra.createNetFromMatPowerCase(mpc = nobus("bus_name_once_b"), apply_bus_names = true)
+
+    # line or transformer without a branch kind (0.60.0): TAP 0 or exactly 1,
+    # SHIFT 0 and one voltage level is a line (case6495rte writes TAP 1 on
+    # every line); TAP 1 between 110 and 20 kV is a transformer with ratio 1,
+    # TAP 1 with a shift and any other TAP are transformers. Both readers
+    # agree, an explicit kind still wins, and the Y-bus equals the one of the
+    # rows with plain MATPOWER semantics (the kind changes no admittance).
+    mktempdir() do dir
+      path_kind = joinpath(dir, "kind_rule.m")
+      write(path_kind, """
+      function mpc = kind_rule
+      mpc.version = '2';
+      mpc.baseMVA = 100;
+      mpc.bus = [
+      1 3 0 0 0 0 1 1.0 0 110 1 1.1 0.9;
+      2 1 20 5 0 0 1 1.0 0 110 1 1.1 0.9;
+      3 1 10 2 0 0 1 1.0 0 20 1 1.1 0.9;
+      ];
+      mpc.gen = [
+      1 30 0 100 -100 1.0 100 1 100 0 0 0 0 0 0 0 0 0 0 0 0;
+      ];
+      mpc.branch = [
+      1 2 0.01 0.05 0.02 100 0 0 1 0 1 -360 360;
+      2 3 0.005 0.08 0 100 0 0 1 0 1 -360 360;
+      1 2 0.01 0.06 0 100 0 0 1 2 1 -360 360;
+      1 2 0.02 0.07 0.01 100 0 0 0 0 1 -360 360;
+      1 2 0.01 0.05 0 100 0 0 0.98 0 1 -360 360;
+      ];
+      """)
+      cfg_kind = Sparlectra.active_sparlectra_config()
+      net_dir = Sparlectra.createNetFromMatPowerFile(filename = path_kind)
+      net_conv = Sparlectra.build_net(Sparlectra.convert_case(Sparlectra.MatpowerAdapter(), Sparlectra.MatpowerIO.read_case(path_kind; legacy_compat = true), Sparlectra.matpower_adapter_options(cfg_kind)); config = cfg_kind)
+      for n in (net_dir, net_conv)
+        @test [br.ratio != 0.0 for br in n.branchVec] == [false, true, true, false, true]
+        @test n.branchVec[2].ratio == 1.0
+        @test maximum(abs.(Matrix(createYBUS(net = n, sparse = true)) .- _mp_rows_ybus(path_kind))) <= 1e-12
+      end
+      # an explicit kind overrides the rule in both directions
+      mpc_kind = Sparlectra.MatpowerIO.read_case(path_kind)
+      mpc_kind = Sparlectra.MatpowerIO.MatpowerCase(mpc_kind.name, mpc_kind.baseMVA, mpc_kind.bus, mpc_kind.gen, mpc_kind.branch, nothing, nothing, nothing, ["T", "T", "T", "L", "T"], nothing, nothing)
+      net_k = Sparlectra.createNetFromMatPowerCase(mpc = mpc_kind, apply_branch_kind = true)
+      @test [br.ratio != 0.0 for br in net_k.branchVec] == [true, true, true, false, true]
+    end
+
     @testset "Sparlectra transformer-loss extension" begin (function ()
       net_loss = Sparlectra.Net(name = "loss_extension", baseMVA = 100.0)
       Sparlectra.addBus!(net = net_loss, busName = "FROM", vn_kV = 110.0, oBusIdx = 1)
@@ -403,6 +458,33 @@ mpc.sparlectra.tap_changers = [
           @test (n1.tap_ratio, n1.ratio_step_assumed, n1.phase_step_assumed) == (1.0, true, false)
           @test (n2.phase_shift_deg, n2.phase_step_assumed, n2.ratio_step_assumed) == (-2.0, true, false)
         end
+        # MATPOWER has no mark for it: the export writes the middle position
+        # as the step with one warning per transformer, and the reimport
+        # reads it as a transferred step with the same taps
+        pathw = joinpath(dir, "case_taps_nostep_out.m")
+        assumed_warn(br, which) = "MATPOWER export: transformer $(br.comp.cName): $(which) step not transferred, the export writes the assumed middle position"
+        w1 = only(b for b in netn.branchVec if b.ratio_step_assumed)
+        w2 = only(b for b in netn.branchVec if b.phase_step_assumed)
+        wlogs, _ = Test.collect_test_logs() do
+          Sparlectra.writeMatpowerCasefile(netn, pathw; write_solution = false)
+        end
+        wmsgs = [string(l.message) for l in wlogs if l.level == Base.CoreLogging.Warn && occursin("step not transferred", string(l.message))]
+        @test sort(wmsgs) == sort([assumed_warn(w1, "ratio"), assumed_warn(w2, "phase")])
+        netw = Sparlectra.createNetFromMatPowerFile(filename = pathw)
+        @test !any(b -> b.ratio_step_assumed || b.phase_step_assumed, netw.branchVec)
+        @test [(b.tap_ratio, b.phase_shift_deg) for b in netw.branchVec] == [(b.tap_ratio, b.phase_shift_deg) for b in netn.branchVec]
+        # a tap controller that moves the assumed ratio changer takes its
+        # mark off: the step it reaches is a step, only the phase changer
+        # is still warned about
+        netc = deepcopy(netn)
+        wc1 = only(b for b in netc.branchVec if b.ratio_step_assumed)
+        Sparlectra.addPowerTransformerControl!(netc; trafo = string(wc1.branchIdx), mode = :voltage, target_bus = only(k for (k, v) in netc.busDict if v == Int(wc1.toBus)), target_vm_pu = 1.04, deadband_vm_pu = 2e-3)
+        @test Sparlectra.run_sparlectra(net = netc, config = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 30, tol = 1e-9), output = OutputConfig(logfile_results = :off, startup_latency_hint = false))).numerical_converged
+        @test wc1.tap_ratio != 1.0 && !wc1.ratio_step_assumed
+        clogs, _ = Test.collect_test_logs() do
+          Sparlectra.writeMatpowerCasefile(netc, joinpath(dir, "case_taps_ctl_out.m"); write_solution = false)
+        end
+        @test [string(l.message) for l in clogs if l.level == Base.CoreLogging.Warn && occursin("step not transferred", string(l.message))] == [assumed_warn(w2, "phase")]
 
         # the live positions enter the power flow and the generated flows
         # stay consistent with the injections (branchFlow_pu live-tap rule)

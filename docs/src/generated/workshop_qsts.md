@@ -42,13 +42,15 @@ not in the series.
 
 ````@example workshop_qsts
 using Sparlectra
+using Printf
 
 # the shipped series and the controller file next to it
 data = joinpath(dirname(dirname(pathof(Sparlectra))), "data", "qsts")
 series = read_scf_series(joinpath(data, "sp_case14_day.qsts.zip"))
 control_file = joinpath(data, "sp_case14_day.control.yaml")
-println(series.name, ": ", length(series.steps), " steps of ", series.step_minutes, " min, ", series.steps[1].label, " to ", series.steps[end].label, ", ", sum(length, series.ops), " patch operations")
-println("step 57 (", series.steps[57].label, "): ", only(filter(op -> op.op === :status, series.ops[57])))
+println("series ", series.name, ": ", length(series.steps), " steps of ", Int(series.step_minutes), " min (", series.steps[1].label, " to ", series.steps[end].label, "), ", sum(length, series.ops), " patch operations")
+outage = only(filter(op -> op.op === :status, series.ops[57]))
+println("step 57 (", series.steps[57].label, "), status operation: ", outage.target, " ", outage.id, " status set to ", outage.value, " (0 = out of service)")
 @assert length(series.steps) == 96 && series.step_minutes == 15.0
 @assert sum(length, series.ops) == 968
 @assert [k for k in eachindex(series.ops) if any(op -> op.op === :status, series.ops[k])] == collect(57:64)
@@ -102,10 +104,14 @@ labels = [s.label for s in plain.steps]
 vm_moorau = qstsValues(plain, "8", "vm_pu")
 vm_wehrden = qstsValues(plain, "14", "vm_pu")
 line_out = findall(isnan, qstsValues(plain, "26", "p_from_mw"))
-println("mode A: ", count(s -> s.status === :solved, plain.steps), " of ", length(plain.steps), " steps solved, controllers ", unique(s.control_status for s in plain.steps))
-println("line 26 without values: ", labels[first(line_out)], " to ", labels[last(line_out)])
-println("Moorau_20 below 0.99 pu: ", count(<(0.99), vm_moorau), " steps (", labels[findfirst(<(0.99), vm_moorau)], " to ", labels[findlast(<(0.99), vm_moorau)], "), lowest ", round(minimum(vm_moorau); digits = 4), " pu")
-println("Wehrden_20 below 0.99 pu: ", count(<(0.99), vm_wehrden), " steps, highest ", round(maximum(vm_wehrden); digits = 4), " pu")
+println("mode A: ", count(s -> s.status === :solved, plain.steps), " of ", length(plain.steps), " steps solved, controller status ", join(unique(s.control_status for s in plain.steps), ", "))
+println("branch 26 Ostheim_Neuwiese_1, P at the from side: no value from ", labels[first(line_out)], " to ", labels[last(line_out)], " (out of service)")
+println("bus voltage Vm [pu] over the day, mode A without controllers (power flow result):")
+println("  bus                 lowest   highest   steps below 0.99 pu")
+for (name, vm) in (("Moorau_20 (bus 8)", vm_moorau), ("Wehrden_20 (bus 14)", vm_wehrden))
+    @printf("  %-19s %6.4f   %6.4f    %2d\n", name, minimum(vm), maximum(vm), count(<(0.99), vm))
+end
+println("  Moorau_20 below 0.99 pu from ", labels[findfirst(<(0.99), vm_moorau)], " to ", labels[findlast(<(0.99), vm_moorau)])
 @assert all(s -> s.status === :solved && s.control_status === :none, plain.steps)
 @assert line_out == collect(57:64)
 @assert findall(<(0.99), vm_moorau) == collect(73:83)
@@ -137,10 +143,12 @@ and bank of its end. A controller has the address `<actuator>#<kind>`:
 config_b = load_sparlectra_config(control_file; reload = true, overrides = Dict("qsts" => Dict("mode" => "sequential")))
 day = redirect_stdout(() -> runQsts(series; config = config_b), devnull)
 println("mode B: ", count(s -> s.status === :solved, day.steps), " of ", length(day.steps), " steps solved")
+println("controller position, mode B (OLTC: tap step, 0 at ratio 1.0; MSC: blocks in service):")
+println("  controller  name               at 00:00   changed to")
 for (id, name) in zip(day.elements.controller_ids, day.elements.controller_names)
     position = qstsValues(day, id, "position")
     changes = [k for k in 2:length(position) if position[k] != position[k - 1]]
-    println(rpad(id, 9), rpad(name, 20), "step 1: ", Int(position[1]), ", changes at ", join([string(day.steps[k].label, " to ", Int(position[k])) for k in changes], ", "))
+    println("  ", rpad(id, 12), rpad(name, 19), lpad(Int(position[1]), 8), "   ", join([string(Int(position[k]), " at ", day.steps[k].label) for k in changes], ", "))
 end
 @assert day.mode === :sequential && all(s -> s.status === :solved, day.steps)
 @assert day.elements.controller_ids == ["30#OLTC", "31#OLTC", "8#MSC"]
@@ -165,13 +173,18 @@ end of the step before, with old and new position and the trigger.
 # uses: day (3. Mode B: the day in order with controllers)
 @isdefined(day) || error("Run the section \"3. Mode B: the day in order with controllers\" first: it sets up day.")
 sw = qstsSwitching(day)
+println("switching list, mode B:")
+println("  time   controller  position old -> new   trigger")
 for i in eachindex(sw.step)
-    println(rpad(day.steps[sw.step[i]].label, 7), rpad(sw.element_id[i], 9), sw.old[i], " -> ", sw.new[i], "  ", sw.trigger[i])
+    println("  ", rpad(day.steps[sw.step[i]].label, 7), rpad(sw.element_id[i], 12), lpad(sw.old[i], 12), " -> ", rpad(sw.new[i], 6), sw.trigger[i])
 end
 metrics = qstsMetrics(day)
 metric(id, name) = metrics.value[only(i for i in eachindex(metrics.metric) if metrics.element_id[i] == id && metrics.metric[i] == name)]
-println("switch count ", Int(metric("", "switch_count_total")), ", hunting patterns ", Int(metric("", "n_hunting_total")), ", loss energy ", round(metric("", "loss_energy_mwh"); digits = 2), " MWh")
-println("Moorau tap at its limit in ", Int(metric("30#OLTC", "steps_at_limit")), " steps")
+println("metrics, mode B:")
+println("  switching operations, all controllers:     ", Int(metric("", "switch_count_total")))
+println("  hunting patterns, all controllers:         ", Int(metric("", "n_hunting_total")))
+@printf("  loss energy of the day [MWh]:              %.2f\n", metric("", "loss_energy_mwh"))
+println("  30#OLTC Moorau, steps at the tap limit:    ", Int(metric("30#OLTC", "steps_at_limit")), " of ", length(day.steps))
 @assert sw.step == [4, 26, 27, 33, 73, 89] && all(==("control"), sw.trigger)
 @assert metric("", "switch_count_total") == 6 && metric("", "n_hunting_total") == 0
 @assert metric("", "loss_energy_mwh") ≈ sum(qstsValues(day, "", "total_p_loss_mw")) / 4
@@ -194,7 +207,10 @@ field `svg` holds the text for a file.
 # uses: day (3. Mode B: the day in order with controllers)
 @isdefined(day) || error("Run the section \"3. Mode B: the day in order with controllers\" first: it sets up day.")
 chart = qstsChart(day, "14", "vm_pu"; band = (0.99, 1.01))
-println(chart, ", lowest ", round(minimum(chart.values); digits = 4), " pu, highest ", round(maximum(chart.values); digits = 4), " pu")
+println("Wehrden_20 (bus 14), Vm [pu], mode B (power flow result):")
+@printf("  lowest of the day:                 %.4f\n", minimum(chart.values))
+@printf("  highest of the day:                %.4f\n", maximum(chart.values))
+@printf("  band of 31#OLTC (dashed):          %.2f to %.2f\n", chart.band...)
 @assert count(!isnan, chart.values) == 96 && chart.band == (0.99, 1.01)
 @assert all(v -> 0.99 <= v <= 1.01, chart.values)
 chart
@@ -216,16 +232,24 @@ the same controller file and compare with mode B.
 config_ac = load_sparlectra_config(control_file; reload = true, overrides = Dict("qsts" => Dict("mode" => "snapshots", "snapshot_controls" => true)))
 each = redirect_stdout(() -> runQsts(series; config = config_ac), devnull)
 step_changes(v) = count(k -> v[k] != v[k - 1], 2:length(v))
-println("step 1 equal in both modes: ", isequal(each.bus_values[:, :, 1], day.bus_values[:, :, 1]))
-for (id, name) in (("30", "Moorau"), ("31", "Wehrden"))
-    println(rpad(name, 8), "tap changes between steps: mode A ", step_changes(qstsValues(each, id, "tap_ratio")), ", mode B ", step_changes(qstsValues(day, id, "tap_ratio")))
+println("step 1 (", day.steps[1].label, "), all bus values equal in mode A and mode B: ", isequal(each.bus_values[:, :, 1], day.bus_values[:, :, 1]))
+println("                                                 mode A    mode B")
+println("tap ratio changes between consecutive steps:")
+for (id, name) in (("30", "Moorau_110_20 (30)"), ("31", "Wehrden_110_20 (31)"))
+    @printf("  %-45s %6d    %6d\n", name, step_changes(qstsValues(each, id, "tap_ratio")), step_changes(qstsValues(day, id, "tap_ratio")))
 end
 k = 22
-println(day.steps[k].label, " Moorau tap: mode A ", qstsValues(each, "30", "tap_ratio")[k], " (", round(qstsValues(each, "8", "vm_pu")[k]; digits = 4), " pu), mode B ", qstsValues(day, "30", "tap_ratio")[k], " (", round(qstsValues(day, "8", "vm_pu")[k]; digits = 4), " pu)")
+println(day.steps[k].label, ", power flow result:")
+@printf("  %-45s %6.4f    %6.4f\n", "tap ratio Moorau_110_20 (30) [pu]", qstsValues(each, "30", "tap_ratio")[k], qstsValues(day, "30", "tap_ratio")[k])
+@printf("  %-45s %6.4f    %6.4f\n", "Vm Moorau_20 (bus 8) [pu]", qstsValues(each, "8", "vm_pu")[k], qstsValues(day, "8", "vm_pu")[k])
 k = 84
-println(day.steps[k].label, " Moorau_20: mode A ", round(qstsValues(each, "8", "vm_pu")[k]; digits = 4), " pu, mode B ", round(qstsValues(day, "8", "vm_pu")[k]; digits = 4), " pu with the bank at ", qstsValues(day, "8#MSC", "bs_mvar")[k], " MVAr")
-println("Newton iterations: mode A ", sum(s.iterations for s in each.steps), ", mode B ", sum(s.iterations for s in day.steps))
-println("switching rows and metrics in mode A: ", length(each.switching), ", ", length(each.metrics))
+println(day.steps[k].label, ", power flow result:")
+@printf("  %-45s %6.4f    %6.4f\n", "Vm Moorau_20 (bus 8) [pu]", qstsValues(each, "8", "vm_pu")[k], qstsValues(day, "8", "vm_pu")[k])
+@printf("  %-45s %6s    %6.1f\n", "bank 8#MSC in service [MVAr]", "n/a", qstsValues(day, "8#MSC", "bs_mvar")[k])
+println("whole day:")
+@printf("  %-45s %6d    %6d\n", "Newton iterations, sum over 96 steps", sum(s.iterations for s in each.steps), sum(s.iterations for s in day.steps))
+@printf("  %-45s %6d    %6d\n", "switching rows", length(each.switching), length(day.switching))
+@printf("  %-45s %6d    %6d\n", "metric rows", length(each.metrics), length(day.metrics))
 @assert isequal(each.bus_values[:, :, 1], day.bus_values[:, :, 1]) && isequal(each.branch_values[:, :, 1], day.branch_values[:, :, 1])
 @assert step_changes(qstsValues(each, "30", "tap_ratio")) == 2 && step_changes(qstsValues(day, "30", "tap_ratio")) == 3
 @assert step_changes(qstsValues(each, "31", "tap_ratio")) == 10 && step_changes(qstsValues(day, "31", "tap_ratio")) == 2
@@ -249,7 +273,8 @@ solution, as mode A starts every step. After that the history decides.
   position from the tap of the case file.
 - **Mode B keeps the bank in.** At 20:45 mode A starts with the bank off;
   `Moorau_20` at 0.991 pu lies inside the band of the bank, so it stays
-  off. Mode B carries the block from 18:00 into the night, and the
+  off. Mode A reports no controller values, so its bank column reads
+  n/a. Mode B carries the block from 18:00 into the night, and the
   voltage is above 1.0 pu.
 - **Mode B is cheaper per step.** It starts each step from the step
   before; mode A needs more than twice the Newton iterations.

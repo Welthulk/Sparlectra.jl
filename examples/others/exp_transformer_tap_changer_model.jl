@@ -34,7 +34,7 @@ them with the squared magnitude of the regulating vector `|1 + f·e^(jφ)|²`.
 Both models are implemented centrally in `calcTapCorrectedRX` /
 `calcTapImpedanceCorrectionFactor` (`src/equicircuit.jl`) and are read by both
 the MATPOWER and the native DTF importer through
-`transformer.tap_changer_model`.
+`model.tap_changer_model`.
 """
 function main()
   print_example_banner("examples/others/exp_transformer_tap_changer_model.jl", "imports the same off-nominal-tap MATPOWER transformer with :ideal vs :impedance_correction tap_changer_model and compares the resulting series impedance and power-flow solution")

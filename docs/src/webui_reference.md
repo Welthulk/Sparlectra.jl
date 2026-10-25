@@ -639,8 +639,8 @@ set** perturbs each value with the sigma its own row declares. **Reset
 saved settings** under the generator deletes the per-case settings
 sidecar. **estimate taps** (`state_estimation.tap_estimation.enabled` of
 the case, on by default)
-releases every tap changer, ratio and phase, of every in-service
-transformer; off, every changer keeps its transferred step. A changer whose
+releases every declared tap changer, ratio and phase, of every in-service
+transformer (a transformer that only carries a ratio has none); off, every changer keeps its transferred step. A changer whose
 step the measurements do not determine is not estimated and keeps its
 transferred step (status `not_estimated` with the reason), see
 [Observability per changer](@ref se-tap-observability). Which
@@ -658,7 +658,8 @@ Q is measured on every bus of its machine node; otherwise it keeps its
 step (reason `q_not_measured_in_group`), see
 [Tap estimation per transformer](@ref se-tap-exclude). The result page
 shows one row per
-tap changer (estimated step, Delta U, ratio, angle, model and fixed step,
+tap changer (transferred step, estimated step and its raw value before
+rounding, Delta U, ratio, angle,
 deviation, status with its reason) and the J change of the fixation.
 **tap fallback** (`state_estimation.tap_estimation.fallback`, on) runs once
 more without tap estimation when the run with it does not converge or its

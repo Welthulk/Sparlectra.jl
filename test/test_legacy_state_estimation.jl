@@ -469,6 +469,7 @@ function test_state_estimation_tap_guards()::Bool
       addProsumer!(net = net, busName = "L3", type = "ENERGYCONSUMER", p = p, q = q)
       addPIModelTrafo!(net = net, fromBus = "L2", toBus = "L3", r_pu = 0.004, x_pu = 0.08, b_pu = 0.0, ratio = 1.0, shift_deg = 0.0, status = 1)
       net.branchVec[5].has_ratio_tap = true
+      net.branchVec[5].ratio_tap_declared = true
       net.branchVec[5].tap_step = step
       return net
     end
@@ -504,9 +505,11 @@ function test_state_estimation_tap_guards()::Bool
     # (radial_no_voltage_pin); at the converged state the losses of the
     # 8 MW load tie the far-side voltage level to the measured flows, the
     # recheck at the estimate (0.60.0) finds the column determinable and
-    # estimates it: on the truth step 2 with exact rows.
-    # Until the recheck ran on a run without a fixation the tap stayed
-    # frozen here.
+    # estimates it again. With exact rows the estimate is the truth step 2,
+    # but sigma_s from the row sigmas is several steps, above the bound of
+    # 0.5 for a re-estimate: the changer keeps its transferred step 0 with
+    # :weak_at_estimate. Until the bound it was fixed at 2; until the recheck
+    # ran on a run without a fixation the tap stayed frozen here.
     idxL3 = 5   # bus L3 is the fifth bus of _radial_net
     measNoVm = [m for m in meas if !(m.typ == Sparlectra.VmMeas && m.busIdx == idxL3)]
     net = _radial_net()
@@ -514,8 +517,9 @@ function test_state_estimation_tap_guards()::Bool
     resE = with_state_estimation_config(max_iter = 40, tol = 1e-10) do
       runse!(net, measNoVm)
     end
-    @test resE.converged && resE.tapFixation !== nothing && resE.tapFixation.fixed && resE.objectiveJ < 1e-12
-    @test only(resE.tapEstimates).status === :estimated && only(resE.tapEstimates).step_fixed == 2
+    rowE = only(resE.tapEstimates)
+    @test resE.converged && rowE.status === :not_estimated && rowE.reason === :weak_at_estimate && rowE.step_fixed == 0
+    @test (est = match(r"estimated again at step (\S+) with sigma_s (\S+) steps", rowE.notice); est !== nothing && abs(parse(Float64, est[1]) - 2.0) < 1e-3 && parse(Float64, est[2]) >= 0.5)
     # without load nothing flows at the estimate either, the tap is not
     # determinable there: noisy rows (seed 11) give the estimate a small
     # current, the recheck finds a rank, the joint estimate does not
@@ -556,6 +560,7 @@ function test_state_estimation_tap_guards()::Bool
     # :ratio release moves up; freezing the rest restores the stamps bitwise
     net = _tap_gate_pair_net(0, 0; psi = 30.0)
     net.branchVec[4].tap_step = step
+    net.branchVec[4].ratio_tap_declared = true
     setTapEstimation!(net; trafo = 3, mode = :both)
     setTapEstimation!(net; trafo = 4, mode = :ratio)
     col0 = (length(net.nodeVec) - 1) + length(net.nodeVec) + 1
@@ -806,9 +811,15 @@ function test_state_estimation_tap_determinability()::Bool
     res = _tap_se_run(net, meas)
     # (0.60.0) the recheck at the estimate: kept out at the flat start, the
     # run has no tap state, at the converged state the Ia row counts and the
-    # changer is estimated again, on the truth. Until
-    # the recheck ran on a run without a fixation it stayed symmetric_start
-    @test res.converged && only(res.tapEstimates).status === :estimated && only(res.tapEstimates).step_fixed == 3.0 && res.objectiveJ < 1e-12
+    # changer is estimated again, on the truth 3, but with sigma_s of
+    # several steps at the default sigmas (1 % per step): not taken over
+    # (:weak_at_estimate), the transferred step 0 stays. The same path with
+    # tight rows is taken over (recheck test of the se group). Until the
+    # bound it was fixed at 3; until the recheck ran on a run without a
+    # fixation it stayed symmetric_start
+    rowR = only(res.tapEstimates)
+    @test res.converged && rowR.status === :not_estimated && rowR.reason === :weak_at_estimate && rowR.step_fixed == 0.0
+    @test (est = match(r"estimated again at step (\S+) with sigma_s (\S+) steps", rowR.notice); est !== nothing && abs(parse(Float64, est[1]) - 3.0) < 1e-3 && parse(Float64, est[2]) >= 0.5)
     net = du90(0)
     runpf!(net, 40, 1e-12, 0; method = :rectangular)
     setTapEstimation!(net; trafo = 5, mode = :pst)

@@ -46,6 +46,17 @@ with `flatstart = true`, or with a hand reset of the non-slack buses to
 Jacobian at a given state (condition number, diagnostics benchmark) use the
 warm start on purpose.
 
+Start ladder (`state_estimation.start_ladder`, default `true`): when the
+run from the flat start does not converge, `runse!` solves once more from
+the voltages stored in the net, the case state of the import (MATPOWER
+Vm/Va, CGMES SV voltages, the SCF start state). A net whose stored voltages
+equal the flat start gets no second try. `SEResult.start` names the start
+of the result (`flat`, `stored`, `stored_after_flat`), the SE service writes
+one run.log line and the metadata `se_start` (with a staged start also
+`se_tap_staged_start_from`). On case6495rte with a generated set the flat
+start did not converge in 50 iterations and the case voltages converged in
+3.
+
 With `state_estimation.start_mode.rotate_behind_pst = true` (default
 `false`) the flat start turns a bus that the slack reaches only across
 phase-shifting transformers by their shift sum, the same angles as the
@@ -247,7 +258,10 @@ method.
 
 A passive bus (no load, generation or shunt) injects nothing, and so does the fused bus of a closed
 coupler cluster whose members are all passive (with load or generation the fused bus carries the sum of
-the member injection rows as a weighted `LINKAGG` row). With `state_estimation.zero_injection = on`
+the member injection rows as a weighted `LINKAGG` row). A busbar joined to the network by closed
+couplers only (no branch of its own, typed `Isolated` by the import) is a member of its cluster and
+gets its zero-injection rows like any passive bus; without them the cluster would have no balance.
+With `state_estimation.zero_injection = on`
 (default, weighted) each balance is a pseudo-measurement with sigma
 `state_estimation.zero_injection_sigma_mva` in MVA (default 0.001 MVA, 1 kW). It counts in $J$ and in the ranking, is never
 eliminated and leaves an injection of the order of the sigma. With `constraint` the balances are
@@ -315,8 +329,9 @@ taps") switches the tap estimation. Off, no changer becomes a state, even
 one released with `setTapEstimation!`: every changer keeps its transferred
 step (SSH profile or measurement file), and each row of `tapEstimates` and
 `se_tap_estimates.csv` says `status = not_estimated`, `reason = disabled`.
-The rows carry `status` (`estimated`, `not_estimated`, `calculated` for a
-machine transformer) and `reason` for every changer.
+The rows carry `status` (`estimated`, `out_of_range` for an estimate too
+far outside the band, `not_estimated`, `calculated` for a machine
+transformer) and `reason` for every changer.
 
 **Fallback.** When the run with tap estimation does not converge (the
 estimation run, the fixation run, or non-finite values), `runse!` solves
@@ -338,6 +353,10 @@ converged estimate: J after the fixation above the J of the pre-solve with
 the transferred steps (relative margin 1e-6, acceptance rule `worse_fit`).
 The first line then reads `run 1 rejected (worse_fit, ...)` and the rows
 have `reason = fallback_worse_fit`.
+When the staged start with the taps frozen does not converge, the SE
+service starts no released run and falls back at once (reason
+`staged_not_converged`, see
+[Staged start and fallback](state_estimation_extensions.md)).
 `state_estimation.tap_estimation.fallback = false` (Web UI "tap fallback")
 switches off both and returns the first run as it is.
 
@@ -436,7 +455,11 @@ state: a changer it drops there, or a phase changer without an angle
 anchor whose mirror step fits as well, is withdrawn
 (`not_observable_at_estimate`, `mirror_step_fits`), and a changer that
 becomes determinable is estimated again with the other changers of its
-transformer, also in a run where the start test kept every changer out.
+transformer, also in a run where the start test kept every changer out;
+that re-estimate is taken over only with `sigma_s` below 0.5 steps
+(`weak_at_estimate` otherwise). The other changers of the transformer of a
+withdrawn changer, or of one kept at its transferred step as
+`out_of_range`, are estimated again with it at that step.
 For a changer kept out and for one of a run that fell back, the column
 `step_from_target` gives the step that meets the control target of its tap
 controller (voltage setpoint, or active power over the transformer),
@@ -545,10 +568,12 @@ Defaults and ranges of every key:
   is not bad data either: the elimination does not start and reports
   `:band_low`. A row whose $\Omega_{ii}$ sits at the numerical floor gets
   `rn = 0`.
-- Virtual measurements (`σ ≤ 1e-6`) are exempt in every mode. The `ZI`
-  rows (sigma `state_estimation.zero_injection_sigma_mva`, default 1e-3 MW)
-  are never eliminated and never down-weighted by `replacement`; `staged`
-  applies its knees to them like to any other row.
+- Virtual measurements (`σ ≤ 1e-6`), the `ZI` rows (sigma
+  `state_estimation.zero_injection_sigma_mva`, default 1e-3 MW, also the
+  aggregate of a coupler cluster of them) and the derived shunt rows
+  (`SHDERIV`) are exempt in every mode: they are never eliminated and never
+  down-weighted by `replacement` or `staged`. They carry network structure
+  or other measurements, not a meter of their own.
 - The replacement threshold is judged on the converged state, never on
   flat-start transients: the estimator solves plain, builds the suppression
   set from the converged residuals, re-solves with those weights frozen and

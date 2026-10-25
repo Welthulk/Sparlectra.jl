@@ -103,11 +103,15 @@ function _typed_phase_changer(br::Branch, m::PhaseTapChangerModel)::SETapChanger
 end
 
 # Set from the branch fields, neutral point (ratio, angle) as
-# applyTapNameplate! keeps it. Ratio changer when has_ratio_tap (the
-# constructor sets it for every transformer, so MATPOWER and SCF
-# transformers without a nameplate row keep the constructor grid); phase
-# changer only when declared (_declared_phase_tap): the Delta-u form divides
-# (side :to), the degree form adds degrees (side :from, kind :linear). A
+# applyTapNameplate! keeps it. Only declared changers join (0.60.0): the
+# ratio changer when a nameplate row declared it (ratio_tap_declared), the
+# phase changer when declared (_declared_phase_tap). The constructor gives
+# every transformer has_ratio_tap and a default grid, which is no changer
+# model: a transformer that only carries a ratio (plain MATPOWER without
+# mpc.sparlectra.tap_changers, a DTF transformer without changer data, a
+# hand-built branch without applyTapNameplate!) gets an empty set and is
+# never released. The Delta-u form divides (side :to), the degree form adds
+# degrees (side :from, kind :linear). A
 # branch TapStepImpedance gives the changers of the roles it has values for
 # the impedance source :tsi.
 function _field_tap_changers(br::Branch)::SETapChangerSet
@@ -121,7 +125,7 @@ function _field_tap_changers(br::Branch)::SETapChangerSet
   # with a Delta-u changer tap_ratio carries both factors; the ratio
   # changer's own position comes from the split
   ratio_live, r2 = du_changer ? _tap_du_positions(br, psi) : (br.tap_ratio, 0.0)
-  br.has_ratio_tap && push!(chs, _field_ratio_changer(br, ratio_live, imp_ratio))
+  (br.has_ratio_tap && br.ratio_tap_declared) && push!(chs, _field_ratio_changer(br, ratio_live, imp_ratio))
   if du_changer
     du = br.phase_du_step
     lo, hi = minmax(Int(round(br.phase_du_min_step)), Int(round(br.phase_du_max_step)))
@@ -461,23 +465,15 @@ end
 
 # True when `net` has at least one closed transformer that is no machine
 # transformer and carries a DECLARED tap changer (the Web UI checks
-# "estimate taps" by default for such a case): a non-empty set
-# an import stored, a typed winding with a changer, a ratio nameplate row
-# (ratio_tap_declared) or a declared phase changer (_declared_phase_tap). A
-# transformer whose only changer is the constructor's default ratio grid
-# does not count, although the mass release would release it.
+# "estimate taps" by default for such a case), that is a transformer the
+# SE service releases (_tap_release_mode): a non-empty set an import
+# stored, a typed winding with a changer, or a declared changer of the
+# branch fields (_field_tap_changers).
 function _case_has_tap_changers(net::Net)::Bool
   for (k, br) in enumerate(net.branchVec)
     br.ratio == 0.0 && continue
     _branch_terminal_state(br) == :closed || continue
-    declared = if br.se_tap_changers !== nothing
-      !isempty(br.se_tap_changers.changers)
-    elseif br.taps_derived && br.tap_winding !== nothing
-      !isempty(_typed_tap_changers(br, br.tap_winding).changers)
-    else
-      (br.has_ratio_tap && br.ratio_tap_declared) || _declared_phase_tap(br)
-    end
-    declared || continue
+    _tap_release_mode(br) === nothing && continue
     _is_machine_transformer(net, k) && continue
     return true
   end

@@ -815,6 +815,12 @@ Base.@kwdef struct StateEstimationConfig
   # the result, which is what made 30 look sufficient.
   max_iter::Int = 50
   flatstart::Bool = true
+  # start ladder: a WLS from the flat start that does not converge is solved
+  # once more from the voltages stored in the net (the case state of the
+  # import), when the net has such a state. Measured on case6495rte with a
+  # generated set: 50 iterations from the flat start without convergence,
+  # 3 iterations from the case voltages.
+  start_ladder::Bool = true
   # start_mode.rotate_behind_pst: the flat start turned behind phase
   # shifters like the power flow flat start (SEStartModeConfig)
   start_mode::SEStartModeConfig = SEStartModeConfig()
@@ -2489,6 +2495,7 @@ function StateEstimationConfig(raw::AbstractDict)
     tol = _validate_positive("state_estimation.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-6))),
     max_iter = _as_int_cfg(_raw_get(merged, "max_iter", 50)),
     flatstart = _as_bool_cfg(_raw_get(merged, "flatstart", true)),
+    start_ladder = _as_bool_cfg(_raw_get(merged, "start_ladder", true)),
     start_mode = SEStartModeConfig(merged),
     jac_eps = _validate_positive("state_estimation.jac_eps", _as_float_cfg(_raw_get(merged, "jac_eps", 1.0e-6))),
     update_net = _as_bool_cfg(_raw_get(merged, "update_net", true)),

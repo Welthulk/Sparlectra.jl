@@ -1,0 +1,53 @@
+# sparlectra-measurement-table v1
+# case: sp_case6tap.scf.json
+# generator: Sparlectra measurement generator, seed=20261024
+# noise: gaussian per-type stddev (measurementStdDevs)
+# truth: power flow with the three controllers of the case file settled
+# converted from sp_case6tap.measurements.csv (measurement CSV v1): 46 row(s), 0 not converted
+timestamp,measurement_mrid,terminal_mrid,node_mrid,type,value,sigma,source,valid
+,,,Nordwerk_220,U,224.8644458279355,1.1,converted;v1,true
+,,,Nordwerk_220,P,45.49176405977218,1.0,converted;v1,true
+,,,Nordwerk_220,Q,19.159247241675704,1.0,converted;v1,true
+,,,Suedfeld_220,U,224.63478658651326,1.1,converted;v1,true
+,,,Suedfeld_220,P,79.88739714115286,1.0,converted;v1,true
+,,,Suedfeld_220,Q,20.304250171245076,1.0,converted;v1,true
+,,,Kreuzau_110,U,111.72965798140129,0.55,converted;v1,true
+,,,Kreuzau_110,P,0.42489186414498226,1.0,converted;v1,true
+,,,Kreuzau_110,Q,-0.17277021625039118,1.0,converted;v1,true
+,,,Mittelbach_110,U,107.2321169886336001,0.55,converted;v1,true
+,,,Mittelbach_110,P,-61.95525353226287,1.0,converted;v1,true
+,,,Mittelbach_110,Q,-20.021280110058903,1.0,converted;v1,true
+,,,Ostheim_110,U,110.6903643899381,0.55,converted;v1,true
+,,,Ostheim_110,P,-40.64095074080267,1.0,converted;v1,true
+,,,Ostheim_110,Q,-11.606535058058315,1.0,converted;v1,true
+,,,Lindenau_20,U,19.8699128028800032,0.1,converted;v1,true
+,,,Lindenau_20,P,-26.129437681243758,1.0,converted;v1,true
+,,,Lindenau_20,Q,-8.969851093580864,1.0,converted;v1,true
+,,Nordwerk_Suedfeld:from,,P,-16.031901764137924,1.0,converted;v1,true
+,,Nordwerk_Suedfeld:to,,P,15.434580058325233,1.0,converted;v1,true
+,,Nordwerk_Suedfeld:from,,Q,-2.2875297553337974,1.0,converted;v1,true
+,,Nordwerk_Suedfeld:to,,Q,-6.720634873587777,1.0,converted;v1,true
+,,Kreuzau_Mittelbach:from,,P,53.7471430365488,1.0,converted;v1,true
+,,Kreuzau_Mittelbach:to,,P,-52.311178092178814,1.0,converted;v1,true
+,,Kreuzau_Mittelbach:from,,Q,17.615993403320612,1.0,converted;v1,true
+,,Kreuzau_Mittelbach:to,,Q,-17.810297347255958,1.0,converted;v1,true
+,,Mittelbach_Ostheim:from,,P,-31.074600048486552,1.0,converted;v1,true
+,,Mittelbach_Ostheim:to,,P,33.802547651582536,1.0,converted;v1,true
+,,Mittelbach_Ostheim:from,,Q,-13.858031252328985,1.0,converted;v1,true
+,,Mittelbach_Ostheim:to,,Q,12.330913826536955,1.0,converted;v1,true
+,,Kreuzau_Ostheim:from,,P,8.330067187429178,1.0,converted;v1,true
+,,Kreuzau_Ostheim:to,,P,-8.843363549044001,1.0,converted;v1,true
+,,Kreuzau_Ostheim:from,,Q,-1.1684228455953027,1.0,converted;v1,true
+,,Kreuzau_Ostheim:to,,Q,-0.5167504397440703,1.0,converted;v1,true
+,,T1_Nordwerk_Kreuzau:from,,P,61.70525237816907,1.0,converted;v1,true
+,,T1_Nordwerk_Kreuzau:to,,P,-63.919163464481066,1.0,converted;v1,true
+,,T1_Nordwerk_Kreuzau:from,,Q,20.418674671313735,1.0,converted;v1,true
+,,T1_Nordwerk_Kreuzau:to,,Q,-18.488650580172298,1.0,converted;v1,true
+,,T2_Suedfeld_Ostheim:from,,P,65.93999741296027,1.0,converted;v1,true
+,,T2_Suedfeld_Ostheim:to,,P,-65.54401959616035,1.0,converted;v1,true
+,,T2_Suedfeld_Ostheim:from,,Q,27.487482266485415,1.0,converted;v1,true
+,,T2_Suedfeld_Ostheim:to,,Q,-26.164493272191027,1.0,converted;v1,true
+,,T3_Mittelbach_Lindenau:from,,P,24.94913467686104,1.0,converted;v1,true
+,,T3_Mittelbach_Lindenau:to,,P,-25.57377218932877,1.0,converted;v1,true
+,,T3_Mittelbach_Lindenau:from,,Q,7.618990084650397,1.0,converted;v1,true
+,,T3_Mittelbach_Lindenau:to,,Q,-7.0728361804209765,1.0,converted;v1,true

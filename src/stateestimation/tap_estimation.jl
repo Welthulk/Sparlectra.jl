@@ -612,6 +612,9 @@ function _tap_guard_causes!(net::Net, map::TapStateMap, activeMeas::Vector{Measu
   live(ts, c) = ts.cols[c] != 0 && ts.frozen[c] === :none
   vmBuses = Set{Int}(m.busIdx for m in activeMeas if m.typ == VmMeas && m.busIdx !== nothing)
   for ts in map.trafos
+    # one bridge search over the whole net per transformer: seconds when
+    # every branch is a transformer (case6495rte), so an abort point each
+    sparlectra_check_abort()
     cut = _tap_cut_component(net, ts.branch)
     (cut === nothing || !isempty(intersect(vmBuses, cut))) && continue
     for c in eachindex(ts.cols)
@@ -857,6 +860,19 @@ const _TAP_FD_NOISE_ULPS = 10.0
 # the former column rule under another name. The bound does not
 # depend on the weights.
 const _TAP_RANK_TOL = 1.0e-8
+# Work budget of the rank test at the start point (`_tap_rank_freezes!`),
+# in units of m*k^2 for m rows and k candidate columns. `_tap_rank_kept`
+# keeps one dense m-vector per kept column (Gram-Schmidt, m*k^2) and takes
+# the singular values of a growing k x k triangle per candidate (k^4/4,
+# measured at about 1/11 of the m*k^2 weight). Measured on case6495rte
+# (m = 55561): k = 400 in 6.6 s, k = 800 in 42.7 s. The service releases
+# every transformer of a case, and that case stores every branch as a
+# transformer with ratio 1: k = 8617, which would run for days and hold
+# 3.8 GB of vectors, without an abort point. 1e11 is about one minute on
+# that machine; above it no changer is estimated (reason :rank_budget) and
+# the run is the run without tap states.
+const _TAP_RANK_MAX_WORK = 1.0e11
+_tap_rank_work(m::Integer, k::Integer)::Float64 = Float64(m) * Float64(k)^2 + Float64(k)^4 / 11.0
 
 ## Noise part of the determinability guard (a regulator no measurement
 ## sees): at the start point a tap column that is zero within the rounding
@@ -886,15 +902,19 @@ function _tap_column_freezes!(map::TapStateMap, H::AbstractMatrix{<:Real}, z::Ve
   # T_i of the noise bound: Va columns 1:(nbus-1), Vm column of bus b at
   # (nbus-1)+b, Vm_b at the same index of the state x
   termSize = abs.(z)
+  # one dense m-vector per voltage column: an abort point every 256 columns
   for col in 1:(nbus - 1)
+    col % 256 == 0 && sparlectra_check_abort()
     termSize .+= abs.(H[:, col])
   end
   for b in 1:nbus
+    b % 256 == 0 && sparlectra_check_abort()
     termSize .+= abs(x[(nbus - 1) + b]) .* abs.(H[:, (nbus - 1) + b])
   end
   for ts in map.trafos, c in eachindex(ts.cols)
     col = ts.cols[c]
     (col != 0 && ts.frozen[c] === :none) || continue
+    sparlectra_check_abort()
     hc = Vector{Float64}(H[:, col])
     all(isfinite, hc) || error("tap column test: Jacobian column $(col) is not finite")
     scale = _TAP_FD_NOISE_ULPS * eps(Float64) * ts.sigma[c] / jacEps
@@ -923,6 +943,9 @@ function _tap_rank_kept(H::AbstractMatrix{<:Real}, stateCols::Vector{Int}, cand:
   rankT = 0
   kept = falses(length(cand))
   for (i, j) in enumerate(cand)
+    # one abort point per candidate: the loop is quadratic in the number of
+    # candidates and was the step a Web UI abort could not stop
+    sparlectra_check_abort()
     b = colScaled(j)
     p = b .- A * (F \ b)
     # twice Gram-Schmidt against the kept parts (orthonormal), for rounding
@@ -981,6 +1004,17 @@ function _tap_rank_freezes!(map::TapStateMap, H::AbstractMatrix{<:Real}, net::Ne
   # the changer the structural rule names (the phase changer of a ratio and
   # phase pair on a bridge, the tree edge of parallel phase changers)
   cand = vcat([x for x in cand if x[1].cause[x[2]] === :none], [x for x in cand if x[1].cause[x[2]] !== :none])
+  # above the work budget the test is not run and no changer is estimated
+  # (_TAP_RANK_MAX_WORK): the run continues without tap states instead of
+  # running for hours
+  work = _tap_rank_work(size(H, 1), length(cand))
+  if work > _TAP_RANK_MAX_WORK
+    @warn "runse!: tap estimation: $(length(cand)) released regulator(s) on $(size(H, 1)) measurement row(s) exceed the work budget of the rank test ($(round(work; sigdigits = 3)) against $(_TAP_RANK_MAX_WORK)); no regulator is estimated, every one keeps its transferred step (reason rank_budget)"
+    for (ts, c) in cand
+      _tap_freeze!(ts, c, :rank_budget)
+    end
+    return map
+  end
   kept = _tap_rank_kept(H, [j for j in axes(H, 2) if !(j in tapCols)], Int[ts.cols[c] for (ts, c) in cand])
   dropped = Tuple{TapBranchState,Int}[cand[i] for i in eachindex(cand) if !kept[i]]
   isempty(dropped) && return map
@@ -1025,7 +1059,7 @@ end
 ## ratio step then holds only together with that frozen phase position),
 ## cleared when no such regulator is left (a phase regulator estimated again)
 function _tap_recheck_conditional!(ts::TapBranchState)
-  held = any(c -> ts.frozen[c] in (:no_angle_anchor, :not_observable_at_estimate, :mirror_step_fits) && ts.set.changers[c].role === :phase && _tap_changes_magnitude(ts.set.changers[c]), eachindex(ts.cols))
+  held = any(c -> ts.frozen[c] in (:no_angle_anchor, :not_observable_at_estimate, :mirror_step_fits, :weak_at_estimate, :not_converged_at_estimate) && ts.set.changers[c].role === :phase && _tap_changes_magnitude(ts.set.changers[c]), eachindex(ts.cols))
   for c in eachindex(ts.cols)
     (ts.released[c] && ts.frozen[c] === :none && ts.set.changers[c].role === :ratio) || continue
     if held
@@ -1058,6 +1092,13 @@ end
 # (recheck at the estimate): 9 is the
 # 3 sigma threshold of chi2 with one degree of freedom
 const _TAP_MIRROR_DJ = 9.0
+
+# sigma_s bound (steps) of a changer the recheck at the estimate estimates
+# again: at or above it the estimate is not taken over (:weak_at_estimate).
+# The rank test there has no weight bound; a bridge transformer without a
+# voltage on its cut-off side gains rank from the losses of its load
+# alone, and its step is then known only to several steps
+const _TAP_RECHECK_SIGMA_MAX = 0.5
 
 ## The mirror step of changer `ch` at its fixed step `s` (relative to
 ## neutral) for the mirror check of the recheck at the estimate: a
@@ -1340,6 +1381,8 @@ function _tap_machine_rows(rows::Vector{NamedTuple}, net::Net, measurements::Vec
       push!(out, r)
       continue
     end
+    # one back-calculation per machine transformer (402 on case6495rte)
+    sparlectra_check_abort()
     k = r.branch
     # the machine node is the closed-link cluster of the machine terminal:
     # the GSU is its only branch, so the sum of the measured injections of
@@ -1405,9 +1448,9 @@ end
 
 ## the reasons of a regulator the determinability guard kept out at the
 ## start point (rank test with its structural causes, the noise test), and
-## with the two of the recheck at the estimate (`_tap_recheck_map`)
+## with the four of the recheck at the estimate (`_tap_recheck_map`)
 const _TAP_START_RANK_REASONS = (:radial_no_voltage_pin, :not_separable, :no_angle_anchor, :symmetric_start, :not_observable)
-const _TAP_RANK_REASONS = (_TAP_START_RANK_REASONS..., :not_observable_at_estimate, :mirror_step_fits)
+const _TAP_RANK_REASONS = (_TAP_START_RANK_REASONS..., :not_observable_at_estimate, :mirror_step_fits, :weak_at_estimate, :not_converged_at_estimate)
 
 ## the reasons of a regulator the run kept out automatically (rank test,
 ## noise test, fallback without tap estimation): its row gets the step
@@ -1857,7 +1900,8 @@ end
     _tap_fix_columns(x, map, fix) -> (fixedMap, xFixed, colmap)
 
 Fixation of the tap states in the columns `fix`: each goes to
-its nearest physical step (`_tap_fixed_position`) and leaves the state; the
+its nearest physical step (`_tap_fixed_position`), one frozen with
+`:out_of_range` to its transferred step, and leaves the state; the
 other tap columns stay states, renumbered from `map.col0` in their order.
 Returns the map of the next run (every transformer of `map` in the same
 order, a fixed regulator stamped at its step through `spos`), the state
@@ -1877,7 +1921,9 @@ function _tap_fix_columns(x::Vector{Float64}, map::TapStateMap, fix::AbstractSet
       col = ts.cols[c]
       col == 0 && continue
       if col in fix
-        spos[c] = _tap_fixed_position(ts.set.changers[c], x[col])
+        # an estimate too far outside the band (_tap_mark_out_of_range!)
+        # keeps the transferred step
+        spos[c] = ts.frozen[c] === :out_of_range ? ts.s0[c] : _tap_fixed_position(ts.set.changers[c], x[col])
       else
         cols[c] = next
         colmap[col] = next
@@ -1917,7 +1963,10 @@ end
 ## branch ratio and angle at the estimate, the position of the fixed run
 ## `s_fixed`, model step, fixed step and deviation in steps, the
 ## out-of-range flag, whether the regulator was fixed, its status
-## (`:estimated` or `:not_estimated`) with the reason, note and notice. A regulator with note `:relative_to_frozen` is not
+## (`:estimated`, `:out_of_range` or `:not_estimated`) with the reason,
+## note and notice. An estimated changer with a partner the rank test or
+## the recheck kept out, or one with status `:out_of_range`, gets the
+## partner notice (`_tap_partner_text`). A regulator with note `:relative_to_frozen` is not
 ## fixed: `s_fixed` is its continuous value in the fixed run. `converged` enables the notices of the estimate (the
 ## vertex notice of a phase regulator on a tree edge without an angle
 ## anchor, the re-import guard of a CGMES changer). `sigma_s` holds per
@@ -1929,10 +1978,20 @@ end
 ## automatically (`_tap_target_rows`). `voltage_hint` (`_tap_voltage_hint`)
 ## goes into the notice of a changer the rank test kept out.
 ## `extra_notice` holds per changer a text the notice ends with (the J of
-## the mirror check of the recheck at the estimate, "" = none).
-function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::AbstractString, s_est::Vector{Float64}, s_fix::Vector{Float64}, oor::AbstractVector{Bool}, fixed::Bool, converged::Bool; sigma_s::AbstractVector = fill(nothing, length(ts.cols)), voltage_hint::AbstractString = "", extra_notice::AbstractVector{<:AbstractString} = fill("", length(ts.cols)))::Vector{NamedTuple}
+## the mirror check of the recheck at the estimate, the estimate and sigma_s
+## of a weak re-estimate, "" = none). `weak` holds per changer the
+## continuous estimate (relative to neutral) and sigma_s of a weak
+## re-estimate (`nothing` = none): a changer frozen with :weak_at_estimate
+## shows them in s_est, du_est and sigma_s, its fixed step stays the
+## transferred one. ratio_est and angle_est_deg of every row stay at the
+## steps the state was solved with, so a partner row is not shifted by it.
+function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::AbstractString, s_est::Vector{Float64}, s_fix::Vector{Float64}, oor::AbstractVector{Bool}, fixed::Bool, converged::Bool; sigma_s::AbstractVector = fill(nothing, length(ts.cols)), voltage_hint::AbstractString = "", extra_notice::AbstractVector{<:AbstractString} = fill("", length(ts.cols)), weak::AbstractVector = fill(nothing, length(ts.cols)))::Vector{NamedTuple}
   rows = NamedTuple[]
   R, Phi = _tap_set_ratio_shift(ts.set, s_est)
+  isWeak = [ts.frozen[c] === :weak_at_estimate && weak[c] !== nothing for c in eachindex(ts.cols)]
+  # the value a row shows in s_est: the weak re-estimate replaces only its
+  # own entry, after the composite R, Phi above
+  s_row = [isWeak[c] ? first(weak[c]) : s_est[c] for c in eachindex(s_est)]
   for c in eachindex(ts.set.changers)
     ts.released[c] || continue
     ch = ts.set.changers[c]
@@ -1944,7 +2003,20 @@ function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::Abst
       m, _ = _tap_changer_factor(ch, s_fix[c])
       (0.5 <= m <= 2.0) || (guard = :reimport_guard)
     end
-    sg = estimated ? sigma_s[c] : nothing
+    # an estimate too far outside the band, not taken over
+    # (_tap_mark_out_of_range!): its sigma_s stays in the row
+    outr = ts.frozen[c] === :out_of_range
+    sg = (estimated || outr) ? sigma_s[c] : isWeak[c] ? last(weak[c]) : nothing
+    fixedRow = fixed && estimated && !relative
+    oorText = ""
+    if oor[c]
+      v, d = _tap_band_verdict(ch, s_est[c], sg)
+      oorText = _tap_out_of_range_text(ch, s_est[c]; verdict = outr ? :out_of_range : (fixedRow && v === :band_end) ? :band_end : :inside, dist = d, s0 = ts.s0[c])
+    end
+    # an estimated changer whose partner on the same transformer is not
+    # determinable or not taken over (out_of_range): its value holds for the
+    # partner's transferred step only
+    partner = estimated ? join([_tap_partner_text(ts, k) for k in eachindex(ts.set.changers) if k != c && ts.released[k] && (ts.frozen[k] in _TAP_RANK_REASONS || ts.frozen[k] === :out_of_range)], "; ") : ""
     push!(rows, (
       branch = ob,
       regulator = c,
@@ -1959,8 +2031,8 @@ function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::Abst
       alpha_deg = ch.alpha_deg,
       du = ch.du,
       neutral_step = ch.neutral,
-      s_est = s_est[c],
-      du_est = ch.du === nothing ? nothing : s_est[c] * ch.du,
+      s_est = s_row[c],
+      du_est = ch.du === nothing ? nothing : s_row[c] * ch.du,
       ratio_est = R,
       angle_est_deg = Phi,
       s_fixed = s_fix[c],
@@ -1968,29 +2040,40 @@ function _tap_regulator_rows(ts::TapBranchState, br::Branch, ob::Int, mrid::Abst
       step_fixed = ch.neutral + s_fix[c],
       deviation_steps = s_fix[c] - ts.s0[c],
       sigma_s = sg,
-      round_distance_sigma = (sg === nothing || !(sg > 0.0)) ? nothing : _tap_step_distance(ch, s_est[c]) / sg,
+      round_distance_sigma = (sg === nothing || !(sg > 0.0)) ? nothing : _tap_step_distance(ch, s_row[c]) / sg,
       step_from_target = nothing,
       out_of_range = oor[c],
-      fixed = fixed && estimated && !relative,
+      fixed = fixedRow,
       # where the impedance of the transformer comes from in this run
       # (_tap_reactance_source): the per-step data, the analytic correction
       # or none (the start impedance)
       reactance_source = !ts.impedance ? :nominal : _tap_set_has_table(ts.set) ? :table : :analytic,
-      # :estimated (a state of the run) or :not_estimated with the reason
-      # (a guard freeze, :disabled, :fallback_not_converged, :excluded,
-      # :machine_transformer); _tap_machine_rows turns a machine row into
-      # :calculated after a run with update_net, or into reason
-      # :q_not_measured_in_group
-      status = estimated ? :estimated : :not_estimated,
-      reason = estimated ? :none : ts.frozen[c],
+      # :estimated (a state of the run), :out_of_range (estimated too far
+      # outside the band, the transferred step stays, reason :none) or
+      # :not_estimated with the reason (a guard freeze, :disabled,
+      # :fallback_not_converged, :excluded, :machine_transformer);
+      # _tap_machine_rows turns a machine row into :calculated after a run
+      # with update_net, or into reason :q_not_measured_in_group
+      status = estimated ? :estimated : outr ? :out_of_range : :not_estimated,
+      reason = (estimated || outr) ? :none : ts.frozen[c],
       note = ts.notes[c],
       # the import carried no step, step_model is the middle position;
       # every later rewrite of the notice keeps the text (_tap_assumed_notice)
       step_assumed = ch.step_assumed,
-      notice = join(filter(!isempty, [ch.step_assumed ? _tap_notice_text(:step_assumed) : "", oor[c] ? _tap_out_of_range_text(ch, s_est[c]) : "", _tap_freeze_text(ts, c), _tap_regulator_notice(relative ? :none : ts.notes[c], vertex, guard), relative ? _tap_relative_text(ts.rel_ref[c]) : "", (estimated && ts.weak[c] > 0.0) ? _tap_weak_text(ts.weak[c]) : "", ts.frozen[c] in _TAP_RANK_REASONS ? String(voltage_hint) : "", String(extra_notice[c])]), "; "),
+      notice = join(filter(!isempty, [ch.step_assumed ? _tap_notice_text(:step_assumed) : "", oorText, _tap_freeze_text(ts, c), _tap_regulator_notice(relative ? :none : ts.notes[c], vertex, guard), relative ? _tap_relative_text(ts.rel_ref[c]) : "", (estimated && ts.weak[c] > 0.0) ? _tap_weak_text(ts.weak[c]) : "", ts.frozen[c] in _TAP_RANK_REASONS ? String(voltage_hint) : "", partner, String(extra_notice[c])]), "; "),
     ))
   end
   return rows
+end
+
+## Notice on an estimated changer of `ts` whose partner `k` on the same
+## transformer the rank test or the recheck kept out or the band verdict
+## did not take over (`:out_of_range`): the estimate holds only together
+## with the transferred step of `k`
+function _tap_partner_text(ts::TapBranchState, k::Int)::String
+  ch = ts.set.changers[k]
+  name = isempty(ch.name) ? string("regulator ", k) : string("changer ", ch.name)
+  return string(name, " of this transformer is not determinable (", ts.frozen[k], "), this estimate depends on its transferred step ", _tap_notice_step(ch.neutral + ts.s0[k]))
 end
 
 ## The voltage hint of a transformer (snet branch `k`) whose regulator the
@@ -2035,6 +2118,9 @@ const _TAP_NOTICE_TEXTS = Dict{Symbol,String}(
   :not_observable => "not estimated (rank test): the other columns of the Jacobian explain its column at the start point, no structural cause found",
   :zero_column => "not estimated: the measurements do not see this regulator (Jacobian column zero within its finite-difference noise)",
   :not_observable_at_estimate => "not estimated (rank test at the estimate): at the converged state with the fixed steps the other columns of the Jacobian explain its column, the estimate is withdrawn and the transferred step stays",
+  :weak_at_estimate => "not estimated (rank test at the estimate): determinable only at the converged state, and estimated again there with sigma_s not below 0.5 steps, the estimate is not taken over and the transferred step stays",
+  :not_converged_at_estimate => "not estimated (recheck at the estimate): estimated again after a changer of the same transformer was withdrawn to its transferred step, that run did not converge, the transferred step stays",
+  :rank_budget => "not estimated: the number of released regulators puts the rank test above its work budget (one minute on a large net), no regulator of the run is estimated, the transferred step stays",
   :mirror_step_fits => "not estimated: no angle anchor ties its far side, and its mirror step fits the measurements as well as the fixed step (J difference below 9), the estimate is withdrawn and the transferred step stays",
   :model_mismatch => "frozen: the branch ratio and angle do not lie on the curves of its tap changer data",
   :disabled => "not estimated: tap estimation is switched off (state_estimation.tap_estimation.enabled = false), the transferred step stays",
@@ -2050,6 +2136,8 @@ const _TAP_NOTICE_TEXTS = Dict{Symbol,String}(
   :sign_from_start => "only the magnitude effect pins this regulator, the sign of its step comes from the start position",
   :vertex => "only the magnitude effect pins this regulator, its step is not reliable",
   :reimport_guard => "a re-import would ignore this changer at this step (its factor leaves 0.5 to 2)",
+  # appended by runse! after the topology precheck, no reason and no note
+  :mesh_without_p_measurement => "lies in a mesh without P measurement: the step may not be unique",
 )
 
 ## notice text of a freeze reason or note
@@ -2094,14 +2182,63 @@ end
 ## only by the magnitude of its ratio can end on either side. Steps are
 ## model steps (neutral + s). No ';' in the text: the warning line of
 ## runse! and run.log is built from the joined notice.
-function _tap_out_of_range_text(ch::SETapChanger, s::Float64)::String
+## `verdict` (`_tap_band_verdict`, with the distance `dist` in sigma_s)
+## adds what the fixation made of it: `:band_end` the end step, `:out_of_range`
+## the transferred step `s0`; `:inside` adds nothing (a row that was not
+## fixed, or was withdrawn later).
+function _tap_out_of_range_text(ch::SETapChanger, s::Float64; verdict::Symbol = :inside, dist::Union{Nothing,Float64} = nothing, s0::Float64 = 0.0)::String
   smin, smax = _tap_band(ch)
   txt = string("estimate at step ", _tap_notice_step(ch.neutral + s), " lies outside the band ", _tap_notice_step(ch.neutral + smin), " to ", _tap_notice_step(ch.neutral + smax))
   if ch.kind === :asymmetrical && ch.du !== nothing && ch.du != 0.0 && abs(sind(ch.alpha_deg)) > 1e-9
     sstar = _tap_asym_turning_point(ch)
     txt = string(txt, ", |t| has the same value at the mirror step ", _tap_notice_step(ch.neutral + 2.0 * sstar - s), " across its turning point at step ", _tap_notice_step(ch.neutral + sstar))
   end
-  return txt
+  verdict === :inside && return txt
+  endStep = _tap_notice_step(ch.neutral + (s > smax ? smax : smin))
+  distText = dist === nothing ? "sigma_s not available" : string(@sprintf("%.3g", dist), " sigma_s beyond the band end step ", endStep)
+  verdict === :band_end && return string(txt, ", ", distText, ", fixed to the end step ", endStep)
+  return string(txt, ", ", distText, ", not taken over, the transferred step ", _tap_notice_step(ch.neutral + s0), " stays")
+end
+
+# distance (in sigma_s of the step) of an estimate outside the band from
+# the band end up to which the fixation takes the end step; farther out
+# the estimate is not taken over (status :out_of_range)
+const _TAP_BAND_SIGMA_MAX = 2.0
+
+## Band verdict of the continuous estimate `s` (relative to neutral) of
+## changer `ch` with the step sigma `sg` (`nothing` = none from the
+## covariance): `:inside` when it lies at most half a step outside the band
+## (its nearest step is in the band, row flag out_of_range false),
+## `:band_end` when it lies farther out but at most `_TAP_BAND_SIGMA_MAX`
+## sigma_s beyond the band end step (the fixation takes that step), else
+## `:out_of_range` (the transferred step stays). Without a sigma_s the
+## distance is not known and the verdict is `:out_of_range`. Returns
+## `(verdict, distance in sigma_s or nothing)`.
+function _tap_band_verdict(ch::SETapChanger, s::Float64, sg)::Tuple{Symbol,Union{Nothing,Float64}}
+  smin, smax = _tap_band(ch)
+  (smin - 0.5 <= s <= smax + 0.5) && return (:inside, nothing)
+  d = s > smax ? s - smax : smin - s
+  ds = (sg === nothing || !(sg > 0.0)) ? nothing : d / sg
+  return ((ds !== nothing && ds <= _TAP_BAND_SIGMA_MAX) ? :band_end : :out_of_range, ds)
+end
+
+## The changers of the estimation map `map` at the continuous estimate `x`
+## (sigma per column in `sigma`) among the columns `cols` whose estimate
+## lies too far outside the band (`_tap_band_verdict` `:out_of_range`): each
+## is frozen with `:out_of_range`, so the fixation (`_tap_fix_columns`) puts
+## it at its transferred step instead of the band end. Returns
+## `(state, changer, note, tree_phase)` of each, with the note and flag the
+## freeze cleared, so a caller that puts its state back can undo it.
+function _tap_mark_out_of_range!(map::TapStateMap, x::Vector{Float64}, sigma::AbstractDict, cols::AbstractSet{Int})::Vector{Tuple{TapBranchState,Int,Symbol,Bool}}
+  out = Tuple{TapBranchState,Int,Symbol,Bool}[]
+  for ts in map.trafos, c in eachindex(ts.cols)
+    col = ts.cols[c]
+    (col != 0 && col in cols && ts.frozen[c] === :none && _tap_fixable(ts, c)) || continue
+    first(_tap_band_verdict(ts.set.changers[c], x[col], get(sigma, col, nothing))) === :out_of_range || continue
+    push!(out, (ts, c, ts.notes[c], ts.tree_phase[c]))
+    _tap_freeze!(ts, c, :out_of_range)
+  end
+  return out
 end
 
 ## The warning line of a tap row whose estimate lies outside the band

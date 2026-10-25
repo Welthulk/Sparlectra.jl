@@ -105,7 +105,8 @@ end
 Pure mapping from the canonical `PFModel` fields onto the AnalyticLoadFlow
 spec expected by `solve_pf_apslf`: `Ybus → Y`, `busType → bustype`,
 `real/imag(Sspec) → Pspec/Qspec`, `Vset → Vm`, `qmin_pu/qmax_pu → Qmin/Qmax`
-(defaulting to `-Inf`/`Inf` when `model` carries no Q-limits), `slack_idx →
+(the band of the bus injection, see `PFModel`; defaulting to
+`-Inf`/`Inf` when `model` carries no Q-limits), `slack_idx →
 slack`, and `Vslack`, the complex slack voltage: magnitude `Vset[slack_idx]`,
 angle of `V0[slack_idx]` (the slack angle of the net, which `getBusData` keeps
 under a flat start as well). `_apslf_solve` passes `Vslack` as the keyword of
@@ -197,7 +198,8 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
   S_final = ComplexF64[complex(real(model.Sspec[i]), res.Q[i]) for i in eachindex(model.Sspec)]
   F = mismatch_rectangular(model.Ybus, res.V, S_final, bt_final, model.Vset, model.slack_idx)
   residual_final = maximum(abs.(F))
-  # clamped machines, in net bus numbering, with the limit side that binds
+  # clamped machines, in net bus numbering, with the limit side that binds;
+  # res.Q and spec.Qmin/Qmax are both injection terms (buildPfModel)
   clamps = Tuple{Int,Symbol}[]
   for i in eachindex(bt_final)
     (model.busType[i] === :PV && bt_final[i] === :PQ) || continue

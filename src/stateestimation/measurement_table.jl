@@ -480,7 +480,7 @@ end
 # member of its bus group, so the bus sum is never formed without it.
 function _name_measurement_targets(net::Net)
   key = _name_key
-  iso = Set(net.isoNodes)
+  iso = _unfed_isolated_buses(net)
   energized(b) = b > 0 && !(b in iso)
   busname = _measurement_bus_names(net)
   cand = Tuple{String,MeasurementTarget,Any,Union{Nothing,Tuple{Symbol,Int}}}[]
@@ -598,7 +598,8 @@ The key index of a net without CGMES identities (MATPOWER, SCF, DTF,
 PowSyBl, a net built in code) for `importMeasurementTable`. The table keeps
 its header; its key columns hold element names:
 
-- `node_mrid`: the bus name. A bus that is not energized resolves to bus 0.
+- `node_mrid`: the bus name. A bus that is not energized resolves to bus 0;
+  a bus that only closed links join to a fed bus counts as energized.
 - `terminal_mrid`: `<branch name>:from` or `<branch name>:to` for a branch
   end, the prosumer name for a load or generator (member of the injection
   sum at its bus), the shunt name for a shunt (member of the shunt sum).
@@ -633,7 +634,7 @@ make that key ambiguous: a `U` row on it is reported as `:not_modelled`.
 """
 function nameMeasurementKeys(net::Net)::MeasurementKeyIndex
   key = _name_key
-  iso = Set(net.isoNodes)
+  iso = _unfed_isolated_buses(net)
   nodes = Dict{String,Int}()
   nbus = Dict{String,Int}()
   for (name, b) in net.busDict
@@ -884,7 +885,7 @@ function generateMeasurementTableFromPF(net::Net; timestamp::AbstractString = ""
   _check_table_sigmas("generateMeasurementTableFromPF", sigma_pq_rel, sigma_pq_floor, sigma_u_rel, bad_data_sigmas)
   levels = _sigma_levels(sigma_by_voltage_level)
   key = _name_key
-  iso = Set(net.isoNodes)
+  iso = _unfed_isolated_buses(net)
   V = buildVoltageVector(net)
   busname = _measurement_bus_names(net)
   targets = _name_measurement_targets(net).targets

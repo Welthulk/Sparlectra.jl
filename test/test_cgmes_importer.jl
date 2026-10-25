@@ -934,21 +934,33 @@ function run_cgmes_importer_tests()
       # a neutral step the band middle 3 of 1..5; the ratio is the table
       # point of that step, the set of the tap estimation marks it, and one
       # notice names it
-      for (neutral, step) in ((2, 2), (nothing, 3))
+      function nostep_copy(src, neutral)
         nd = mktempdir()
-        for f in readdir(dir)
-          txt = read(joinpath(dir, f), String)
+        for f in readdir(src)
+          txt = read(joinpath(src, f), String)
           nstep = neutral === nothing ? "" : "<cim:TapChanger.neutralStep>$(neutral)</cim:TapChanger.neutralStep>"
           write(joinpath(nd, f), replace(txt, r"<cim:SvTapStep .*?</cim:SvTapStep>" => "", "<cim:TapChanger.step>5</cim:TapChanger.step>" => "", "<cim:TapChanger.neutralStep>3</cim:TapChanger.neutralStep>" => nstep))
         end
+        return nd
+      end
+      for (neutral, step) in ((2, 2), (nothing, 3))
+        nd = nostep_copy(dir, neutral)
         nr = importCGMES(path = nd, name = "synth_rtct_nostep")
         nbr = nr.net.branchVec[last(nr.element_by_mrid["_t2w"])]
         @test nbr.ratio ≈ _RTC_TABLE_RATIOS[step] atol = 1e-12
         nch = only(nbr.se_tap_changers.changers)
         @test (nch.step, nch.step_assumed) == (Float64(step), true)
         @test count(==("notice: tap changer T2W/T2W_OLTC: step not transferred, middle position $(step) assumed"), nr.messages) == 1
+        # the export has no mark for it: the ratio of the middle position
+        # goes out and one notice names the transformer
+        enotes = String[]
+        writeCGMESFiles(nr.net; path = mktempdir(), notices = enotes)
+        @test count(==("transformer 2WT_110: ratio step not transferred, the export writes the assumed middle position"), enotes) == 1
       end
       @test !only(br.se_tap_changers.changers).step_assumed && !any(m -> occursin("step not transferred", m), res.messages)
+      rnotes = String[]
+      writeCGMESFiles(res.net; path = mktempdir(), notices = rnotes)
+      @test !any(n -> occursin("step not transferred", n), rnotes)
       # tap_control: start ratio, range and step come from the table ratios
       ctl = importCGMES(path = dir, name = "synth_rtct_ctl", tap_control = true)
       cbr = ctl.net.branchVec[last(ctl.element_by_mrid["_t2w"])]
@@ -969,6 +981,19 @@ function run_cgmes_importer_tests()
         @test run_sparlectra(net = tc.net, config = cfg).numerical_converged
         @test latest_control_result(tc.net).status == :converged
         @test any(r -> isapprox(tbr.tap_ratio, r; atol = 1e-12), values(_RTC_TABLE_RATIOS))
+      end
+      # a changer without a transferred step that the controller moves off
+      # its middle position 3 loses the mark of the stored set, and the
+      # export names no assumed step; one it leaves there keeps both
+      for (target_kV, moves) in ((19.4, true), (19.73, false))
+        mc = importCGMES(path = nostep_copy(_cgmes_synth_rtc_table_dir(target_kV = target_kV), nothing), name = "synth_rtct_nostep_ctl", tap_control = true)
+        mbr = mc.net.branchVec[last(mc.element_by_mrid["_t2w"])]
+        @test only(mbr.se_tap_changers.changers).step_assumed
+        @test run_sparlectra(net = mc.net, config = cfg).numerical_converged
+        @test (mbr.tap_ratio != _RTC_TABLE_RATIOS[3], only(mbr.se_tap_changers.changers).step_assumed) == (moves, !moves)
+        mnotes = String[]
+        writeCGMESFiles(mc.net; path = mktempdir(), notices = mnotes)
+        @test count(n -> occursin("step not transferred", n), mnotes) == (moves ? 0 : 1)
       end
       # per-step r/x/g/b corrections of the table are named once and the point
       # of the tap position (x + 5 %) applies to the series reactance
@@ -2837,7 +2862,9 @@ function run_cgmes_importer_tests()
         local fj_bus(tn) = fj.net.busDict[fj.topo.bus_name[tn]]
         local fj_ps(mrid) = fj.net.prosumpsVec[last(fj.element_by_mrid[mrid])]
         @test fj_bus("_f2_jx") in fj.net.isoNodes
-        @test haskey(Sparlectra.CGMESImporter._linkFedIsolatedBuses(fj.net), fj_bus("_f2_jx"))
+        @test haskey(Sparlectra._linkFedIsolatedBuses(fj.net), fj_bus("_f2_jx"))
+        # the node of jx keeps its bus for a voltage measurement
+        @test Sparlectra.CGMESImporter.cgmesMeasurementKeys(fj).nodes[Sparlectra._measurement_key("_f2_jx")] == fj_bus("_f2_jx")
         @test Sparlectra.isSlack(fj_ps("_f2_ei_j4")) && !Sparlectra.isSlack(fj_ps("_f2_ei_j1"))
         @test count(m -> startswith(m, "warning: electrical island of "), fj.messages) == 1
         local wnet = first(Sparlectra._merged_pf_net(fj.net))

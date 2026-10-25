@@ -78,6 +78,13 @@ multiplier is the pull of the measurements against the balance: the
 measurement part of the gradient, `H_M' W r_M = C' lambda`. A large value
 points at a measurement error near the bus. `nothing` under `on` and
 `off`; on a multi-island net the rows of all islands.
+
+`start` names the start of the result run: `:flat` (`flatstart = true`),
+`:stored` (`flatstart = false`, the voltages stored in the net) or
+`:stored_after_flat`: the run from the flat start did not converge and
+the start ladder (`state_estimation.start_ladder`, default on) solved
+once more from the stored voltages; `converged` says whether that second
+try converged.
 """
 struct SEResult
   voltages::Vector{ComplexF64}
@@ -100,7 +107,7 @@ struct SEResult
   islands::Union{Nothing,Vector{NamedTuple}}
   # tap estimation: one row per released regulator (tap changer) with its
   # continuous step estimate s, the fixed physical step, the model step and
-  # the deviation, `status` (:estimated or :not_estimated) with its
+  # the deviation, `status` (:estimated, :out_of_range or :not_estimated) with its
   # `reason`, note and notice; `nothing` without releases. After the estimation the regulators are FIXED to their
   # physical step and one more run is solved in which they are no states any
   # more: `objectiveJ`/`dof`/`voltages` above are that FIXED final run,
@@ -128,7 +135,10 @@ struct SEResult
   tapFixation::Union{Nothing,NamedTuple}
   # topology validation: the ADVISORY stage-1 precheck findings
   # (status contradictions, dead closed branches, link voltage mismatches,
-  # node-balance violations); nothing when the precheck is off or clean.
+  # node-balance violations, meshes without an active power row:
+  # kind :mesh_without_p_measurement, the solution may not be unique; the
+  # tap rows of a changer in such a mesh carry that in their notice);
+  # nothing when the precheck is off or clean.
   # Findings never block or mutate anything.
   topologyFindings::Union{Nothing,Vector{NamedTuple}}
   # J_active: `(j, dof, suppressed)` when replacement-mode suppression
@@ -148,6 +158,11 @@ struct SEResult
   # matrix and, under zero_injection = constraint, the multipliers per bus
   conditioning::Union{Nothing,NamedTuple}
   zeroInjectionMultipliers::Union{Nothing,Vector{NamedTuple}}
+  # start of the result run (0.60.0): `:flat`, `:stored` (flatstart =
+  # false, the voltages stored in the net) or `:stored_after_flat` (the
+  # start ladder: the run from the flat start did not converge, this result
+  # starts from the stored voltages)
+  start::Symbol
 end
 
 ## Two-stage robust weight modification (SE phase 4): per
@@ -158,9 +173,9 @@ end
 ##   contribution is effectively suppressed)
 ## The knees default to the historical 3/6 and are bitwise identical to the
 ## pre-0.10 fixed formulas at those values. Stages are recomputed every
-## iteration, so a measurement can recover. Virtual measurements
-## (sigma <= 1e-6, including ZI pseudo-measurements) are exempt; SHDERIV and
-## LINKAGG rows carry real sigmas and remain subject to modification.
+## iteration, so a measurement can recover. Rows with sigma <= 1e-6 are
+## exempt here; the row-level method below also exempts every row that
+## bad-data elimination and replacement protect.
 ## Returns (stage, sigma_mod).
 @inline function _robust_stage(absr::Float64, σ::Float64, k1::Float64 = 3.0, k2::Float64 = 6.0)
   if σ <= 1e-6
@@ -175,6 +190,14 @@ end
   end
   return (2, absr / k1)
 end
+
+## Stage of one measurement row: rows protected from bad-data elimination
+## (`_elimination_protected`: zero-injection rows, also on a LINKAGG
+## aggregate of them, SHDERIV rows, sigma <= 1e-6) keep their weight, the
+## same test elimination and replacement use. A zero-injection row with
+## a real sigma (`zero_injection = on`) encodes network structure; widening
+## it would let the estimate leave the balance it stands for.
+@inline _robust_stage(m::Measurement, absr::Float64, k1::Float64, k2::Float64) = _elimination_protected(m) ? (0, m.sigma) : _robust_stage(absr, m.sigma, k1, k2)
 
 ## Effective robust mode of a config: the legacy Bool `robust` selects the
 ## staged modification only while robust_mode itself is :off, so every
@@ -400,6 +423,26 @@ end
 @inline function _va_offset_from_state(x::Vector{Float64}, withVaOffset::Bool, refRad::Float64)
   return withVaOffset ? x[end] + refRad : refRad
 end
+
+## Whether the voltages stored in `net` differ from the flat start, the
+## condition of the start ladder (`state_estimation.start_ladder`): a net
+## without a stored state (every |V| 1 pu or unset, every angle at the slack
+## angle) would start the second try where the first one started.
+function _se_has_stored_state(net::Net)::Bool
+  slackIdx = _find_slack_idx(net)
+  vaRef = _se_slack_ref_deg(net, slackIdx)
+  for (i, nd) in enumerate(net.nodeVec)
+    i == slackIdx && continue
+    something(nd._vm_pu, 1.0) != 1.0 && return true
+    something(nd._va_deg, 0.0) != vaRef && return true
+  end
+  return false
+end
+
+## the log line of the start ladder (runse! and the SE service write it)
+## (`ite` the iterations of the try from the flat start, `nothing` when the
+## caller does not know them)
+_se_start_ladder_line(ite::Union{Nothing,Int})::String = string("the WLS from the flat start did not converge", ite === nothing ? "" : string(" (", ite, " iteration(s))"), "; second try from the voltages stored in the case (state_estimation.start_ladder)")
 
 ## Internal helper: build initial state vector for WLS iterations.
 ## flatstart=true uses θ=0, Vm=1 except slack magnitude initialized from net;
@@ -983,6 +1026,8 @@ function _suppression_normalized_residuals(H, r::Vector{Float64}, w::Vector{Floa
     d = _residual_diagnostics(H, r, w; minStates = minStates)
     (rn = d.rn, wii = d.wii)
   catch err
+    # an abort of the run is no missing covariance
+    err isa PowerFlowAborted && rethrow()
     @warn "SE suppression: no residual covariance available, no row is suppressed this round" exception = err
     nothing
   end
@@ -1206,6 +1251,8 @@ function _omega_diag_blockwise(Ht::SparseMatrixCSC{Float64,Int}, w::Vector{Float
   m = size(Ht, 2)
   d = zeros(Float64, m)
   for c0 = 1:_SE_OMEGA_BLOCK:m
+    # one abort point per block: on a large set the blocks add up to minutes
+    sparlectra_check_abort()
     cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, m)
     X = F \ Matrix{Float64}(Ht[:, cols])
     for (jj, j) in enumerate(cols)
@@ -1239,6 +1286,7 @@ function _residual_diagnostics_blockwise(H::AbstractMatrix{<:Real}, r::Vector{Fl
   end
   sv = zeros(Float64, n)
   for c0 = 1:_SE_OMEGA_BLOCK:n
+    sparlectra_check_abort()
     cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, n)
     E = zeros(Float64, n, length(cols))
     for (jj, j) in enumerate(cols)
@@ -1266,6 +1314,7 @@ function _residual_correlation_max_blockwise(H::AbstractMatrix{<:Real}, w::Vecto
   d = _omega_diag_blockwise(Ht, w, F)
   kmax = zeros(Float64, m)
   for c0 = 1:_SE_OMEGA_BLOCK:m
+    sparlectra_check_abort()
     cols = c0:min(c0 + _SE_OMEGA_BLOCK - 1, m)
     Y = Hs * (F \ Matrix{Float64}(Ht[:, cols]))   # (H G⁻¹ Hᵀ)[:, cols]
     for (jj, j) in enumerate(cols)
@@ -2109,6 +2158,8 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
       wii = wii_all
       c
     catch err
+      # an abort of the run is no unavailable covariance
+      err isa PowerFlowAborted && rethrow()
       @warn "observability: criticality via diag(Omega) unavailable ($(sprint(showerror, err))); falling back to the per-row rank tests"
       method_used = :rank
       nothing
@@ -2137,6 +2188,8 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
     criticalitySkipped = !structural_affordable
     if !criticalitySkipped
       for i = 1:m
+        # one rank test per row: an abort point every 64 rows
+        i % 64 == 0 && sparlectra_check_abort()
         _numerical_row_redundant(H, i; tol = tol) || push!(criticalNum, activeOriginalIdx[i])
         _structural_row_redundant(H, i) || push!(criticalStr, activeOriginalIdx[i])
       end
@@ -2684,6 +2737,10 @@ end
 ## links are merged into one estimation group here (the estimator's own
 ## contraction then handles the cluster); tearing such a cluster apart
 ## would break the LINKAGG semantics and drop the link-flow measurements.
+## The join runs over the link groups (`_active_link_representative_map`),
+## so it also passes a bus no branch reaches (a busbar with couplers only,
+## typed Isolated, in no island of detect_ac_islands); such a bus goes into
+## the island of its group with its rows.
 function _se_island_partition(net::Net, measurements::Vector{Measurement})
   rep = detect_ac_islands(net)
   raw = rep.rows
@@ -2702,14 +2759,21 @@ function _se_island_partition(net::Net, measurements::Vector{Measurement})
     end
     return i
   end
-  for l in net.linkVec
-    l.status == 1 || continue
-    a = get(busIsland0, Int(l.fromBus), 0)
-    b = get(busIsland0, Int(l.toBus), 0)
-    (a == 0 || b == 0) && continue
-    ra = findroot(a)
-    rb = findroot(b)
+  reps = _active_link_representative_map(net)
+  groupIsland = Dict{Int,Int}()   # link group representative => an island of it
+  for b in eachindex(reps)
+    a = get(busIsland0, b, 0)
+    a == 0 && continue
+    g = get!(groupIsland, reps[b], a)
+    ra = findroot(g)
+    rb = findroot(a)
     ra != rb && (parent[rb] = ra)
+  end
+  # buses in no island whose link group has one: island root => buses
+  linkFed = Dict{Int,Vector{Int}}()
+  for b in eachindex(reps)
+    (haskey(busIsland0, b) || !haskey(groupIsland, reps[b])) && continue
+    push!(get!(linkFed, findroot(groupIsland[reps[b]]), Int[]), b)
   end
   groups = Dict{Int,Vector{Int}}()
   for i in eachindex(raw)
@@ -2717,10 +2781,11 @@ function _se_island_partition(net::Net, measurements::Vector{Measurement})
   end
   rows = NamedTuple[]
   for members in sort!(collect(values(groups)); by = first)
-    if length(members) == 1
+    fedBuses = get(linkFed, findroot(members[1]), Int[])
+    if length(members) == 1 && isempty(fedBuses)
       push!(rows, raw[members[1]])
     else
-      buses = reduce(vcat, (raw[m].buses for m in members))
+      buses = vcat(reduce(vcat, (raw[m].buses for m in members)), fedBuses)
       branches = reduce(vcat, (raw[m].branches for m in members))
       n_ref = sum(raw[m].n_ref for m in members)
       chosen = 0
@@ -3101,7 +3166,7 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
     # and a zero balance
     _register_se_start!(net, seVm, seVa, sePinj, seQinj, conv; link_circulation = any(l -> l.status == 1, net.linkVec) ? linkCircMerged : nothing)
   end
-  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTapFix ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum, fallback_used = false, fallback_reason = :none, failure = tapFailure) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing, nothing, worstCond, anyZI ? ziRows : nothing)
+  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTapFix ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum, fallback_used = false, fallback_reason = :none, failure = tapFailure) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing, nothing, worstCond, anyZI ? ziRows : nothing, cfg.flatstart ? :flat : :stored)
 end
 
 ## `tap_excl`: the transformers the tap estimation keeps out, resolved on
@@ -3117,37 +3182,82 @@ function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::St
     if !isempty(pre.findings)
       topo = pre.findings
       # one line per RUN, not per finding: a weak measurement set produces a
-      # dozen findings, and the result object carries them all anyway
-      shown = [string(f.kind, " at ", f.location, " (", f.evidence, ", ", f.severity, ")") for f in first(topo, 3)]
-      @warn "runse!: topology precheck reported $(length(topo)) finding(s) (advisory, the estimation proceeds)" findings = join(shown, "; ") * (length(topo) > 3 ? "; ..." : "")
+      # dozen findings, and the result object carries them all anyway. The
+      # meshes without P get their own line, a plausibility finding listed
+      # first must not hide them.
+      mesh = [f for f in topo if f.kind === :mesh_without_p_measurement]
+      other = [f for f in topo if f.kind !== :mesh_without_p_measurement]
+      isempty(mesh) || @warn "runse!: mesh without P measurement: solution may not be unique ($(length(mesh)) mesh group(s), the estimation proceeds)" meshes = join((f.location for f in first(mesh, 3)), "; ") * (length(mesh) > 3 ? "; ..." : "")
+      if !isempty(other)
+        shown = [string(f.kind, " at ", f.location, " (", f.evidence, ", ", f.severity, ")") for f in first(other, 3)]
+        @warn "runse!: topology precheck reported $(length(other)) finding(s) (advisory, the estimation proceeds)" findings = join(shown, "; ") * (length(other) > 3 ? "; ..." : "")
+      end
     end
   end
   part = _se_island_partition(net, measurements)
   solve(c::StateEstimationConfig) = length(part.rows) <= 1 ? _runse_with_config!(net, measurements, c; tap_excl = tap_excl) : _runse_islands!(net, measurements, c, part; tap_excl = tap_excl)
   # the start voltages of the run: a run that does not converge still writes
-  # its last iterate into the net (update_net), the fallback starts from these
+  # its last iterate into the net (update_net), the fallback and the second
+  # try of the start ladder start from these
   vStart = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
   te = cfg.tap_estimation
   # and the model: on a multi-island net an island that converged writes
   # its steps and shunts back (update_taps, update_shunts) even when another
   # island fails, so run 2 would otherwise see the run-1 steps
   withFallback = te.enabled && te.fallback
-  modelStart = withFallback ? _se_writeback_snapshot(net, cfg) : nothing
-  res = solve(cfg)
-  if withFallback && _se_tap_run_failed(res)
-    reason, ite1 = res.tapFixation.failure
-    @warn _se_tap_fallback_line1(reason, ite1)
+  # start ladder (state_estimation.start_ladder): only from the flat start
+  # and only when the net stores voltages that differ from it; the second
+  # try would otherwise repeat the first
+  withLadder = cfg.flatstart && cfg.start_ladder && _se_has_stored_state(net)
+  modelStart = (withFallback || withLadder) ? _se_writeback_snapshot(net, cfg) : nothing
+  restoreStart! = function ()
     for (i, nd) in enumerate(net.nodeVec)
       nd._vm_pu, nd._va_deg = vStart[i]
     end
     _se_writeback_restore!(net, modelStart)
-    cfgOff = _copy_se_config_with(cfg; tap_estimation = _tap_config_off(te))
-    res = _se_tap_fallback_result(solve(cfgOff), reason, ite1; net = net, measurements = measurements, excl = tap_excl, update_net = cfg.update_net)
-    line2 = _se_tap_fallback_line2(res)
-    res.converged ? (@info line2) : (@warn line2)
+  end
+  # one try from the start of `c`: the run, and its fallback without tap
+  # estimation when the run with tap states failed
+  attempt = function (c::StateEstimationConfig)
+    local r = solve(c)
+    if withFallback && _se_tap_run_failed(r)
+      local reason, ite1 = r.tapFixation.failure
+      @warn _se_tap_fallback_line1(reason, ite1)
+      restoreStart!()
+      local cfgOff = _copy_se_config_with(c; tap_estimation = _tap_config_off(te))
+      r = _se_tap_fallback_result(solve(cfgOff), reason, ite1; net = net, measurements = measurements, excl = tap_excl, update_net = c.update_net)
+      local line2 = _se_tap_fallback_line2(r)
+      r.converged ? (@info line2) : (@warn line2)
+    end
+    return r
+  end
+  res = attempt(cfg)
+  if withLadder && !res.converged
+    @info string("runse!: ", _se_start_ladder_line(res.iterations))
+    restoreStart!()
+    res = _se_result_with(attempt(_copy_se_config_with(cfg; flatstart = false)); start = :stored_after_flat)
   end
   topo === nothing && return res
-  return _se_result_with(res; topologyFindings = topo)
+  return _se_result_with(res; topologyFindings = topo, tapEstimates = _se_tap_rows_mesh_notice(res.tapEstimates, topo))
+end
+
+# the row reasons of a changer that was no state of the run (not released,
+# switched off, kept out by the configuration, or the fallback run): its
+# step is the transferred one, the mesh notice does not apply
+const _TAP_ROW_NOT_RELEASED = (:no_changer, :disabled, :excluded, :machine_transformer, :q_not_measured_in_group, :fallback_not_converged, :fallback_worse_fit)
+
+## the tap rows with the mesh notice appended to every row of a released
+## changer whose branch lies in a mesh of a :mesh_without_p_measurement
+## finding: Q, |I| and Vm rows alone can admit a second state there, and a
+## released changer in such a mesh can end at a wrong step with J near
+## zero. Status, reason and note stay; the notice is the only trace on the
+## row.
+function _se_tap_rows_mesh_notice(rows, topo::Vector{NamedTuple})
+  rows === nothing && return nothing
+  meshBr = Set{Int}(k for f in topo if f.kind === :mesh_without_p_measurement for k in f.branches)
+  isempty(meshBr) && return rows
+  text = _tap_notice_text(:mesh_without_p_measurement)
+  return NamedTuple[(!(t.reason in _TAP_ROW_NOT_RELEASED) && t.branch in meshBr) ? merge(t, (notice = join(filter(!isempty, [t.notice, text]), "; "),)) : t for t in rows]
 end
 
 ## the tap estimation settings `te` with the switch off, everything else
@@ -4000,7 +4110,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       elseif robustOn && ite >= robustStart
         wSolve = copy(w)
         for i in eachindex(activeMeas)
-          stage, σmod = _robust_stage(abs(r[i]), activeMeas[i].sigma, robustK1, robustK2)
+          stage, σmod = _robust_stage(activeMeas[i], abs(r[i]), robustK1, robustK2)
           stage == 0 && continue
           wSolve[i] = inv(σmod * σmod)
         end
@@ -4244,6 +4354,10 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # the text the notice of a changer ends with, by (branch, changer): the J
   # of the mirror check of the recheck at the estimate
   tapExtraNotice = Dict{Tuple{Int,Int},String}()
+  # the continuous estimate (relative to neutral) and sigma_s of a weak
+  # re-estimate of the recheck, by (branch, changer): its row shows them,
+  # its step stays the transferred one
+  tapWeakEst = Dict{Tuple{Int,Int},Tuple{Float64,Union{Nothing,Float64}}}()
   # J and the gated Ia rows at the current state (Ia rows gated at this
   # state leave J, the same discipline as the final block below)
   tapJNow = function ()
@@ -4278,15 +4392,20 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # (_tap_recheck_map): a fixed one that adds no rank there is withdrawn
   # (:not_observable_at_estimate, back to its transferred step), a kept
   # out one that adds rank is estimated again together with the other
-  # free changers of its transformer (one joint estimate and fixation, no
-  # loop). A fixed phase changer on a tree edge without an angle anchor
+  # free changers of its transformer and fixed (a weak re-estimate is not
+  # taken over and the joint estimate runs again without it, see below).
+  # A fixed phase changer on a tree edge without an angle anchor
   # with a mirror step (_tap_mirror_step) is solved once at that step;
   # when J there differs from J at the fixed step by less than
   # _TAP_MIRROR_DJ the measurements cannot tell the two steps apart and
   # it is withdrawn as well (:mirror_step_fits). Whether a phase changer has
   # an angle anchor is judged at the converged state as well (the guard of
   # the start test on the recheck rows: an Ia row gated out at the start
-  # anchors once its current flows). It runs after the fixation, and also
+  # anchors once its current flows). The fixed partners of a withdrawn
+  # changer (or of one put at its transferred step by the band verdict)
+  # are estimated again with it at that step (partnerPass!), so no step
+  # of the result comes from a joint estimate with a step that was not
+  # taken over. It runs after the fixation, and also
   # on a converged run in which the start test kept every released changer
   # out (no exception for it; the caller below sets up an
   # empty map). Every name below is local to this closure; it reassigns
@@ -4297,6 +4416,8 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     local rmap, xr, rcand, movedIdx, nfin, withdrawList, newly, keptCols, newlyT, again
     local Yr, Hf, Hb, rankRowsR, live, order, candCols, keptR
     local saved, addIdx, addTs, jOf, againF, finTrafos, estTrafos, reasons, colR, valsR, againCols, newTrafos, okR, gatedA, sigA, xestR, viewTrafos, w2
+    local touchedB, weakNow, oorR, detLines
+    local stale, fixedEst, markStale!, partnerPass!, pairsP, outP
     # J of the fixed run with changer c of transformer j at step m,
     # solved warm from the current state; state, map and the numerics
     # of the last solve are put back (Inf when it does not converge)
@@ -4357,6 +4478,129 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       _wls_solve!(false)
       return iteDone
     end
+    # The partners of a withdrawn changer. A changer withdrawn here
+    # (:not_observable_at_estimate, :mirror_step_fits) or put at its
+    # transferred step by the band verdict (:out_of_range) was a state of
+    # the joint estimate that fixed the other changers of its transformer;
+    # their steps belong to a state that no longer exists. Measured on a
+    # ratio and phase pair: the phase changer jointly at -11.84 (truth
+    # -13) and withdrawn to its transferred -13, the ratio changer kept the
+    # -2 of the joint estimate (truth -5). Such a partner is in `stale`
+    # ((j, c) of the current map) and is estimated again with the
+    # withdrawn changer at its transferred step (partnerPass! below).
+    # fixedEst: changer c of transformer j is fixed from an estimate of
+    # this run (a state of the estimation map, now a fixed step)
+    stale = Set{Tuple{Int,Int}}()
+    fixedEst = function (j, c)
+      local t
+      t = tapMap.trafos[j]
+      return t.released[c] && t.frozen[c] === :none && t.cols[c] == 0 && j <= length(tapMapEst.trafos) && tapMapEst.trafos[j].cols[c] != 0
+    end
+    markStale! = function (wd)
+      for (j, c) in wd, k in eachindex(tapMap.trafos[j].cols)
+        (k != c && !((j, k) in wd) && fixedEst(j, k)) && push!(stale, (j, k))
+      end
+      return nothing
+    end
+    # One pass over the partners `pairs` ((j, c) of the current map):
+    # estimated again together, every other changer at its current step
+    # (a withdrawn one at its transferred step), then the band verdict, the
+    # fixation and the mirror check, as for the first estimate. The rank
+    # test at the converged state has kept each of them already (a
+    # withdrawn changer comes after its partners in that test), and the
+    # sigma_s bound of a newly determinable changer does not apply: this
+    # estimate replaces the first one. When the joint run or its fixation
+    # does not converge, the state before it is put back and the partners
+    # go to their transferred step (:not_converged_at_estimate). Returns
+    # the changers this pass withdrew or put at their transferred step.
+    partnerPass! = function (pairs)
+      local sv, colP, valsP, colsP, trafosP, okP, gatedP, sigP, oorP, viewX, viewSig, wP, out, jOfB
+      sv = (x = copy(x), map = tapMap, prior = copy(tapPriorCols), ite = iteDone, gain = lastGain, conJac = lastConJac, lambda = lastLambda, jac = lastJacobian)
+      for (j, c) in pairs
+        @info "runse!: recheck at the estimate: tap regulator $(regName(tapMap.trafos[j], c)) estimated again, a changer of its transformer was withdrawn to its transferred step"
+      end
+      colP = tapMap.col0
+      valsP = Float64[]
+      colsP = Int[]
+      trafosP = TapBranchState[]
+      for (j, ts) in enumerate(tapMap.trafos)
+        let cols = zeros(Int, length(ts.cols))
+          for c in eachindex(cols)
+            if ts.cols[c] != 0
+              push!(valsP, x[ts.cols[c]])
+            elseif (j, c) in pairs
+              push!(valsP, ts.spos[c])
+              push!(colsP, colP)
+            else
+              continue
+            end
+            cols[c] = colP
+            colP += 1
+          end
+          push!(trafosP, _tap_with_cols(ts, cols, copy(ts.spos)))
+        end
+      end
+      x = vcat(x[1:(tapMap.col0 - 1)], valsP, x[(tapMap.col0 + tapMap.ncols):end])
+      tapMap = TapStateMap(trafosP, tapMap.col0, colP - tapMap.col0, tapMap.impedance)
+      tapPriorCols = _tap_prior_columns!(tapMap, net, activeMeas)
+      _wls_solve!(false)
+      tapIteFix += iteDone
+      okP = converged
+      oorP = Tuple{TapBranchState,Int,Symbol,Bool}[]
+      if okP
+        _, gatedP = tapJNow()
+        sigP = lastJacobian === nothing ? Dict{Int,Union{Nothing,Float64}}() : _se_state_sigmas(lastJacobian, wJ, conIdx, [i for i in eachindex(activeMeas) if !(i in gatedP)], colsP)
+        oorP = _tap_mark_out_of_range!(tapMap, x, sigP, Set{Int}(colsP))
+        # the report view: the new estimate and its sigma_s replace the
+        # joint ones (the column of the estimation map stays)
+        viewX = copy(tapXEst)
+        viewSig = copy(tapSigma)
+        for (j, c) in pairs
+          let col = tapMap.trafos[j].cols[c], ecol = tapMapEst.trafos[j].cols[c]
+            viewX[ecol] = x[col]
+            viewSig[ecol] = get(sigP, col, nothing)
+          end
+        end
+        okP = tapFixAndSolve!(colsP)
+        tapIteFix += iteDone
+        if okP
+          tapXEst = viewX
+          tapSigma = viewSig
+        end
+      end
+      out = Tuple{Int,Int}[]
+      if okP
+        jOfB = Dict{Int,Int}(ts.branch => j for (j, ts) in enumerate(tapMap.trafos))
+        for (ts, c, _, _) in oorP
+          push!(out, (jOfB[ts.branch], c))
+        end
+        wP = Tuple{Int,Int,Symbol}[]
+        for (j, c, txt) in mirrorCheck([(j, c) for (j, c) in pairs if tapMap.trafos[j].frozen[c] === :none])
+          push!(wP, (j, c, :mirror_step_fits))
+          tapExtraNotice[(tapMap.trafos[j].branch, c)] = txt
+          push!(out, (j, c))
+        end
+        tapIteFix += withdraw!(wP)
+      else
+        for (ts, c, nt, tp) in oorP
+          ts.frozen[c] = :none
+          ts.notes[c] = nt
+          ts.tree_phase[c] = tp
+        end
+        x = sv.x
+        tapMap = sv.map
+        tapPriorCols = sv.prior
+        iteDone = sv.ite
+        converged = true
+        lastGain = sv.gain
+        lastConJac = sv.conJac
+        lastLambda = sv.lambda
+        lastJacobian = sv.jac
+        tapIteFix += withdraw!([(j, c, :not_converged_at_estimate) for (j, c) in pairs])
+        append!(out, pairs)
+      end
+      return out
+    end
 
     rmap, xr, rcand, movedIdx = _tap_recheck_map(tapMap, tapMapEst, x, tapFrozenStates)
     nfin = length(tapMap.trafos)
@@ -4402,6 +4646,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       end
     end
     newlyT = sort!(unique(first.(newly)))
+    touchedB = Set{Int}(rmap.trafos[j].branch for j in newlyT)
     # the mirror check over every fixed changer that keeps its rank, also
     # on a transformer estimated again below: if that joint estimate fails,
     # its fixed changers are checked here all the same
@@ -4409,134 +4654,225 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       push!(withdrawList, (j, c, :mirror_step_fits))
       tapExtraNotice[(tapMap.trafos[j].branch, c)] = txt
     end
-    # per transformer with a newly determinable changer (rmap index):
-    # those changers and its other fixed changers that stay
-    again = Dict{Int,Vector{Int}}(j => sort!(unique(vcat([c for (jj, c) in newly if jj == j], [k.c for k in rcand if k.j == j && k.kind === :est && !any(wd -> wd[1] == j && wd[2] == k.c, withdrawList)]))) for j in newlyT)
     tapIteFix += withdraw!(withdrawList)
+    # the partners of these withdrawals and of the changers the band
+    # verdict of the first estimate put at their transferred step
+    markStale!(vcat(Tuple{Int,Int}[(j, c) for (j, c, _) in withdrawList], Tuple{Int,Int}[(j, c) for (j, ts) in enumerate(tapMap.trafos) for c in eachindex(ts.cols) if ts.released[c] && ts.frozen[c] === :out_of_range]))
+    # The joint estimate of the newly determinable changers. A newly
+    # determinable changer whose sigma_s there is not below
+    # _TAP_RECHECK_SIGMA_MAX is not taken over: the state before the joint
+    # estimate is put back and solved again, it keeps its transferred step
+    # (:weak_at_estimate, the row and the notice keep the estimate and
+    # sigma_s), and
+    # the joint estimate runs again without it. Each repeat drops at least
+    # one changer, so the loop ends. Only the re-estimate gets this bound,
+    # never the first round.
     if !isempty(newlyT) && converged
-      saved = (x = copy(x), map = tapMap, prior = copy(tapPriorCols), ite = iteDone, gain = lastGain, conJac = lastConJac, lambda = lastLambda, est = tapMapEst, xest = copy(tapXEst), frozenStates = copy(tapFrozenStates), sigma = copy(tapSigma))
-      # the transformers that left the map at the start join it again:
-      # out of the Ybus (the overlay stamps them) and out of the frozen
-      # list; jOf maps an rmap index to the index of the maps from here
-      addIdx = Int[movedIdx[j - nfin] for j in newlyT if j > nfin]
-      addTs = TapBranchState[tapFrozenStates[i] for i in addIdx]
-      jOf = Dict{Int,Int}(j => (j <= nfin ? j : nfin + findfirst(==(movedIdx[j - nfin]), addIdx)) for j in newlyT)
-      againF = Dict{Int,Vector{Int}}(jOf[j] => again[j] for j in newlyT)
-      isempty(addTs) || _tap_unstamp!(Ybus, net, TapStateMap(addTs, tapMap.col0, 0, tapMap.impedance))
-      tapFrozenStates = TapBranchState[ts for (i, ts) in enumerate(tapFrozenStates) if !(i in addIdx)]
-      finTrafos = vcat(tapMap.trafos, addTs)
-      estTrafos = vcat(tapMapEst.trafos, addTs)
-      reasons = Dict{Tuple{Int,Int},Symbol}()
-      for (j, c) in newly
-        let ts = finTrafos[jOf[j]]
-          reasons[(jOf[j], c)] = ts.frozen[c]
-          ts.frozen[c] = :none
-          ts.tree_phase[c] = (ts.branch, c) in unanch
-          @info "runse!: recheck at the estimate: tap regulator $(regName(ts, c)) determinable at the estimate, estimated again with the other free changers of its transformer"
-        end
-      end
-      # map of the joint estimate: the states of the fixed run and the
-      # changers to estimate again, at their positions
-      colR = tapMap.col0
-      valsR = Float64[]
-      againCols = Int[]
-      newTrafos = TapBranchState[]
-      for (jf, ts) in enumerate(finTrafos)
-        let cols = zeros(Int, length(ts.cols)), cs = get(againF, jf, Int[])
-          for c in eachindex(cols)
-            if ts.cols[c] != 0
-              push!(valsR, x[ts.cols[c]])
-            elseif c in cs
-              push!(valsR, ts.spos[c])
-              push!(againCols, colR)
-            else
-              continue
-            end
-            cols[c] = colR
-            colR += 1
+      saved = (x = copy(x), map = tapMap, prior = copy(tapPriorCols), ite = iteDone, gain = lastGain, conJac = lastConJac, lambda = lastLambda, jac = lastJacobian, est = tapMapEst, xest = copy(tapXEst), frozenStates = copy(tapFrozenStates), sigma = copy(tapSigma))
+      # set when a pass withdraws a weak changer: a later pass that ends
+      # with the state put back still owes the new solve below
+      weakWithdrawn = false
+      while true
+        newlyT = sort!(unique(first.(newly)))
+        # per transformer with a newly determinable changer (rmap index):
+        # those changers and its other fixed changers that stay
+        again = Dict{Int,Vector{Int}}(j => sort!(unique(vcat([c for (jj, c) in newly if jj == j], [k.c for k in rcand if k.j == j && k.kind === :est && !any(wd -> wd[1] == j && wd[2] == k.c, withdrawList)]))) for j in newlyT)
+        # the transformers that left the map at the start join it again:
+        # out of the Ybus (the overlay stamps them) and out of the frozen
+        # list; jOf maps an rmap index to the index of the maps from here
+        addIdx = Int[movedIdx[j - nfin] for j in newlyT if j > nfin]
+        addTs = TapBranchState[tapFrozenStates[i] for i in addIdx]
+        jOf = Dict{Int,Int}(j => (j <= nfin ? j : nfin + findfirst(==(movedIdx[j - nfin]), addIdx)) for j in newlyT)
+        againF = Dict{Int,Vector{Int}}(jOf[j] => again[j] for j in newlyT)
+        isempty(addTs) || _tap_unstamp!(Ybus, net, TapStateMap(addTs, tapMap.col0, 0, tapMap.impedance))
+        tapFrozenStates = TapBranchState[ts for (i, ts) in enumerate(tapFrozenStates) if !(i in addIdx)]
+        finTrafos = vcat(tapMap.trafos, addTs)
+        estTrafos = vcat(tapMapEst.trafos, addTs)
+        reasons = Dict{Tuple{Int,Int},Symbol}()
+        # the log lines of the changers estimated again, emitted once the
+        # outcome is known: at info level when the joint estimate changes
+        # the result (taken over, or a weak changer with its notice), at
+        # debug level when it did not converge and the result before it
+        # stays unchanged (seen on radial changers kept out at the start)
+        detLines = String[]
+        for (j, c) in newly
+          let ts = finTrafos[jOf[j]]
+            reasons[(jOf[j], c)] = ts.frozen[c]
+            ts.frozen[c] = :none
+            ts.tree_phase[c] = (ts.branch, c) in unanch
+            push!(detLines, "runse!: recheck at the estimate: tap regulator $(regName(ts, c)) determinable at the estimate, estimated again with the other free changers of its transformer")
           end
-          push!(newTrafos, _tap_with_cols(ts, cols, copy(ts.spos)))
         end
-      end
-      x = vcat(x[1:(tapMap.col0 - 1)], valsR, x[(tapMap.col0 + tapMap.ncols):end])
-      tapMap = TapStateMap(newTrafos, tapMap.col0, colR - tapMap.col0, tapMap.impedance)
-      tapPriorCols = _tap_prior_columns!(tapMap, net, activeMeas)
-      _wls_solve!(false)
-      tapIteFix += iteDone
-      okR = converged
-      if okR
-        # the continuous estimate and its sigma go into the report view
-        # of the estimation map (tapMapEst, tapXEst): a changer with a
-        # column there gets the new value, one without a column appended
-        # behind the state vector (the view is read by the report only)
-        jA, gatedA = tapJNow()
-        dofA = length(activeMeas) - length(gatedA) - length(x)
-        iteA = iteDone
-        sigA = lastJacobian === nothing ? Dict{Int,Union{Nothing,Float64}}() : _se_state_sigmas(lastJacobian, wJ, conIdx, [i for i in eachindex(activeMeas) if !(i in gatedA)], againCols)
-        xestR = copy(tapXEst)
-        viewTrafos = TapBranchState[]
-        for (jf, ts) in enumerate(tapMap.trafos)
-          let e = estTrafos[jf], ecols = copy(estTrafos[jf].cols)
-            for c in eachindex(ts.cols)
-              (ts.cols[c] != 0 && ts.cols[c] in againCols) || continue
-              if ecols[c] == 0
-                push!(xestR, x[ts.cols[c]])
-                ecols[c] = length(xestR)
+        # map of the joint estimate: the states of the fixed run and the
+        # changers to estimate again, at their positions
+        colR = tapMap.col0
+        valsR = Float64[]
+        againCols = Int[]
+        newTrafos = TapBranchState[]
+        for (jf, ts) in enumerate(finTrafos)
+          let cols = zeros(Int, length(ts.cols)), cs = get(againF, jf, Int[])
+            for c in eachindex(cols)
+              if ts.cols[c] != 0
+                push!(valsR, x[ts.cols[c]])
+              elseif c in cs
+                push!(valsR, ts.spos[c])
+                push!(againCols, colR)
               else
-                xestR[ecols[c]] = x[ts.cols[c]]
+                continue
               end
-              tapSigma[ecols[c]] = get(sigA, ts.cols[c], nothing)
+              cols[c] = colR
+              colR += 1
             end
-            push!(viewTrafos, _tap_with_cols(e, ecols, e.spos))
+            push!(newTrafos, _tap_with_cols(ts, cols, copy(ts.spos)))
           end
         end
-        okR = tapFixAndSolve!(againCols)
+        x = vcat(x[1:(tapMap.col0 - 1)], valsR, x[(tapMap.col0 + tapMap.ncols):end])
+        tapMap = TapStateMap(newTrafos, tapMap.col0, colR - tapMap.col0, tapMap.impedance)
+        tapPriorCols = _tap_prior_columns!(tapMap, net, activeMeas)
+        _wls_solve!(false)
         tapIteFix += iteDone
+        okR = converged
+        weakNow = Tuple{Int,Int,Float64,Union{Nothing,Float64}}[]
         if okR
-          tapMapEst = TapStateMap(viewTrafos, tapMapEst.col0, tapMapEst.ncols, tapMapEst.impedance)
-          tapXEst = xestR
-          # J and dof of the joint estimate and of its fixation, for the
-          # fixation statistics of a run that had no fixation before
-          tapRecheckEst = (j = jA, gated = gatedA, dof = dofA, ite = iteA, k = length(againCols), jfix = first(tapJNow()))
+          # the continuous estimate and its sigma go into the report view
+          # of the estimation map (tapMapEst, tapXEst): a changer with a
+          # column there gets the new value, one without a column appended
+          # behind the state vector (the view is read by the report only)
+          jA, gatedA = tapJNow()
+          dofA = length(activeMeas) - length(gatedA) - length(x)
+          iteA = iteDone
+          sigA = lastJacobian === nothing ? Dict{Int,Union{Nothing,Float64}}() : _se_state_sigmas(lastJacobian, wJ, conIdx, [i for i in eachindex(activeMeas) if !(i in gatedA)], againCols)
+          # the newly determinable changers without a sigma_s below the bound
+          # (none from the covariance counts as not below it)
+          for (j, c) in newly
+            let col = tapMap.trafos[jOf[j]].cols[c], sg = get(sigA, col, nothing)
+              (sg !== nothing && sg < _TAP_RECHECK_SIGMA_MAX) || push!(weakNow, (j, c, x[col], sg))
+            end
+          end
+          okR = isempty(weakNow)
         end
+        oorR = Tuple{TapBranchState,Int,Symbol,Bool}[]
+        if okR
+          # the band verdict of the first round on the joint estimate
+          oorR = _tap_mark_out_of_range!(tapMap, x, sigA, Set{Int}(againCols))
+          xestR = copy(tapXEst)
+          viewTrafos = TapBranchState[]
+          for (jf, ts) in enumerate(tapMap.trafos)
+            let e = estTrafos[jf], ecols = copy(estTrafos[jf].cols)
+              for c in eachindex(ts.cols)
+                (ts.cols[c] != 0 && ts.cols[c] in againCols) || continue
+                if ecols[c] == 0
+                  push!(xestR, x[ts.cols[c]])
+                  ecols[c] = length(xestR)
+                else
+                  xestR[ecols[c]] = x[ts.cols[c]]
+                end
+                tapSigma[ecols[c]] = get(sigA, ts.cols[c], nothing)
+              end
+              push!(viewTrafos, _tap_with_cols(e, ecols, e.spos))
+            end
+          end
+          okR = tapFixAndSolve!(againCols)
+          tapIteFix += iteDone
+          if okR
+            tapMapEst = TapStateMap(viewTrafos, tapMapEst.col0, tapMapEst.ncols, tapMapEst.impedance)
+            tapXEst = xestR
+            # J and dof of the joint estimate and of its fixation, for the
+            # fixation statistics of a run that had no fixation before
+            tapRecheckEst = (j = jA, gated = gatedA, dof = dofA, ite = iteA, k = length(againCols), jfix = first(tapJNow()))
+          end
+        end
+        if okR || !isempty(weakNow)
+          foreach(l -> @info(l), detLines)
+        else
+          foreach(l -> @debug(l), detLines)
+        end
+        if okR
+          # the mirror check over the changers fixed again (the joint estimate
+          # can move the ones checked above)
+          w2 = Tuple{Int,Int,Symbol}[]
+          for (j, c, txt) in mirrorCheck([(jf, c) for (jf, cs) in againF for c in cs if tapMap.trafos[jf].frozen[c] === :none])
+            push!(w2, (j, c, :mirror_step_fits))
+            tapExtraNotice[(tapMap.trafos[j].branch, c)] = txt
+          end
+          tapIteFix += withdraw!(w2)
+          # the changers of this joint estimate were estimated with every
+          # earlier withdrawal at its transferred step; the withdrawals and
+          # band verdicts of this estimate leave their own partners stale
+          for (jf, cs) in againF, c in cs
+            delete!(stale, (jf, c))
+          end
+          let jOfB = Dict{Int,Int}(ts.branch => jf for (jf, ts) in enumerate(tapMap.trafos))
+            markStale!(vcat(Tuple{Int,Int}[(jOfB[ts.branch], c) for (ts, c, _, _) in oorR], Tuple{Int,Int}[(j, c) for (j, c, _) in w2]))
+          end
+        else
+          # a weak re-estimate, or the joint estimate or its fixation did not
+          # converge: the result before it stays, the changers keep their
+          # reason, a weak one gets :weak_at_estimate
+          isempty(weakNow) && @debug "runse!: recheck at the estimate: the joint estimate of the newly determinable tap regulator(s) did not converge, they keep the transferred step"
+          for (j, c, s, sg) in weakNow
+            let ts = finTrafos[jOf[j]], ch = ts.set.changers[c], sgText = sg === nothing ? "sigma_s not available" : string("sigma_s ", @sprintf("%.3g", sg), " steps")
+              reasons[(jOf[j], c)] = :weak_at_estimate
+              tapWeakEst[(ts.branch, c)] = (s, sg)
+              weakWithdrawn = true
+              tapExtraNotice[(ts.branch, c)] = string("estimated again at step ", @sprintf("%.4g", ch.neutral + s), " with ", sgText)
+              @info "runse!: recheck at the estimate: tap regulator $(regName(ts, c)) estimated again at step $(@sprintf("%.4g", ch.neutral + s)) with $(sgText) (bound $(_TAP_RECHECK_SIGMA_MAX)), not taken over (weak_at_estimate), the transferred step $(_tap_notice_step(ch.neutral + ts.s0[c])) stays"
+            end
+          end
+          # a changer the band verdict froze goes back to the state before
+          for (ts, c, nt, tp) in oorR
+            ts.frozen[c] = :none
+            ts.notes[c] = nt
+            ts.tree_phase[c] = tp
+          end
+          for ((jf, c), r) in reasons
+            _tap_freeze!(finTrafos[jf], c, r)
+          end
+          for ts in addTs
+            _tap_restamp!(Ybus, net, ts.branch)
+          end
+          x = saved.x
+          tapMap = saved.map
+          tapPriorCols = saved.prior
+          iteDone = saved.ite
+          converged = true
+          lastGain = saved.gain
+          lastConJac = saved.conJac
+          lastLambda = saved.lambda
+          lastJacobian = saved.jac
+          tapMapEst = saved.est
+          tapXEst = saved.xest
+          tapFrozenStates = saved.frozenStates
+          # a copy: a later pass writes the sigmas of its joint estimate
+          # into tapSigma before its fixation, and that fixation can fail
+          tapSigma = copy(saved.sigma)
+          # again without the weak ones, when a newly determinable one is left
+          filter!(k -> !any(w -> w[1] == k[1] && w[2] == k[2], weakNow), newly)
+          (!isempty(weakNow) && !isempty(newly)) && continue
+          # the final state of a weak withdrawal (in this pass or an earlier
+          # one) comes from a new solve with the transferred step, warm from
+          # the state put back, so the state and the reported step agree
+          if weakWithdrawn
+            _wls_solve!(false)
+            tapIteFix += iteDone
+          end
+        end
+        break
       end
-      if okR
-        # the mirror check over the changers fixed again (the joint estimate
-        # can move the ones checked above)
-        w2 = Tuple{Int,Int,Symbol}[]
-        for (j, c, txt) in mirrorCheck([(jf, c) for (jf, cs) in againF for c in cs])
-          push!(w2, (j, c, :mirror_step_fits))
-          tapExtraNotice[(tapMap.trafos[j].branch, c)] = txt
-        end
-        tapIteFix += withdraw!(w2)
-      else
-        # the joint estimate or its fixation did not converge: the
-        # result before it stays, the changers keep their reason
-        @info "runse!: recheck at the estimate: the joint estimate of the newly determinable tap regulator(s) did not converge, they keep the transferred step"
-        for ((jf, c), r) in reasons
-          _tap_freeze!(finTrafos[jf], c, r)
-        end
-        for ts in addTs
-          _tap_restamp!(Ybus, net, ts.branch)
-        end
-        x = saved.x
-        tapMap = saved.map
-        tapPriorCols = saved.prior
-        iteDone = saved.ite
-        converged = true
-        lastGain = saved.gain
-        lastConJac = saved.conJac
-        lastLambda = saved.lambda
-        tapMapEst = saved.est
-        tapXEst = saved.xest
-        tapFrozenStates = saved.frozenStates
-        tapSigma = saved.sigma
-      end
+    end
+    # the stale partners estimated again, one pass per round; a round that
+    # withdraws a partner leaves the others of its transformer stale again,
+    # each round withdraws at least one changer or ends the loop
+    while !isempty(stale) && converged
+      pairsP = sort!(collect(stale))
+      empty!(stale)
+      outP = partnerPass!(pairsP)
+      markStale!(outP)
     end
     # the ratio partners of every transformer the recheck touched (a
     # changer withdrawn, or one estimated again)
     for ts in tapMap.trafos
-      (ts.branch in Set{Int}(rmap.trafos[j].branch for j in newlyT) || any(c -> ts.frozen[c] in (:not_observable_at_estimate, :mirror_step_fits), eachindex(ts.cols))) && _tap_recheck_conditional!(ts)
+      (ts.branch in touchedB || any(c -> ts.frozen[c] in (:not_observable_at_estimate, :mirror_step_fits, :weak_at_estimate, :not_converged_at_estimate), eachindex(ts.cols))) && _tap_recheck_conditional!(ts)
     end
     return nothing
   end
@@ -4563,6 +4899,10 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       tapKRemoved = length(fixCols)
       priorEst = copy(tapPriorCols)
       tapFixed = true
+      # an estimate more than _TAP_BAND_SIGMA_MAX sigma_s outside its band
+      # is not taken over: frozen with :out_of_range, the fixation puts it
+      # at its transferred step (a nearer one goes to the band end step)
+      _tap_mark_out_of_range!(tapMapEst, tapXEst, tapSigma, Set{Int}(fixCols))
       tapFixAndSolve!(fixCols)
       tapIteFix = iteDone
       tapJSim, gatedSim = tapJNow()
@@ -4822,7 +5162,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     else
       for i in eachindex(activeMeas)
         σ = activeMeas[i].sigma
-        stage, σmod = _robust_stage(abs(r[i]), σ, robustK1, robustK2)
+        stage, σmod = _robust_stage(activeMeas[i], abs(r[i]), robustK1, robustK2)
         stage == 0 && continue
         push!(rows, (measurement_index = activeOrig[i], id = activeMeas[i].id, stage = stage, t = abs(r[i]) / σ, sigma_factor = σmod / σ))
       end
@@ -4851,12 +5191,12 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       for (j, ts) in enumerate(tapMapEst.trafos)
         s_est, s_fix, oor = tapPositions[j]
         ob = origOf(ts.branch)
-        append!(rows, _tap_regulator_rows(ts, net.branchVec[ts.branch], ob, get(mrids, ob, ""), s_est, tapFixed ? s_fix : s_est, oor, tapFixed, tapConvEst; sigma_s = [get(tapSigma, ts.cols[c], nothing) for c in eachindex(ts.cols)], voltage_hint = _tap_voltage_hint(net, ts.branch, activeMeas, r), extra_notice = [get(tapExtraNotice, (ts.branch, c), "") for c in eachindex(ts.cols)]))
+        append!(rows, _tap_regulator_rows(ts, net.branchVec[ts.branch], ob, get(mrids, ob, ""), s_est, tapFixed ? s_fix : s_est, oor, tapFixed, tapConvEst; sigma_s = [get(tapSigma, ts.cols[c], nothing) for c in eachindex(ts.cols)], voltage_hint = _tap_voltage_hint(net, ts.branch, activeMeas, r), extra_notice = [get(tapExtraNotice, (ts.branch, c), "") for c in eachindex(ts.cols)], weak = [get(tapWeakEst, (ts.branch, c), nothing) for c in eachindex(ts.cols)]))
       end
     end
     for ts in tapFrozenStates
       ob = origOf(ts.branch)
-      append!(rows, _tap_regulator_rows(ts, net.branchVec[ts.branch], ob, get(mrids, ob, ""), ts.s0, ts.s0, falses(length(ts.s0)), false, false; voltage_hint = _tap_voltage_hint(net, ts.branch, activeMeas, r)))
+      append!(rows, _tap_regulator_rows(ts, net.branchVec[ts.branch], ob, get(mrids, ob, ""), ts.s0, ts.s0, falses(length(ts.s0)), false, false; voltage_hint = _tap_voltage_hint(net, ts.branch, activeMeas, r), extra_notice = [get(tapExtraNotice, (ts.branch, c), "") for c in eachindex(ts.cols)], weak = [get(tapWeakEst, (ts.branch, c), nothing) for c in eachindex(ts.cols)]))
     end
     for k in tapNoChanger
       ob = origOf(k)
@@ -4920,7 +5260,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
 
   conditioning = _se_conditioning(lastGain, lastConJac, cfg.zero_injection)
   ziMultipliers = (isempty(conIdx) || lastLambda === nothing) ? nothing : _se_zero_injection_multipliers(net, activeMeas, activeOrig, conIdx, lastLambda)
-  return SEResult(VestModel, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(x[end]) : nothing, shuntEstimates, robustRows, nothing, tapEstimates, tapFixation, nothing, activeObjective, linkCircEst, conditioning, ziMultipliers)
+  return SEResult(VestModel, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(x[end]) : nothing, shuntEstimates, robustRows, nothing, tapEstimates, tapFixation, nothing, activeObjective, linkCircEst, conditioning, ziMultipliers, flatstart ? :flat : :stored)
 end
 
 # The multipliers of the constraint rows `conIdx` of `meas` (on the working
@@ -5124,7 +5464,10 @@ call. A run with other settings wraps the call:
 
 With `state_estimation.topology_precheck` (default `true`) an advisory
 topology check runs first: its findings are warned once per run and attached
-to the result, and the estimation always proceeds.
+to the result, and the estimation always proceeds. The tap row of a
+released changer on a branch of a mesh without P measurement gets that in
+its notice (the step may not be unique); with the check off the rows carry
+no such notice.
 
 Before the WLS every active voltage measurement outside 0.5 to 1.5 pu (0 kV
 and non-finite values included) goes through the range check: on a bus the
@@ -5163,10 +5506,12 @@ function runse!(net::Net, measurements::Vector{Measurement})
   checked, rc = _se_range_check(net, measurements)
   _se_log_range_check(net, rc, "runse!")
   res = _runse_configured!(net, checked, cfg)
-  # one warning per regulator whose estimate left its band: the fixation
-  # clamps it to the band end and keeps status :estimated, so without the
-  # warning the result looks normal. The rows of
-  # a fallback come from the run without tap states and carry no flag.
+  # one warning per regulator whose estimate left its band. Within 2 sigma_s
+  # of the band end step the fixation sets it to that step and the status
+  # stays :estimated, so without the warning the result looks normal;
+  # farther out the status is :out_of_range and the transferred step stays.
+  # The rows of a fallback come from the run without tap states and carry
+  # no flag.
   if res.tapEstimates !== nothing
     for t in res.tapEstimates
       t.out_of_range && @warn string("runse!: ", _tap_out_of_range_line(t))
@@ -5567,6 +5912,8 @@ function runse_diagnostics(net::Net, measurements::Vector{Measurement})
   revertedAttempt = nothing
 
   while true
+    # one abort point per elimination pass (every pass solves again)
+    sparlectra_check_abort()
     if !current.converged
       stopReason = :not_converged
       break

@@ -1067,7 +1067,7 @@ function _qstsSVReference(Rk::CGMESImportResult, tn_buses::Dict{String,Vector{In
   net = Rk.net
   topo = Rk.topo
   iso = Set(net.isoNodes)
-  fed = _linkFedIsolatedBuses(net)
+  fed = Sparlectra._linkFedIsolatedBuses(net)
   tnb = Vector{Int}[]
   vm = Float64[]
   va = Float64[]

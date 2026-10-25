@@ -43,6 +43,8 @@ function warmup()
     wi = build_substation("warmup_single")
     addPowerTransformerControl!(wi; trafo = trafo_ids[1], mode = :voltage, target_bus = "Feeder", target_vm_pu = 1.0)
   end
-  println("warm: power flow ", round(t_pf; digits = 2), " s, tap-group control loop ", round(t_ctrl; digits = 2), " s (first calls compile); everything warm")
+  println("warm-up wall time [s], first calls include compilation:")
+  println("  power flow:                ", round(t_pf; digits = 2))
+  println("  tap-group control loop:    ", round(t_ctrl; digits = 2))
   return nothing
 end

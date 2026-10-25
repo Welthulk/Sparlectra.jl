@@ -476,8 +476,8 @@ end
 
 # Printed Type column of the branch table. Consult the import metadata
 # first so print and report rows (_branch_kind_name) agree for the same
-# branch ("EqBr" for a CGMES EquivalentBranch), then fall back to the name
-# marker. The PST label is a heuristic
+# branch ("EqBr" for a CGMES EquivalentBranch), then fall back to the kind
+# the branch was built as (_branch_build_kind). The PST label is a heuristic
 # (phase tap present, nonzero shift, no ratio tap) pending the typed
 # BranchKind enum (tracked separately).
 function _branch_kind_label(net::Net, br::Branch)::String
@@ -495,16 +495,8 @@ function _branch_kind_label(net::Net, br::Branch)::String
   elseif kind === :line
     "Line"
   else
-    name = br.comp.cName
-    if occursin("_ACL_", name)
-      "Line"
-    elseif occursin("_2WT_", name)
-      "Trafo"
-    elseif occursin("_PI_", name)
-      "PI"
-    else
-      "Branch"
-    end
+    bk = _branch_build_kind(br)
+    bk === :line ? "Line" : (bk === :transformer ? "Trafo" : "PI")
   end
   if label == "Trafo" && br.has_phase_tap && !br.has_ratio_tap && abs(br.phase_shift_deg) > 0.0
     return "PST"

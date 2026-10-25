@@ -42,8 +42,12 @@ function warmup()
   wnet.branchVec[1].phase_min_deg = -10.0
   wnet.branchVec[1].phase_max_deg = 10.0
   wnet.branchVec[1].phase_step_deg = 0.5
-  t_ctrl = @elapsed run_sparlectra(net = wnet)
-  println("warm: power flow ", round(t_pf; digits = 2), " s, control loop ", round(t_ctrl; digits = 2), " s (first calls compile)")
+  ## the first run_sparlectra of the process; this warm-up is the compile
+  ## step the startup hint talks about, so the hint is switched off here
+  t_ctrl = @elapsed with_sparlectra_config(SparlectraConfig(output = OutputConfig(startup_latency_hint = false))) do
+    run_sparlectra(net = wnet)
+  end
+  println("warm-up time: first power flow ", round(t_pf; digits = 2), " s, first control loop ", round(t_ctrl; digits = 2), " s (first calls compile)")
 
   ## every further path of the chapters once, output discarded: the tap
   ## device formulas, the builders, the phase-tap loop with a reactance
@@ -67,6 +71,6 @@ function warmup()
     run_sparlectra(net = wc)
     println(bus_vm(build_3wt(oltc_step = 1), "B3"))
   end
-  println("further paths  : ", round(t_paths; digits = 2), " s (tap formulas, builders, X(alpha) control loop, 3WT); everything warm")
+  println("warm-up time: further paths ", round(t_paths; digits = 2), " s (tap formulas, builders, X(alpha) control loop, 3WT); everything warm")
   return nothing
 end

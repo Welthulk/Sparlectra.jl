@@ -55,6 +55,7 @@ modes below give visibly different shares.
 
 ````@example workshop_distributed_slack
 using Sparlectra
+using Printf
 
 function write_demo_case(dir)
   path = joinpath(dir, "case4_distributed_slack.m")
@@ -100,18 +101,20 @@ function print_beyond_schedule(net)
   Y = Sparlectra.createYBUS(net = net, sparse = true, printYBUS = false)
   V = [n._vm_pu * cis(deg2rad(n._va_deg)) for n in net.nodeVec]
   extra = (real.(Sparlectra.calc_injections(Y, V)) .- real.(Sparlectra.buildComplexSVec(net))) .* net.baseMVA
+  println("  active power delivered beyond schedule, solved state [MW]:")
   for (i, n) in enumerate(net.nodeVec)
     abs(extra[i]) < 0.005 && continue
-    println("    bus ", i, " (", Sparlectra.getCompName(n.comp), ")  +", round(extra[i]; digits = 2), " MW beyond schedule")
+    @printf("    B%s: %+.2f\n", Sparlectra.getCompName(n.comp), extra[i])
   end
 end
 
 # participation table from the solver status (bus, alpha, delta P)
 function print_participation(net)
   st = Sparlectra.rectangular_pf_status(net)
-  println("    lambda = ", round(st.distributed_slack_lambda_p_mw; digits = 2), " MW over ", st.distributed_slack_participants, " participant bus(es), mode ", st.distributed_slack_mode)
+  @printf("  imbalance lambda, solved [MW]: %.2f (mode %s, %d participant bus(es))\n", st.distributed_slack_lambda_p_mw, st.distributed_slack_mode, st.distributed_slack_participants)
+  println("    bus   weight alpha [-]   share alpha * lambda [MW]   Pg scheduled [MW]")
   for row in st.distributed_slack_participation
-    println("    ", row.bus, ": alpha = ", round(row.alpha; digits = 3), "  ->  dP = ", round(row.dp_mw; digits = 2), " MW (scheduled ", round(row.pg_mw; digits = 1), " MW)")
+    @printf("    B%-3s  %5.3f              %6.2f                      %5.1f\n", row.bus, row.alpha, row.dp_mw, row.pg_mw)
   end
 end
 
@@ -173,7 +176,7 @@ $\alpha = 0.6 / 0.4$. Big units take proportionally more, the classical
 # uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :pg_weighted)
-println("pg_weighted (raw weights 30 : 20):")
+println("pg_weighted, raw weights = scheduled Pg of B2 : B3 = 30 : 20 MW:")
 print_participation(net)
 print_beyond_schedule(net)
 ````
@@ -192,7 +195,7 @@ schedule:
 # uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :imported)
-println("imported (MATPOWER APF 0.75 : 0.25):")
+println("imported, raw weights = MATPOWER APF of B2 : B3 = 0.75 : 0.25:")
 print_participation(net)
 print_beyond_schedule(net)
 ````
@@ -216,7 +219,7 @@ installed size) for markets that contract by capacity.
 # uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :headroom_weighted)
-println("headroom_weighted (raw weights 250 : 70 : 80):")
+println("headroom_weighted, raw weights = maxP - Pg of B1 : B2 : B3 = 250 : 70 : 80 MW:")
 print_participation(net)
 print_beyond_schedule(net)
 ````
@@ -233,7 +236,7 @@ automatic. Here bus 2 gets everything:
 # uses: load_case, print_beyond_schedule, print_participation (warm-up cell)
 net = load_case()
 runpf!(net, 30, 1e-8, 0; distributed_slack_enabled = true, distributed_slack_p_mode = :explicit, distributed_slack_weights = Dict("2" => 1.0))
-println("explicit (all on bus 2):")
+println("explicit, weight 1.0 on B2, none elsewhere:")
 print_participation(net)
 print_beyond_schedule(net)
 ````

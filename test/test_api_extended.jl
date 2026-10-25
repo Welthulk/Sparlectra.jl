@@ -1522,6 +1522,31 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
       pre_cancelled = Threads.Atomic{Bool}(true)
       @test_throws Sparlectra.PowerFlowAborted start_powerflow_run(merge(async_request, Dict("cancellation_token" => pre_cancelled)))
 
+      # an abort that arrives inside the state estimation service leaves it
+      # as PowerFlowAborted (the job then writes "aborted"), not as a failed
+      # run: the token is set when the service enters importing_case, the
+      # next abort point is in the observability check, whose catch turned
+      # the abort into invalid_measurements before
+      se_data = joinpath(dirname(@__DIR__), "data", "scf")
+      se_token = Threads.Atomic{Bool}(false)
+      se_phases = String[]
+      se_request = Dict{String,Any}("casefile" => joinpath(se_data, "sp_case188.scf.json"), "config_file" => config_file, "output_root" => joinpath(tmpdir, "se-abort"), "se_mode" => true, "measurement_file" => joinpath(se_data, "sp_case188.measurements.csv"), "phase_callback" => phase -> (push!(se_phases, phase); phase == "importing_case" && (se_token[] = true)))
+      # armed in its own task, as the Web UI job worker does: disarming
+      # clears only the process-wide slot, the task-local copy ends with the
+      # task (armed on the test task it aborted every later solve)
+      se_outcome = fetch(@async begin
+        Sparlectra.sparlectra_arm_abort_token!(se_token)
+        try
+          start_powerflow_run(se_request)
+        catch err
+          err
+        finally
+          Sparlectra.sparlectra_disarm_abort_token!()
+        end
+      end)
+      @test se_outcome isa Sparlectra.PowerFlowAborted
+      @test last(se_phases) == "importing_case"
+
       solver_checks = Ref(0)
       solver_profile = Dict{Symbol,Any}(:cancellation_check => () -> begin
         solver_checks[] += 1

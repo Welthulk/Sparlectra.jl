@@ -42,6 +42,7 @@ function _topo_net(; link_status::Int = 1)
   for br in net.branchVec
     br.ratio == 0.0 && continue
     br.has_ratio_tap = true
+    br.ratio_tap_declared = true
     br.tap_step = 0.00625
   end
   return net
@@ -297,6 +298,7 @@ function test_topology_singular_normal_equations()::Bool
       for br in n.branchVec
         br.ratio == 0.0 && continue
         br.has_ratio_tap = true
+        br.ratio_tap_declared = true
         br.tap_step = 0.00625
       end
       return n

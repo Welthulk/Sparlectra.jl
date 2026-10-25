@@ -673,7 +673,10 @@ function _sparlectra_tap_changer_rows(net::Net)::Vector{NTuple{14,Float64}}
     base = br.ratio
     grid_default = br.tap_step == 0.00625 && br.tap_min == 0.9 && br.tap_max == 1.1 && br.phase_step_deg == 1.25 && br.phase_min_deg == -30.0 && br.phase_max_deg == 30.0 && br.phase_du_step == 0.0
     on_neutral = br.tap_ratio == base && br.phase_shift_deg == br.angle
-    (grid_default && on_neutral) && continue
+    # a declared changer keeps its row even at neutral on the default grid:
+    # the declaration is what releases it for the tap estimation
+    declared = br.ratio_tap_declared || br.phase_tap_declared
+    (grid_default && on_neutral && !declared) && continue
     tstep = br.has_ratio_tap ? br.tap_step : 0.0
     psi = br.tap_est_alpha_deg
     du = br.phase_du_step
@@ -841,11 +844,16 @@ function writeMatpowerCasefile(net::Net, pathfilename::String; write_solution::U
   # keyword exists so a later :drop or :error can join without a new call
   asymmetric_shunts === :bus_shunt || throw(ArgumentError("writeMatpowerCasefile: asymmetric_shunts must be :bus_shunt (the only rule in this release), got $(repr(asymmetric_shunts))"))
   branch_shunt_rows = _matpower_branch_shunt_rows(net)
+  # MATPOWER has no mark for a step that was not transferred: the assumed
+  # middle position goes out as the step, one warning per transformer
+  for (k, br) in enumerate(net.branchVec)
+    which = _tap_step_assumed_text(br)
+    which === nothing || @warn "MATPOWER export: " * _tap_step_assumed_export_text(br.comp.cName, which) branch = k
+  end
   base, ext = splitext(pathfilename)
 
   case = basename(base)
   base = base * ".m"
-  @info "convertion to Matpower CASE-Files, Testcase: ($case)"
   transformer_loss_rows = _sparlectra_transformer_loss_rows(net)
   NodeDict = Dict{Int,Node}()
   for n in net.nodeVec

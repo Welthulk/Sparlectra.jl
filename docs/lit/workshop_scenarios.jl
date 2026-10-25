@@ -112,12 +112,12 @@ warmup()
 # ## 1. The N-1 baseline
 #
 # One case per in-service branch. `names = c14.names` makes the rows carry
-# the line names of the file (`Ostheim_Neuwiese_1`) instead of the
-# generated names of the network (`B_ACL_110_1_2#1`).
+# the line names of the file (`Ostheim_Neuwiese_1`), the names the imported
+# network carries as well.
 
 ## uses: c14 (warm-up cell)
 n1 = runContingencies!(c14.net, generateN1Branches(c14.net; names=c14.names); names=c14.names)
-println("N-1: ", length(n1), " outages, ", count(r -> r.converged, n1), " converged, ", count(r -> r.error !== nothing && occursin("island", r.error), n1), " cut a bus off")
+println("N-1 on sp_case14: ", length(n1), " branch outages, ", count(r -> r.converged, n1), " converged, ", count(r -> r.error !== nothing && occursin("island", r.error), n1), " cut a bus off")
 @assert length(n1) == 17
 @assert count(r -> r.converged, n1) == 14
 @assert all(r -> r.kind === :branch && length(r.elements) == 1, n1)
@@ -136,8 +136,11 @@ by_hand = Scenario(name="both Ostheim-Neuwiese lines", ops=[PatchOp(op=:status, 
 r_hand = only(runScenarios!(c14.net, [by_hand]; index=c14.index))
 dc = only(generateDoubleCircuits(c14.net; names=c14.names))
 r_gen = only(runContingencies!(c14.net, [dc]; names=c14.names))
-println(r_hand.name, " (", r_hand.kind, "): vmin ", round(r_hand.min_vm_pu; digits=4), " pu, max loading ", round(r_hand.max_branch_loading_pct; digits=1), " %")
-println(r_gen.name, " (", r_gen.kind, "): vmin ", round(r_gen.min_vm_pu; digits=4), " pu, max loading ", round(r_gen.max_branch_loading_pct; digits=1), " %")
+println("sp_case14, both lines out, power flow result:")
+println("  case                          kind            lowest bus Vm [pu]   highest branch loading [%]")
+for r in (r_hand, r_gen)
+    println("  ", rpad(r.name, 30), rpad(String(r.kind), 16), lpad(round(r.min_vm_pu; digits=4), 18), lpad(round(r.max_branch_loading_pct; digits=1), 29))
+end
 @assert ids == [26, 27]
 @assert r_hand.kind === :explicit && r_gen.kind === :double_circuit
 @assert r_hand.elements == r_gen.elements == ["Ostheim_Neuwiese_1", "Ostheim_Neuwiese_2"]
@@ -161,14 +164,19 @@ write_scf_json(c14.case, copy14)
 back = scf_case_scenarios(read_scf_json(copy14))
 from_file = runScenarios!(c14.net, back; index=c14.index)
 kinds = Dict(k => count(r -> r.kind === k, from_file) for k in unique(r.kind for r in from_file))
-println("from the file: ", length(from_file), " cases ", kinds)
+println("scenarios block read back from the file: ", length(from_file), " cases (", join(["$(k) $(n)" for (k, n) in sort(collect(kinds))], ", "), ")")
 cfg = ContingencyEventsConfig(enabled=true, double_circuits=true, busbars=true)
 from_cfg = generateCorrelatedEvents(c14.net; names=c14.names, double_circuits=cfg.double_circuits, busbars=cfg.busbars, max_members=cfg.max_members)
-println("from the configuration: ", length(from_cfg), " events")
+println("events generated from the configuration (double circuits, busbars): ", length(from_cfg))
 @assert back.events == [:double_circuits, :busbars]
 @assert kinds[:explicit] == 1 && kinds[:double_circuit] == 1 && kinds[:busbar] == 12
 @assert length(from_cfg) == 13
 
+# One of the busbar events, `BB Ostheim_110`, cuts off the slack bus of
+# sp_case14. For that event the engine makes another generator the slack
+# and says so in the `auto_slack:` line above (`Gen_110` at
+# `Dallwitz_110`). The other events keep the original slack.
+#
 # In the Web UI the button **Scenarios** runs this block (it appears for a
 # case file with a scenarios block); the Settings page carries the
 # `contingency.events.*` switches in its N-1 box, which add the events to a
@@ -188,7 +196,7 @@ neubach = vcat(generateLinkOutages(c60.net; names=c60.names),
     [c for c in generateBusbarEvents(c60.net; names=c60.names) if startswith(c.name, "BB Neubach_110")],
     [c for c in generateSubstationEvents(c60.net; names=c60.names) if c.name == "SUB Neubach_110"])
 for r in runContingencies!(c60.net, neubach; names=c60.names)
-    println(rpad(r.name, 20), rpad(String(r.kind), 12), "out: ", join(r.elements, ", "), "; shed ", r.shed_load_mw, " MW; ", something(r.error, "nothing cut off"))
+    println(rpad(r.name, 20), rpad(String(r.kind), 12), "out: ", join(r.elements, ", "), "; shed load ", r.shed_load_mw, " MW; ", something(r.error, "nothing cut off"))
 end
 @assert [c.kind for c in neubach] == [:link, :busbar, :busbar, :substation]
 @assert "Link_1" in neubach[2].elements && "Link_1" in neubach[3].elements
@@ -217,8 +225,15 @@ println(ng.name, ": ", join(ng.elements, ", "))
 gens = sort([id for (id, k) in c60.index.kind_by_id if k === :generator]; by=id -> c60.index.internal_by_id[id])
 unit(id) = PatchOp(op=:status, target=:generator, id=id, value=0.0)
 ab, ba = runScenarios!(c60.net, [Scenario(name="a then b", ops=[unit(gens[1]), unit(gens[2])]), Scenario(name="b then a", ops=[unit(gens[2]), unit(gens[1])])]; index=c60.index)
-println("a then b: vmin ", round(ab.min_vm_pu; digits=4), " pu; b then a: vmin ", round(ba.min_vm_pu; digits=4), " pu")
+println("sp_case60, units gens[1] and gens[2] out, lowest bus Vm [pu] (power flow result):")
+println("  order a then b:   ", round(ab.min_vm_pu; digits=4))
+println("  order b then a:   ", round(ba.min_vm_pu; digits=4))
 @assert ab.min_vm_pu == ba.min_vm_pu && ab.max_branch_loading_pct == ba.max_branch_loading_pct
+
+# `gens[1]` is the slack unit of sp_case60 (`Gen_220` at `Altau_220`), so
+# both scenarios lose the slack. Each run prints one `auto_slack:` line
+# naming the unit that takes over, `Gen_110` at `Birkkamp_110` in both
+# orders.
 
 # ## 7. N-2 pairs
 #
@@ -238,7 +253,12 @@ pairs = generateBranchPairs(c60.net; names=c60.names)
 pair_results = redirect_stdout(() -> runContingencies!(c60.net, pairs; names=c60.names), devnull)
 emergent = [p for (p, r) in zip(pairs, pair_results) if harmful(r) && !any(e -> single_harm[e], p.elements)]
 circuits = Set(Set(c.elements) for c in generateDoubleCircuits(c60.net; names=c60.names))
-println(length(pairs), " pairs, ", count(harmful, pair_results), " harmful, ", length(emergent), " harmful with two harmless singles, ", count(p -> Set(p.elements) in circuits, emergent), " of them double circuits")
+println("N-2 on sp_case60, number of branch pairs:")
+for (label, n) in (("all pairs", length(pairs)), ("harmful", count(harmful, pair_results)),
+    ("harmful although both singles are harmless", length(emergent)),
+    ("of these, double circuits ($(length(circuits)) in the case)", count(p -> Set(p.elements) in circuits, emergent)))
+    println("  ", rpad(label * ":", 46), lpad(n, 5))
+end
 @assert length(pairs) == 2701
 ## 0.50.0: harmful old 1106, new 1115; emergent old 124, new 133; demo case rebuilt, transformer magnetizing from nameplate since 0.32.1 #src
 @assert count(harmful, pair_results) == 1115
@@ -262,7 +282,7 @@ println(length(pairs), " pairs, ", count(harmful, pair_results), " harmful, ", l
 @isdefined(neubach) || error("Run the section \"4. Neubach: the coupler, one section, the whole station\" first: it sets up neubach.")
 @isdefined(workdir) || error("Run the section \"3. Generated events from the file and from the configuration\" first: it sets up workdir.")
 report = buildContingencyReport(redirect_stdout(() -> runContingencies!(c60.net, vcat(generateN1Branches(c60.net; names=c60.names), neubach); names=c60.names), devnull))
-println("cases by kind: ", join(["$(k) $(n)" for (k, n) in report.n_by_kind], ", "))
+println("sp_case60 report, cases by kind: ", join(["$(k) $(n)" for (k, n) in report.n_by_kind], ", "))
 ## format="technical" fixes comma and decimal point; the default follows the regional settings
 csv = writeContingencyResultsCSV(joinpath(workdir, "events.csv"), redirect_stdout(() -> runContingencies!(c60.net, neubach; names=c60.names), devnull); format="technical")
 println(first(readlines(csv)))
