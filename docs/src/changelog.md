@@ -1,9 +1,9 @@
-# Version 0.51.0 - 2026-10-25
+# Version 0.52.0 - 2026-10-25
 
 Intermediate version on the way to 0.60.0.
 
 ## Breaking
-- 0.51.0 is one of the version steps 0.51.0 to 0.59.0 that the registry needs because it accepts only the next minor version; the code is that of 0.60.0, the changelog of 0.60.0 lists the breaking changes.
+- 0.52.0 is one of the version steps 0.51.0 to 0.59.0 that the registry needs because it accepts only the next minor version; the code is that of 0.60.0, the changelog of 0.60.0 lists the breaking changes.
 
 # Version 0.50.0 - 2026-10-18
 
