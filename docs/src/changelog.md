@@ -1,3 +1,18 @@
+# Version 1.1.0 - 2026-11-04
+
+Observability: observable islands, weakly observable sets.
+
+## Added
+- Observable islands per network island (`identify_observable_islands`), with the unobservable branches and the affected region.
+- Weakly observable class: a set whose branch flows or voltages would scatter beyond `state_estimation.observability.weak_flow_sigma_mw` (default 20 MW) is reported; the service marks such a result unusable.
+- Measurement origin (measured, pseudo, derived): elimination protection follows the origin, not the id.
+
+## Changed
+- Not observable is decided on the decoupled P-θ and Q-V models; angle and magnitude deficit are reported separately.
+
+## Fixed
+- dark states listed forward-difference noise; observability above 2000 states undercounted the deficit.
+
 # Version 1.0.0 - 2026-10-25
 
 First major release: quasi-stationary time series (QSTS) and tap estimation per tap changer. The registered versions 0.51.0 to 0.53.0 were version steps with the code of this release.
