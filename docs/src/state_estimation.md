@@ -231,8 +231,8 @@ value; the predictions add the injection analytically,
 `S_sh = |V_i|^2 conj(G + jB) baseMVA`, so the Ybus stays constant across the
 FD perturbations. Case B takes `Q_sh` from `S = sqrt(3) U I`, the sign from
 the model susceptance, the sigma from first-order error propagation
-(`sigmaFloor` sets a minimum); `SHDERIV` rows are protected from
-elimination like `ZI` rows.
+(`sigmaFloor` sets a minimum); `SHDERIV` rows carry the origin `:derived`
+and are protected from elimination like `ZI` rows.
 
 ### [Link flow measurements](@id se_link_measurements)
 
@@ -570,9 +570,10 @@ Defaults and ranges of every key:
   `rn = 0`.
 - Virtual measurements (`σ ≤ 1e-6`), the `ZI` rows (sigma
   `state_estimation.zero_injection_sigma_mva`, default 1e-3 MW, also the
-  aggregate of a coupler cluster of them) and the derived shunt rows
-  (`SHDERIV`) are exempt in every mode: they are never eliminated and never
-  down-weighted by `replacement` or `staged`. They carry network structure
+  aggregate of a coupler cluster of them), the derived shunt rows
+  (`SHDERIV`, origin `:derived`) and rows with origin `:pseudo_restore`
+  (reserved for the substitute values of an observability restoration) are
+  exempt in every mode: they are never eliminated and never down-weighted by `replacement` or `staged`. They carry network structure
   or other measurements, not a meter of their own.
 - The replacement threshold is judged on the converged state, never on
   flat-start transients: the estimator solves plain, builds the suppression
@@ -626,9 +627,11 @@ above 3) is localizable (`wii` > 0.3), the worst row is deactivated and the
 estimation reruns, up to this many times. `0` disables elimination
 (diagnostics only).
 
-Protected rows (`ZI`, `SHDERIV`, `LINKAGG` aggregates and any row with
-`sigma <= 1e-6`) encode model knowledge, not telemetry, and are never
-eliminated. The trace lands in `se_diagnostics.md`. Configuration key
+Protected rows (`ZI`, origin `:derived` or `:pseudo_restore`, `LINKAGG`
+aggregates of them and any row with `sigma <= 1e-6`) encode model
+knowledge, not telemetry, and are never eliminated. The protection follows
+`Measurement.origin`, not the id; `:pseudo` rows from a measurement table
+are eliminated like measured rows. The trace lands in `se_diagnostics.md`. Configuration key
 `state_estimation.max_eliminations` (default 5, one row per round, so also
 the round limit of the loop); the Web UI field **Sequential elimination
 budget** sets it per run. Pseudo measurements of the

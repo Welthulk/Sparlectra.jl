@@ -824,6 +824,26 @@ function run_measurement_table_tests()
       @test se.converged
       @test se.objectiveJ < 1e-8
       @test maximum(abs.(se.voltages .- Vpf)) < 1e-6
+      # origin from the source token: the bus sums that use a pseudo row are
+      # :pseudo, every other row :measured
+      pbus = Set(index.terminals[k].busIdx for k in loads)
+      isPseudoSum(m) = m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) && m.busIdx in pbus
+      @test count(isPseudoSum, set.measurements) == 2 * length(pbus)
+      @test all(m -> m.origin === (isPseudoSum(m) ? :pseudo : :measured), set.measurements)
+      # the origin survives the noise re-draw, and the table writer (the Web
+      # UI noise path writes net.measurements back) keeps the token, so the
+      # written set reads back with the same origins
+      work = deepcopy(net)
+      applyMeasurementSet!(work, set; zero_injection = false)
+      addMeasurementNoise!(work)
+      @test [m.origin for m in work.measurements] == [m.origin for m in set.measurements]
+      conv = Sparlectra._measurement_table_from_measurements(work, work.measurements, index)
+      @test isempty(conv.problems)
+      @test count(r -> occursin("pseudo", r.source), conv.rows) == 2 * length(pbus)
+      file0 = test_scratch_path(".table.csv")
+      writeMeasurementTable(file0, conv.rows)
+      back = only(importMeasurementTable(readMeasurementTable(file0), index).sets)
+      @test Dict(conv.ids[m.id] => m.origin for m in work.measurements) == Dict(m.id => m.origin for m in back.measurements)
       for kw in ((sigma = 0.0,), (sigma = NaN,), (sigma = 1.0, sigma_q = -1.0))
         @test_throws ArgumentError generatePseudoMeasurementTable(net, cut; kw...)
       end
@@ -855,6 +875,14 @@ function run_measurement_table_tests()
       set2 = only(importMeasurementTable(readMeasurementTable(file), cindex).sets)
       @test isempty(set2.problems)
       @test count(m -> m.typ == Sparlectra.PinjMeas, set2.measurements) == length(groups)
+      # one member of a two-member bus cut: its sum mixes a measured and a
+      # pseudo row and is :pseudo, nothing else is
+      two = first(filter(g -> length(g[2]) == 2, loadbuses))
+      rows3 = filter(r -> r.timestamp == ts2 && r.terminal_mrid != two[2][1], rows)
+      file3 = test_scratch_path(".table.csv")
+      writeMeasurementTable(file3, vcat(rows3, generatePseudoMeasurementTable(result, rows3; sigma = 5.0)))
+      set3 = only(importMeasurementTable(readMeasurementTable(file3), cindex).sets)
+      @test sort!([(m.busIdx, m.typ) for m in set3.measurements if m.origin === :pseudo]; by = string) == sort!([(two[1], Sparlectra.PinjMeas), (two[1], Sparlectra.QinjMeas)]; by = string)
       work = deepcopy(result.net)
       applyMeasurementSet!(work, set2)
       se2 = with_state_estimation_config(update_net = false) do
@@ -1109,7 +1137,7 @@ function run_measurement_table_tests()
       passive = findPassiveBuses(net)
       filter!(m -> !(m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) && m.busIdx in passive), ms)
       addZeroInjectionMeasurements!(ms; net = net, busIdxs = passive, sigma = 0.05)
-      ms[3] = Measurement(typ = ms[3].typ, value = ms[3].value, sigma = ms[3].sigma, active = false, busIdx = ms[3].busIdx, id = ms[3].id)
+      ms[3] = Measurement(typ = ms[3].typ, value = ms[3].value, sigma = ms[3].sigma, active = false, busIdx = ms[3].busIdx, id = ms[3].id, origin = ms[3].origin)
       push!(ms, ms[1])
       empty!(net.measurements)
       append!(net.measurements, ms)

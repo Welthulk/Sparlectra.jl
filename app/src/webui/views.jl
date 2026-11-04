@@ -4814,6 +4814,11 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   else
     "J OUTSIDE 3σ band ($(reason))"
   end
+  # weakly observable at the estimate: the run completed, but the result
+  # must not be used (the flows of the affected branches are left out)
+  if get(metadata, "se_result_usable", true) == false
+    push!(parts, "🔴 RESULT UNUSABLE: weakly observable at the estimated state ($(get(metadata, "se_weak_directions", "?")) weak direction(s), $(length(get(metadata, "se_weak_branches", Any[]))) branch flow(s) not written; see run.log)")
+  end
   # J/dof leads: J alone grows with the number of measurements, so the same
   # healthy set reads as an alarm on a larger case. The ratio is the number a
   # reader can judge at a glance.

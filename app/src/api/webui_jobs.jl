@@ -505,6 +505,12 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           status = job["status"],
           message = job["message"],
         )
+        # a completed run whose result the service marked unusable (a state
+        # estimation that is weakly observable at its estimate) gets its own
+        # line next to the completion
+        if get(failure_metadata, "se_result_usable", true) == false
+          event_callback("se_result_unusable"; run_id = job["run_id"], reason = get(failure_metadata, "se_result_unusable_reason", nothing), weak_directions = get(failure_metadata, "se_weak_directions", nothing), status = "unusable")
+        end
         if detailed_result_csv
           rescanned_artifacts = list_powerflow_artifacts(job["run_id"])
           artifact_source = rescanned_artifacts isa AbstractVector ? rescanned_artifacts : get(result, "artifacts", Any[])

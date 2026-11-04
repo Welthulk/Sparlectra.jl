@@ -605,12 +605,31 @@ const DEFAULT_NEWTON_UPDATE = PowerFlowConfig().newton_update
 # duplicate Vector-typed definition used to live here)
 
 """
-    ObservabilityConfig
+    ObservabilityConfig(; enabled = true, weak_flow_sigma_mw = 20.0, weak_vm_sigma_pu = 0.01, weak_check_after_estimation = false)
 
-State-estimation observability diagnostic configuration.
+State-estimation observability diagnostic configuration
+(`state_estimation.observability`).
+
+`weak_flow_sigma_mw` (MW, positive) and `weak_vm_sigma_pu` (pu, positive)
+are the bounds of the weak class of [`evaluate_weak_observability`](@ref):
+a singular direction of the weighted measurement Jacobian along which the
+standard deviation of an active branch flow exceeds `weak_flow_sigma_mw`,
+or the one of a voltage magnitude exceeds `weak_vm_sigma_pu`, makes the set
+`:weakly_observable`. On sp_case1354 with P, Q and U at every bus and no
+flows the largest flow standard deviation along one direction is 6.7 MW,
+the flow bound is three times that; the magnitude bound is twice the
+default sigma of a Vm measurement.
+
+`weak_check_after_estimation` lets [`runse!`](@ref) determine the weak
+class at the estimated state after a converged run with `update_net`
+(field `weakObservability` of the result). It is off by default: on
+sp_case1354 it costs more than the estimation itself.
 """
 Base.@kwdef struct ObservabilityConfig
   enabled::Bool = true
+  weak_flow_sigma_mw::Float64 = 20.0
+  weak_vm_sigma_pu::Float64 = 0.01
+  weak_check_after_estimation::Bool = false
 end
 
 """
@@ -2435,7 +2454,12 @@ end
 
 function ObservabilityConfig(raw::AbstractDict)
   merged = _merged_section(raw, "observability")
-  return ObservabilityConfig(enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)))
+  return ObservabilityConfig(
+    enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)),
+    weak_flow_sigma_mw = Float64(_validate_positive("state_estimation.observability.weak_flow_sigma_mw", _as_float_cfg(_raw_get(merged, "weak_flow_sigma_mw", 20.0)))),
+    weak_vm_sigma_pu = Float64(_validate_positive("state_estimation.observability.weak_vm_sigma_pu", _as_float_cfg(_raw_get(merged, "weak_vm_sigma_pu", 0.01)))),
+    weak_check_after_estimation = _as_bool_cfg(_raw_get(merged, "weak_check_after_estimation", false)),
+  )
 end
 
 # `raw` is the merged state_estimation section. A factor below 1 would make

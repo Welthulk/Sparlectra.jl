@@ -561,6 +561,17 @@ state_estimation:
   topology_cluster_min: 3
   observability:
     enabled: true
+    # Weak class of the observability check: a direction of the weighted
+    # Jacobian along which a branch flow has a standard deviation above
+    # weak_flow_sigma_mw (MW) or a voltage magnitude one above
+    # weak_vm_sigma_pu (pu) makes the set weakly observable. Before the
+    # estimation the class is provisional (at the stored state); the SE
+    # service decides at the estimated state and marks a weakly observable
+    # result unusable. weak_check_after_estimation: runse! determines the
+    # class at the estimate as well (costs more than the estimation).
+    weak_flow_sigma_mw: 20.0
+    weak_vm_sigma_pu: 0.01
+    weak_check_after_estimation: false
   # Transformer tap estimation. enabled: false estimates no tap, every
   # changer keeps its transferred step (SSH profile or measurement file) and
   # se_tap_estimates.csv lists it with status not_estimated, reason disabled.

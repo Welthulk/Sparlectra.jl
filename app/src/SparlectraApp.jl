@@ -236,6 +236,7 @@ import Sparlectra:
   _tap_stamp_end_steps!,
   _tap_voltage_target_by_bus,
   _transformer_mrids,
+  _weak_at_estimate,
   _write_auto_mode_decision_log,
   _write_namedtuple_csv,
   _yaml_dict_text,

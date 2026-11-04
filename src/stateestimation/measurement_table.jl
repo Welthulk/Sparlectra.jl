@@ -781,7 +781,7 @@ function _apply_sigma_levels_to_generated(net::Net, meas::Vector{Measurement}, t
     s === nothing && continue
     σ = typ == "U" ? s / vn : s
     z = t.value + (m.value - t.value) * (σ / m.sigma)
-    out[k] = Measurement(typ = m.typ, value = z, sigma = σ, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
+    out[k] = Measurement(typ = m.typ, value = z, sigma = σ, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = m.origin)
     push!(changed, k)
   end
   return (out, changed)
@@ -1149,6 +1149,10 @@ _measurement_table_group_type(kind::Symbol, typ::AbstractString) = kind === :shu
 # `zero_injection` (among `;`-separated tokens) on a bus balance row
 _measurement_table_zero_injection(source::AbstractString)::Bool = any(t -> strip(t) == "zero_injection", split(source, ';'))
 
+# the token `pseudo` in `source` marks a substitute value (the rows of
+# generatePseudoMeasurementTable carry `pseudo;ssh`): Measurement.origin
+_measurement_table_origin(source::AbstractString)::Symbol = any(t -> strip(t) == "pseudo", split(source, ';')) ? :pseudo : :measured
+
 # one pending value of a group sum (injection or shunt bay at a bus)
 struct _GroupPart
   terminal::String
@@ -1202,6 +1206,12 @@ Mapping:
 Several keys at one location (two Analogs on one terminal, U at every
 busbar section of one node) are redundant measurements and all enter the
 set; only the same key with the same type twice is a `:duplicate`.
+
+A row whose `source` carries the token `pseudo` (`;`-separated, as
+`generatePseudoMeasurementTable` writes `pseudo;ssh`) becomes a measurement
+with origin `:pseudo`, every other row one with origin `:measured` (see
+[`Measurement`](@ref)). A group sum is `:pseudo` when one of the rows it
+uses is.
 
 The sigma of a row, in this order: the `sigma` cell of the row; else the
 row of `sigma_by_voltage_level` (default: the active
@@ -1273,8 +1283,10 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
   # (kind, bus, type) -> the member rows of a group sum with their terminal
   group_rows = Dict{Tuple{Symbol,Int,String},Vector{Tuple{MeasurementRow,String,Float64,Symbol}}}()
 
+  # `origin` here is where the sigma came from; where the value came from
+  # (Measurement.origin) is read from the source cell of the row
   function add!(r::MeasurementRow, typ::MeasurementType, value::Float64, sigma::Float64, origin::Symbol; busIdx = nothing, branchIdx = nothing, linkIdx = nothing, direction = :none, id::String, zero_injection::Bool = false)
-    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, linkIdx = linkIdx, direction = direction, id = id, zero_injection = zero_injection))
+    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, linkIdx = linkIdx, direction = direction, id = id, zero_injection = zero_injection, origin = _measurement_table_origin(r.source)))
     sources[id] = [r.line]
     origins[id] = origin
     bump!(r.valid ? :active : :inactive)
@@ -1507,8 +1519,12 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
     value = kind === :shunt ? total : -total
     sigma = sqrt(sum(p.sigma^2 for p in got))
     id = string(mt, "@bus", bus)
-    push!(meas, Measurement(typ = mt, value = value, sigma = sigma, active = active, busIdx = bus, id = id))
-    sources[id] = sort!([r.line for (r, loc, _, _) in entries if r.valid || !haskey(valid_by_member, loc)])
+    # the rows the sum uses (as in `sources`) decide its origin: one pseudo
+    # row among them makes the sum a substitute value
+    used = [r for (r, loc, _, _) in entries if r.valid || !haskey(valid_by_member, loc)]
+    sum_origin = _combined_measurement_origin(_measurement_table_origin(r.source) for r in used)
+    push!(meas, Measurement(typ = mt, value = value, sigma = sigma, active = active, busIdx = bus, id = id, origin = sum_origin))
+    sources[id] = sort!([r.line for r in used])
     origins[id] = _weakest_sigma_origin(p.origin for p in got)
     bump!(active ? :active : :inactive)
   end

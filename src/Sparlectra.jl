@@ -739,6 +739,9 @@ export
   evaluate_observability_matrix,
   evaluate_local_observability_matrix,
   evaluate_global_observability,          # Evaluate global SE observability.
+  evaluate_weak_observability,            # Weak class of a measurement set at the stored (or estimated) state.
+  identify_observable_islands,            # Observable islands, unobservable branches and rank deficit of a measurement set.
+  print_observable_islands,               # REPL printout of the observable islands.
   measurement_jacobian,                   # Labeled measurement Jacobian H (rows/cols described) for matrix reports.
   evaluate_local_observability,           # Evaluate local SE observability.
 

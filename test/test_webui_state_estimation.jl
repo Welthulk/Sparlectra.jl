@@ -687,6 +687,40 @@ function run_webui_state_estimation_tests()
       hyp_md = read(joinpath(root, idc, "topology_hypotheses.md"), String)
       @test occursin("k_eliminate 5.5,", hyp_md) && occursin("zero_injection off.", hyp_md)
       rm(case_cfg)
+      # a weakly observable set (concept K3, G2): the class before the
+      # estimation is provisional and stops nothing; at the estimated state
+      # it marks the result unusable and the estimated flows of the affected
+      # branches stay empty in se_deltas.csv. The bound comes from the
+      # configuration file of the run (an installation setting like
+      # rank_tol_factor, not case scope), and 0.001 MW lies below every
+      # branch-flow standard deviation of the set, so every flow row is
+      # affected and every bus row keeps its estimate
+      weak_cfg = joinpath(root, "weak_bound.yaml")
+      write(weak_cfg, "config_version: 1\nstate_estimation:\n  observability:\n    weak_flow_sigma_mw: 0.001\n")
+      rweak = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => weak_cfg, "output_root" => root, "se_mode" => true, "measurement_file" => mfile))
+      @test rweak["status"] == "succeeded"
+      @test occursin("Result unusable: weakly observable at the estimated state", rweak["message"])
+      wmeta = get_powerflow_result(rweak["run_id"])["metadata"]
+      # the case stores the flat profile: before the estimation the class
+      # is not determined and the quality stays observable
+      @test get(wmeta, "se_observability_quality", nothing) in ("good", "critical")
+      @test (get(wmeta, "se_weak_basis_before_estimation", nothing), get(wmeta, "se_weak_basis", nothing)) == ("not_determined", "estimated_state")
+      @test get(wmeta, "se_result_usable", nothing) == false && get(wmeta, "se_result_unusable_reason", nothing) == "weakly_observable"
+      @test get(wmeta, "se_weak_directions", 0) > 0 && !isempty(get(wmeta, "se_weak_branches", Any[]))
+      @test occursin("result unusable: weakly observable at the estimated state", read(joinpath(root, rweak["run_id"], "run.log"), String))
+      wd = readlines(joinpath(root, rweak["run_id"], "se_deltas.csv"))
+      wdelim = occursin(';', wd[2]) ? ';' : ','
+      wcols = split(wd[2], wdelim)
+      # the zero-injection rows the service adds carry no estimate anyway
+      wrows = [split(l, wdelim) for l in wd[3:end] if startswith(l, "meas") && !occursin("ZI_", l)]
+      west(r) = r[findfirst(==("estimated"), wcols)]
+      wtyp(r) = r[findfirst(==("type"), wcols)]
+      @test any(r -> wtyp(r) == "PflowMeas", wrows)
+      @test all(r -> isempty(west(r)), filter(r -> wtyp(r) in ("PflowMeas", "QflowMeas"), wrows))
+      @test all(r -> !isempty(west(r)), filter(r -> wtyp(r) in ("VmMeas", "PinjMeas"), wrows))
+      # the default bounds keep the same set usable
+      @test get(get_powerflow_result(idc)["metadata"], "se_result_usable", nothing) == true
+      rm(weak_cfg)
       # tap-estimation SE run: a set generated with a tap deviation
       # disagrees with the model around one transformer; releasing the taps
       # absorbs the discrepancy and the fixation lands on a mechanical step

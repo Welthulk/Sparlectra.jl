@@ -318,7 +318,7 @@ header:
 | `direction` | branch end (`:from`/`:to`) | branch rows only |
 | `value`, `sigma` | measured value and standard deviation in the type's unit (Vm in pu, powers in MW/MVAr, currents in A, angles in degrees) | numbers keep their shortest round-trip form |
 | `active` | active flag | inactive rows are kept in the file |
-| `id` | measurement id | prefixes `ZI` (zero injection) and `SHDERIV` (derived shunt Q) mark protected rows |
+| `id` | measurement id | the prefix `ZI` marks a zero-injection row |
 | `bad_data`, `status` | run artifact before 0.50.0 only | the converter ignores both columns |
 
 Exactly one location group per row (`bus` |

@@ -1022,6 +1022,28 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
   return (res = res, diag = diag, eliminations = eliminations, staged = staged, staged_start_from = staged_start_from, tap_fallback_used = tap_fallback_used, tap_run1 = tap_run1, rounds = rounds, tap_rounds = tap_rounds, run_cfg = run_cfg)
 end
 
+## one line on a weak report: directions, the largest standard deviations
+## against their bounds and the first affected buses by name
+function _se_weak_summary(net::Net, wk, obsCfg)::String
+  names = _bus_name_by_idx(net)
+  shown = first(wk.buses, 10)
+  busTxt = join((get(names, b, string(b)) for b in shown), ", ") * (length(wk.buses) > length(shown) ? string(", ... (", length(wk.buses), " buses)") : "")
+  return string(wk.n_directions, " weak direction(s), largest branch-flow standard deviation ", round(wk.max_flow_sigma_mw; digits = 1), " MW (bound ", obsCfg.weak_flow_sigma_mw, " MW), largest voltage standard deviation ", round(wk.max_vm_sigma_pu; sigdigits = 3), " pu (bound ", obsCfg.weak_vm_sigma_pu, " pu), affected buses: ", isempty(busTxt) ? "none" : busTxt)
+end
+
+## What the weak class at the estimated state does to the result (concept
+## G2). This is the decision point for `on_unobservable`: under the one
+## behaviour that exists, abort, a weakly observable estimate is marked
+## unusable and the flows of the affected branches are left out of the
+## result files. Returns `(usable, reason, line, blank_branches)`, `line`
+## the run.log text, `blank_branches` the caller's branch indices whose
+## estimated flows are not written.
+function _se_weak_outcome(net::Net, wk, obsCfg)
+  wk.n_directions == 0 && return (usable = true, reason = nothing, line = "", blank_branches = Set{Int}())
+  line = string("result unusable: weakly observable at the estimated state, ", _se_weak_summary(net, wk, obsCfg), "; the flows of ", length(unique(wk.branches)), " branch(es) are not written. Add measurements there (flows or injections).")
+  return (usable = false, reason = "weakly_observable", line = line, blank_branches = Set{Int}(wk.branches))
+end
+
 """
     _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
 
@@ -1074,6 +1096,15 @@ Failure reasons: `se_unsupported_format`, `import_error`,
 `invalid_measurements` (missing/unreadable/rejected file),
 `se_not_observable` (observability quality `:not_observable`),
 `se_not_converged`, plus the shared config failure.
+
+The weak class (`state_estimation.observability`) does not stop the run
+before the estimation: there it is provisional, at the stored state of the
+case (metadata `se_weak_basis_before_estimation`). After the converged run
+it is determined at the estimated state (`evaluate_weak_observability`).
+A weakly observable estimate is marked unusable (`se_result_usable =
+false`, `se_result_unusable_reason = "weakly_observable"`, a run.log line
+and the message), and the estimated flows of the affected branches are
+left empty in `se_deltas.csv`.
 """
 function _run_state_estimation_service(
   case_path::AbstractString,
@@ -1364,9 +1395,11 @@ function _run_state_estimation_service_body(
   end
 
   # observability first (phase 4 two-stage verdict); a not-observable set is
-  # a clean rejection, not a solver crash
+  # a clean rejection, not a solver crash. Under the effective configuration,
+  # so the bounds of the weak class from a case configuration reach the
+  # check that the abort message below quotes them from.
   obs = try
-    evaluate_global_observability(net)
+    with_sparlectra_config(() -> evaluate_global_observability(net), config)
   catch err
     # an abort is no rejected measurement set
     err isa PowerFlowAborted && rethrow()
@@ -1390,12 +1423,21 @@ function _run_state_estimation_service_body(
   end
   if obs.quality == :not_observable
     msg = if hasproperty(obs, :islands)
-      bad = [string("island ", i.island, " (", i.n_bus, " buses): ", String(i.result.quality)) for i in obs.islands if i.measured && i.result.quality == :not_observable]
-      "The measurement set does not observe every measured island ($(join(bad, "; "))). Each island is estimated with its own reference; add measurements to the failing island or deactivate its rows."
+      bad = [string("network island ", i.island, " (", i.n_bus, " buses): ", String(i.result.quality)) for i in obs.islands if i.measured && i.result.quality == :not_observable]
+      "The measurement set does not observe every measured network island ($(join(bad, "; "))). Each network island is estimated with its own reference; add measurements to the failing network island or deactivate its rows."
     else
       "The measurement set does not observe the system (quality :not_observable)."
     end
     return _api_failure("se_not_observable", msg, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  end
+  # the weak class before the estimation is provisional (concept G2): taken
+  # at the stored state, or not determined without one. It stops nothing;
+  # the class at the estimated state decides after the run.
+  wk_pre = obs.weak_observability
+  base_metadata["se_weak_basis_before_estimation"] = String(wk_pre.basis)
+  base_metadata["se_weak_directions_before_estimation"] = wk_pre.n_directions
+  open(logfile, "a") do io
+    println(io, "weak class before the estimation: ", wk_pre.basis === :not_determined ? "not determined (the case stores no state)" : _se_weak_summary(net, wk_pre, config.state_estimation.observability), " (provisional)")
   end
 
   # released transformer taps: every declared tap changer of an in-service
@@ -1574,6 +1616,25 @@ function _run_state_estimation_service_body(
     return _api_failure("se_not_converged", failure_text, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   se_phase("postprocessing_result")
+  # the weak class at the estimated state (concept G2): the final run wrote
+  # its estimate into the net (update_net) and deactivated the eliminated
+  # rows, so the check reads the set and the state of the reported result
+  weak_final = _weak_at_estimate(with_sparlectra_config(() -> evaluate_weak_observability(net), run_cfg))
+  weak_outcome = _se_weak_outcome(net, weak_final, run_cfg.state_estimation.observability)
+  base_metadata["se_weak_basis"] = String(weak_final.basis)
+  base_metadata["se_weakly_observable"] = weak_final.weakly_observable
+  base_metadata["se_weak_directions"] = weak_final.n_directions
+  base_metadata["se_weak_buses"] = length(weak_final.buses)
+  base_metadata["se_weak_branches"] = collect(weak_final.branches)
+  # a null direction of the AC Jacobian has an infinite standard deviation;
+  # JSON has no Inf, the text carries it
+  base_metadata["se_weak_max_flow_sigma_mw"] = isfinite(weak_final.max_flow_sigma_mw) ? weak_final.max_flow_sigma_mw : string(weak_final.max_flow_sigma_mw)
+  base_metadata["se_weak_max_vm_sigma_pu"] = isfinite(weak_final.max_vm_sigma_pu) ? weak_final.max_vm_sigma_pu : string(weak_final.max_vm_sigma_pu)
+  base_metadata["se_result_usable"] = weak_outcome.usable
+  base_metadata["se_result_unusable_reason"] = weak_outcome.reason
+  weak_outcome.usable || open(logfile, "a") do io
+    println(io, weak_outcome.line)
+  end
 
   # artifacts
   open(joinpath(output_dir, "se_diagnostics.md"), "w") do io
@@ -1767,11 +1828,14 @@ function _run_state_estimation_service_body(
         rsub = get(rangeSubD, mi, nothing)
         zD = rsub === nothing ? m.value : rsub.substitute
         sigD = rsub === nothing ? m.sigma : rsub.sigma_substitute
-        estv = rres === nothing ? nothing : zD - rres
+        # the flow of a branch the weak class leaves undetermined is not
+        # written: empty, not zero (_se_weak_outcome)
+        unknownFlow = m.branchIdx !== nothing && m.branchIdx in weak_outcome.blank_branches && m.typ in (PflowMeas, QflowMeas, ImagMeas)
+        estv = (rres === nothing || unknownFlow) ? nothing : zD - rres
         println(
           io,
           join(
-            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / sigD), m.id in elimD),
+            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), estv === nothing ? "" : fmt(abs(rres) / sigD), m.id in elimD),
             se_csv_delim,
           ),
         )
@@ -1814,7 +1878,8 @@ function _run_state_estimation_service_body(
   open(logfile, "a") do io
     println(io, "State estimation on ", basename(case_path))
     println(io, "measurements: ", summary.total, " rows from ", from_case_file ? "the case file" : basename(String(measurement_file)), zi_rows > 0 ? string(", plus ", zi_rows, " zero-injection row(s)") : "")
-    println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "")
+    println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "", obs.quality === :weakly_observable ? " (provisional, at the stored state)" : "")
+    println(io, "weak class at the estimated state: ", weak_final.weakly_observable ? _se_weak_summary(net, weak_final, run_cfg.state_estimation.observability) : "none", weak_outcome.usable ? "" : " (result unusable)")
     _se_log_criticality(io, net, obs)
     println(io, "converged in ", res.iterations, " iteration(s); J = ", round(res.objectiveJ; digits = 6), ", dof = ", res.dof, ", band reason = ", verdict.reason, res.activeObjective === nothing ? "" : string("; J_active = ", round(res.activeObjective.j; digits = 6), " (dof ", res.activeObjective.dof, ", without ", res.activeObjective.suppressed, " suppressed row(s); band verdict stays on J)"))
     println(io, _se_conditioning_line(res))
@@ -1961,6 +2026,7 @@ function _run_state_estimation_service_body(
     res.tapFixation === nothing ? "" : string(" Tap fixation (", _se_tap_transformer_count(res.tapEstimates), " transformer(s)): J ", round(res.tapFixation.j_before; sigdigits = 3), " -> ", round(res.tapFixation.j_after; sigdigits = 3), res.tapFixation.offgrid_residual ? "; off-grid tap residual, not bad data" : "", "."),
     (get(base_metadata, "se_set_tap_deviation", false) == true && !tap_enabled) ? " Hint: the set documents a tap deviation, but tap estimation is switched off; enable 'estimate taps'." : "",
     duplicate_rows > 0 ? string(" Warning: ", duplicate_rows, " measurement(s) repeat an already measured quantity - that alone inflates J; regenerate the set.") : "",
+    weak_outcome.usable ? "" : string(" Result unusable: weakly observable at the estimated state (", weak_final.n_directions, " weak direction(s)); the flows of ", length(weak_outcome.blank_branches), " branch(es) are not written."),
   )
   # timing file plus the raw phase sequence in result.json, same as the
   # power-flow path, so the Web UI run page can show where the time went
