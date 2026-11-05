@@ -909,7 +909,9 @@ function generateMeasurementsFromPF(
   Sbus_MVA = Sbus_pu .* net.baseMVA
   # buses of a closed-link cluster read their own generation minus load
   linkInj = _link_cluster_device_injections(net, Sbus_MVA, V, is_iso, is_dead, iso_shift)
-  injMVA(i::Int) = get(linkInj, i, Sbus_MVA[iso_shift(i)])
+  # not get(linkInj, i, default): the default is evaluated first, and a
+  # link-fed isolated bus after the last Y-bus row has no row to read
+  injMVA(i::Int) = haskey(linkInj, i) ? linkInj[i] : Sbus_MVA[iso_shift(i)]
 
   m = Measurement[]
   nbus = length(net.nodeVec)

@@ -1258,6 +1258,81 @@ function test_observability_islands(fx)::Bool
     @test (nowk["status"], nowk["metadata"]["se_weak_basis"]) == ("succeeded", "not_determined")
   end)() end
 
+  @testset "observable islands: a link cluster in one of two network islands" begin (function ()
+    # A1-A2-A3 and B1-B2 with B2a on B2 through a closed link only (no
+    # branch, the last bus). The cluster injections of B2/B2a become LINKAGG
+    # rows with caller index 0. 1.1.0 failed twice here: the measurement
+    # generator read the Y-bus row of B2a eagerly (BoundsError), and the
+    # merge of the network islands indexed the kept rows with that 0.
+    net = Net(name = "obs_islands_link", baseMVA = 100.0)
+    for b in ("A1", "A2", "A3", "B1", "B2", "B2a")
+      addBus!(net = net, busName = b, vn_kV = 110.0)
+    end
+    addPIModelACLine!(net = net, fromBus = "A1", toBus = "A2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "A2", toBus = "A3", r_pu = 0.012, x_pu = 0.09, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "A1", toBus = "A3", r_pu = 0.011, x_pu = 0.085, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addProsumer!(net = net, busName = "A1", type = "EXTERNALNETWORKINJECTION", referencePri = "A1", vm_pu = 1.02, va_deg = 0.0)
+    addProsumer!(net = net, busName = "A2", type = "ENERGYCONSUMER", p = 30.0, q = 10.0)
+    addProsumer!(net = net, busName = "A3", type = "ENERGYCONSUMER", p = 20.0, q = 6.0)
+    addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", referencePri = "B1", vm_pu = 1.0, va_deg = 0.0)
+    addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 12.0, q = 4.0)
+    addProsumer!(net = net, busName = "B2a", type = "ENERGYCONSUMER", p = 3.0, q = 1.0)
+    addLink!(net = net, fromBus = "B2", toBus = "B2a", status = 1)
+    @test first(validate!(net = net))
+    _, erg = runpf!(net, 40, 1e-10, 0; method = :rectangular, islands_enabled = true)
+    @test erg == 0
+    meas = generateMeasurementsFromPF(net; noise = false)
+    # the cluster rows read generation minus load of their own bus
+    pB2a = only(m for m in meas if m.typ == Sparlectra.PinjMeas && m.busIdx == 6)
+    @test isapprox(pB2a.value, -3.0; atol = 1e-9)
+    obs = _obs_cfg(() -> evaluate_global_observability(net, meas))
+    @test obs.n_measured_islands == 2 && obs.quality !== :not_observable
+    @test length(obs.active_measurement_indices) == length(obs.criticality_wii)
+    @test count(==(0), obs.active_measurement_indices) == 2   # the LINKAGG Pinj and Qinj rows
+    @test all(i -> 0 <= i <= length(meas), obs.active_measurement_indices)
+  end)() end
+
+  @testset "observable islands: a later run starts from a net with NaN voltages" begin (function ()
+    # sp_case14 with the magnitude of the leaf bus 14 dark (its Vm, Qinj and
+    # Q flows and the Qinj of its neighbour 7 removed): Q-V deficit 1. The
+    # SE service with released taps runs the staged start: a pre-solve per
+    # observable island writes NaN for bus 14 into the net, the released run
+    # starts from the stored voltages. 1.1.0 took the NaN into the Jacobian
+    # and failed with "invalid argument #4 to LAPACK call"; a NaN stored
+    # voltage now starts flat.
+    net = importSCF(joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json"))
+    runpf!(net, 40, 1e-8, 0; method = :rectangular)
+    b = 14
+    nb = Set{Int}(br.fromBus == b ? br.toBus : br.fromBus for br in net.branchVec if b in (br.fromBus, br.toBus))
+    @test nb == Set([7])
+    atB(m) = m.busIdx == b || (m.branchIdx !== nothing && b in (net.branchVec[m.branchIdx].fromBus, net.branchVec[m.branchIdx].toBus))
+    qv = (Sparlectra.VmMeas, Sparlectra.QinjMeas, Sparlectra.QflowMeas)
+    meas = filter(m -> !(atB(m) && m.typ in qv) && !(m.typ == Sparlectra.QinjMeas && m.busIdx in nb), _obs_full_set(net))
+    obs = _obs_cfg(() -> evaluate_global_observability(net, meas))
+    @test (obs.quality, obs.angle_rank_deficit, obs.magnitude_rank_deficit) == (:not_observable, 0, 1)
+    # the library: a second runse! from the stored state of the first
+    netL = deepcopy(net)
+    oc = Sparlectra.ObservabilityConfig(on_unobservable = :observable_islands)
+    r1 = _se_run_quiet(() -> with_state_estimation_config(() -> runse!(netL, meas); flatstart = true, update_net = true, observability = oc))
+    @test r1.converged && isnan(netL.nodeVec[b]._vm_pu)
+    r2 = _se_run_quiet(() -> with_state_estimation_config(() -> runse!(netL, meas); flatstart = false, update_net = true, observability = oc))
+    @test r2.converged && isnan(netL.nodeVec[b]._vm_pu) && !isnan(netL.nodeVec[1]._vm_pu)
+    # the service with the staged tap start
+    mktempdir() do d
+      netS = deepcopy(net)
+      netS.measurements = meas
+      case = exportSCF(netS; file = joinpath(d, "case.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
+      cfg = joinpath(d, "se.yaml")
+      write(cfg, "config_version: 1\nstate_estimation:\n  observability:\n    on_unobservable: observable_islands\n")
+      r = SparlectraApp.to_dict(_se_run_quiet(() -> redirect_stdout(() -> SparlectraApp._run_state_estimation_service(case, cfg, joinpath(d, "run"), "nan_start", joinpath(d, "none.csv")), devnull)))
+      @test (r["status"], r["metadata"]["se_tap_staged_start"], r["metadata"]["se_observable_islands_estimated"]) == ("succeeded", true, 1)
+    end
+    # a non-finite Jacobian entry is named, not a LAPACK argument error
+    t = @test_throws ArgumentError Sparlectra._sigma_max(Sparlectra.sparse([1.0 NaN; 0.0 2.0]))
+    @test occursin("non-finite entries (first at row 1, column 2)", t.value.msg)
+  end)() end
+
   return true
 end
 

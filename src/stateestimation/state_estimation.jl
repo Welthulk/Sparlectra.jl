@@ -515,8 +515,19 @@ end
 ## Largest singular value dispatcher: exact dense svdvals below the
 ## threshold (bit-identical to the historical behavior for every existing
 ## caller), power-iteration estimate above it.
-_sigma_max(H::AbstractMatrix{<:Real})::Float64 = maximum(svdvals(Matrix(H)))
-_sigma_max(H::SparseMatrixCSC{Float64})::Float64 = max(size(H)...) <= _SE_DENSE_LINALG_MAX_N ? maximum(svdvals(Matrix(H))) : _sigma_max_estimate(H)
+## A non-finite entry (a NaN start voltage, an Inf from a degenerate
+## branch) is named here instead of surfacing as a LAPACK argument error.
+_sigma_max(H::AbstractMatrix{<:Real})::Float64 = (_se_require_finite(H); maximum(svdvals(Matrix(H))))
+_sigma_max(H::SparseMatrixCSC{Float64})::Float64 = (_se_require_finite(H); max(size(H)...) <= _SE_DENSE_LINALG_MAX_N ? maximum(svdvals(Matrix(H))) : _sigma_max_estimate(H))
+
+## Internal helper: throws an ArgumentError when the measurement Jacobian
+## has a NaN or Inf entry; the message names the first such row and column.
+function _se_require_finite(H::AbstractMatrix{<:Real})
+  vals = H isa SparseMatrixCSC ? nonzeros(H) : H
+  all(isfinite, vals) && return nothing
+  idx = findfirst(v -> !isfinite(v), H)
+  throw(ArgumentError(string("state estimation: the measurement Jacobian has non-finite entries (first at row ", idx[1], ", column ", idx[2], "); a start voltage or a branch parameter of the net is NaN or Inf")))
+end
 
 ## Largest singular value of a sparse matrix without densifying: power
 ## iteration on AᵀA with a fixed deterministic start vector. 30 iterations
@@ -588,7 +599,14 @@ end
 ## result add it again, and the angle predictions (VaMeas, IaMeas) add it, so
 ## measurements, results and the net stay in the model reference
 ## (SE start value). A slack without a stored angle has 0.
-@inline _se_slack_ref_deg(net::Net, slackIdx::Int)::Float64 = Float64(something(net.nodeVec[slackIdx]._va_deg, 0.0))
+@inline _se_slack_ref_deg(net::Net, slackIdx::Int)::Float64 = _se_stored_value(net.nodeVec[slackIdx]._va_deg, 0.0)
+
+## Internal helper: a stored voltage value of the net, `default` when there
+## is none. NaN counts as none: an estimate per observable island writes NaN
+## for the buses it did not estimate (`runse!` with update_net), and a later
+## start from the stored state must not carry it into the Jacobian (1.1.0:
+## the second solve of the staged tap start failed with a LAPACK error).
+@inline _se_stored_value(v, default::Float64)::Float64 = (v === nothing || !isfinite(v)) ? default : Float64(v)
 
 ## Internal helper: map estimator state vector x -> complex bus voltages V.
 ## x = [θ(non-slack); Vm(all buses)] with θ_slack fixed to 0.
@@ -676,17 +694,17 @@ function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true, 
   for i = 1:nbus
     if i != slackIdx
       p += 1
-      x[p] = flatstart ? (theta === nothing ? 0.0 : theta[i]) : deg2rad(something(net.nodeVec[i]._va_deg, 0.0) - vaSlackDeg)
+      x[p] = flatstart ? (theta === nothing ? 0.0 : theta[i]) : deg2rad(_se_stored_value(net.nodeVec[i]._va_deg, vaSlackDeg) - vaSlackDeg)
     end
   end
 
   for i = 1:nbus
-    vm0 = something(net.nodeVec[i]._vm_pu, 1.0)
+    vm0 = _se_stored_value(net.nodeVec[i]._vm_pu, 1.0)
     x[nθ+i] = flatstart ? 1.0 : vm0
   end
 
   if flatstart
-    x[nθ+slackIdx] = something(net.nodeVec[slackIdx]._vm_pu, 1.0)
+    x[nθ+slackIdx] = _se_stored_value(net.nodeVec[slackIdx]._vm_pu, 1.0)
   end
 
   for j = 1:k
@@ -3802,7 +3820,10 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
     r.rank_method === :decomposition && (rankMethod = :decomposition)
     if length(r.criticality_wii) == length(r.active_measurement_indices)
       append!(wiiAll, r.criticality_wii)
-      append!(activeAll, Int[keptIdx[i] for i in r.active_measurement_indices])
+      # index 0 is a LINKAGG aggregate of a link cluster (no caller row); it
+      # stays 0 so the list keeps the length of criticality_wii, as in the
+      # single-island result
+      append!(activeAll, Int[i == 0 ? 0 : keptIdx[i] for i in r.active_measurement_indices])
     end
     angleDef += r.angle_rank_deficit
     magDef += r.magnitude_rank_deficit
@@ -7805,7 +7826,8 @@ network-island path:
 - Unestimated buses have NaN voltages, in the result and with `update_net`
   in the net; closed branches outside every estimated island have NaN flows
   and losses, and the total losses are NaN. [`runpf_from_se!`](@ref)
-  refuses such an estimate.
+  refuses such an estimate. A later run that starts from the stored state
+  (`flatstart = false`) starts these buses flat.
 - After a converged run the weak class is determined at the estimate,
   per estimated island, whatever `weak_check_after_estimation` says
   (`weakObservability`). While a branch or bus is above the bounds, the

@@ -744,9 +744,11 @@ function _webui_is_user_selectable_case(name::AbstractString)::Bool
   # per-case configuration files travel next to their case and are not cases
   endswith(lowered_name, ".config.yaml") && return false
   endswith(lowered_name, ".contingency-weights.csv") && return false
-  # an SCF time series (QSTS) is a case whatever it is called: the content
-  # decides (a zip naming series.json)
-  (isfile(name) && _webui_is_scf_series_cached(name)) && return true
+  # an SCF time series (QSTS) is a case by its content (a zip naming
+  # series.json), but only under a name the run accepts: a backup such as
+  # "<name>.qsts.zip.replaced-<date>" has the content and no case extension,
+  # and 1.1.0 offered it, then failed the run with invalid_casefile
+  (extension in (".zip", ".json") && isfile(name) && _webui_is_scf_series_cached(name)) && return true
   # the bundled precompile workloads are .jl files (warmup_case3/case118);
   # a regular MATPOWER case may legitimately carry the prefix
   # (warmup_casePST.m) and must stay selectable

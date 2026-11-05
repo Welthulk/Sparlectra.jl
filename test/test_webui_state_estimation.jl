@@ -125,6 +125,11 @@ function run_webui_state_estimation_tests()
       @test occursin("scf_time_series", locz)
       @test !occursin("CGMES", locz)
       @test "day.qsts.zip" in SparlectraApp._webui_casefile_options_in_directory(cases)
+      # a backup copy with the series content but no case extension is no
+      # case (1.1.0 offered it, and its run failed with invalid_casefile)
+      cp(series_zip, joinpath(cases, "day.qsts.zip.replaced-2026-11-05"))
+      opts = SparlectraApp._webui_casefile_options_in_directory(cases)
+      @test "day.qsts.zip" in opts && !("day.qsts.zip.replaced-2026-11-05" in opts)
       # traversal names still rejected by the shared upload checks
       bad = SparlectraApp.handle_powerflow_case_import(Dict{String,Any}("casefiles" => [SparlectraApp.WebUICaseUpload("../evil.csv", bytes(v1))]); output_root=root, case_directory=cases, operation_log=root)
       @test bad.status == 303   # redirect with the rejection message

@@ -359,18 +359,11 @@ function _run_build()
   # the build depend on a download, and on this machine it only worked
   # because an older run had left the file in the cache.
   # The MiniGrid CGMES delivery is the one exception, because a CGMES
-  # delivery cannot be assembled from the raw model directories; a failed
-  # fetch only costs that trace (the workload logs the gap), never the build.
-  case_cache = Base.invokelatest(getglobal(spar, :default_webui_case_cache_dir))
-  if !isfile(joinpath(case_cache, "cgmes_minigrid.zip"))
-    println("fetching the MiniGrid CGMES delivery for the short-circuit workload")
-    try
-      cgmes = getglobal(lib, :CGMESImporter)
-      Base.invokelatest(getglobal(cgmes, :fetchCGMESTestSet), "minigrid"; outdir = case_cache)
-    catch err
-      println("MiniGrid fetch failed (", sprint(showerror, err), "); the short-circuit service path will not be traced")
-    end
-  end
+  # delivery cannot be assembled from the raw model directories; the
+  # workload fetches it into its own temporary case directory (the
+  # conformity package is cached in data/CGMES), and a failed fetch only
+  # costs that trace (the workload logs the gap), never the build. Nothing
+  # is written into the user's Web UI case directory.
 
   # both are baked in: AnalyticLoadFlow is a required dependency, and a
   # package loaded after the image would invalidate its precompiled methods

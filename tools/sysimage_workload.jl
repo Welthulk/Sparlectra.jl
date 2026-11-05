@@ -381,7 +381,13 @@ function _trace_apslf()
   return nothing
 end
 
-function run_workload()
+function run_workload(; root::AbstractString)
+  # The Web UI of the workload runs on the temporary output root `root`, so
+  # its case directory, configuration copy, run registry and operation log
+  # are temporary too: the traces below stage cases and write measurement
+  # tables into server.runtime.case_directory. 1.1.0 started it on the
+  # default root, wrote five files into the user's case directory and
+  # overwrote a measurement table there.
   server = nothing
   port = 0
   _step("starting the Web UI")
@@ -391,9 +397,7 @@ function run_workload()
     # wording differs per platform: on Windows the same condition arrives as
     # an IOError with a different text, so the build died on a busy port.
     server = try
-      # the workload never touches the user's case directory: no refresh
-      # of shipped case copies here
-      start_sparlectra_webui(open_browser = false, port = candidate, _refresh_shipped_cases = false)
+      start_sparlectra_webui(open_browser = false, port = candidate, output_root = root, _refresh_shipped_cases = false)
     catch err
       @warn "sysimage workload: port $(candidate) not usable" exception = err
       nothing
@@ -429,7 +433,23 @@ function run_workload()
   return nothing
 end
 
-Base.invokelatest(run_workload)
+# `root` is removed by hand for the reason given at _workload_service_run
+# (open handles on Windows); a leftover temporary directory is harmless
+function _run_workload_in_temp_root()
+  root = mktempdir(; cleanup = false)
+  try
+    run_workload(; root = root)
+  finally
+    try
+      rm(root; recursive = true, force = true)
+    catch err
+      @warn "sysimage workload: temporary Web UI root could not be removed (harmless)" dir = root exception = err
+    end
+  end
+  return nothing
+end
+
+Base.invokelatest(_run_workload_in_temp_root)
 
 # Opt-in comparison trace: the fast test profile plus the
 # Web UI test group. This used to run on every build and dominated its
