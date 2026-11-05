@@ -292,6 +292,8 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     return handle_se_measurement_delete(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/stateestimation/measurements/update-values"
     return handle_se_measurement_update_values(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
+  elseif verb == "GET" && path == "/stateestimation/placement"
+    return handle_se_placement_page(query)
   elseif verb == "POST" && path == "/stateestimation/topology-hypotheses"
     return handle_se_topology_hypotheses(form; output_root, application_root = _webui_application_root(), case_directory = runtime === nothing ? nothing : runtime.case_directory, operation_log = log_root)
   elseif verb == "POST" && path == "/powerflow/config/check"

@@ -3141,6 +3141,7 @@ function _webui_result_page_title(result::AbstractDict)::String
   metadata = get(result, "metadata", Dict{String,Any}())
   mode = metadata isa AbstractDict ? lowercase(string(get(metadata, "run_mode", ""))) : ""
   mode == "se" && return "State estimation result"
+  mode == "se_placement" && return "Measurement placement result"
   mode == "powerflow_se_start" && return "PowerFlow result (started from a state estimate)"
   mode == "short_circuit" && return "Short-circuit result"
   # a run of the case file's scenarios block (the Scenarios button) is no N-1
@@ -3163,7 +3164,7 @@ function _webui_run_method(entry::AbstractDict, stored::AbstractString)
   mode = String(get(entry, "run_mode", ""))
   mode == "se" && return "wls"
   mode == "short_circuit" && return "iec60909"
-  mode == "import_analysis" && return ""
+  mode in ("import_analysis", "se_placement") && return ""
   isempty(stored) ? "rectangular" : String(stored)
 end
 
@@ -3281,6 +3282,8 @@ function render_powerflow_result(result::AbstractDict)::String
   se_sigma_section = active ? "" : _webui_se_sigma_level_section(result)
   se_topology_section = active ? "" : _webui_se_topology_section(result)
   se_chain_section = active ? "" : _webui_se_chain_section(result)
+  se_observability_section = active ? "" : _webui_se_observability_section(result)
+  se_placement_section = active ? "" : _webui_se_placement_section(result)
   n1_table_section = active ? "" : _webui_contingency_table_section(result)
   qsts_section = active ? "" : _webui_qsts_section(result)
   metadata = get(result, "metadata", Dict{String,Any}())
@@ -3290,7 +3293,7 @@ function render_powerflow_result(result::AbstractDict)::String
   # reads like a crashed power flow, and the residual it measured (which IS
   # the answer) looks like the symptom of one.
   diagnose_probe && (runtime_notice *= "<div class=\"alert info\"><strong>This is a diagnosis, not a solve.</strong> The self-check takes exactly one step from the case's own stored voltages (<code>max_iter = 1</code>, no rescue, Q-limit handling off), so a remaining residual is the RESULT and not a failure. The numbers below therefore show one iteration and a non-zero mismatch by design; <code>diagnose.log</code> names the worst bus and what to do about it.</div>")
-  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(n1_table_section)$(qsts_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
+  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(se_observability_section)$(se_placement_section)$(n1_table_section)$(qsts_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
 end
 
 # N-1 / scenario result table on the run result page: the browser must show WHICH case was
@@ -4795,9 +4798,14 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   get(metadata, "run_mode", "") == "se" || return nothing
   quality = String(get(metadata, "se_observability_quality", "?"))
   light = quality == "good" ? "🟢" : quality == "critical" ? "🟡" : "🔴"
+  # a set that is not observable but was estimated per observable island or
+  # closed with scheduled values is an estimate with a gap, not a stop
+  gap_mode = String(get(metadata, "se_on_unobservable", "abort"))
+  estimated_with_gap = quality == "not_observable" && get(result, "success", false) == true && gap_mode != "abort"
+  estimated_with_gap && (light = "🟡")
   reason = String(get(metadata, "se_band_reason", "?"))
   parts = String[]
-  push!(parts, "$(light) observability $(quality)$(get(metadata, "se_structural_islands", false) ? " (structural islands)" : "")")
+  push!(parts, "$(light) observability $(quality)$(estimated_with_gap ? ", estimated with on_unobservable = $(gap_mode) (see Observability below)" : "")")
   # chi-square plausibility at a glance: E[J] = dof for healthy noise, and
   # the Wilson-Hilferty 3-sigma band verdict with its reason. The two
   # failure directions read very differently and say so explicitly: :high
@@ -4817,7 +4825,7 @@ function _webui_se_summary(result::AbstractDict)::Union{Nothing,String}
   # weakly observable at the estimate: the run completed, but the result
   # must not be used (the flows of the affected branches are left out)
   if get(metadata, "se_result_usable", true) == false
-    push!(parts, "🔴 RESULT UNUSABLE: weakly observable at the estimated state ($(get(metadata, "se_weak_directions", "?")) weak direction(s), $(length(get(metadata, "se_weak_branches", Any[]))) branch flow(s) not written; see run.log)")
+    push!(parts, "🔴 RESULT UNUSABLE: weakly observable at the estimated state ($(length(get(metadata, "se_weak_branches", Any[]))) branch flow(s) above the bound and not written, $(get(metadata, "se_weak_buses", "?")) affected bus(es); see run.log)")
   end
   # J/dof leads: J alone grows with the number of measurements, so the same
   # healthy set reads as an alarm on a larger case. The ratio is the number a
@@ -4896,8 +4904,10 @@ function _webui_se_topology_section(result::AbstractDict)::String
   (havePre || haveSt || haveHyp || showButton) || return ""
   parts = String["<section class=\"panel\"><h2>Topology validation (advisory)</h2>"]
   if havePre
-    rows = join(("<tr><td>$(esc(String(get(f, "severity", ""))))</td><td><code>$(esc(String(get(f, "kind", ""))))</code></td><td>$(esc(String(get(f, "location", ""))))</td><td>$(esc(String(get(f, "evidence", ""))))</td></tr>" for f in pre), "")
-    push!(parts, "<h3>Pre-check findings</h3><div style=\"overflow-x:auto\"><table class=\"details\"><thead><tr><th>severity</th><th>kind</th><th>location</th><th>evidence</th></tr></thead><tbody>$(rows)</tbody></table></div>")
+    # every finding is in se_topology.csv; a run from before that file
+    # existed shows the name without a link
+    rows = ["<tr><td>$(esc(String(get(f, "severity", ""))))</td><td><code>$(esc(String(get(f, "kind", ""))))</code></td><td>$(esc(String(get(f, "location", ""))))</td><td>$(esc(String(get(f, "evidence", ""))))</td></tr>" for f in first(pre, _WEBUI_LONG_TABLE_MAX_ROWS)]
+    push!(parts, "<h3>Pre-check findings</h3>", _webui_long_table("<tr><th>severity</th><th>kind</th><th>location</th><th>evidence</th></tr>", rows; total = length(pre), csv = _webui_run_artifact_link(run_id, outdir, "se_topology.csv")))
   elseif get(metadata, "se_topology_precheck_summary", "") != ""
     push!(parts, "<p>$(esc(String(get(metadata, "se_topology_precheck_summary", ""))))</p>")
   end
@@ -4954,8 +4964,8 @@ function _webui_se_tap_section(result::AbstractDict)::String
   jline = (jb === nothing || ja === nothing || !isempty(fallback_line)) ? fallback_line : "<p>J before fixation: <strong>$(round(Float64(jb); sigdigits = 4))</strong> (dof $(db)) &rarr; J after fixation: <strong>$(round(Float64(ja); sigdigits = 4))</strong> (dof $(da)). After the fixation the tap is no state variable any more; a large J after with a small J before means the estimated position sits between mechanical steps.</p>"
   return string(
     "<section class=\"panel\"><h2>Transformer tap estimates</h2>", jline,
-    "<div style=\"overflow-x:auto\"><table class=\"details\"><thead>", head, "</thead><tbody>", join(body, ""), "</tbody></table></div>",
-    "<p class=\"field-help\">Full table: se_tap_estimates.csv in the run artifacts.</p></section>",
+    _webui_long_table(head, body; csv = _webui_run_artifact_link(String(get(result, "run_id", "")), String(get(result, "output_dir", "")), "se_tap_estimates.csv")),
+    "</section>",
   )
 end
 
@@ -5075,6 +5085,312 @@ function _webui_se_start_summary(result::AbstractDict)::Union{Nothing,String}
   return _webui_escape(join(parts, " | "))
 end
 
+# --- observability gaps on the SE result page (1.1.0) ----------------------
+#
+# A state estimation on a set that is not observable (or weakly observable
+# at its estimate) gets an "Observability" section: the traffic light with
+# the counts, the observable islands, the unobservable branches, the bus
+# table of an estimate per observable island, and three buttons. Two
+# buttons repeat the run through the ordinary run route (POST /powerflow/run)
+# with the run's own settings and another on_unobservable; the third opens
+# the placement page.
+
+## The SE run form of `result` as hidden fields, for a repeat from the
+## result page: the case, the configuration, the measurement set and the
+## settings the run was submitted with (`webui_request_settings`: the
+## configuration overrides by their form field, the request-only fields as
+## they are, the sigma table as its se_sigma_lvl_* rows). The caller adds
+## the field that changes (se_on_unobservable, se_placement_kind). Without
+## recorded settings the repeat takes the case configuration.
+function _webui_se_rerun_fields(result::AbstractDict)::Vector{Pair{String,String}}
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || (metadata = Dict{String,Any}())
+  fields = Pair{String,String}["se_mode" => "true"]
+  casefile = String(something(get(result, "casefile", nothing), ""))
+  push!(fields, "casefile" => basename(casefile))
+  push!(fields, "config_file" => String(something(get(result, "config_file", nothing), "")))
+  mf = String(something(get(metadata, "se_measurement_file", nothing), ""))
+  isempty(mf) || push!(fields, "measurement_file" => basename(mf))
+  # the estimated set of a table, so the repeat runs on the same timestamp
+  # (a set without one by its request value)
+  if haskey(metadata, "se_measurement_timestamp")
+    mts = String(something(metadata["se_measurement_timestamp"], ""))
+    push!(fields, "se_timestamp" => isempty(mts) ? SE_NO_TIMESTAMP : mts)
+  end
+  settings = get(metadata, "webui_request_settings", nothing)
+  settings isa AbstractDict || return fields
+  text(v) = v isa Bool ? (v ? "true" : "false") : string(v)
+  for key in sort!([String(k) for k in keys(settings)])
+    v = settings[key]
+    if key == _WEBUI_SIGMA_LEVEL_KEY
+      v isa AbstractDict || continue
+      levels = sort!([String(k) for k in keys(v)]; by = k -> something(tryparse(Float64, k), Inf))
+      push!(fields, "se_sigma_lvl_n" => string(length(levels)))
+      push!(fields, "se_sigma_lvl_stored" => "1")
+      for (i, lvl) in enumerate(levels)
+        push!(fields, "se_sigma_lvl_$(i)_vn_kv" => lvl)
+        row = v[lvl]
+        row isa AbstractDict || continue
+        for col in _WEBUI_SIGMA_LEVEL_SIGMA_COLUMNS
+          haskey(row, col) && push!(fields, "se_sigma_lvl_$(i)_$(col)" => text(row[col]))
+        end
+      end
+      continue
+    end
+    # the field the button sets, and the fields the form posts above
+    key in ("state_estimation.observability.on_unobservable", "casefile", "config_file") && continue
+    spec_idx = findfirst(sp -> sp.config_key == key, WEBUI_OPTION_SPECS)
+    field = spec_idx !== nothing ? WEBUI_OPTION_SPECS[spec_idx].field : (key in _WEBUI_CASE_PROFILE_EXTRA_FIELDS ? key : "")
+    isempty(field) && continue
+    v === nothing && continue
+    push!(fields, field => text(v))
+  end
+  return fields
+end
+
+_webui_hidden_fields(fields) = join(("<input type=\"hidden\" name=\"$(_webui_escape(k))\" value=\"$(_webui_escape(v))\">" for (k, v) in fields), "")
+
+## a CSV artifact of an SE run as named rows: leading comment lines (the
+## version line of se_state.csv) skipped, the delimiter from the header
+function _webui_se_csv_rows(path::AbstractString)::Vector{Dict{String,String}}
+  isfile(path) || return Dict{String,String}[]
+  lines = [l for l in readlines(path) if !startswith(l, "#") && !isempty(strip(l))]
+  isempty(lines) && return Dict{String,String}[]
+  head = strip(lines[1])
+  delimiter = count(==(';'), head) > count(==(','), head) ? ';' : ','
+  header = _webui_compare_split_csv(head, delimiter)
+  rows = Dict{String,String}[]
+  for line in lines[2:end]
+    parts = _webui_compare_split_csv(strip(line), delimiter)
+    length(parts) == length(header) && push!(rows, Dict(header[k] => parts[k] for k in eachindex(header)))
+  end
+  return rows
+end
+
+# --- long tables on result pages ---------------------------------------------
+#
+# A table that grows with the network (observable islands, unobservable
+# branches, buses, placement steps, tap regulators) would flood the result
+# page of a large case. The server renders at most
+# `_WEBUI_LONG_TABLE_MAX_ROWS` rows, the rest is only in the CSV file of the
+# table. Of the rendered rows the page shows `_WEBUI_LONG_TABLE_VISIBLE_ROWS`
+# at first; a range slider shows more without a reload. Without JavaScript
+# the slider stays hidden and every rendered row shows. The count above the
+# table always says how many rows show of how many there are.
+const _WEBUI_LONG_TABLE_MAX_ROWS = 500
+const _WEBUI_LONG_TABLE_VISIBLE_ROWS = 20
+
+# Placed right after its table: `document.currentScript.previousElementSibling`
+# is the table's wrapper, so several tables on one page never share state.
+# The slider label carries `hidden` in the HTML and is shown here, so a page
+# without JavaScript offers no control that does nothing.
+const _WEBUI_LONG_TABLE_SCRIPT = "<script>(function(){var t=document.currentScript.previousElementSibling,r=t.querySelector('.long-table-slider input'),o=t.querySelector('.long-table-shown'),rows=t.querySelectorAll('tbody > tr');function f(){var n=Math.min(parseInt(r.value,10)||0,rows.length);for(var i=0;i<rows.length;i++){rows[i].hidden=i>=n;}o.textContent=n;}r.parentNode.hidden=false;r.addEventListener('input',f);f();})();</script>"
+
+## Link to the artifact `name` of run `run_id` when the file exists in
+## `output_dir`, else the name as code.
+function _webui_run_artifact_link(run_id::AbstractString, output_dir::AbstractString, name::AbstractString)::String
+  (isempty(run_id) || isempty(output_dir) || !isfile(joinpath(output_dir, name))) && return "<code>$(_webui_escape(name))</code>"
+  return "<a href=\"/powerflow/artifact/$(_webui_urlencode(run_id))/$(_webui_urlencode(name))\">$(_webui_escape(name))</a>"
+end
+
+## A long table: `head` is the header row (`<tr>...</tr>`), `rows` the
+## rendered body rows, of which at most `_WEBUI_LONG_TABLE_MAX_ROWS` are
+## used. `total` is the row count of the whole table (callers that cut the
+## rows before rendering pass it), `csv` the link to the file with all rows
+## (empty: no file). Above the table: the count and the CSV link, and the
+## slider when more than `_WEBUI_LONG_TABLE_VISIBLE_ROWS` rows are rendered.
+## Below it, when rows were cut: a line naming the cap and the file.
+function _webui_long_table(head::AbstractString, rows::AbstractVector{<:AbstractString}; total::Integer = length(rows), csv::AbstractString = "", table_class::AbstractString = "details")::String
+  rendered = first(rows, _WEBUI_LONG_TABLE_MAX_ROWS)
+  n = length(rendered)
+  total = max(total, n)
+  visible = _WEBUI_LONG_TABLE_VISIBLE_ROWS
+  slider = n > visible
+  io = IOBuffer()
+  print(io, "<div class=\"long-table\"><div class=\"long-table-bar\"><span class=\"long-table-count\"><output class=\"long-table-shown\">", n, "</output> of <span class=\"long-table-total\">", total, "</span> rows</span>")
+  slider && print(io, "<label class=\"long-table-slider\" hidden>show <input type=\"range\" min=\"", visible, "\" max=\"", n, "\" step=\"1\" value=\"", visible, "\"></label>")
+  isempty(csv) || print(io, "<span class=\"long-table-csv\">", csv, "</span>")
+  print(io, "</div><div class=\"table-scroll\"><table class=\"", table_class, "\"><thead>", head, "</thead><tbody>")
+  for r in rendered
+    print(io, r)
+  end
+  print(io, "</tbody></table></div>")
+  total > n && print(io, "<p class=\"field-help long-table-cap\">First ", n, " of ", total, " rows; all rows in ", isempty(csv) ? "the run artifacts" : csv, ".</p>")
+  print(io, "</div>")
+  slider && print(io, _WEBUI_LONG_TABLE_SCRIPT)
+  return String(take!(io))
+end
+
+## Whether the result page of an SE run gets the Observability section: a
+## set that is not observable, an estimate per observable island, restored
+## rows, or a weak class at the estimate.
+function _webui_se_has_gap(metadata::AbstractDict)::Bool
+  get(metadata, "run_mode", "") == "se" || return false
+  String(get(metadata, "se_observability_quality", "")) == "not_observable" && return true
+  n = get(metadata, "se_observable_islands", 0)
+  (n isa Integer && n > 0) && return true
+  r = get(metadata, "se_restored_rows", 0)
+  (r isa Integer && r > 0) && return true
+  return get(metadata, "se_weakly_observable", false) == true || get(metadata, "se_result_usable", true) == false
+end
+
+function _webui_se_observability_section(result::AbstractDict)::String
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return ""
+  _webui_se_has_gap(metadata) || return ""
+  esc = _webui_escape
+  run_id = String(get(result, "run_id", ""))
+  od = String(get(result, "output_dir", ""))
+  success = get(result, "success", false) == true
+  art(name) = isempty(od) ? "" : joinpath(od, name)
+  link(name) = _webui_run_artifact_link(run_id, od, name)
+  num(k) = (v = get(metadata, k, 0); v isa Integer ? v : 0)
+  mode = String(get(metadata, "se_on_unobservable", "abort"))
+  parts = String["<section class=\"panel se-observability\" id=\"se-observability\"><h2>Observability</h2>"]
+  # the traffic light: red stops (not observable, nothing estimated), yellow
+  # is an estimate with a gap (per observable island, through restored
+  # rows, weakly observable)
+  deficits = "rank deficit $(num("se_rank_deficit")) (angles $(num("se_angle_rank_deficit")), magnitudes $(num("se_magnitude_rank_deficit")))"
+  lights = String[]
+  if !success && String(get(metadata, "se_observability_quality", "")) == "not_observable"
+    push!(lights, "<p class=\"se-light se-light-red\">🔴 Not observable: $(num("se_observable_islands")) observable island(s), $(deficits), $(num("se_unobservable_branches")) unobservable branch(es). Nothing was estimated.</p>")
+  elseif success
+    num("se_restored_rows") > 0 && push!(lights, "<p class=\"se-light se-light-yellow\">🟡 Observable through $(num("se_restored_rows")) restored row(s) from the schedule (before: $(deficits)).</p>")
+    if num("se_observable_islands") > 0
+      push!(lights, "<p class=\"se-light se-light-yellow\">🟡 $(num("se_observable_islands_estimated")) of $(num("se_observable_islands")) observable island(s) estimated, $(num("se_buses_not_estimated")) bus(es) not estimated, $(num("se_unobservable_branches")) branch flow(s) left empty.</p>")
+    end
+    if get(metadata, "se_weakly_observable", false) == true || get(metadata, "se_result_usable", true) == false
+      push!(lights, "<p class=\"se-light se-light-yellow\">🟡 Weakly observable at the estimate: $(length(get(metadata, "se_weak_branches", Any[]))) branch(es) above the flow bound, $(get(metadata, "se_weak_buses", 0)) affected bus(es).</p>")
+    end
+  end
+  append!(parts, lights)
+  # the observable islands: more than one bus one per row, single-bus
+  # islands as a count, the full list in the CSV
+  island_rows = _webui_se_csv_rows(art("se_observable_islands.csv"))
+  if !isempty(island_rows)
+    groups = Dict{String,Vector{Dict{String,String}}}()
+    order = String[]
+    for r in island_rows
+      label = get(r, "observable_island", "")
+      isempty(label) && continue
+      haskey(groups, label) || push!(order, label)
+      push!(get!(groups, label, Dict{String,String}[]), r)
+    end
+    multi = [l for l in order if length(groups[l]) > 1]
+    single = [l for l in order if length(groups[l]) == 1]
+    trs = [begin
+      rs = groups[l]
+      names = join((esc(get(r, "name", "")) for r in first(rs, 5)), ", ") * (length(rs) > 5 ? ", ..." : "")
+      est = count(r -> get(r, "estimated", "") == "true", rs)
+      rel = any(r -> get(r, "relative_angle", "") == "true", rs)
+      "<tr><td>$(esc(l))</td><td>$(esc(get(rs[1], "network_island", "")))</td><td>$(length(rs))</td><td>$(names)</td><td>$(success ? string(est, " of ", length(rs)) : "no")</td><td>$(rel ? "relative" : "")</td></tr>"
+    end for l in first(multi, _WEBUI_LONG_TABLE_MAX_ROWS)]
+    push!(parts, "<h3>Observable islands</h3><p class=\"field-help\">$(length(multi)) island(s) with more than one bus, $(length(single)) single-bus island(s). Every bus with its island: $(link("se_observable_islands.csv")).</p>",
+          isempty(multi) ? "" : _webui_long_table("<tr><th>island</th><th>network island</th><th>buses</th><th>first buses</th><th>estimated</th><th>angles</th></tr>", trs; total = length(multi), csv = link("se_observable_islands.csv")))
+  end
+  branch_rows = _webui_se_csv_rows(art("se_unobservable_branches.csv"))
+  if !isempty(branch_rows)
+    trs = ["<tr><td><code>$(esc(get(r, "name", "")))</code></td><td>$(esc(get(r, "from", "")))</td><td>$(esc(get(r, "to", "")))</td><td>$(esc(replace(get(r, "reason", ""), "_" => " ")))</td></tr>" for r in first(branch_rows, _WEBUI_LONG_TABLE_MAX_ROWS)]
+    push!(parts, "<h3>Unobservable branches</h3><p>$(length(branch_rows)) branch(es) whose flow follows from no measurement$(success ? "; their flows are left empty" : "").</p>",
+          _webui_long_table("<tr><th>branch</th><th>from</th><th>to</th><th>reason</th></tr>", trs; total = length(branch_rows), csv = link("se_unobservable_branches.csv")))
+  end
+  restored = _webui_se_csv_rows(art("se_restored_rows.csv"))
+  restored_buses = Set(get(r, "name", "") for r in restored)
+  if !isempty(restored)
+    trs = ["<tr><td>$(esc(get(r, "name", "")))</td><td>$(esc(get(r, "quantity", "")))</td><td>$(esc(get(r, "value", "")))</td><td>$(esc(get(r, "sigma", "")))</td><td>$(esc(replace(get(r, "source", ""), "_" => " ")))</td></tr>" for r in first(restored, _WEBUI_LONG_TABLE_MAX_ROWS)]
+    push!(parts, "<h3>Restored rows</h3><p class=\"field-help\">Replacement values from the schedule (origin pseudo_restore in measurements_verdict.csv).</p>",
+          _webui_long_table("<tr><th>bus</th><th>quantity</th><th>value</th><th>sigma</th><th>source</th></tr>", trs; total = length(restored), csv = link("se_restored_rows.csv")))
+  end
+  # the bus table of the estimate: observable island, relative angles
+  # marked, a bus not estimated grey with empty values (never zero)
+  state_rows = success ? _webui_se_csv_rows(art("se_state.csv")) : Dict{String,String}[]
+  if !isempty(state_rows) && (num("se_observable_islands") > 0 || !isempty(restored))
+    rel = Dict(get(r, "name", "") => get(r, "relative_angle", "") == "true" for r in island_rows)
+    trs = [begin
+      name = get(r, "bus", "")
+      est = get(r, "estimated", "true") == "true"
+      vm = est ? esc(get(r, "vm_pu", "")) : ""
+      va = est ? esc(get(r, "va_deg", "")) : ""
+      marks = String[]
+      est && get(rel, name, false) && push!(marks, "relative angle")
+      name in restored_buses && push!(marks, "restored row")
+      est || push!(marks, "not estimated")
+      "<tr class=\"$(est ? "se-bus-estimated" : "se-bus-not-estimated")\"><td>$(esc(name))</td><td>$(esc(get(r, "observable_island", "")))</td><td>$(vm)</td><td>$(va)$(est && get(rel, name, false) ? " <span class=\"se-relative-mark\" title=\"angle relative to the reference of its observable island\">rel.</span>" : "")</td><td>$(join(marks, ", "))</td></tr>"
+    end for r in first(state_rows, _WEBUI_LONG_TABLE_MAX_ROWS)]
+    push!(parts, "<h3>Buses</h3>",
+          _webui_long_table("<tr><th>bus</th><th>observable island</th><th>Vm (pu)</th><th>Va (deg)</th><th>note</th></tr>", trs; total = length(state_rows), csv = link("se_state.csv"), table_class = "details se-bus-table"))
+  end
+  # the three buttons: repeat with another on_unobservable, or open the
+  # placement page; the repeat posts the run's own settings
+  fields = _webui_se_rerun_fields(result)
+  hidden = _webui_hidden_fields(fields)
+  button(value, label, note) = "<form method=\"post\" action=\"/powerflow/run\" class=\"se-gap-action\" data-busy=\"Starting the state estimation…\">$(hidden)<input type=\"hidden\" name=\"se_on_unobservable\" value=\"$(value)\"><button type=\"submit\"$(mode == value && success ? " class=\"secondary-button\"" : "")>$(label)</button> <span class=\"field-help\">$(note)</span></form>"
+  push!(parts, "<h3>Next step $(_webui_help_link("state_estimation.observability.on_unobservable", "On gaps"))</h3><div class=\"se-gap-actions\">",
+        button("observable_islands", "Estimate observable islands one by one", "each observable island with its own reference; relative angles, empty flows on unobservable branches"),
+        button("scheduled", "Estimate with scheduled substitute values", "replacement values from the schedule close the gaps first, the rest per observable island"),
+        isempty(run_id) ? "" : "<form method=\"get\" action=\"/stateestimation/placement\" class=\"se-gap-action\"><input type=\"hidden\" name=\"run_id\" value=\"$(esc(run_id))\"><button type=\"submit\">Suggest measurement places</button> <span class=\"field-help\">injection, flow or PMU places step by step until the set is observable</span></form>",
+        "</div></section>")
+  return join(parts, "")
+end
+
+## The placement page (GET /stateestimation/placement?run_id=...): kind and
+## target for the run's case and set, posted through the run route as an
+## SE request with a placement kind. `result` is the SE or placement run the
+## page was opened from.
+function render_se_placement_page(result::AbstractDict; message::AbstractString = "")::String
+  esc = _webui_escape
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || (metadata = Dict{String,Any}())
+  fields = filter(p -> !(first(p) in ("se_placement_kind", "se_placement_target")), _webui_se_rerun_fields(result))
+  kind0 = String(get(metadata, "se_placement_kind", "injection"))
+  target0 = String(get(metadata, "se_placement_target", "observable"))
+  opt(v, cur, label) = "<option value=\"$(v)\"$(v == cur ? " selected" : "")>$(label)</option>"
+  casefile = basename(String(something(get(result, "casefile", nothing), "")))
+  mf = basename(String(something(get(metadata, "se_measurement_file", nothing), "")))
+  body = string(
+    "<section class=\"panel se-placement\"><h2>Measurement placement</h2>",
+    isempty(message) ? "" : "<p class=\"alert info\">$(esc(message))</p>",
+    "<p>Case <code>$(esc(casefile))</code>, measurement set <code>$(isempty(mf) ? "carried by the case file" : esc(mf))</code>. The places are suggestions, step by step; nothing is estimated and the set is not changed.</p>",
+    "<form method=\"post\" action=\"/powerflow/run\" data-busy=\"Searching measurement places…\">",
+    _webui_hidden_fields(fields),
+    "<label title=\"injection: a P, Q or U meter at a bus. flow: P and Q at one branch end. pmu: a voltage angle (PMU).\">$(_webui_field_label("se_placement_kind", "Kind"))<select name=\"se_placement_kind\">",
+    opt("injection", kind0, "injection (P, Q, U at a bus)"), opt("flow", kind0, "flow (P and Q at a branch end)"), opt("pmu", kind0, "PMU (voltage angle)"), "</select></label> ",
+    "<label title=\"observable: until the set is observable. no_critical: further until no row is critical.\">$(_webui_field_label("se_placement_target", "Target"))<select name=\"se_placement_target\">",
+    opt("observable", target0, "observable"), opt("no_critical", target0, "no critical measurement"), "</select></label> ",
+    "<button type=\"submit\">Suggest measurement places</button>",
+    "</form>",
+    "<p class=\"field-help\">One meter per step, at most state_estimation.observability.placement_max_steps steps. The step list is on the result page of the placement run and in se_placement.csv.</p>",
+    "</section>",
+  )
+  return _webui_layout("Measurement placement", body; show_back = true)
+end
+
+## the step list of a placement run on its result page
+function _webui_se_placement_section(result::AbstractDict)::String
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return ""
+  get(metadata, "run_mode", "") == "se_placement" || return ""
+  get(result, "success", false) == true || return ""
+  esc = _webui_escape
+  run_id = String(get(result, "run_id", ""))
+  steps = get(metadata, "se_placement_steps", Any[])
+  steps isa AbstractVector || (steps = Any[])
+  g(d, k) = (v = get(d, k, nothing); v === nothing ? "" : string(v))
+  dsteps = [s for s in steps if s isa AbstractDict]
+  trs = [("<tr><td>$(g(s, "step"))</td><td>$(g(s, "network_island"))</td><td>$(esc(g(s, "phase")))</td><td>$(esc(g(s, "quantity") == "PQ" ? "P and Q flow" : g(s, "quantity")))</td><td>$(esc(g(s, "location")))</td><td>$(g(s, "angle_rank_deficit_before")) → $(g(s, "angle_rank_deficit_after"))</td><td>$(g(s, "magnitude_rank_deficit_before")) → $(g(s, "magnitude_rank_deficit_after"))</td><td>$(g(s, "unobservable_branches_before")) → $(g(s, "unobservable_branches_after"))</td><td>$(isempty(g(s, "critical_before")) ? "" : string(g(s, "critical_before"), " → ", g(s, "critical_after")))</td></tr>") for s in first(dsteps, _WEBUI_LONG_TABLE_MAX_ROWS)]
+  reached = get(metadata, "se_placement_reached", false) == true
+  stop = String(get(metadata, "se_placement_stop_reason", ""))
+  status = reached ? "target reached" : stop == "max_steps" ? "stopped at the step limit, target not reached" : stop == "ac_rank_deficit" ? "stopped, the AC Jacobian has a rank deficit the decoupled models do not show" : "stopped, no candidate of this kind lowers the gap"
+  csv_link = isempty(run_id) ? "<code>se_placement.csv</code>" : "<a href=\"/powerflow/artifact/$(_webui_urlencode(run_id))/se_placement.csv\">se_placement.csv</a>"
+  return string(
+    "<section class=\"panel se-placement-steps\"><h2>Measurement places</h2>",
+    "<p>Kind <code>$(esc(String(get(metadata, "se_placement_kind", ""))))</code>, target <code>$(esc(String(get(metadata, "se_placement_target", ""))))</code>: $(length(steps)) step(s), $(status).</p>",
+    _webui_long_table("<tr><th>step</th><th>network island</th><th>phase</th><th>quantity</th><th>place</th><th>angle deficit</th><th>magnitude deficit</th><th>unobservable branches</th><th>critical rows</th></tr>", trs; total = length(dsteps), csv = csv_link),
+    "<p class=\"field-help\">Step times in performance.log. <a href=\"/stateestimation/placement?run_id=$(_webui_urlencode(run_id))\">Another kind or target</a>.</p>",
+    "</section>",
+  )
+end
+
 ## chain action on a successful SE run's result page: dispatch a power flow
 ## that starts from this estimate (mode select, :se_state default). Plain
 ## POST to /powerflow/run; deliberately NO onsubmit button-disabling (the
@@ -5089,6 +5405,12 @@ function _webui_se_chain_section(result::AbstractDict)::String
   config_file = String(get(result, "config_file", ""))
   isempty(run_id) && return ""
   esc = _webui_escape
+  # an estimate per observable island (relative angles, buses not
+  # estimated) is refused by runpf_from_se!; the page says so instead of
+  # offering a run that fails
+  if get(metadata, "se_observable_islands_estimated", nothing) !== nothing
+    return "<section class=\"panel\"><h2>Chain: power flow from this estimate</h2><p>Not available: this estimate was made per observable island (angles relative to each island, $(get(metadata, "se_buses_not_estimated", 0)) bus(es) not estimated), and a power flow cannot start from it.</p></section>"
+  end
   return string(
     "<section class=\"panel\"><h2>Chain: power flow from this estimate</h2>",
     "<p>Starts a power flow from the estimated state. <code>se_state</code> keeps the model injections authoritative (differences go into the slack); <code>se_snapshot</code> also takes the nodal balances from the estimation and converges immediately.</p>",
@@ -5128,7 +5450,7 @@ from a solved PF, and the run action posting to `/powerflow/run` with
 `se_mode`. Composed from small string pieces like the contingency-weights
 editor; no onsubmit button-disabling.
 """
-function render_se_form(; cases::Vector{String} = String[], measurements::Vector{String} = String[], case_measurement_rows::Integer = 0, case_measurement_noise::Union{Nothing,Bool} = nothing, selected_case::AbstractString = "", selected_measurement::AbstractString = "", config_file::AbstractString = "", message::AbstractString = "", set_info::Vector{String} = String[], set_provenance::Vector{String} = String[], set_counts::Vector{Tuple{String,Int}} = Tuple{String,Int}[], set_v1::Bool = false, meas_case::AbstractDict = Dict{String,String}(), meas_name_matched::AbstractSet = Set{String}(), meas_model_matched::AbstractDict = Dict{String,String}(), starred::AbstractSet = Set{String}(), set_case::AbstractString = "", set_model::AbstractString = "", set_text::AbstractString = "", set_rows::Vector{NamedTuple} = NamedTuple[], gen_values::AbstractDict = Dict{String,String}(), truth_runs::Vector{NamedTuple} = NamedTuple[], active_run = nothing, sigma_levels = (rows = NamedTuple[], error = "", editable = true, stored = false))
+function render_se_form(; cases::Vector{String} = String[], measurements::Vector{String} = String[], case_measurement_rows::Integer = 0, case_measurement_noise::Union{Nothing,Bool} = nothing, selected_case::AbstractString = "", selected_measurement::AbstractString = "", config_file::AbstractString = "", message::AbstractString = "", set_info::Vector{String} = String[], set_provenance::Vector{String} = String[], set_counts::Vector{Tuple{String,Int}} = Tuple{String,Int}[], set_v1::Bool = false, meas_case::AbstractDict = Dict{String,String}(), meas_name_matched::AbstractSet = Set{String}(), meas_model_matched::AbstractDict = Dict{String,String}(), starred::AbstractSet = Set{String}(), set_case::AbstractString = "", set_model::AbstractString = "", set_text::AbstractString = "", set_rows::Vector{NamedTuple} = NamedTuple[], gen_values::AbstractDict = Dict{String,String}(), truth_runs::Vector{NamedTuple} = NamedTuple[], active_run = nothing, sigma_levels = (rows = NamedTuple[], error = "", editable = true, stored = false), meas_timestamps::AbstractDict = Dict{String,Vector{String}}())
   esc = _webui_escape
   # sticky generator inputs: after a generate the redirect carries the
   # submitted values back; the form re-renders with them, not the defaults
@@ -5146,7 +5468,26 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     isempty(bound) && return name
     return string(name, " (case ", bound, ")")
   end
-  meas_options = join(("<option value=\"$(esc(name))\"$(name == selected_measurement ? " selected" : "")>$(esc(meas_label(name)))</option>" for name in measurements), "")
+  # a table with several timestamps carries them on its option, so the
+  # timestamp select follows a change of the set without a reload
+  # a set without a timestamp is posted and shown as SE_NO_TIMESTAMP
+  tsval(t) = isempty(t) ? SE_NO_TIMESTAMP : String(t)
+  meas_ts_attr(name) = haskey(meas_timestamps, name) ? " data-timestamps=\"$(esc(join(tsval.(meas_timestamps[name]), "|")))\"" : ""
+  meas_options = join(("<option value=\"$(esc(name))\"$(meas_ts_attr(name))$(name == selected_measurement ? " selected" : "")>$(esc(meas_label(name)))</option>" for name in measurements), "")
+  # the timestamp select: shown and posted only for a table with more than
+  # one timestamp (hidden and disabled otherwise, so the run takes the first
+  # set); the first timestamp is preselected
+  sel_ts = String[tsval(t) for t in get(meas_timestamps, selected_measurement, String[])]
+  ts_on = length(sel_ts) > 1
+  ts_options = join(("<option value=\"$(esc(t))\"$(k == 1 ? " selected" : "")>$(esc(t))</option>" for (k, t) in enumerate(sel_ts)), "")
+  ts_html = isempty(meas_timestamps) ? "" : string(
+    "<label id=\"se-timestamp-field\" title=\"Timestamp of the table whose set the run estimates; the earlier timestamps are the history for the last valid value\"$(ts_on ? "" : " hidden")>",
+    _webui_field_label("se_timestamp", "Timestamp"),
+    "<select name=\"se_timestamp\" id=\"se-timestamp\"$(ts_on ? "" : " disabled")>", ts_options, "</select></label>",
+    "<script>(function(){var m=document.querySelector('select[name=measurement_file]'),f=document.getElementById('se-timestamp-field'),t=document.getElementById('se-timestamp');if(!m||!f||!t)return;",
+    "m.addEventListener('change',function(){var o=m.options[m.selectedIndex],a=o?(o.getAttribute('data-timestamps')||''):'',l=a?a.split('|'):[];t.innerHTML='';",
+    "l.forEach(function(v,i){var e=document.createElement('option');e.value=v;e.textContent=v;e.selected=(i===0);t.appendChild(e);});var on=l.length>1;f.hidden=!on;t.disabled=!on;});})();</script>",
+  )
   # The case file's own set is the FIRST choice when it has one; an empty
   # value means "take what came with the case", which is what the service
   # does. Without one, an empty first entry makes the user pick: preselecting
@@ -5332,6 +5673,7 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<input type=\"hidden\" name=\"casefile\" value=\"$(esc(selected_case))\">",
     "<input type=\"hidden\" name=\"config_file\" value=\"$(esc(config_file))\">",
     "<p class=\"se-recommend\">The list shows only the measurement sets of the selected case (their <code># case:</code> line names it, or their <code># cgmes_model:</code> line the EQ model of a CGMES case); the matching set (&lt;case&gt;.measurements.csv) is preselected.$(isempty(measurements) ? " No set in the case directory belongs to this case; generate one with the measurement generator above." : "")</p><label title=\"Measurement CSV v1 or measurement table (content-sniffed)\">$(_webui_field_label("measurement_file", "Measurement set"))<select name=\"measurement_file\">$(meas_options)</select></label>",
+    ts_html,
     "<fieldset class=\"se-options\"><legend>Estimator options</legend>",
     "<label title=\"Start from a flat voltage profile\">$(_webui_field_label("se_flatstart", "flatstart"))<input type=\"checkbox\" name=\"se_flatstart\" value=\"true\"$(gchk2("se_flatstart", true))></label> ",
     # a config key (state_estimation.start_mode.rotate_behind_pst): the hidden
@@ -5373,7 +5715,10 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
     "<label title=\"When the run with tap estimation does not converge, or its fixed steps fit worse than the transferred steps (worse_fit), run once more without it on the same measurements; that run is the result. Off: the first run is shown as it is.\">$(_webui_field_label("se_tap_fallback", "tap fallback"))<input type=\"hidden\" name=\"se_tap_fallback\" value=\"false\"><input type=\"checkbox\" name=\"se_tap_fallback\" value=\"true\"$(gchk2("se_tap_fallback", "true"))></label> ",
     "<label title=\"Impedance of a released regulator. Per-step data always follow the step. auto adds the analytic correction of typed models, off does not; an imported table takes the impedance alone.\">$(_webui_field_label("se_tap_impedance_correction", "tap impedance per step"))<select name=\"se_tap_impedance_correction\">$(join(("<option value=\"$(v)\"$(gv("se_tap_impedance_correction", "auto") == v ? " selected" : "")>$(v)</option>" for v in ("auto", "off")), ""))</select></label> ",
     "<label title=\"Residual-correlation (K matrix) report columns\">$(_webui_field_label("se_report_correlation", "report_correlation"))<input type=\"checkbox\" name=\"se_report_correlation\" value=\"true\"$(gchk("se_report_correlation"))></label> ",
-    "<label title=\"Sigma of one zero-injection row in MVA (MW for P, Mvar for Q) while the rows are weighted (zero_injection on); 0.001 MVA is 1 kW. Smaller binds harder and worsens the conditioning.\">$(_webui_field_label("se_zero_injection_sigma_mva", "zero-injection sigma (MVA)"))<input type=\"number\" name=\"se_zero_injection_sigma_mva\" value=\"$(gv("se_zero_injection_sigma_mva", string(ZERO_INJECTION_SIGMA)))\" min=\"0.000000000001\" step=\"any\"></label>",
+    "<label title=\"Sigma of one zero-injection row in MVA (MW for P, Mvar for Q) while the rows are weighted (zero_injection on); 0.001 MVA is 1 kW. Smaller binds harder and worsens the conditioning.\">$(_webui_field_label("se_zero_injection_sigma_mva", "zero-injection sigma (MVA)"))<input type=\"number\" name=\"se_zero_injection_sigma_mva\" value=\"$(gv("se_zero_injection_sigma_mva", string(ZERO_INJECTION_SIGMA)))\" min=\"0.000000000001\" step=\"any\"></label> ",
+    # a config key (state_estimation.observability.on_unobservable), offered
+    # since the service implements all three values (concept M3)
+    "<label title=\"What the run does with a set that is not observable. abort: stop and name the observable islands. observable_islands: estimate each one on its own. scheduled: close the gaps with scheduled values first.\">$(_webui_field_label("se_on_unobservable", "On gaps"))<select name=\"se_on_unobservable\">$(join(("<option value=\"$(v)\"$(gv("se_on_unobservable", "abort") == v ? " selected" : "")>$(v)</option>" for v in ("abort", "observable_islands", "scheduled")), ""))</select></label>",
     "</fieldset>",
     _webui_sigma_level_fieldset(sigma_levels),
     "<button type=\"submit\">Run state estimation</button> ",

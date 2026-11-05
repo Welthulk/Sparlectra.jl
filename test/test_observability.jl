@@ -21,8 +21,10 @@
 #          FD column coloring, diag(Omega) criticality, #394), the
 #          observable islands of the P-theta model with the boundary
 #          iteration, the deficits of the P-theta and Q-V models (SVD and
-#          gain-matrix iteration, boundary rows, network islands) and the
-#          weak class against an SVD reference
+#          gain-matrix iteration, boundary rows, network islands), the
+#          estimation of the observable islands one by one
+#          (on_unobservable), the measurement placement and the weak
+#          class against an SVD reference
 
 using Test
 using Logging
@@ -654,6 +656,10 @@ end
 _obs_full_set(net) = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = true, includeQflow = true, noise = false)
 _obs_is_injection(m) = m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas)
 _obs_cfg(f) = with_state_estimation_config(f; flatstart = true, jac_eps = 1e-6)
+_obs_mode(f, mode::Symbol; zero_injection::Symbol = :on) = with_state_estimation_config(f; flatstart = true, jac_eps = 1e-6, zero_injection = zero_injection, observability = Sparlectra.ObservabilityConfig(on_unobservable = mode))
+## the schedule and U-order tests without the passive-bus candidates
+## (zero_injection = off reports them in `passive_not_inserted`)
+_obs_zioff(f) = with_state_estimation_config(f; flatstart = true, jac_eps = 1e-6, zero_injection = :off)
 
 ## no observable island may contradict the region: the angle of every bus
 ## outside the observable island of the reference bus floats against the
@@ -771,6 +777,92 @@ function test_observability_islands(fx)::Bool
     @test obs_zi.numerical_observable
     @test isempty(obs_zi.observable_islands)
     @test _obs_cfg(() -> identify_observable_islands(net, meas_zi)).n_islands == 1
+  end)() end
+
+  # Test 10 of the concept (I6): runse! with on_unobservable =
+  # observable_islands on the set of test 1. Observable island 1.2 is bus 8
+  # alone with the slack and its Vm row; island 1.1 takes the bus of its
+  # best voltage-controlled unit as reference (bus 1, the largest unit of
+  # case14), so its angles are relative. The flow on 7-8 follows from no
+  # measurement and stays NaN, not zero. Each island equals runse! on its
+  # subnet, cut out with the helpers of the network-island path, with the
+  # rows that lie inside it; with noise-free rows both reproduce the power
+  # flow, because a reference keeps its stored angle. Two variants:
+  # without the Vm rows of island 1.1 its magnitudes can shift together
+  # (the Q-V null direction), all 13 are dark and leave (concept M1: they
+  # are listed as removed, the island has no row, bus 8 is island 1.1 of
+  # the cut); with the Q injection at 7 kept and the Vm row, the Q flows
+  # at 7 and the Q injections at 4 and 9 (which would tie it through 4-7
+  # and 7-9) removed, the magnitude of 7 is seen through that injection
+  # only (not dark), but the injection holds the flow on 7-8 and is not
+  # used, so island 1.1 fails the rank check (Q-V deficit 1). Under :abort
+  # the not-observable set takes the old path (no island rows), an
+  # observable set gives the same result bit for bit in both modes.
+  @testset "observable islands: estimated one by one" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    meas = filter(m -> m.branchIdx != 14 && !(_obs_is_injection(m) && m.busIdx in (7, 8)), full)
+    closed = [k for (k, b) in enumerate(net.branchVec) if Sparlectra._branch_terminal_state(b) == :closed]
+    est = deepcopy(net)
+    res = _obs_mode(() -> runse!(est, meas), :observable_islands)
+    oi = res.observableIslands
+    @test res.converged
+    @test [(r.label, r.network_island, r.estimated, r.reason) for r in res.islands] == [("1.1", 1, true, :estimated), ("1.2", 1, true, :estimated)]
+    @test res.islands[1].buses == [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14] && res.islands[2].buses == [8]
+    @test (res.islands[1].reference_bus, res.islands[1].relative_angles) == (1, true)
+    @test (res.islands[2].reference_bus, res.islands[2].relative_angles) == (8, false)
+    @test oi.label_of_bus == [fill("1.1", 7); "1.2"; fill("1.1", 6)]
+    @test oi.relative_angle == [fill(true, 7); false; fill(true, 6)] && all(oi.estimated)
+    @test oi.unobservable_branches == [14] && isempty(oi.dropped_measurements)
+    @test isnan(est.branchVec[14].fBranchFlow.pFlow) && isnan(est.branchVec[14].tBranchFlow.qFlow)
+    @test all(k -> isfinite(est.branchVec[k].fBranchFlow.pFlow), setdiff(closed, [14]))
+    @test all(isnan, est.totalLosses[end])
+    @test maximum(abs.(res.voltages .- buildVoltageVector(net))) < 1e-9
+    for row in res.islands
+      bset = Set(row.buses)
+      brs = [k for k in closed if Int(net.branchVec[k].fromBus) in bset && Int(net.branchVec[k].toBus) in bset && !(k in oi.unobservable_branches)]
+      slack = [b for b in row.buses if getNodeType(net.nodeVec[b]) == Sparlectra.Slack]
+      sub = Sparlectra._se_island_subnet(net, (buses = row.buses, branches = brs, n_bus = length(row.buses), n_ref = length(slack), chosen_ref_bus = isempty(slack) ? row.reference_bus : 0))
+      inside = [q for (q, m) in enumerate(meas) if m.branchIdx !== nothing ? m.branchIdx in brs : m.busIdx in bset]
+      smeas, _ = Sparlectra._se_remap_island_measurements(sub, meas, inside)
+      sres = _obs_cfg(() -> runse!(sub.inet, smeas))
+      @test sres.converged && maximum(abs.(sres.voltages .- res.voltages[row.buses])) < 1e-12
+      @test (sres.objectiveJ, sres.dof) == (row.objectiveJ, row.dof)
+    end
+    io = IOBuffer()
+    print_observable_islands(io, res)
+    @test length(split(strip(String(take!(io))), '\n')) == 3
+    # the weak class at the estimate, per estimated island (concept M2):
+    # both islands carry every row of their buses, nothing is weak
+    @test res.weakObservability.basis === :estimated_state && res.weakObservability.n_buses == 0
+    @test [r.label for r in res.weakObservability.network_islands] == ["1.1", "1.2"]
+
+    # no magnitude anchor in island 1.1
+    noVm = filter(m -> !(m.typ == Sparlectra.VmMeas && m.busIdx != 8), meas)
+    est2 = deepcopy(net)
+    res2 = _obs_mode(() -> runse!(est2, noVm), :observable_islands)
+    @test [(r.label, r.estimated, r.reason, r.buses) for r in res2.islands] == [("1.1", true, :estimated, [8])]
+    @test res2.observableIslands.removed_buses == [(bus = b, reason = :dark_magnitude) for b in res.islands[1].buses]
+    @test res2.observableIslands.label_of_bus == [fill("", 7); "1.1"; fill("", 6)]
+    @test all(isnan, res2.voltages[res.islands[1].buses]) && all(b -> isnan(est2.nodeVec[b]._vm_pu), res.islands[1].buses)
+    @test all(k -> isnan(est2.branchVec[k].fBranchFlow.pFlow), closed)
+
+    # the magnitude of 7 seen through its injection only
+    at7 = [k for k in closed if 7 in (Int(net.branchVec[k].fromBus), Int(net.branchVec[k].toBus))]
+    q7 = filter(m -> m.branchIdx != 14 && !(_obs_is_injection(m) && m.busIdx == 8) && !(m.typ == Sparlectra.PinjMeas && m.busIdx == 7) && !(m.typ == Sparlectra.VmMeas && m.busIdx == 7) && !(m.typ == Sparlectra.QinjMeas && m.busIdx in (4, 9)) && !(m.typ == Sparlectra.QflowMeas && m.branchIdx in at7), full)
+    isl7 = _obs_cfg(() -> identify_observable_islands(net, q7))
+    @test isl7.island_labels == ["1.1", "1.2"] && isempty(isl7.dark_magnitude_buses) && isl7.magnitude_rank_deficit == 0
+    res3 = _obs_mode(() -> runse!(deepcopy(net), q7), :observable_islands)
+    @test [(r.label, r.estimated, r.reason, r.rank_deficit) for r in res3.islands] == [("1.1", false, :not_observable, 1), ("1.2", true, :estimated, 0)]
+    @test "Qinj_bus_7" in res3.observableIslands.dropped_measurements
+
+    # abort: the old path, and an observable set is the same in both modes
+    ab = _obs_mode(() -> runse!(deepcopy(net), meas), :abort)
+    @test ab.islands === nothing && ab.observableIslands === nothing && all(isfinite, ab.voltages)
+    a = _obs_mode(() -> runse!(deepcopy(net), full), :abort)
+    o = _obs_mode(() -> runse!(deepcopy(net), full), :observable_islands)
+    @test isequal(a.voltages, o.voltages) && a.objectiveJ === o.objectiveJ && (a.iterations, a.dof) == (o.iterations, o.dof)
+    @test o.islands === nothing && o.observableIslands === nothing
   end)() end
 
   # Test 2: buses 9 to 14 carry no measurement (no bus row and no flow
@@ -893,13 +985,13 @@ function test_observability_islands(fx)::Bool
   # groups with B1 - X and B1a - Y unobservable. The link row contains both
   # flows and is dropped; the second pass gives the same three islands.
   @testset "observable islands: boundary rows and link rows" begin (function ()
-    function small_net(name, lines, loads; link = nothing)
+    function small_net(name, lines, loads; link = nothing, open = Int[])
       net = Net(name = name, baseMVA = 100.0)
       for b in unique(vcat(["S"], [l[1] for l in lines], [l[2] for l in lines], link === nothing ? String[] : collect(link)))
         addBus!(net = net, busName = b, vn_kV = 110.0)
       end
-      for (f, t, r) in lines
-        addPIModelACLine!(net = net, fromBus = f, toBus = t, r_pu = r, x_pu = 0.2, b_pu = 0.0, status = 1)
+      for (k, (f, t, r)) in enumerate(lines)
+        addPIModelACLine!(net = net, fromBus = f, toBus = t, r_pu = r, x_pu = 0.2, b_pu = 0.0, status = k in open ? 0 : 1)
       end
       addProsumer!(net = net, busName = "S", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.02, va_deg = 0.0, referencePri = "S")
       for (b, p, q) in loads
@@ -942,6 +1034,17 @@ function test_observability_islands(fx)::Bool
     @test ip.island_buses == [[1, 2, 3], [4], [5]] && ip.unobservable_branch_names == ["B1 - X", "B1a - Y"]
     @test ip.removed_boundary_injections == ["link_P"] && ip.passes == 2 && ip.region_buses == [4, 5]
     @test ip.angle_rank_deficit == 1 && i0.angle_rank_deficit == 2
+    # the same pattern with the open line S - Y in front of the two branches
+    # to X and Y: the working net keeps branches 1, 3 and 4, so its
+    # numbering differs from the caller's. The placement names the
+    # unobservable branches 3 and 4 like identify_observable_islands (1.1.0
+    # mapped them twice and failed with a BoundsError), and two P
+    # injections close the two angle gaps.
+    net3 = small_net("linkopen", [("S", "B1", 0.02), ("S", "Y", 0.02), ("B1", "X", 0.02), ("B1a", "Y", 0.02)], [("B1a", 5.0, 2.0), ("X", 10.0, 3.0), ("Y", 20.0, 6.0)]; link = ("B1", "B1a"), open = [2])
+    base3 = filter(m -> m.typ == Sparlectra.VmMeas || (m.branchIdx == 1 && m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas)), _obs_full_set(net3))
+    @test _obs_cfg(() -> identify_observable_islands(net3, base3)).unobservable_branches == [3, 4]
+    pl3 = _obs_cfg(() -> suggest_measurement_placement(net3, base3; kind = :injection))
+    @test (pl3.unobservable_branches_before, pl3.unobservable_branches_after, length(pl3.steps), pl3.reached) == ([3, 4], Int[], 2, true)
   end)() end
 
   # Test 5: an observable set computes nothing new. The old fields are
@@ -1116,23 +1219,357 @@ function test_observability_islands(fx)::Bool
     @test isempty(_obs_cfg(() -> evaluate_global_observability(fx.net_two, full)).observable_islands)
     two = _obs_cfg(() -> identify_observable_islands(fx.net_two, full))
     @test two.island_of_bus == [1, 1, 1, 2, 2, 2, 2] && two.island_labels == ["1", "2"]
+    # estimated one by one: bus 2 has a dark magnitude and leaves (concept
+    # M1), so network island 1 keeps one unit, numbered 1.1 because it lost
+    # a bus; network island 2 keeps its promoted reference (bus 4), so no
+    # angle is relative; network island 3 is not measured.
+    res = _obs_mode(() -> runse!(deepcopy(net), meas), :observable_islands)
+    @test [(r.label, r.network_island, r.estimated, r.reason) for r in res.islands] == [("1.1", 1, true, :estimated), ("2", 2, true, :estimated), ("3", 3, false, :no_measurements)]
+    @test res.observableIslands.removed_buses == [(bus = 2, reason = :dark_magnitude)]
+    @test res.observableIslands.label_of_bus == ["1.1", "", "1.1", "2", "3", "3", "2"]
+    @test res.observableIslands.estimated == [true, false, true, true, false, false, true]
+    @test !any(res.observableIslands.relative_angle) && isequal(isnan.(res.voltages), .!res.observableIslands.estimated)
+    # The SE service on a case file with these network islands. abort:
+    # rejected with the islands in the metadata (1.1.0 crashed on the
+    # criticality fields the merged verdict lacked); observable_islands:
+    # estimated per observable island as runse! above (2 units). With P rows
+    # only no magnitude has a row (Q-V deficit 7, every bus dark), no
+    # observable island can be estimated, and the service rejects the set
+    # like abort instead of failing with a backtrace. On the observable set
+    # of two_islands_prio with weak_check_after_estimation = false the run
+    # computes no weak class after the estimation.
+    service(m, tag, mode; weak_check::Bool = true) = mktempdir() do d
+      case_net = deepcopy(m === full ? fx.net_two : net)
+      case_net.measurements = m
+      case = exportSCF(case_net; file = joinpath(d, "case.scf.json"), intended_calculations = String["power_flow", "state_estimation"])
+      cfg = joinpath(d, "se.yaml")
+      write(cfg, "config_version: 1\nstate_estimation:\n  observability:\n    on_unobservable: $(mode)\n    weak_check_after_estimation: $(weak_check)\n")
+      r = _se_run_quiet(() -> redirect_stdout(() -> SparlectraApp._run_state_estimation_service(case, cfg, joinpath(d, "run"), tag, joinpath(d, "none.csv")), devnull))
+      SparlectraApp.to_dict(r)
+    end
+    ab = service(meas, "isl_abort", "abort")
+    @test (ab["status"], ab["reason"], ab["metadata"]["se_islands_total"], ab["metadata"]["se_criticality_skipped"]) == ("failed", "se_not_observable", 3, false)
+    oi = service(meas, "isl_oi", "observable_islands")
+    @test (oi["status"], oi["metadata"]["se_observable_islands_estimated"]) == ("succeeded", 2)
+    ponly = service(filter(m -> m.typ in (Sparlectra.PinjMeas, Sparlectra.PflowMeas), meas), "isl_ponly", "observable_islands")
+    @test (ponly["status"], ponly["reason"]) == ("failed", "se_not_observable")
+    @test occursin("none of its observable islands can be estimated", ponly["message"])
+    nowk = service(full, "isl_noweak", "abort"; weak_check = false)
+    @test (nowk["status"], nowk["metadata"]["se_weak_basis"]) == ("succeeded", "not_determined")
   end)() end
 
   return true
 end
 
-## The weak class (concept K3, G3) against a reference computed here from
-## the labeled Jacobian of `measurement_jacobian` at the stored state:
-## W^(1/2) H with W = 1/sigma^2, a dense SVD, per direction the largest
-## branch-flow standard deviation |g_k . v_i| / sigma_i (g_k from
-## `measurement_jacobian` on one P flow row at the from end of every
-## in-service branch) and the largest magnitude one |v_ji| / sigma_i.
-## Returns the weak count, the affected buses (the ends of the branches
-## whose flow standard deviation over the weak directions exceeds `wf`, and
-## the buses whose magnitude standard deviation exceeds `wv`), those
-## branches with their standard deviation, the largest s_i, and the buses
-## of the rule of 790900bc (angle and magnitude rows of the weak directions
-## scaled by 1/sigma_i above rank_tol_factor * jac_eps).
+## The weak gaps, the state file and the restoration with scheduled values
+## (concept 1.1.0, M1, M2, M4 and block B) on the shipped IEEE 14-bus
+## topology with its slack on bus 8 (`net14z`) and on two_islands_prio.
+function test_observability_restore(fx)::Bool
+  # M1: a bus with a dark magnitude cuts an observable island in two. Bus
+  # 7 is the hub of 4-7, 7-8 and 7-9. Removed: the Vm row at 7, the Q
+  # injections at 4, 7, 8 and 9 and the Q flows on the three branches at 7
+  # (8, 14, 15), i.e. every Q-V row that holds the magnitude of 7. By
+  # hand: every P row stays, so the P-theta model has full rank and the set
+  # is one observable island; the magnitude of 7 appears in no row (Q-V
+  # deficit 1, bus 7 dark). Without bus 7 the branches 8, 14 and 15 are
+  # unobservable and the island falls into {1..6, 9..14} and {8}: two
+  # observable islands of their own, 1.1 and 1.2 (no third level), bus 7
+  # removed with reason :dark_magnitude. The P injections at 4, 8 and 9 hold
+  # a flow of those branches and are not used; island 1.2 keeps the Vm row
+  # of bus 8 and is estimated with the slack, island 1.1 through its flows
+  # with a relative reference.
+  @testset "observable islands: a dark magnitude cuts an island in two" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    cut = filter(m -> !(m.typ == Sparlectra.VmMeas && m.busIdx == 7) && !(m.typ == Sparlectra.QinjMeas && m.busIdx in (4, 7, 8, 9)) && !(m.typ == Sparlectra.QflowMeas && m.branchIdx in (8, 14, 15)), full)
+    isl = _obs_cfg(() -> identify_observable_islands(net, cut))
+    @test (isl.n_islands, isl.dark_magnitude_buses, isl.angle_rank_deficit, isl.magnitude_rank_deficit) == (1, [7], 0, 1)
+    res = _obs_mode(() -> runse!(deepcopy(net), cut), :observable_islands)
+    oi = res.observableIslands
+    @test res.converged
+    @test [(r.label, r.estimated, r.reason, r.buses) for r in res.islands] == [("1.1", true, :estimated, [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14]), ("1.2", true, :estimated, [8])]
+    @test oi.removed_buses == [(bus = 7, reason = :dark_magnitude)]
+    @test oi.unobservable_branches == [8, 14, 15]
+    @test oi.label_of_bus == [fill("1.1", 6); ""; "1.2"; fill("1.1", 6)]
+    @test res.islands[1].relative_angles && !res.islands[2].relative_angles
+    @test issubset(["Pinj_bus_4", "Pinj_bus_8", "Pinj_bus_9"], oi.dropped_measurements)
+    @test isnan(res.voltages[7]) && all(b -> isfinite(res.voltages[b]), setdiff(1:14, [7]))
+    io = IOBuffer()
+    print_observable_islands(io, res)
+    @test occursin("buses not estimated (dark magnitude): 1 bus (7)", String(take!(io)))
+  end)() end
+
+  # M2: a weak direction at the estimate is a gap. The flows on 7-8 and the
+  # injections at 7 are removed and the P injection at 8 carries 50 MW
+  # instead of 1 MW. Bus 8 hangs on 7-8 alone, so by hand the active flow
+  # on 7-8 is the injection at 8 (losses aside) and follows from that row
+  # only: its standard deviation is about 50 MW, above the 20 MW bound, the
+  # other flows are measured with 1 MW. The set is observable, so the first
+  # run estimates the whole net; at its estimate branch 14 is the weak one
+  # and its ends 7 and 8 are the affected buses (concept G3). They leave
+  # with reason :weak, the rest {1..6, 9..14} is estimated again as one
+  # observable island (1.1, it lost buses; relative angles, the slack 8 is
+  # gone), and at that estimate nothing is weak. Under abort runse! only
+  # reports (weak_check_after_estimation, default on): branch 14 above the
+  # bound, its ends 7 and 8 affected, every voltage estimated.
+  @testset "weak directions at the estimate are a gap" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    base = filter(m -> m.branchIdx != 14 && !(_obs_is_injection(m) && m.busIdx == 7), full)
+    weakSet = [m.typ == Sparlectra.PinjMeas && m.busIdx == 8 ? Measurement(typ = m.typ, value = m.value, sigma = 50.0, busIdx = 8, id = m.id) : m for m in base]
+    @test _obs_cfg(() -> evaluate_global_observability(net, weakSet)).quality === :weakly_observable
+    res = _obs_mode(() -> runse!(deepcopy(net), weakSet), :observable_islands)
+    oi = res.observableIslands
+    @test res.converged && oi !== nothing
+    @test oi.removed_buses == [(bus = 7, reason = :weak), (bus = 8, reason = :weak)]
+    @test [(r.label, r.estimated, r.buses, r.relative_angles) for r in res.islands] == [("1.1", true, [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14], true)]
+    @test res.weakObservability.basis === :estimated_state && res.weakObservability.n_buses == 0
+    # abort: one estimate of the whole net, the weak class reported only
+    ab = _obs_mode(() -> runse!(deepcopy(net), weakSet), :abort)
+    @test ab.observableIslands === nothing && all(isfinite, ab.voltages)
+    wa = ab.weakObservability
+    @test (wa.basis, wa.weakly_observable, wa.branches, wa.buses) == (:estimated_state, true, [14], [7, 8])
+    @test 40.0 < only(wa.branch_flow_sigma_mw) < 55.0
+    # A cut estimate that does not converge keeps the converged one before
+    # the cut. A gross error of 1000 MW on the flow of branch 9 (the start
+    # ladder off, max_iter 30): the whole set absorbs it (17 iterations,
+    # still weak at 7 and 8), the set without 7 and 8 does not converge in
+    # 30. The result is the first estimate with its weak report, the net
+    # holds its voltages (those of the same run under abort), and the flow
+    # of branch 14 is left empty.
+    gross = [m.id == "Pflow_branch_9_from" ? Measurement(typ = m.typ, value = m.value + 1000.0, sigma = m.sigma, branchIdx = m.branchIdx, direction = m.direction, id = m.id) : m for m in weakSet]
+    gcfg(f, mode) = with_state_estimation_config(f; flatstart = true, jac_eps = 1e-6, start_ladder = false, max_iter = 30, observability = Sparlectra.ObservabilityConfig(on_unobservable = mode))
+    gnet = deepcopy(net)
+    gr = gcfg(() -> runse!(gnet, gross), :observable_islands)
+    ga = gcfg(() -> runse!(deepcopy(net), gross), :abort)
+    @test (ga.converged, ga.iterations, ga.weakObservability.buses) == (true, 17, [7, 8])
+    @test (gr.converged, gr.iterations, gr.observableIslands === nothing, gr.weakObservability.buses) == (true, 17, true, [7, 8])
+    @test gr.voltages == ga.voltages && [nd._vm_pu for nd in gnet.nodeVec] == abs.(ga.voltages)
+    @test isnan(gnet.branchVec[14].fBranchFlow.pFlow)
+  end)() end
+
+  # M4: the state file of an estimate per observable island. The case14
+  # split of test 1 estimates both islands with relative angles: read back,
+  # every bus is estimated, branch 7-8 between the two islands is not, and
+  # the state is partial, so runpf_from_se! refuses it with the message of
+  # the in-memory estimate. Without the Vm rows of island 1.1 its 13 buses
+  # are not estimated and no closed branch is (each has an end among them).
+  # A full estimate reads back as before, without a warning.
+  @testset "state file of an estimate per observable island" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    meas = filter(m -> m.branchIdx != 14 && !(_obs_is_injection(m) && m.busIdx in (7, 8)), full)
+    pferr(n) = try
+      runpf_from_se!(n, 40, 1e-8, 0)
+      ""
+    catch e
+      sprint(showerror, e)
+    end
+    dir = mktempdir()
+    est = deepcopy(net)
+    _obs_mode(() -> runse!(est, meas), :observable_islands)
+    f = joinpath(dir, "split.csv")
+    @test writeSEStateCSV(est; file = f) == (count = 14, not_estimated = 0)
+    @test startswith(readlines(f)[1], "# sparlectra-se-state v2")
+    back = deepcopy(net)
+    rb = @test_logs (:warn, r"0 bus\(es\) and 1 branch\(es\) not estimated") readSEStateCSV!(back; file = f)
+    @test (rb.not_estimated_buses, rb.not_estimated_branches, rb.partial) == (Int[], [14], true)
+    @test isnan(back.branchVec[14].fBranchFlow.pFlow)
+    msg = pferr(est)
+    @test occursin("observable islands only", msg) && pferr(back) == msg
+    est2 = deepcopy(net)
+    _obs_mode(() -> runse!(est2, filter(m -> !(m.typ == Sparlectra.VmMeas && m.busIdx != 8), meas)), :observable_islands)
+    f2 = joinpath(dir, "dark.csv")
+    @test writeSEStateCSV(est2; file = f2).not_estimated == 13
+    back2 = deepcopy(net)
+    rb2 = @test_logs (:warn, r"13 bus\(es\) and 20 branch\(es\) not estimated") readSEStateCSV!(back2; file = f2)
+    @test rb2.not_estimated_buses == setdiff(1:14, [8]) && rb2.not_estimated_branches == collect(1:20)
+    @test all(b -> isnan(back2.nodeVec[b]._vm_pu), rb2.not_estimated_buses) && pferr(back2) == msg
+    estF = deepcopy(net)
+    _obs_cfg(() -> runse!(estF, full))
+    f3 = joinpath(dir, "full.csv")
+    writeSEStateCSV(estF; file = f3)
+    back3 = deepcopy(net)
+    rb3 = @test_logs min_level = Logging.Warn readSEStateCSV!(back3; file = f3)
+    @test !rb3.partial && isempty(rb3.not_estimated_buses) && isempty(rb3.not_estimated_branches)
+  end)() end
+
+  # Test 8 of the concept: restoration with scheduled values. The case14
+  # split of test 1 has a P-theta deficit of 1 (bus 8 floats against the
+  # rest) and full Q-V rank. P candidates are the buses without a P
+  # injection row, 7 and 8; bus 7 has no load or generator (a passive bus,
+  # no schedule), bus 8 the condenser with P = 0. Under zero_injection = off
+  # the passive bus is no candidate: by hand the injection at 8 is the flow
+  # on 7-8 and ties the angle of 8 to bus 7, so it closes the deficit; its
+  # sigma is the floor, the default P sigma of 1 MW (30 % of 0 is 0), and
+  # the zero injection at 7 is reported as one that would close it (its
+  # row holds the flow on 7-8 as well). At the stored (power-flow) state
+  # nothing is weak, so the restoration succeeds (R1), and runse! estimates
+  # the whole net with the row. Under zero_injection = on (concept U3) the
+  # passive bus comes first: P = 0 at bus 7 with the zero-injection sigma
+  # closes the deficit, flagged as a zero-injection row, and the schedule
+  # of bus 8 is not needed.
+  @testset "restoration: the case14 split closed from the schedule" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    meas = filter(m -> m.branchIdx != 14 && !(_obs_is_injection(m) && m.busIdx in (7, 8)), full)
+    rr = _obs_zioff(() -> restore_observability(net, meas))
+    @test [(r.id, r.bus, r.quantity, r.value, r.sigma, r.source) for r in rr.restored] == [("restore_Pinj_bus_8", 8, :P, 0.0, 1.0, :schedule)]
+    @test isempty(rr.skipped) && (rr.rank_deficit_before, rr.rank_deficit_after) == (1, 0)
+    @test rr.observable && rr.weak_judged && rr.success && rr.verdict === :observable
+    @test [(r.bus, r.quantity) for r in rr.passive_not_inserted] == [(7, :P)]
+    @test only(rr.rows).origin === :pseudo_restore && Sparlectra._elimination_protected(only(rr.rows))
+    res = _obs_mode(() -> runse!(deepcopy(net), meas), :scheduled; zero_injection = :off)
+    @test res.converged && res.observableIslands === nothing
+    @test [r.id for r in res.restoredRows] == ["restore_Pinj_bus_8"]
+    @test _obs_mode(() -> runse!(deepcopy(net), meas), :observable_islands).restoredRows === nothing
+    rz = _obs_cfg(() -> restore_observability(net, meas))
+    zs = Sparlectra.state_estimation_config().zero_injection_sigma_mva
+    @test [(r.id, r.bus, r.quantity, r.value, r.sigma, r.source) for r in rz.restored] == [("restore_Pinj_bus_7", 7, :P, 0.0, zs, :passive)]
+    @test only(rz.rows).zero_injection && isempty(rz.passive_not_inserted) && rz.verdict === :observable
+    # the replacement row is protected, a gross error elsewhere goes: the
+    # from-end P flow of branch 1 shifted by 50 MW (50 sigma)
+    bad = [m.typ == Sparlectra.PflowMeas && m.branchIdx == 1 && m.direction == :from ? Measurement(typ = m.typ, value = m.value + 50.0, sigma = m.sigma, branchIdx = 1, direction = :from, id = m.id) : m for m in meas]
+    badId = only(m.id for m in bad if m.typ == Sparlectra.PflowMeas && m.branchIdx == 1 && m.direction == :from)
+    diag = _obs_cfg(() -> runse_diagnostics(net, vcat(bad, rr.rows)))
+    ids = [t.id for t in diag.eliminations]
+    @test badId in ids && !("restore_Pinj_bus_8" in ids)
+    # a redundant candidate: without the P injection at bus 2 its schedule
+    # is a candidate before bus 8, but every flow at bus 2 is measured, so
+    # its row is the sum of measured flow rows and does not lower the deficit
+    no2 = filter(m -> !(m.typ == Sparlectra.PinjMeas && m.busIdx == 2), meas)
+    r2 = _obs_zioff(() -> restore_observability(net, no2))
+    @test [(r.bus, r.quantity) for r in r2.restored] == [(8, :P)]
+    @test r2.skipped == [(bus = 2, network_island = 1, quantity = :P, source = :schedule)]
+    # the schedule cannot close the gap (no P set point at bus 8): nothing
+    # is taken, and :scheduled runs the rest like :observable_islands
+    nosched = deepcopy(net)
+    for ps in nosched.prosumpsVec
+      Sparlectra.getPosumerBusIndex(ps) == 8 && (ps.pVal = nothing)
+    end
+    r3 = _obs_zioff(() -> restore_observability(nosched, meas))
+    @test isempty(r3.restored) && (r3.rank_deficit_before, r3.rank_deficit_after) == (1, 1) && !r3.observable && !r3.success && r3.verdict === :not_observable
+    s3 = _obs_mode(() -> runse!(deepcopy(nosched), meas), :scheduled; zero_injection = :off)
+    o3 = _obs_mode(() -> runse!(deepcopy(nosched), meas), :observable_islands; zero_injection = :off)
+    @test isempty(s3.restoredRows) && [r.label for r in s3.islands] == ["1.1", "1.2"]
+    @test isequal(s3.voltages, o3.voltages)
+  end)() end
+
+  # Magnitude gaps closed by U in the order of concept R4, one case per
+  # rule. Rules 1 and 2: the split without the Vm row at 8 leaves the
+  # magnitude of 8 in no Q-V row (its injections and the flows on 7-8 are
+  # gone), Q-V deficit 1; bus 8 carries the condenser with set point 1.09
+  # pu (rule 2), with an SV value stored for bus 8 rule 1 wins. Rule 3: the
+  # set of the M1 test (magnitude of 7 dark) on a copy whose loads at 4, 8
+  # and 9 carry no Q set point, so no Q candidate: bus 7 has no unit and no
+  # stored state, so U is the median of the 13 measured Vm rows of its
+  # level, sigma their standard deviation (at least 0.005 pu). Rule 4: no
+  # Vm row at all and no voltage-controlled unit (every prosumer
+  # unregulated on a copy): the Q rows see magnitude differences only, one
+  # common shift is free (Q-V deficit 1), and U at the first bus closes it
+  # at 1.0 pu with restore_vm_sigma_nominal_pu (0.05). All under
+  # zero_injection = off: the passive bus 7 would otherwise come first.
+  @testset "restoration: U by the order of the stored state, set point, level median, nominal" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    split = filter(m -> m.branchIdx != 14 && !(_obs_is_injection(m) && m.busIdx in (7, 8)), full)
+    no8 = filter(m -> !(m.typ == Sparlectra.VmMeas && m.busIdx == 8), split)
+    rr = _obs_zioff(() -> restore_observability(net, no8))
+    @test [(r.bus, r.quantity, r.value, r.sigma, r.source) for r in rr.restored] == [(8, :P, 0.0, 1.0, :schedule), (8, :U, 1.09, 0.005, :unit_setpoint)]
+    @test rr.network_islands == [(network_island = 1, angle_rank_deficit = 1, magnitude_rank_deficit = 1, angle_rank_deficit_after = 0, magnitude_rank_deficit_after = 0, n_taken = 2)]
+    sv = deepcopy(net)
+    sv._sv_vm_pu[8] = 1.085
+    r1 = _obs_zioff(() -> restore_observability(sv, no8))
+    @test [(r.quantity, r.value, r.source) for r in r1.restored] == [(:P, 0.0, :schedule), (:U, 1.085, :stored_state)]
+    cut = filter(m -> !(m.typ == Sparlectra.VmMeas && m.busIdx == 7) && !(m.typ == Sparlectra.QinjMeas && m.busIdx in (4, 7, 8, 9)) && !(m.typ == Sparlectra.QflowMeas && m.branchIdx in (8, 14, 15)), full)
+    noq = deepcopy(net)
+    for ps in noq.prosumpsVec
+      Sparlectra.getPosumerBusIndex(ps) in (4, 8, 9) && (ps.qVal = nothing)
+    end
+    vms = sort([m.value for m in cut if m.typ == Sparlectra.VmMeas])
+    @test length(vms) == 13
+    mu = sum(vms) / 13
+    r3 = _obs_zioff(() -> restore_observability(noq, cut))
+    @test [(r.bus, r.quantity, r.source) for r in r3.restored] == [(7, :U, :level_median)]
+    @test only(r3.restored).value == vms[7] && only(r3.restored).sigma ≈ max(sqrt(sum(abs2, vms .- mu) / 13), 0.005)
+    @test r3.rank_deficit_after == 0
+    novm = filter(m -> m.typ != Sparlectra.VmMeas, full)
+    flat = deepcopy(net)
+    for ps in flat.prosumpsVec
+      ps.isRegulated = false
+    end
+    r4 = _obs_zioff(() -> restore_observability(flat, novm))
+    @test [(r.bus, r.quantity, r.value, r.sigma, r.source) for r in r4.restored] == [(1, :U, 1.0, 0.05, :nominal)]
+    @test (r4.network_islands[1].magnitude_rank_deficit, r4.rank_deficit_after) == (1, 0)
+  end)() end
+
+  # N4, N5: candidates stay inside their network island. The set of the
+  # network-island test (network island 1 with a P-theta and a Q-V deficit
+  # at bus 2, network island 2 observable, network island 3 not measured):
+  # every taken row lies in network island 1, network island 3 gets none
+  # although its buses carry schedules, and network island 2 needs none.
+  @testset "restoration: candidates never cross a network island" begin (function ()
+    net = deepcopy(fx.net_two)
+    full = _obs_full_set(net)
+    setBranchStatus!(net.branchVec[5], false)
+    setBranchStatus!(net.branchVec[7], false)
+    meas = filter(m -> !(m.busIdx in (2, 5, 6)) && !(m.branchIdx !== nothing && m.branchIdx in (1, 2, 5, 6, 7)) && !(_obs_is_injection(m) && m.busIdx in (1, 3)), full)
+    isl = _obs_cfg(() -> identify_observable_islands(net, meas))
+    rr = _obs_cfg(() -> restore_observability(net, meas))
+    @test [r.network_island for r in rr.network_islands] == [1, 2]
+    @test (rr.network_islands[1].angle_rank_deficit, rr.network_islands[1].magnitude_rank_deficit, rr.network_islands[2].n_taken) == (1, 1, 0)
+    @test !isempty(rr.restored) && all(r -> r.network_island == 1 && isl.network_island_of_bus[r.bus] == 1, rr.restored)
+    @test all(r -> isl.network_island_of_bus[r.bus] == 1, rr.skipped)
+  end)() end
+
+  return true
+end
+
+## The weak class (concept K3, G3, U4) against references computed here
+## from the labeled Jacobian of `measurement_jacobian` at the stored state.
+## The covariance reference: G = H' W H with W = 1/sigma^2, the covariance
+## inv(G) dense, or with constraint rows (`constraint = true`: the
+## zero-injection rows, weight 0) the upper-left block of the dense inverse
+## of the KKT matrix [G C'; C 0]; per in-service branch sqrt(g Cov g') in
+## MW, g from `measurement_jacobian` on one P flow row at the from end, per
+## bus the root of the diagonal entry of its Vm column in pu.
+function _obs_cov_reference(net, meas; constraint::Bool = false)
+  stored(f) = with_state_estimation_config(f; flatstart = false, jac_eps = 1e-6)
+  netc = deepcopy(net)
+  empty!(netc.measurements)
+  append!(netc.measurements, meas)
+  jm = stored(() -> measurement_jacobian(netc))
+  H = Matrix{Float64}(jm.H)
+  w = Float64[1.0 / meas[r.index].sigma^2 for r in jm.rows]
+  con = constraint ? [i for (i, r) in enumerate(jm.rows) if meas[r.index].zero_injection] : Int[]
+  w[con] .= 0.0
+  G = H' * (w .* H)
+  n = size(G, 1)
+  C = H[con, :]
+  Cov = isempty(con) ? inv(G) : inv([G C'; C zeros(length(con), length(con))])[1:n, 1:n]
+  brs = [k for (k, br) in enumerate(net.branchVec) if br.status == 1]
+  netf = deepcopy(net)
+  empty!(netf.measurements)
+  for k in brs
+    push!(netf.measurements, Measurement(typ = Sparlectra.PflowMeas, value = 0.0, sigma = 1.0, branchIdx = k, direction = :from, id = "g$(k)"))
+  end
+  Gf = Matrix{Float64}(stored(() -> measurement_jacobian(netf)).H)
+  nb = length(net.nodeVec)
+  flow = [sqrt(max(LinearAlgebra.dot(Gf[k, :], Cov * Gf[k, :]), 0.0)) for k in eachindex(brs)]
+  vm = [sqrt(Cov[nb - 1 + b, nb - 1 + b]) for b = 1:nb]
+  return (brs = brs, flow = flow, vm = vm, cond_g = LinearAlgebra.cond(G))
+end
+
+## The direction reference of the singular fallback (`_weak_directions`):
+## W^(1/2) H, a dense SVD, per direction the largest branch-flow standard
+## deviation |g_k . v_i| / sigma_i and the largest magnitude one |v_ji| /
+## sigma_i. Returns the affected buses (the ends of the branches whose flow
+## standard deviation over the weak directions exceeds `wf`, and the buses
+## whose magnitude standard deviation exceeds `wv`), those branches with
+## their standard deviation, the largest branch-flow standard deviation
+## over the weak directions (per branch, as on the covariance path), and the buses of the rule of
+## 790900bc (angle and magnitude rows of the weak directions scaled by
+## 1/sigma_i above rank_tol_factor * jac_eps).
 function _obs_weak_reference(net, meas; wf = 20.0, wv = 0.01)
   stored(f) = with_state_estimation_config(f; flatstart = false, jac_eps = 1e-6)
   netc = deepcopy(net)
@@ -1163,45 +1600,88 @@ function _obs_weak_reference(net, meas; wf = 20.0, wv = 0.01)
   cfg = _obs_cfg(state_estimation_config)
   tau = cfg.rank_tol_factor * cfg.jac_eps
   oldBuses = [b for b = 1:nb if LinearAlgebra.norm(vcat(b == slack ? Float64[] : R[b < slack ? b : b - 1, :], R[nb - 1 + b, :])) > tau]
-  return (n = length(weak), buses = buses, branches = brs[hit], std = std[hit], smax = maximum(s), old_buses = oldBuses)
+  return (buses = buses, branches = brs[hit], std = std[hit], smax = maximum(std; init = 0.0), old_buses = oldBuses)
 end
 
-function test_observability_weak()::Bool
-  # Weakly observable (concept K3, F2, F3, G2, G3) on the shipped
+## `_weak_directions` (the fallback on a singular gain matrix) called the
+## way `_weak_network_island` calls it, at the stored state
+function _obs_weak_directions(net, meas, dense_max_n)
+  return _obs_cfg() do
+    cfg = Sparlectra.state_estimation_config()
+    prep, act, _ = Sparlectra._observability_rows(net, meas, "test")
+    snet = prep.snet
+    sl = Sparlectra._find_slack_idx(snet)
+    Y = Sparlectra.createYBUS(net = snet)
+    x = Sparlectra._initial_state_vector(snet, sl; flatstart = false)
+    H = SparseArrays.sparse(first(Sparlectra._measurement_jacobian_fd(act, snet, x, sl, length(snet.nodeVec), Y; eps = cfg.jac_eps)))
+    Sparlectra._weak_directions(H, act, snet, x, sl, Y, cfg.jac_eps, false, 20.0, 0.01, dense_max_n)
+  end
+end
+
+## bounds below every standard deviation: every in-service branch is
+## listed with its flow standard deviation (the values against a reference)
+const _OBS_WEAK_ALL = Sparlectra.SparlectraConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("weak_flow_sigma_mw" => 1.0e-9, "weak_vm_sigma_pu" => 1.0e-12))))
+
+function test_observability_weak(fx)::Bool
+  # Weakly observable (concept K3, G2, G3, U4, U5) on the shipped
   # sp_case118 with Vm, P and Q at every bus and no flows, at the stored
-  # (power-flow) state of the net. With the default sigmas (1 MW) the
-  # largest branch-flow standard deviation along any direction is a few MW
+  # (power-flow) state of the net. The class comes from the covariance of
+  # the estimate: per branch the flow standard deviation sqrt(g G^-1 g'),
+  # per bus the magnitude one, from the Takahashi selected inverse. With the
+  # default sigmas (1 MW) the largest flow standard deviation is a few MW
   # and the set is observable; with P and Q at 30 MW (pseudo measurements)
-  # it rises above the default bound of 20 MW. The class, its directions,
-  # buses and branches equal the SVD reference computed from
-  # `measurement_jacobian`, on the dense path and on the sparse one. The
+  # it rises above the default bound of 20 MW. Every flow and magnitude
+  # standard deviation equals the dense inv(G) reference (bounds below all
+  # of them list every branch), on the dense and the sparse path, with no
+  # covariance entry outside the pattern of the selected inverse; the
   # affected buses are the ends of the branches above the bound and the
-  # buses with a magnitude standard deviation above its bound: a proper
-  # subset of the buses the D1 tolerance flagged in 790900bc.
-  @testset "weak directions: sp_case118 against an SVD reference" begin (function ()
+  # buses above the magnitude bound.
+  @testset "weak class: sp_case118 covariance against a dense reference" begin (function ()
     net = Sparlectra.createNetFromMatPowerFile(filename = joinpath(pkgdir(Sparlectra), "data", "mpower", "sp_case118.m"), flatstart = false, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)
     redirect_stdout(() -> runpf!(net, 40, 1e-8, 0), devnull)
     inj = generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = false, includeQflow = false, noise = false)
     good = _obs_cfg(() -> evaluate_global_observability(net, inj))
+    refG = _obs_cov_reference(net, inj)
     @test good.quality in (:good, :critical) && !good.weakly_observable
     @test good.weak_observability.basis === :stored_state
-    @test good.weak_observability.n_directions == 0 && good.weak_observability.max_flow_sigma_mw < 20.0
+    @test good.weak_observability.n_buses == 0 && good.weak_observability.max_flow_sigma_mw < 20.0
+    @test isapprox(good.weak_observability.max_flow_sigma_mw, maximum(refG.flow); rtol = 1e-8)
+    @test isapprox(good.weak_observability.max_vm_sigma_pu, maximum(refG.vm); rtol = 1e-8)
     coarse = [Measurement(typ = m.typ, value = m.value, sigma = m.typ in (Sparlectra.PinjMeas, Sparlectra.QinjMeas) ? 30.0 : m.sigma, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, origin = m.origin) for m in inj]
-    ref = _obs_weak_reference(net, coarse)
-    @test ref.n > 0
-    @test issubset(ref.buses, ref.old_buses) && length(ref.buses) < length(ref.old_buses)
+    ref = _obs_cov_reference(net, coarse)
+    hit = [k for k in eachindex(ref.brs) if ref.flow[k] > 20.0]
+    buses = sort(unique(vcat([b for b in eachindex(ref.vm) if ref.vm[b] > 0.01], [Int(net.branchVec[ref.brs[k]].fromBus) for k in hit], [Int(net.branchVec[ref.brs[k]].toBus) for k in hit])))
+    @test !isempty(hit)
     for dmn in (Sparlectra._SE_DENSE_LINALG_MAX_N, 0)
       o = _obs_cfg(() -> evaluate_global_observability(net, coarse; dense_max_n = dmn))
       w = o.weak_observability
       @test (dmn, o.quality, o.weakly_observable, o.numerical_observable, o.angle_rank_deficit, o.magnitude_rank_deficit) == (dmn, :weakly_observable, true, true, 0, 0)
-      @test (dmn, w.basis, w.n_directions, w.buses, w.branches) == (dmn, :stored_state, ref.n, ref.buses, ref.branches)
-      @test isapprox(w.branch_flow_sigma_mw, ref.std; rtol = 1e-4)
-      @test isapprox(w.max_flow_sigma_mw, ref.smax; rtol = 1e-4)
+      @test (dmn, w.basis, w.n_branches, w.branches, w.buses, w.n_buses, w.pattern_misses) == (dmn, :stored_state, length(hit), ref.brs[hit], buses, length(buses), 0)
+      @test (dmn, only(w.network_islands).method) == (dmn, :covariance)
+      @test isapprox(w.branch_flow_sigma_mw, ref.flow[hit]; rtol = 1e-8)
+      @test isapprox(w.max_flow_sigma_mw, maximum(ref.flow); rtol = 1e-8)
       # the old fields of the verdict do not change with the class
       @test (o.numerical_rank, o.unobservable_state_columns, isempty(o.observable_islands)) == (o.n_states, Int[], true)
       # the standalone call at the same state gives the same report
       ws = _obs_cfg(() -> evaluate_weak_observability(net, coarse; dense_max_n = dmn))
-      @test ws.weakly_observable && (ws.n_directions, ws.buses, ws.branches) == (w.n_directions, w.buses, w.branches)
+      @test ws.weakly_observable && (ws.n_branches, ws.buses, ws.branches) == (w.n_branches, w.buses, w.branches)
+    end
+    # every branch and bus against the reference
+    all118 = with_sparlectra_config(() -> _obs_cfg(() -> evaluate_weak_observability(net, coarse)), _OBS_WEAK_ALL)
+    @test all118.branches == ref.brs && isapprox(all118.branch_flow_sigma_mw, ref.flow; rtol = 1e-8)
+    @test all118.buses == collect(eachindex(ref.vm)) && isapprox(all118.max_vm_sigma_pu, maximum(ref.vm); rtol = 1e-8)
+    # The singular fallback (`_weak_directions`, a gain matrix without
+    # covariance) against the SVD reference on the same set, on both paths;
+    # its affected buses are a proper subset of the buses the D1 tolerance
+    # flagged in 790900bc, and its branches a subset of the covariance ones
+    # (the directions add only the weak part of the covariance)
+    dref = _obs_weak_reference(net, coarse)
+    @test issubset(dref.buses, dref.old_buses) && length(dref.buses) < length(dref.old_buses)
+    @test issubset(dref.branches, ref.brs[hit])
+    for dmn in (Sparlectra._SE_DENSE_LINALG_MAX_N, 0)
+      d = _obs_weak_directions(net, coarse, dmn)
+      @test (dmn, d.method, d.buses, d.branches) == (dmn, :directions, dref.buses, dref.branches)
+      @test isapprox(d.branch_flow_sigma_mw, dref.std; rtol = 1e-4) && isapprox(d.max_flow_sigma_mw, dref.smax; rtol = 1e-4)
     end
     # a net that stores the flat profile: the class is not determined
     flat = deepcopy(net)
@@ -1210,34 +1690,171 @@ function test_observability_weak()::Bool
       nd._va_deg = 0.0
     end
     wf = _obs_cfg(() -> evaluate_weak_observability(flat, coarse))
-    @test (wf.basis, wf.weakly_observable, wf.n_directions) == (:not_determined, false, 0)
+    @test (wf.basis, wf.weakly_observable, wf.n_buses) == (:not_determined, false, 0)
     @test _obs_cfg(() -> evaluate_global_observability(flat, coarse)).weak_observability.basis === :not_determined
     # the bounds come from state_estimation.observability: a file value
     # parses, a non-positive one is refused with the key named, and a bound
     # below the largest flow standard deviation of the default set makes
     # that set weakly observable as well
-    cfg = Sparlectra.SparlectraConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("weak_flow_sigma_mw" => 2.0, "weak_vm_sigma_pu" => 0.5, "weak_check_after_estimation" => true))))
-    @test (cfg.state_estimation.observability.weak_flow_sigma_mw, cfg.state_estimation.observability.weak_vm_sigma_pu, cfg.state_estimation.observability.weak_check_after_estimation) == (2.0, 0.5, true)
+    cfg = Sparlectra.SparlectraConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("weak_flow_sigma_mw" => 2.0, "weak_vm_sigma_pu" => 0.5, "weak_check_after_estimation" => false))))
+    @test (cfg.state_estimation.observability.weak_flow_sigma_mw, cfg.state_estimation.observability.weak_vm_sigma_pu, cfg.state_estimation.observability.weak_check_after_estimation) == (2.0, 0.5, false)
+    @test Sparlectra.ObservabilityConfig().weak_check_after_estimation
     @test_throws "state_estimation.observability.weak_flow_sigma_mw" Sparlectra.SparlectraConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("weak_flow_sigma_mw" => 0.0))))
     @test_throws "state_estimation.observability.weak_vm_sigma_pu" Sparlectra.SparlectraConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("weak_vm_sigma_pu" => -1.0))))
     tight = with_sparlectra_config(cfg) do
       _obs_cfg(() -> evaluate_global_observability(net, inj))
     end
-    @test tight.quality === :weakly_observable && tight.weak_observability.n_directions > 0
+    @test tight.quality === :weakly_observable && tight.weak_observability.n_buses > 0
     @test tight.weak_observability.max_flow_sigma_mw == good.weak_observability.max_flow_sigma_mw
-    # after the estimation (weak_check_after_estimation): runse! takes the
-    # class at the estimate it wrote into the net, the same as the
-    # standalone call on that net; without the key the field is nothing
+    # after the estimation (weak_check_after_estimation, default on):
+    # runse! takes the class at the estimate it wrote into the net, the
+    # same as the standalone call on that net; with the key off the field
+    # is nothing
+    tight2 = Sparlectra.SparlectraConfig(Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("weak_flow_sigma_mw" => 2.0, "weak_vm_sigma_pu" => 0.5))))
     est = deepcopy(net)
-    res = with_sparlectra_config(cfg) do
-      _obs_cfg(() -> runse!(est, inj))
-    end
+    res = with_sparlectra_config(() -> _obs_cfg(() -> runse!(est, inj)), tight2)
     @test res.converged && res.weakObservability !== nothing
     @test res.weakObservability.basis === :estimated_state && res.weakObservability.weakly_observable
-    again = with_sparlectra_config(() -> _obs_cfg(() -> evaluate_weak_observability(est, inj)), cfg)
-    @test (again.basis, again.n_directions, again.branches) == (:stored_state, res.weakObservability.n_directions, res.weakObservability.branches)
-    @test _obs_cfg(() -> runse!(deepcopy(net), inj)).weakObservability === nothing
+    again = with_sparlectra_config(() -> _obs_cfg(() -> evaluate_weak_observability(est, inj)), tight2)
+    @test (again.basis, again.n_branches, again.branches) == (:stored_state, res.weakObservability.n_branches, res.weakObservability.branches)
+    plain = _obs_cfg(() -> runse!(deepcopy(net), inj))
+    @test plain.weakObservability !== nothing && !plain.weakObservability.weakly_observable && plain.weakObservability.basis === :estimated_state
+    @test with_sparlectra_config(() -> _obs_cfg(() -> runse!(deepcopy(net), inj)), cfg).weakObservability === nothing
   end)() end
+
+  # The IEEE 14-bus topology (net14z, slack on bus 8) with Vm, P and Q at
+  # every bus and no flows; bus 7 is passive, its injection rows are the
+  # zero-injection rows (sigma 1e-3 MW). zero_injection = on weights them,
+  # the covariance is inv(G); zero_injection = constraint solves them as
+  # equality constraints, weight 0 in G, and the covariance of the
+  # constrained estimate is the upper-left block of the inverse of the KKT
+  # matrix [G C'; C 0] (derivation at `_weak_covariance_factor`). Every flow
+  # and magnitude standard deviation equals the dense reference of its
+  # mode; the two modes agree to the size of the zero-injection sigma, and
+  # without the zero-injection rows the flows at bus 7 are looser.
+  @testset "weak class: case14 covariance, weighted and constrained zero injections" begin (function ()
+    net = fx.net14z
+    base = filter(m -> !(_obs_is_injection(m) && m.busIdx == 7), generateMeasurementsFromPF(net; includeVm = true, includePinj = true, includeQinj = true, includePflow = false, includeQflow = false, noise = false))
+    meas = copy(base)
+    addZeroInjectionMeasurements!(meas; net = net, busIdxs = [7])
+    vals = Dict{Symbol,Any}()
+    for mode in (:on, :constraint)
+      w = with_sparlectra_config(() -> with_state_estimation_config(() -> evaluate_weak_observability(net, meas); flatstart = true, jac_eps = 1e-6, zero_injection = mode), _OBS_WEAK_ALL)
+      ref = _obs_cov_reference(net, meas; constraint = mode === :constraint)
+      @test (mode, w.branches, w.pattern_misses) == (mode, ref.brs, 0)
+      @test isapprox(w.branch_flow_sigma_mw, ref.flow; rtol = 1e-7)
+      @test isapprox(w.max_vm_sigma_pu, maximum(ref.vm); rtol = 1e-7)
+      vals[mode] = w.branch_flow_sigma_mw
+    end
+    @test isapprox(vals[:on], vals[:constraint]; rtol = 1e-4)
+    loose = with_sparlectra_config(() -> _obs_cfg(() -> evaluate_weak_observability(net, base)), _OBS_WEAK_ALL)
+    at7 = [k for (k, br) in enumerate(net.branchVec) if br.status == 1 && 7 in (Int(br.fromBus), Int(br.toBus))]
+    @test all(k -> loose.branch_flow_sigma_mw[k] > vals[:constraint][k], at7)
+  end)() end
+  return true
+end
+
+## Measurement placement (concept test 9, A4, N4) on the shipped IEEE
+## 14-bus topology with its slack on bus 8 (`net14z`) and on
+## two_islands_prio. Every result is checked by evaluate_global_observability
+## on the set plus the suggested rows, not by the placement's own counts.
+function test_observability_placement(fx)::Bool
+  # Vm rows only: the Q-V model has full rank (every magnitude has its own
+  # row), the P-theta model has no row, so all 13 non-slack angles are free
+  # (deficit 13 + 0). One P injection lowers the P-theta deficit by at most
+  # one, so :injection needs exactly 13 steps. The first step is bus 8: it
+  # hangs on 7-8 alone, its injection is the flow on 7-8, and it is the
+  # only P row that makes a branch observable on its own (the plain pass
+  # orders by that, ties by bus). With flows every candidate adds one P row
+  # as well, so 13 is a lower bound for :flow; the count itself is
+  # computed. A PMU angle is theta_i plus the PMU offset (pmu_ref_offset =
+  # auto, the default): a set without a PMU has no offset column, so the
+  # first PMU fixes only the offset and lowers no deficit, every further one
+  # lowers it by one, 14 steps. Under pmu_ref_offset = off there is no
+  # offset column and a PMU at the slack row adds nothing: 13 steps.
+  @testset "placement: case14 with Vm rows only" begin (function ()
+    net = fx.net14z
+    vm = filter(m -> m.typ == Sparlectra.VmMeas, _obs_full_set(net))
+    o0 = _obs_cfg(() -> evaluate_global_observability(net, vm))
+    @test (o0.angle_rank_deficit, o0.magnitude_rank_deficit) == (13, 0)
+    observable_with(rows) = _obs_cfg(() -> evaluate_global_observability(net, vcat(vm, rows))).numerical_observable
+    inj = _obs_cfg(() -> suggest_measurement_placement(net, vm; kind = :injection))
+    @test inj.reached && inj.stop_reason === :reached
+    @test length(inj.steps) == o0.angle_rank_deficit + o0.magnitude_rank_deficit
+    @test all(s -> s.quantity === :P && s.angle_rank_deficit_after == s.angle_rank_deficit_before - 1, inj.steps)
+    @test first(inj.steps).bus == 8 && first(inj.steps).unobservable_branches_before == 20
+    @test (inj.angle_rank_deficit_after, inj.magnitude_rank_deficit_after) == (0, 0)
+    @test observable_with(inj.rows) && !observable_with(inj.rows[1:end-1])
+    @test all(r -> startswith(r.id, "placement_Pinj_bus_"), inj.rows)
+    fl = _obs_cfg(() -> suggest_measurement_placement(net, vm; kind = :flow))
+    @test fl.reached && length(fl.steps) >= 13 && observable_with(fl.rows)
+    @test all(s -> s.quantity === :PQ && s.branch > 0 && s.bus == 0, fl.steps) && length(fl.rows) == 2 * length(fl.steps)
+    pm = _obs_cfg(() -> suggest_measurement_placement(net, vm; kind = :pmu))
+    @test pm.reached && observable_with(pm.rows)
+    @test length(pm.steps) == 14
+    @test (pm.steps[1].angle_rank_deficit_before, pm.steps[1].angle_rank_deficit_after) == (13, 13)
+    @test all(s -> s.angle_rank_deficit_after == s.angle_rank_deficit_before - 1, pm.steps[2:end])
+    off = with_state_estimation_config(() -> suggest_measurement_placement(net, vm; kind = :pmu); flatstart = true, jac_eps = 1e-6, pmu_ref_offset = :off)
+    @test off.reached && length(off.steps) == 13
+    # max_steps stops early and says so; the configured default reaches the
+    # call
+    short = _obs_cfg(() -> suggest_measurement_placement(net, vm; kind = :injection, max_steps = 3))
+    @test (length(short.steps), short.reached, short.stop_reason, short.angle_rank_deficit_after) == (3, false, :max_steps, 10)
+    capped = with_state_estimation_config(() -> suggest_measurement_placement(net, vm; kind = :injection); flatstart = true, jac_eps = 1e-6, observability = Sparlectra.ObservabilityConfig(placement_max_steps = 5))
+    @test (length(capped.steps), capped.stop_reason) == (5, :max_steps)
+    io = IOBuffer()
+    print_measurement_placement(io, short)
+    @test countlines(seekstart(io)) == 4
+  end)() end
+
+  # target :no_critical on an observable set: Vm everywhere and P at every
+  # bus but 14. Observable (the 13 P rows fix the 13 angles), but every row
+  # is critical (no row has a second). The placement continues until the
+  # criticality check of the verdict finds no critical row; the count is
+  # computed, the result is checked by evaluate_global_observability.
+  @testset "placement: no critical measurement left" begin (function ()
+    net = fx.net14z
+    full = _obs_full_set(net)
+    set = filter(m -> m.typ == Sparlectra.VmMeas || (m.typ == Sparlectra.PinjMeas && m.busIdx != 14), full)
+    o0 = _obs_cfg(() -> evaluate_global_observability(net, set))
+    @test o0.numerical_observable && o0.quality === :critical
+    r = _obs_cfg(() -> suggest_measurement_placement(net, set; kind = :injection, target = :no_critical))
+    @test r.reached && !isempty(r.steps) && all(s -> s.phase === :no_critical && s.critical_after < s.critical_before, r.steps)
+    o1 = _obs_cfg(() -> evaluate_global_observability(net, vcat(set, r.rows)))
+    @test isempty(o1.numerical_critical_measurement_indices) && isempty(o1.structural_critical_measurement_indices)
+  end)() end
+
+  # N4, N5: the set of the network-island test (network island 1 with a
+  # P-theta and a Q-V deficit at bus 2, network island 2 observable,
+  # network island 3 not measured). No step leaves its network island,
+  # network islands 2 and 3 get none. :injection and :flow close the gap;
+  # :pmu closes the angle and stops on the magnitude of bus 2, which no
+  # angle row reaches.
+  @testset "placement: no candidate crosses a network island" begin (function ()
+    net = deepcopy(fx.net_two)
+    full = _obs_full_set(net)
+    setBranchStatus!(net.branchVec[5], false)
+    setBranchStatus!(net.branchVec[7], false)
+    meas = filter(m -> !(m.busIdx in (2, 5, 6)) && !(m.branchIdx !== nothing && m.branchIdx in (1, 2, 5, 6, 7)) && !(_obs_is_injection(m) && m.busIdx in (1, 3)), full)
+    isl = _obs_cfg(() -> identify_observable_islands(net, meas))
+    island_of(s) = s.branch == 0 ? isl.network_island_of_bus[s.bus] : isl.network_island_of_bus[Int(net.branchVec[s.branch].fromBus)]
+    for kind in (:injection, :flow, :pmu)
+      r = _obs_cfg(() -> suggest_measurement_placement(net, meas; kind = kind))
+      @test (kind, [x.network_island for x in r.network_islands]) == (kind, [1, 2])
+      @test (kind, all(s -> s.network_island == 1 && island_of(s) == 1, r.steps)) == (kind, true)
+      @test (kind, r.network_islands[2].n_steps) == (kind, 0)
+      o = _obs_cfg(() -> evaluate_global_observability(net, vcat(meas, r.rows)))
+      @test (kind, r.reached, o.numerical_observable) == (kind, kind !== :pmu, kind !== :pmu)
+      kind === :pmu && @test (r.stop_reason, o.angle_rank_deficit, o.magnitude_rank_deficit) == (:no_candidate, 0, 1)
+    end
+    # a magnitude gap alone (the dark bus 7 of the M1 set, no PMU in the
+    # set): a PMU enters only the P-theta model, whose deficit is 0, so
+    # :pmu takes no step (1.1.0 took one PMU that only fixed the offset)
+    cut = filter(m -> !(m.typ == Sparlectra.VmMeas && m.busIdx == 7) && !(m.typ == Sparlectra.QinjMeas && m.busIdx in (4, 7, 8, 9)) && !(m.typ == Sparlectra.QflowMeas && m.branchIdx in (8, 14, 15)), _obs_full_set(fx.net14z))
+    pm = _obs_cfg(() -> suggest_measurement_placement(fx.net14z, cut; kind = :pmu))
+    @test (length(pm.steps), pm.reached, pm.stop_reason, pm.angle_rank_deficit_before, pm.magnitude_rank_deficit_after) == (0, false, :no_candidate, 0, 1)
+  end)() end
+
   return true
 end
 
@@ -1246,7 +1863,7 @@ function run_observability_tests()
   @testset "Observability" begin (function ()
     fx = observability_fixture()
     tests =
-      [("Observability metrics", () -> test_observability_metrics(fx)), ("Matrix observability helpers", test_observability_matrix_helpers), ("FD-aware rank tolerance", () -> test_observability_fd_rank_tolerance(fx)), ("Takahashi diagnostics", () -> test_observability_takahashi_diagnostics(fx)), ("Observable islands", () -> test_observability_islands(fx)), ("Weak directions", test_observability_weak)]
+      [("Observability metrics", () -> test_observability_metrics(fx)), ("Matrix observability helpers", test_observability_matrix_helpers), ("FD-aware rank tolerance", () -> test_observability_fd_rank_tolerance(fx)), ("Takahashi diagnostics", () -> test_observability_takahashi_diagnostics(fx)), ("Observable islands", () -> test_observability_islands(fx)), ("Restoration and weak gaps", () -> test_observability_restore(fx)), ("Measurement placement", () -> test_observability_placement(fx)), ("Weak class", () -> test_observability_weak(fx))]
 
     for (name, testfn) in tests
       @testset "$name" begin (function ()
@@ -1318,11 +1935,12 @@ function run_observability_rank_tests()
     @test obs_b.numerical_observable == obs_a.numerical_observable
     @test obs_b.rank_method === :pivots
     # the full set (P, Q and U at every bus): observable in both decoupled
-    # models, no weak direction at the default bounds at the stored state
-    # (concept F3: the largest branch-flow standard deviation along one
-    # direction is 6.7 MW, below 20 MW)
+    # models, not weakly observable at the default bounds at the stored
+    # state (concept U4: the largest branch-flow standard deviation of the
+    # covariance is 9.8 MW, below 20 MW)
     @test (obs_a.angle_rank_deficit, obs_a.magnitude_rank_deficit) == (0, 0) && obs_a.numerical_observable
-    @test !obs_a.weakly_observable && obs_a.weak_observability.basis === :stored_state && obs_a.weak_observability.n_directions == 0
+    @test !obs_a.weakly_observable && obs_a.weak_observability.basis === :stored_state && obs_a.weak_observability.n_buses == 0
+    @test 9.0 < obs_a.weak_observability.max_flow_sigma_mw < 11.0
     # The patterns of the evidence table (concept K2, E1, G4'): every bus
     # row of a few buses removed, the set has injections and Vm rows and no
     # flows. The P-theta deficit is the number of missing P injections minus
@@ -1341,6 +1959,43 @@ function run_observability_rank_tests()
       @test (r, o.quality, o.angle_rank_deficit, o.magnitude_rank_deficit, o.rank_deficit, o.n_states - o.numerical_rank) == (r, :not_observable, d, 0, d, dac)
       @test (r, length(o.observable_islands.region_buses), o.observable_islands.n_islands > d) == (r, 1353, true)
     end
+    # Restoration with scheduled values on two of the patterns (concept
+    # test 8, U2, U3): without 700:702 the deficit 2 closes with the P
+    # schedules of the first two candidates by bus, 700 (a generator of 180
+    # MW, sigma 30 % = 54 MW) and 701 (a load of 6 MW, 1.8 MW); at the
+    # stored state seven branches stay above the flow bound (largest 29.9
+    # MW, 124 MW before), so the verdict is weakly observable after
+    # restoring. Without 100:105 the buses 100 and 104 carry no load,
+    # generator or shunt (passive): their zero injections come first, then
+    # the P rows at 101, 102 and 103 close the five, and the set is
+    # observable (13.6 MW). Under zero_injection = off the passive rows are
+    # only reported, the schedules at 101, 102, 103 and 105 close four of
+    # the five, one stays.
+    for (r, buses, srcs, verdict) in ((700:702, [700, 701], [:schedule, :schedule], :weakly_observable), (100:105, [100, 104, 101, 102, 103], [:passive, :passive, :schedule, :schedule, :schedule], :observable))
+      rr = restore_observability(netq, filter(m -> !(m.busIdx !== nothing && m.busIdx in r), msfull))
+      @test (r, [x.bus for x in rr.restored], [x.source for x in rr.restored], all(x -> x.quantity === :P, rr.restored), rr.rank_deficit_after, rr.observable) == (r, buses, srcs, true, 0, true)
+      @test (r, rr.verdict, rr.success, isempty(rr.weak.branches)) == (r, verdict, verdict === :observable, verdict === :observable)
+      r == 700:702 && @test reduce(vcat, [[x.value, x.sigma] for x in rr.restored]) ≈ [180.0, 54.0, -6.0, 1.8]
+    end
+    ro = with_state_estimation_config(() -> restore_observability(netq, filter(m -> !(m.busIdx !== nothing && m.busIdx in 100:105), msfull)); zero_injection = :off)
+    @test ([x.bus for x in ro.restored], [(x.bus, x.quantity) for x in ro.passive_not_inserted], ro.rank_deficit_after, ro.verdict) == ([101, 102, 103, 105], [(100, :P), (104, :P)], 1, :not_observable)
+    # The kept weak estimate (concept G2, M2): without 700:702 runse! under
+    # scheduled takes the two schedules, the estimate is weakly observable,
+    # and without its affected buses no observable island passes its rank
+    # check (the boundary injections leave with them), so the estimate is
+    # kept. It carries the weak report (the service maps it to
+    # se_result_usable = false), and the flows of the weak branches and the
+    # total losses are NaN in the net, never zero. Without 100:105 the same
+    # set is not weak at its estimate (13.6 MW at the stored state) and
+    # does not reach this path, neither under scheduled nor under
+    # observable_islands.
+    netk = deepcopy(netq)
+    rk = @test_logs (:info, r"no observable island passes its rank check, the estimate is kept") match_mode = :any with_state_estimation_config(() -> runse!(netk, filter(m -> !(m.busIdx !== nothing && m.busIdx in 700:702), msfull)); update_net = true, observability = Sparlectra.ObservabilityConfig(on_unobservable = :scheduled))
+    wk = rk.weakObservability
+    @test (rk.converged, rk.observableIslands === nothing, length(rk.restoredRows), wk.basis, wk.n_branches, wk.n_buses) == (true, true, 2, :estimated_state, 7, 10)
+    @test all(j -> isnan(netk.branchVec[j].fBranchFlow.pFlow) && isnan(netk.branchVec[j].tBranchFlow.qFlow), wk.branches)
+    @test all(isnan, netk.totalLosses[end])
+    @test all(j -> isfinite(netk.branchVec[j].fBranchFlow.pFlow), [j for j in eachindex(netk.branchVec) if netk.branchVec[j].status == 1 && !(j in wk.branches)])
     # With every flow on a branch outside the removed region measured as
     # well (evidence E2) both models agree: deficits 0, 0 and 1, the full
     # deficit equals the AC deficit. Without 50:60 the one null direction

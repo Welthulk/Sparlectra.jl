@@ -283,11 +283,12 @@ construction, and the fused balance is the `LINKAGG` row, so there is no separat
 
 ## Observability
 
-Run `evaluate_global_observability(net; ...)` before estimating (structural
-islands, then FD-aware numeric rank; verdict `:good` / `:critical` /
-`:not_observable`), and `evaluate_local_observability(net, cols; ...)` for
-placement studies on chosen state columns; see
-[Observability](observability.md).
+Run `evaluate_global_observability(net; ...)` before estimating (verdict
+`:good` / `:critical` / `:weakly_observable` / `:not_observable`), and
+`evaluate_local_observability(net, cols; ...)` for placement studies on
+chosen state columns; see [Observability](observability.md). Islands,
+scheduled values and meter places for a set that is not observable:
+[When the set is not observable](@ref se_observability_gaps).
 
 ## Integration with the Net workflow
 
@@ -572,7 +573,7 @@ Defaults and ranges of every key:
   `state_estimation.zero_injection_sigma_mva`, default 1e-3 MW, also the
   aggregate of a coupler cluster of them), the derived shunt rows
   (`SHDERIV`, origin `:derived`) and rows with origin `:pseudo_restore`
-  (reserved for the substitute values of an observability restoration) are
+  (the replacement values of `on_unobservable = scheduled`) are
   exempt in every mode: they are never eliminated and never down-weighted by `replacement` or `staged`. They carry network structure
   or other measurements, not a meter of their own.
 - The replacement threshold is judged on the converged state, never on
@@ -667,7 +668,10 @@ Which path the residual diagnostics take, for Vm plus P/Q injection sets,
 with the default `report_residual_correlation = true`. Up to 2000 states
 the correlation report needs the full `Ω` and pins the dense path; above
 2000 states `Ω_ii` comes from the Takahashi path and the correlations from
-a blockwise solve:
+a blockwise solve. The observability check (observable islands, dark
+states, deficit, weak class) is computed completely at any size; at 2000
+states only the computation path switches from dense to sparse
+factorizations:
 
 | Network | m × n | residual diagnostics | notes |
 |---|---|---|---|
@@ -676,14 +680,10 @@ a blockwise solve:
 | case1354pegase | 4062 × 2707 | Takahashi | every diagnostic available; criticality from `diag(Omega)` (no size budget) |
 | case13659pegase | 40977 × 27317 | Takahashi | criticality from `diag(Omega)`; K-matrix report skipped above 20000 rows |
 
-Three bounds:
+Two bounds:
 
 * the per-row criticality tests (`criticality_method = rank`) are skipped
-  with a warning above an m·n budget of 300000, the dark-state SVD behind
-  `unobservable_state_columns` above 2000 states or measurements;
-* the dense `pinv` diagnostics path stops at 2000 states; above it the
-  diagonal comes from the Takahashi path or, when that refuses, from a
-  blockwise sparse solve;
+  with a warning above an m·n budget of 300000;
 * the `state_estimation.report_residual_correlation` columns are skipped
   with a warning above 20000 measurement rows.
 
@@ -784,5 +784,5 @@ NASPI TR-006, *Phase Angle Calculations: Considerations and Use Cases*.
 * 7-bus tutorial: [advanced workshop tour](generated/workshop_tour_advanced.md), [state-estimation notebook](generated/workshop_state_estimation.md)
 * Bad-data localization, elimination, robust estimation, shunt estimation: the [SE diagnostics notebook](generated/workshop_se_diagnostics.md)
 * Tap estimation, current measurements, PMU phasors, topology advisory, islands, $J$ versus $J_{active}$: the [taps, phasors and topology notebook](generated/workshop_se_taps.md)
-* Scripts in `examples/state_estimation/`: `state_estimation_wls.jl`, `state_estimation_pmu_angles.jl`, `state_estimation_observability.jl`, `state_estimation_passive_bus_zib_comparison.jl`, `state_estimation_zero_injection_constraint.jl`, `h_matrix_observability_demo.jl`
+* Scripts in `examples/state_estimation/`: `state_estimation_wls.jl`, `state_estimation_pmu_angles.jl`, `state_estimation_observability.jl`, `state_estimation_observable_islands.jl`, `state_estimation_passive_bus_zib_comparison.jl`, `state_estimation_zero_injection_constraint.jl`, `h_matrix_observability_demo.jl`
 * A [Sparlectra Case Format](scf.md) case carries its own measurement set, see [Case files carry their own measurements](@ref se-case-file-measurements)

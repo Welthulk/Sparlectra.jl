@@ -36,6 +36,8 @@ declared controllers on every case. A fresh install can run every run kind on th
 downloading anything; new tests should use them instead of downloaded
 cases. `sp_case6tap` is the exception: written by hand, one measurement table
 without a bad-data variant, no start state, no fixture (see its section).
+`sp_case16_islands` ships its case file, the case configuration and one
+measurement table.
 
 ## sp_case5 (5 buses, the hand-checkable entry)
 
@@ -68,6 +70,20 @@ position -1, T3 position -3: `Kreuzau_110` 1.008 pu, `Lindenau_20`
 (seed 20261024) is taken from that settled state, so its tap steps differ
 from the steps in the case file and the tap estimation has work to do. No
 case configuration file.
+
+## sp_case16_islands (16 buses, attached networks and ties)
+
+Built by `tools/build_demo_cases.jl` (diagram
+`sp_case16_islands_single_line.svg`): the sp_case6tap network unchanged
+plus network B (`Haldorf_110`, `Weidach_110`, `Rotbuch_110`, `Rotbuch_20`,
+`Lerchau_20`, machine `Gen_Weidach` 30 MW) on the 110 kV tie
+`Ostheim_Haldorf` and network C (`Erlbach_20` with two radial feeders,
+loads only, 5.1 MW) on the 20 kV tie `Lindenau_Erlbach`. The measurement
+table (seed 20261116) lacks both flows of `Ostheim_Haldorf` and the P and Q
+injections at `Ostheim_110` and `Haldorf_110`: two observable islands, the
+tie unobservable. Zero injection stays on, both tie ends carry a load.
+Scenarios: `ties_out_three_islands` (both ties open, C without a source)
+and `tie_Ostheim_Haldorf_out`. No bad-data variant, no fixture.
 
 ## sp_case14 (14 buses, the regulated feeder)
 

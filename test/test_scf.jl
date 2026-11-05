@@ -1930,8 +1930,8 @@ mpc.branch = [
     se_path = joinpath(d, "se_state_de.csv")
     with_sparlectra_config(() -> writeSEStateCSV(se_net; file = se_path), cfg_obj_de)
     se_lines = readlines(se_path)
-    @test se_lines[1] == "# sparlectra-se-state v1"
-    @test se_lines[2] == "bus;vm_pu;va_deg;pinj_MW;qinj_MVar"
+    @test se_lines[1] == "# sparlectra-se-state v2"
+    @test se_lines[2] == "bus;vm_pu;va_deg;pinj_MW;qinj_MVar;estimated;observable_island"
     @test occursin(',', split(se_lines[3], ';')[2])
     se_back = Sparlectra.importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
     readSEStateCSV!(se_back; file = se_path)

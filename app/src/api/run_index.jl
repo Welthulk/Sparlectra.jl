@@ -83,7 +83,7 @@ function _powerflow_run_index_solver(result::SparlectraApiResult)::String
   mode = String(get(result.metadata, "run_mode", ""))
   mode == "se" && return "wls"
   mode == "short_circuit" && return "iec60909"
-  mode == "import_analysis" && return ""
+  mode in ("import_analysis", "se_placement") && return ""
   # plain power flow, an SE-started power flow and every contingency case
   # do run the rectangular Newton-Raphson
   return "rectangular"

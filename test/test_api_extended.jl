@@ -1525,8 +1525,9 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
       # an abort that arrives inside the state estimation service leaves it
       # as PowerFlowAborted (the job then writes "aborted"), not as a failed
       # run: the token is set when the service enters importing_case, the
-      # next abort point is in the observability check, whose catch turned
-      # the abort into invalid_measurements before
+      # next abort point is in the observability check (its own phase since
+      # 1.1.0, so it is the last phase announced), whose catch turned the
+      # abort into invalid_measurements before
       se_data = joinpath(dirname(@__DIR__), "data", "scf")
       se_token = Threads.Atomic{Bool}(false)
       se_phases = String[]
@@ -1545,7 +1546,7 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
         end
       end)
       @test se_outcome isa Sparlectra.PowerFlowAborted
-      @test last(se_phases) == "importing_case"
+      @test se_phases[(end - 1):end] == ["importing_case", "observability_check"]
 
       solver_checks = Ref(0)
       solver_profile = Dict{Symbol,Any}(:cancellation_check => () -> begin

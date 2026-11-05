@@ -33,7 +33,7 @@
 # carry the source token zero_injection and keep their sigma; rows with
 # origin :pseudo or :pseudo_restore carry the token pseudo, so the import
 # reads them back as :pseudo (the table has no token for :pseudo_restore or
-# :derived). Units are
+# :derived); rows with origin :last_value carry the token last_value. Units are
 # unchanged otherwise: P and Q in MW and MVAr, I in A, angles in degrees.
 # `source` is the source cell of every row (`converted;v1` for the
 # converter, the SE run artifact names where its rows came from).
@@ -75,6 +75,7 @@ function _measurement_table_from_measurements(net::Net, ms::AbstractVector, inde
     zi = m.zero_injection
     row_source = zi ? string(source, ";zero_injection") : String(source)
     m.origin in (:pseudo, :pseudo_restore) && (row_source = string(row_source, ";pseudo"))
+    m.origin === :last_value && (row_source = string(row_source, ";last_value"))
     kind = ""
     key = ""
     typ = ""

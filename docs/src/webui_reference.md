@@ -626,6 +626,9 @@ set the section says so and points to the generator. The run still
 refuses a set bound to another case. A case file with its own
 measurements offers those first; otherwise `<case>.measurements.csv` is
 preselected (cases with a bound set are starred).
+**Timestamp** appears for a measurement table with more than one timestamp
+and picks the set the run estimates (default the first), see
+[Use in the SE service](@ref se_table_service).
 
 Every generation and every "add noise" writes a new time-stamped file
 (`<case>.measurements.<yyyymmdd-HHMMSS>.csv`, `<case>.noisy.<stamp>.csv`)
@@ -675,9 +678,28 @@ see [Zero injections and coupler balances](@ref se_zero_injection). The
 form warns when `k_suppress < k_eliminate`, because suppressed rows then
 rarely reach the elimination.
 
+**On gaps** (`state_estimation.observability.on_unobservable`, default
+`abort`): under `abort` a not-observable set stops the run, and the section
+**Observability** shows a red light, the observable islands, the
+unobservable branches and three buttons, **Estimate observable islands one
+by one**, **Estimate with scheduled substitute values** (both repeat the
+run) and **Suggest measurement places**. An estimate per island or with
+restored rows is yellow. Files `se_observable_islands.csv`,
+`se_unobservable_branches.csv`, `se_restored_rows.csv`; see
+[When the set is not observable](@ref se_observability_gaps). The
+placement page (`/stateestimation/placement`) takes kind and target and
+runs on the case, set and settings of the run; its result lists the steps
+with the deficits before and after (`se_placement.csv`).
+Long tables on the result page (observable islands, unobservable branches,
+restored rows, buses, placement steps, tap estimates, topology findings)
+show the first 20 rows; a slider shows more without a reload. At most 500
+rows are on the page, all rows are in the CSV file linked above the table.
+
 Artifacts (`measurements.csv`, `measurements_verdict.csv`,
 `se_diagnostics.md`, `se_view.md`, `se_state.csv`, `shunt_estimates.csv`,
-`se_tap_estimates.csv`, `se_deltas.csv`, `se_link_flows.csv`, and under
+`se_tap_estimates.csv`, `se_deltas.csv`, `se_link_flows.csv`,
+`se_topology.csv` with the findings of the topology pre-check when there
+are any, and under
 `zero_injection = constraint` `se_zero_injection_multipliers.csv`) land in
 the run history with kind `se`. `measurements.csv` is the estimated set as a measurement table and
 can be picked as the measurement set of a new run; the verdict per row

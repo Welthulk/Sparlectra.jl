@@ -706,7 +706,7 @@ function run_webui_state_estimation_tests()
       @test get(wmeta, "se_observability_quality", nothing) in ("good", "critical")
       @test (get(wmeta, "se_weak_basis_before_estimation", nothing), get(wmeta, "se_weak_basis", nothing)) == ("not_determined", "estimated_state")
       @test get(wmeta, "se_result_usable", nothing) == false && get(wmeta, "se_result_unusable_reason", nothing) == "weakly_observable"
-      @test get(wmeta, "se_weak_directions", 0) > 0 && !isempty(get(wmeta, "se_weak_branches", Any[]))
+      @test get(wmeta, "se_weak_buses", 0) > 0 && !isempty(get(wmeta, "se_weak_branches", Any[]))
       @test occursin("result unusable: weakly observable at the estimated state", read(joinpath(root, rweak["run_id"], "run.log"), String))
       wd = readlines(joinpath(root, rweak["run_id"], "se_deltas.csv"))
       wdelim = occursin(';', wd[2]) ? ';' : ','
@@ -1258,6 +1258,176 @@ function run_webui_state_estimation_tests()
       # se_mode without a measurement file is rejected up front
       r6 = start_powerflow_run(Dict{String,Any}("casefile" => case_path, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root, "se_mode" => true))
       @test r6["status"] == "failed"
+    end)() end
+    @testset "observability gaps: three modes, repeat buttons and placement" begin (function ()
+      # The shipped sp_case14 with transformer Wehrden_110_20 (branch 17, the
+      # only branch at Wehrden_20) unmeasured: no flow on it and no P or Q
+      # injection at either end. By hand: no remaining row contains the
+      # angle of Wehrden_20, so it floats against the rest (P-theta deficit
+      # 1), and its U row fixes its magnitude (Q-V deficit 0). Two
+      # observable islands, 1.1 (13 buses with the slack Ostheim_110) and
+      # 1.2 (Wehrden_20 alone), branch 17 unobservable. Zero injection is off
+      # in the case configuration: Wehrden_110 is passive, and its balance
+      # would tie the flow of branch 17 to the measured flows at that bus
+      # (one island). The schedule has the load of Wehrden_20, so scheduled
+      # takes one P row (sigma 30 % of the value, at least 1 MW) and closes
+      # the gap.
+      scf_src = joinpath(dirname(@__DIR__), "data", "scf")
+      gcase = joinpath(cases, "sp_case14.scf.json")
+      cp(joinpath(scf_src, "sp_case14.scf.json"), gcase; force = true)
+      write(SparlectraApp.case_config_path(gcase), "config_version: 1\nscope: case\ncase: sp_case14.scf.json\nstate_estimation:\n  zero_injection: off\n")
+      gdrop(l) = occursin("Wehrden_110_20:", l) || any(q -> startswith(l, ",,,$(q),"), ("Wehrden_20,P", "Wehrden_20,Q", "Wehrden_110,P", "Wehrden_110,Q"))
+      glines = readlines(joinpath(scf_src, "sp_case14.measurements.csv"))
+      @test count(gdrop, glines) == 8
+      gset = "sp_case14.split.measurements.csv"
+      write(joinpath(cases, gset), join(filter(!gdrop, glines), "\n") * "\n")
+      # one run through the run route, as the browser posts it; returns the
+      # finished job
+      post_run(form) = begin
+        resp = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/run", form; output_root = root, runtime = rt)
+        @test resp.status == 303
+        rid = SparlectraApp._webui_urldecode(last(split(Dict(resp.headers)["Location"], "/powerflow/result/")))
+        wait(SparlectraApp._POWERFLOW_WEBUI_JOBS[rid]["task"])
+        SparlectraApp.get_webui_powerflow_job(rid)
+      end
+      result_page(rid) = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/result/$(rid)", Dict{String,String}(); output_root = root, runtime = rt).body)
+      # the POST body of a form on a page: its hidden inputs and the
+      # selected option of each select
+      unesc(s) = replace(String(s), "&quot;" => "\"", "&#39;" => "'", "&lt;" => "<", "&gt;" => ">", "&amp;" => "&")
+      form_body(html) = begin
+        d = Dict{String,Any}(unesc(m[1]) => unesc(m[2]) for m in eachmatch(r"<input type=\"hidden\" name=\"([^\"]*)\" value=\"([^\"]*)\">", html))
+        for m in eachmatch(r"<select name=\"([^\"]*)\">(.*?)</select>"s, html)
+          sel = match(r"<option value=\"([^\"]*)\"[^>]* selected>", m[2])
+          d[m[1]] = sel === nothing ? match(r"<option value=\"([^\"]*)\"", m[2])[1] : sel[1]
+        end
+        d
+      end
+      gap_forms(page) = [form_body(m.match) for m in eachmatch(r"<form method=\"post\" action=\"/powerflow/run\" class=\"se-gap-action\".*?</form>"s, page)]
+      oplog() = read(rt.operation_log, String)
+
+      # the run form posts the choice as the configuration override
+      @test SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => gcase, "se_mode" => "true", "se_on_unobservable" => "scheduled"))["config_overrides"]["state_estimation.observability.on_unobservable"] == "scheduled"
+
+      # abort: the run stops, names the islands and the branch, writes both
+      # files; the failed job keeps the service metadata for the page
+      ja = post_run(Dict{String,Any}("se_mode" => "true", "casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "measurement_file" => gset, "se_on_unobservable" => "abort"))
+      @test ja["status"] == "failed"
+      ma = ja["metadata"]
+      @test (ma["se_on_unobservable"], ma["se_observable_islands"], ma["se_rank_deficit"], ma["se_angle_rank_deficit"], ma["se_magnitude_rank_deficit"], ma["se_unobservable_branches"], ma["se_restored_rows"]) == ("abort", 2, 1, 1, 0, 1, 0)
+      @test occursin("Wehrden_110_20", ja["message"])
+      oa = joinpath(root, ja["run_id"])
+      ia = run_csv(joinpath(oa, "se_observable_islands.csv"))
+      @test ia.header == ["bus", "name", "network_island", "observable_island", "estimated", "relative_angle"]
+      @test [r[4] for r in ia.rows] == [fill("1.1", 13); "1.2"] && all(r -> r[5] == "false", ia.rows)
+      @test run_csv(joinpath(oa, "se_unobservable_branches.csv")).rows == [["17", "Wehrden_110_20", "Wehrden_110", "Wehrden_20", "between_observable_islands"]]
+      loga = read(joinpath(oa, "run.log"), String)
+      @test occursin("observability: not_observable, rank deficit 1 (angles 1, magnitudes 0), 2 observable island(s) (13 buses, 1 single-bus island), 1 unobservable branch: Wehrden_110_20", loga)
+      pagea = result_page(ja["run_id"])
+      @test occursin("id=\"se-observability\"", pagea)
+      fa = gap_forms(pagea)
+      @test [f["se_on_unobservable"] for f in fa] == ["observable_islands", "scheduled"]
+      @test all(f -> f["se_mode"] == "true" && f["casefile"] == "sp_case14.scf.json" && f["measurement_file"] == gset, fa)
+      @test occursin("action=\"/stateestimation/placement\"", pagea)
+
+      # observable_islands: the first button, posted as the page carries it
+      jo = post_run(fa[1])
+      @test jo["status"] == "success"
+      mo = jo["metadata"]
+      @test (mo["se_on_unobservable"], mo["se_observable_islands"], mo["se_observable_islands_estimated"], mo["se_unobservable_branches"], mo["se_buses_not_estimated"]) == ("observable_islands", 2, 2, 1, 0)
+      oo = joinpath(root, jo["run_id"])
+      io_ = run_csv(joinpath(oo, "se_observable_islands.csv"))
+      @test io_.rows[14] == ["14", "Wehrden_20", "1", "1.2", "true", "true"]
+      @test all(r -> r[6] == "false", io_.rows[1:13])
+      st = run_csv(joinpath(oo, "se_state.csv"))
+      @test st.rows[14][end] == "1.2" && all(r -> r[6] == "true", st.rows)
+      logo = read(joinpath(oo, "run.log"), String)
+      @test occursin("observable island 1.1: 13 buses, reference Ostheim_110", logo)
+      @test occursin("1 single-bus observable island(s), 1 estimated", logo)
+      @test occursin(r"se_observability.*observable_islands", oplog())
+      pageo = result_page(jo["run_id"])
+      @test occursin("se-relative-mark", pageo) && !occursin("se_start_run_id", pageo)
+
+      # scheduled: the second button; the P row of the schedule closes the
+      # gap, the estimate is one piece again
+      js = post_run(fa[2])
+      @test js["status"] == "success"
+      ms = js["metadata"]
+      @test (ms["se_on_unobservable"], ms["se_restored_rows"], ms["se_observable_islands"], ms["se_observable_islands_before_restore"]) == ("scheduled", 1, 0, 2)
+      os_ = joinpath(root, js["run_id"])
+      rr = run_csv(joinpath(os_, "se_restored_rows.csv"))
+      @test rr.header == ["id", "bus", "name", "quantity", "value", "sigma", "source"]
+      @test [only(rr.rows)[k] for k in (1, 2, 3, 4, 7)] == ["restore_Pinj_bus_14", "14", "Wehrden_20", "P", "schedule"]
+      @test rr.number(only(rr.rows)[6]) ≈ max(0.3 * abs(rr.number(only(rr.rows)[5])), 1.0)
+      vs = run_csv(joinpath(os_, "measurements_verdict.csv"))
+      @test vs.header[11] == "origin" && last(vs.rows)[4] == "restore_Pinj_bus_14" && last(vs.rows)[11] == "pseudo_restore"
+      @test !isfile(joinpath(os_, "se_observable_islands.csv"))
+      @test occursin("restore: P injection at Wehrden_20 from the schedule", read(joinpath(os_, "run.log"), String))
+      @test occursin(r"se_observability.*scheduled.*restored_rows.*1", oplog())
+
+      # placement: the page of the first run, its form posted as it is
+      ppage = String(SparlectraApp.route_sparlectra_webui("GET", "/stateestimation/placement?run_id=$(ja["run_id"])", Dict{String,String}(); output_root = root, runtime = rt).body)
+      pbody = form_body(match(r"<form method=\"post\" action=\"/powerflow/run\".*?</form>"s, ppage).match)
+      @test (pbody["se_placement_kind"], pbody["se_placement_target"], pbody["measurement_file"]) == ("injection", "observable", gset)
+      jp = post_run(pbody)
+      @test jp["status"] == "success"
+      mp = jp["metadata"]
+      @test (mp["run_mode"], mp["se_placement_kind"], mp["se_placement_reached"], length(mp["se_placement_steps"])) == ("se_placement", "injection", true, 1)
+      @test (mp["se_angle_rank_deficit"], mp["se_placement_angle_rank_deficit_after"]) == (1, 0)
+      op_ = joinpath(root, jp["run_id"])
+      @test length(run_csv(joinpath(op_, "se_placement.csv")).rows) == 1
+      @test occursin("step 1 (network island 1)", read(joinpath(op_, "run.log"), String))
+      @test occursin("step 1:", read(joinpath(op_, "performance.log"), String))
+      @test occursin("se_placement.csv", result_page(jp["run_id"]))
+
+      # long tables: a small one shows the count and no slider; a large one
+      # renders at most the cap, with the slider, the count and the CSV link
+      @test occursin("class=\"long-table-count\"", pagea) && !occursin("type=\"range\"", pagea)
+      cap = SparlectraApp._WEBUI_LONG_TABLE_MAX_ROWS
+      nbig = cap + 200
+      obig = mktempdir(root)
+      write(joinpath(obig, "se_unobservable_branches.csv"), "branch,name,from,to,reason\n" * join(("$(k),brX$(k),A$(k),B$(k),between_observable_islands\n" for k in 1:nbig), ""))
+      big = Dict{String,Any}("run_id" => basename(obig), "output_dir" => obig, "success" => false,
+        "metadata" => Dict{String,Any}("run_mode" => "se", "se_observability_quality" => "not_observable", "se_unobservable_branches" => nbig))
+      secbig = SparlectraApp._webui_se_observability_section(big)
+      @test count("<td><code>brX", secbig) == cap
+      @test occursin("<output class=\"long-table-shown\">$(cap)</output>", secbig) && occursin("class=\"long-table-total\">$(nbig)<", secbig)
+      @test occursin("type=\"range\" min=\"$(SparlectraApp._WEBUI_LONG_TABLE_VISIBLE_ROWS)\" max=\"$(cap)\"", secbig)
+      @test count("href=\"/powerflow/artifact/$(basename(obig))/se_unobservable_branches.csv\"", secbig) == 2   # bar and cap line
+      @test occursin("class=\"field-help long-table-cap\"", secbig) && !occursin("<tr hidden", secbig)
+
+      # a table with two timestamps: the run form shows the timestamp
+      # select (first one preselected), a set with one timestamp gets it
+      # hidden and disabled, so a browser does not post it. The form posted
+      # with the second timestamp estimates that set.
+      ts1, ts2 = "2026-01-01T12:00Z", "2026-01-01T12:15Z"
+      ghead = filter(l -> startswith(l, "#") || startswith(l, "timestamp,"), glines)
+      gdata = filter(l -> startswith(l, ","), glines)
+      tsset = "sp_case14.two.measurements.csv"
+      write(joinpath(cases, tsset), join(vcat(ghead, ts1 .* gdata, ts2 .* gdata[2:end]), "\n") * "\n")
+      se_page(set) = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow?casefile=sp_case14.scf.json&measurement_file=$(set)", Dict{String,String}(); output_root = root, runtime = rt).body)
+      run_form(page) = match(r"<form method=\"post\" action=\"/powerflow/run\" data-busy=\"Starting the state estimation…\">.*?</form>"s, page).match
+      ts_select(form) = match(r"<select name=\"se_timestamp\"([^>]*)>(.*?)</select>"s, form)
+      f2 = run_form(se_page(tsset))
+      sel2 = ts_select(f2)
+      @test sel2 !== nothing && !occursin("disabled", sel2[1])
+      @test [m[1] for m in eachmatch(r"<option value=\"([^\"]*)\"", sel2[2])] == [ts1, ts2]
+      @test occursin("<option value=\"$(ts1)\" selected>", sel2[2])
+      @test !occursin(r"<label id=\"se-timestamp-field\"[^>]* hidden", f2)
+      @test occursin("data-timestamps=\"$(ts1)|$(ts2)\"", f2)
+      f1 = run_form(se_page(gset))
+      sel1 = ts_select(f1)
+      @test sel1 !== nothing && occursin("disabled", sel1[1]) && isempty(strip(sel1[2]))
+      @test occursin(r"<label id=\"se-timestamp-field\"[^>]* hidden", f1)
+      body2 = form_body(f2)
+      @test body2["measurement_file"] == tsset
+      body2["se_timestamp"] = [m[1] for m in eachmatch(r"<option value=\"([^\"]*)\"", sel2[2])][2]
+      jt = post_run(body2)
+      @test jt["status"] == "success"
+      @test jt["metadata"]["se_measurement_timestamp"] == ts2
+      @test occursin("estimating set $(ts2): ", read(joinpath(root, jt["run_id"], "run.log"), String))
+      @test all(r -> r.timestamp == ts2, readMeasurementTable(joinpath(root, jt["run_id"], "measurements.csv")))
+      rm(joinpath(cases, tsset))
+      rm(SparlectraApp.case_config_path(gcase); force = true)
     end)() end
   end)() end
   return nothing

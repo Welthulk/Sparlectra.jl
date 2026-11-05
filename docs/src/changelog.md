@@ -1,17 +1,20 @@
 # Version 1.1.0 - 2026-11-04
 
-Observability: observable islands, weakly observable sets.
+Observability: observable islands, closing gaps, weak results.
 
-## Added
-- Observable islands per network island (`identify_observable_islands`), with the unobservable branches and the affected region.
-- Weakly observable class: a set whose branch flows or voltages would scatter beyond `state_estimation.observability.weak_flow_sigma_mw` (default 20 MW) is reported; the service marks such a result unusable.
-- Measurement origin (measured, pseudo, derived): elimination protection follows the origin, not the id.
+## Highlights
+
+- **Observable islands.** When the measurements do not cover the network, the check names the observable islands, the unobservable branches and the affected region instead of only refusing the run, on any network size. `state_estimation.observability.on_unobservable` (default `abort`) decides whether the run stops, estimates each island on its own reference, or first closes the gaps with zero injections and scheduled values. See [Observability](observability.md).
+- **Weakly observable results.** After every estimate the spread of the branch flows and voltages is checked. A result whose flows the measurements do not pin down is marked unusable instead of returned as valid (`state_estimation.observability.weak_flow_sigma_mw`, default 20 MW).
+- **Measurement placement.** `suggest_measurement_placement` proposes where a new injection, flow or PMU measurement closes a gap; the Web UI shows the proposal on its own page.
 
 ## Changed
-- Not observable is decided on the decoupled P-θ and Q-V models; angle and magnitude deficit are reported separately.
+
+- **Not observable is decided on the decoupled P-θ and Q-V models**, so the verdict no longer depends on a rank tolerance. Angle and magnitude deficits are reported separately.
 
 ## Fixed
-- dark states listed forward-difference noise; observability above 2000 states undercounted the deficit.
+
+- **Observability above 2000 states.** The verdict could call an unobservable set observable, and the list of unobservable states contained forward-difference noise.
 
 # Version 1.0.0 - 2026-10-25
 

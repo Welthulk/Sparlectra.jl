@@ -1239,6 +1239,116 @@ function run_measurement_table_tests()
     end)()
   end
 
+  @testset "measurement table: last valid value for a missing one" begin
+    (function ()
+      # state_estimation.last_value on sp_case14: three timestamps, a branch
+      # P missing at the second (filled from the first, 30 min) and at the
+      # third (75 min after the reading, over the 60 min limit: the gap
+      # stays), a U without a sigma cell invalid at the second, a branch P
+      # with only a pseudo row at the second (the last value comes before
+      # the schedule), a branch Q missing at the third only (filled from the
+      # second, 45 min). The readings of the first timestamp are shifted so
+      # a filled value shows where it came from.
+      net = load_fixture_net("sp_case14")
+      _, erg = runpf!(net, 40, 1e-10, 0)
+      @test erg == 0
+      index = nameMeasurementKeys(net)
+      base = generateMeasurementTableFromPF(net; noise = false)
+      t1, t2, t3 = "2026-01-01T12:00Z", "2026-01-01T12:30Z", "2026-01-01T13:15Z"
+      branch_p = findall(r -> r.type == "P" && !isempty(r.terminal_mrid), base)
+      ia, ip = branch_p[1], branch_p[2]
+      iu = findfirst(r -> r.type == "U", base)
+      ic = findlast(r -> r.type == "Q" && !isempty(r.terminal_mrid), base)
+      row(i, ts; kw...) = merge(base[i], (timestamp = ts, sigma = i == iu ? nothing : base[i].sigma), (; kw...))
+      # plus a zero-injection row at the node of the U row at the first
+      # timestamp only: a property of the bus, never the original of a last
+      # value (1.1.0 filled it at the second timestamp as a plain P row)
+      zi_row = merge(base[iu], (timestamp = t1, type = "P", value = 0.0, sigma = 0.001, source = "zero_injection"))
+      rows_t1 = vcat([row(i, t1; value = i in (ia, iu, ip) ? base[i].value + 0.5 : base[i].value) for i in eachindex(base)], [zi_row])
+      rows_t2 = vcat([row(i, t2; valid = i != iu) for i in eachindex(base) if !(i in (ia, ip))], [row(ip, t2; value = 99.0, source = "pseudo;ssh")])
+      rows_t3 = [row(i, t3) for i in eachindex(base) if !(i in (ia, ic))]
+      file = test_scratch_path(".table.csv")
+      writeMeasurementTable(file, vcat(rows_t1, rows_t2, rows_t3))
+      rows = readMeasurementTable(file)
+      on = Sparlectra.LastValueConfig(enabled = true)
+      imp = importMeasurementTable(rows, index; last_value = on)
+      s1, s2, s3 = imp.sets
+      line_t1(i) = only(r.line for r in rows if r.timestamp == t1 && _table_row_id(r) == _table_row_id(base[i]))
+      meas(set, i) = filter(m -> m.id == _table_row_id(base[i]), set.measurements)
+      # second timestamp: three values filled from the first, sigma tripled
+      @test s2.counts[:last_value] == 3
+      @test [(e.timestamp, e.filled, e.oldest) for e in imp.last_value] == [(t2, 3, t1), (t3, 1, t2)]
+      for i in (ia, ip)
+        m = only(meas(s2, i))
+        @test m.value == base[i].value + 0.5
+        @test m.sigma == 3.0 * base[i].sigma
+        @test m.origin === :last_value && m.active
+        @test s2.sources[m.id] == [line_t1(i)]
+      end
+      mu1 = only(meas(s1, iu))
+      mu2 = only(meas(s2, iu))
+      @test mu2.typ == Sparlectra.VmMeas && mu2.value == mu1.value && mu2.active
+      @test mu2.sigma ≈ 3.0 * mu1.sigma rtol = 1e-12
+      @test mu2.origin === :last_value && mu1.origin === :measured
+      @test count(m -> m.origin === :last_value, s2.measurements) == 3
+      zi_bus = index.nodes[base[iu].node_mrid]
+      @test any(m -> m.zero_injection && m.busIdx == zi_bus, s1.measurements)
+      @test !any(m -> m.typ == Sparlectra.PinjMeas && m.busIdx == zi_bus, s2.measurements)
+      # the rows a filled value takes the place of are counted: the invalid
+      # U and the pseudo P of the second timestamp
+      line_t2(i) = only(r.line for r in rows if r.timestamp == t2 && _table_row_id(r) == _table_row_id(base[i]))
+      @test s2.counts[:last_value_replaced] == 2
+      @test sort!([(p.line, p.problem) for p in s2.problems]) == sort!([(line_t2(iu), :last_value_replaced), (line_t2(ip), :last_value_replaced)])
+      # third timestamp: the first P is 75 min old, its gap stays; the Q
+      # comes from the second timestamp
+      @test isempty(meas(s3, ia))
+      mq = only(meas(s3, ic))
+      @test mq.origin === :last_value && mq.sigma == 3.0 * base[ic].sigma
+      @test s3.counts[:last_value] == 1
+      @test !haskey(s1.counts, :last_value)
+      @test occursin("oldest last value from $(t1)", measurementImportReport(imp))
+      # the filled rows carry the source, and a table written from them
+      # reads back to the same values with origin :last_value
+      @test all(r -> r.source == "last_value;$(t1)", imp.last_value[1].rows)
+      back_file = test_scratch_path(".table.csv")
+      writeMeasurementTable(back_file, imp.last_value[1].rows)
+      back = only(importMeasurementTable(readMeasurementTable(back_file), index).sets)
+      @test all(m -> m.origin === :last_value, back.measurements)
+      @test sort!([(m.id, m.value, m.sigma) for m in back.measurements]) == sort!([(m.id, m.value, m.sigma) for m in s2.measurements if m.origin === :last_value])
+      # off (the default): every set is the set of its timestamp alone, bit
+      # for bit, and a single timestamp gets nothing with the switch on
+      off = importMeasurementTable(rows, index)
+      setkey(s) = (s.timestamp, s.measurements, s.sources, s.counts, s.problems, s.sigma_origin)
+      for (k, ts) in enumerate((t1, t2, t3))
+        alone = only(importMeasurementTable([r for r in rows if r.timestamp == ts], index).sets)
+        @test setkey(off.sets[k]) == setkey(alone)
+      end
+      @test isempty(off.last_value) && isempty(off.last_value_note)
+      single = [r for r in rows if r.timestamp == t2]
+      @test setkey(only(importMeasurementTable(single, index; last_value = on).sets)) == setkey(off.sets[2])
+      # a set without a timestamp: nothing is filled, one warning
+      untimed = [r.timestamp == t2 ? MeasurementRow(r.line, "", r.measurement_mrid, r.terminal_mrid, r.node_mrid, r.type, r.value, r.sigma, r.source, r.valid, r.problem, r.detail, r.value_text, r.sigma_text) : r for r in rows if r.timestamp != t3]
+      skipped = @test_logs (:warn, r"last values not filled: set \(no timestamp\)") importMeasurementTable(untimed, index; last_value = on)
+      @test isempty(skipped.last_value) && occursin("no timestamp that reads as a time", skipped.last_value_note)
+      @test setkey.(skipped.sets) == setkey.(importMeasurementTable(untimed, index).sets)
+      # no protection: a gross reading at the first timestamp, filled at
+      # the second with three times its sigma, is eliminated as bad data
+      ig = branch_p[3]
+      gross = vcat([row(i, t1; value = i == ig ? base[i].value + 60.0 * base[i].sigma : base[i].value) for i in eachindex(base)],
+                   [row(i, t2) for i in eachindex(base) if i != ig])
+      gross_file = test_scratch_path(".table.csv")
+      writeMeasurementTable(gross_file, gross)
+      gs = importMeasurementTable(readMeasurementTable(gross_file), index; last_value = on).sets[2]
+      @test only(meas(gs, ig)).origin === :last_value
+      work = deepcopy(net)
+      applyMeasurementSet!(work, gs)
+      d = with_state_estimation_config(update_net = false, max_eliminations = 3) do
+        runse_diagnostics(work, Measurement[m for m in work.measurements])
+      end
+      @test [e.id for e in d.eliminations] == [_table_row_id(base[ig])]
+    end)()
+  end
+
   @testset "measurement table: SE service switch" begin
     (function ()
       mktempdir() do d
@@ -1277,6 +1387,9 @@ function run_measurement_table_tests()
         @test occursin("999.0 kV is configured in `state_estimation.sigma_by_voltage_level`, but no bus of this case has that nominal voltage", on_log)
         @test occursin(string(sg_levels[1], " kV: "), on_log)
         @test occursin("## Measurement sigma by voltage level", read(joinpath(d, "on", "se_diagnostics.md"), String))
+        # no finding of the topology pre-check, no se_topology.csv
+        @test isempty(d_on["metadata"]["se_topology_findings"])
+        @test !isfile(joinpath(d, "on", "se_topology.csv"))
         # state_estimation.zero_injection on (the default): the passive buses
         # without an injection row get ZI pairs, counted in the report, the
         # log and the metadata, and written to the run's measurements.csv
@@ -1340,6 +1453,106 @@ function run_measurement_table_tests()
         @test r2["status"] == "succeeded"
         @test r2["metadata"]["se_measurement_rows"] == 863
         @test !haskey(r2["metadata"], "se_duplicate_rows")
+        # The same run with the voltage and balance thresholds of the
+        # topology pre-check at 0.01 sigma turns the noise of the set into
+        # findings: one row per finding in se_topology.csv, linked above the
+        # table of the result page.
+        # state_estimation.last_value on: run.log names per timestamp the
+        # values filled and the oldest timestamp used (a U row of the second
+        # set left out, 60 min after the first: at the limit, filled); a row
+        # of the estimated set marked last_value keeps its source in
+        # measurements.csv and its origin in measurements_verdict.csv
+        t2 = first(r.timestamp for r in rows if r.timestamp != t1)
+        u_rows = [r for r in rows if r.timestamp == t1 && r.type == "U" && r.valid && r.problem === :none]
+        tagged, dropped = u_rows[1], u_rows[2]
+        @test any(r -> r.timestamp == t2 && r.node_mrid == dropped.node_mrid && r.type == "U" && r.valid, rows)
+        lv_rows = [r === tagged ? MeasurementRow(r.line, r.timestamp, r.measurement_mrid, r.terminal_mrid, r.node_mrid, r.type, r.value, r.sigma, "last_value;2026-01-01T11:00Z", true, :none, "", r.value_text, r.sigma_text) : r
+                   for r in rows if !(r.timestamp == t2 && r.node_mrid == dropped.node_mrid && r.type == "U")]
+        lv_table = joinpath(d, "last_value.table.csv")
+        writeMeasurementTable(lv_table, lv_rows)
+        cfg_lv = joinpath(d, "table_lv.yaml")
+        write(cfg_lv, "config_version: 1\nstate_estimation:\n  measurement_table: true\n  topology_voltage_k: 0.01\n  topology_kcl_k: 0.01\n  last_value:\n    enabled: true\n")
+        lv_imp = importMeasurementTable(readMeasurementTable(lv_table), index; last_value = Sparlectra.LastValueConfig(enabled = true))
+        @test length(lv_imp.last_value) == 1 && lv_imp.last_value[1].filled >= 1
+        lv = SparlectraApp.to_dict(redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg_lv, joinpath(d, "lv"), "table_lv", lv_table)
+        end)
+        @test lv["status"] == "succeeded"
+        @test occursin("measurements: last values at $(t2): $(lv_imp.last_value[1].filled) value(s) filled, oldest from $(t1)", read(joinpath(d, "lv", "run.log"), String))
+        lv_art = readMeasurementTable(joinpath(d, "lv", "measurements.csv"))
+        tagged_art = only(r for r in lv_art if startswith(r.source, "last_value;2026-01-01T11:00Z"))
+        lv_verdict = run_csv(joinpath(d, "lv", "measurements_verdict.csv"))
+        vrow = only(row for row in lv_verdict.rows if row[1] == string(tagged_art.line))
+        @test vrow[findfirst(==("origin"), lv_verdict.header)] == "last_value"
+        # the second timestamp (se_timestamp), with the U row of `dropped`
+        # missing there: with last_value on the U of t1 stands in (row of
+        # measurements.csv at t2, source last_value;t1, origin last_value in
+        # the verdict); with it off the U stays a gap. The run names the
+        # set in run.log and the metadata, the default run takes the first
+        # set, and naming the first set gives the same J bit for bit.
+        is_dropped(r) = r.node_mrid == dropped.node_mrid && r.type == "U"
+        on_t1 = SparlectraApp.to_dict(redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg, joinpath(d, "on_t1"), "table_on_t1", _SMALLGRID_TABLE; timestamp = t1)
+        end)
+        @test on_t1["metadata"]["se_objective"] === d_on["metadata"]["se_objective"]
+        @test on_t1["metadata"]["se_measurement_timestamp"] == d_on["metadata"]["se_measurement_timestamp"] == t1
+        lv2 = SparlectraApp.to_dict(redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg_lv, joinpath(d, "lv2"), "table_lv2", lv_table; timestamp = t2)
+        end)
+        @test lv2["status"] == "succeeded"
+        @test lv2["metadata"]["se_measurement_timestamp"] == t2
+        lv2_log = read(joinpath(d, "lv2", "run.log"), String)
+        @test occursin("estimating set $(t2): ", lv2_log)
+        @test occursin("note: the other sets of the table are not estimated in this run: $(t1)", lv2_log)
+        lv2_art = readMeasurementTable(joinpath(d, "lv2", "measurements.csv"))
+        @test all(r -> r.timestamp == t2, lv2_art)
+        filled_u = only(r for r in lv2_art if is_dropped(r))
+        @test filled_u.source == "last_value;$(t1)" && filled_u.value == dropped.value
+        lv2_verdict = run_csv(joinpath(d, "lv2", "measurements_verdict.csv"))
+        @test only(row for row in lv2_verdict.rows if row[1] == string(filled_u.line))[findfirst(==("origin"), lv2_verdict.header)] == "last_value"
+        gap2 = SparlectraApp.to_dict(redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg, joinpath(d, "gap2"), "table_gap2", lv_table; timestamp = t2)
+        end)
+        @test gap2["status"] == "succeeded"
+        @test !any(is_dropped, readMeasurementTable(joinpath(d, "gap2", "measurements.csv")))
+        @test !any(r -> startswith(r.source, "last_value;$(t1)"), readMeasurementTable(joinpath(d, "gap2", "measurements.csv")))
+        # a timestamp the table does not have is named with the ones it has
+        none = SparlectraApp.to_dict(redirect_stdout(devnull) do
+          SparlectraApp._run_state_estimation_service(_SMALLGRID_DIR, cfg, joinpath(d, "none"), "table_none", lv_table; timestamp = "2030-01-01T00:00Z")
+        end)
+        @test none["status"] == "failed" && occursin("no measurement set with timestamp 2030-01-01T00:00Z; the table has $(t1), $(t2)", none["message"])
+        topo = lv["metadata"]["se_topology_findings"]
+        @test !isempty(topo)
+        topo_csv = run_csv(joinpath(d, "lv", "se_topology.csv"))
+        @test topo_csv.header == ["stage", "kind", "severity", "location", "evidence"]
+        @test length(topo_csv.rows) == length(topo)
+        topo_page = SparlectraApp._webui_se_topology_section(Dict{String,Any}("run_id" => "table_lv", "output_dir" => joinpath(d, "lv"), "success" => true, "metadata" => lv["metadata"]))
+        @test occursin("/powerflow/artifact/table_lv/se_topology.csv", topo_page)
+        # A set without a timestamp behind a set with one (the shipped
+        # sp_case5 table, its rows once at 12:00Z and once without a
+        # timestamp). The request value "(no timestamp)" picks the second
+        # set, which 1.1.0 could not name; the default takes the first. The
+        # placement run records its set, so "another kind or target" on its
+        # result page repeats it on that set (1.1.0 recorded none).
+        scf = joinpath(dirname(@__DIR__), "data", "scf")
+        case5 = joinpath(scf, "sp_case5.scf.json")
+        lines5 = readlines(joinpath(scf, "sp_case5.measurements.csv"))
+        hdr = findfirst(l -> startswith(l, "timestamp,"), lines5)
+        data5 = filter(!isempty, lines5[(hdr+1):end])
+        two = joinpath(d, "sp_case5.two.measurements.csv")
+        write(two, join(vcat(lines5[1:hdr], ["2026-01-01T12:00Z" * l for l in data5], data5), "\n") * "\n")
+        se5(tag; kw...) = SparlectraApp.to_dict(_se_run_quiet(() -> redirect_stdout(() -> SparlectraApp._run_state_estimation_service(case5, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, tag), tag, two; kw...), devnull)))
+        first5 = se5("ts_first")
+        none5 = se5("ts_none"; timestamp = SparlectraApp.SE_NO_TIMESTAMP)
+        @test (first5["status"], first5["metadata"]["se_measurement_timestamp"]) == ("succeeded", "2026-01-01T12:00Z")
+        @test (none5["status"], none5["metadata"]["se_measurement_timestamp"]) == ("succeeded", "")
+        @test occursin("estimating set (no timestamp): ", read(joinpath(d, "ts_none", "run.log"), String))
+        @test ("se_timestamp" => SparlectraApp.SE_NO_TIMESTAMP) in SparlectraApp._webui_se_rerun_fields(none5)
+        for (tag, ts, want) in (("pl_first", "2026-01-01T12:00Z", "2026-01-01T12:00Z"), ("pl_none", SparlectraApp.SE_NO_TIMESTAMP, ""))
+          pl = SparlectraApp.to_dict(redirect_stdout(() -> SparlectraApp._run_se_placement_service(case5, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, tag), tag, two; kind = :injection, target = :observable, timestamp = ts), devnull))
+          @test (tag, pl["status"], pl["metadata"]["se_measurement_timestamp"]) == (tag, "succeeded", want)
+          @test (tag, ("se_timestamp" => ts) in SparlectraApp._webui_se_rerun_fields(pl)) == (tag, true)
+        end
       end
     end)()
   end

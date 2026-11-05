@@ -1,0 +1,228 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1360 1190" font-family="DejaVu Sans, Arial, sans-serif" font-size="13">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c0392b"/>
+    </marker>
+    <marker id="load" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#222"/>
+    </marker>
+    <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="8" stroke="#222" stroke-width="1.5"/>
+    </pattern>
+  </defs>
+  <rect x="0" y="0" width="1360" height="1190" fill="#ffffff"/>
+
+  <text x="680" y="32" text-anchor="middle" font-size="17" font-weight="bold">sp_case16_islands: sp_case6tap with two attached networks for island checks</text>
+
+  <!-- the sp_case6tap part, drawn as in sp_case6tap_single_line.svg -->
+  <!-- 220 kV -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="150" y1="170" x2="330" y2="170"/>
+    <line x1="570" y1="170" x2="750" y2="170"/>
+  </g>
+  <text x="140" y="175" text-anchor="end" font-weight="bold">Nordwerk_220</text>
+  <text x="760" y="175" font-weight="bold">Suedfeld_220</text>
+
+  <!-- grid / slack -->
+  <rect x="175" y="70" width="50" height="40" fill="url(#hatch)" stroke="#222" stroke-width="2"/>
+  <line x1="200" y1="110" x2="200" y2="170" stroke="#222" stroke-width="2"/>
+  <text x="235" y="88">Grid (slack)</text>
+  <text x="235" y="104">U = 1.02 pu</text>
+
+  <!-- generator -->
+  <circle cx="700" cy="85" r="22" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="700" y="91" text-anchor="middle" font-size="18">~</text>
+  <line x1="700" y1="107" x2="700" y2="170" stroke="#222" stroke-width="2"/>
+  <text x="668" y="80" text-anchor="end">G 80 MW, PV</text>
+  <text x="668" y="96" text-anchor="end">U = 1.02 pu, Q ±60 Mvar</text>
+
+  <!-- L1 -->
+  <polyline points="300,170 300,130 600,130 600,170" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="450" y="122" text-anchor="middle">L1  220 kV, 60 km</text>
+
+  <!-- T1 in-phase and quadrature regulator -->
+  <line x1="240" y1="170" x2="240" y2="204" stroke="#222" stroke-width="2"/>
+  <circle cx="240" cy="222" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="240" cy="252" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="240" y1="270" x2="240" y2="330" stroke="#222" stroke-width="2"/>
+  <line x1="214" y1="274" x2="266" y2="200" stroke="#c0392b" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="208" y="241" text-anchor="end" fill="#c0392b" font-weight="bold">U, φ</text>
+  <text x="272" y="214" font-weight="bold">T1 quadrature regulator 220/110 kV, 200 MVA</text>
+  <text x="272" y="231">ratio tap ±12 × 1.25 %  → U Kreuzau_110</text>
+  <text x="272" y="248">phase tap ±20 × 1.0°  → active power</text>
+  <text x="272" y="265">uk 12 %, two tap changers on one transformer</text>
+
+  <!-- T2 -->
+  <line x1="660" y1="170" x2="660" y2="204" stroke="#222" stroke-width="2"/>
+  <circle cx="660" cy="222" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="660" cy="252" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="660" y1="270" x2="660" y2="330" stroke="#222" stroke-width="2"/>
+  <text x="690" y="231" font-weight="bold">T2 220/110 kV, 200 MVA</text>
+  <text x="690" y="248">ratio tap ±12 × 1.25 %</text>
+  <text x="690" y="265">not controlled</text>
+
+  <!-- 110 kV -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="150" y1="330" x2="330" y2="330"/>
+    <line x1="570" y1="330" x2="750" y2="330"/>
+    <line x1="380" y1="500" x2="520" y2="500"/>
+  </g>
+  <text x="140" y="335" text-anchor="end" font-weight="bold">Kreuzau_110</text>
+  <text x="150" y="352" fill="#555">no load (passive)</text>
+  <text x="760" y="335" font-weight="bold">Ostheim_110</text>
+  <text x="370" y="505" text-anchor="end" font-weight="bold">Mittelbach_110</text>
+
+  <!-- L4 Kreuzau-Ostheim -->
+  <polyline points="310,330 310,380 590,380 590,330" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="450" y="372" text-anchor="middle">L4  110 kV, 40 km</text>
+  <!-- L2 Kreuzau-Mittelbach -->
+  <polyline points="280,330 280,440 420,440 420,500" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="350" y="432" text-anchor="middle">L2  25 km</text>
+  <!-- L3 Mittelbach-Ostheim -->
+  <polyline points="620,330 620,440 480,440 480,500" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="550" y="432" text-anchor="middle">L3  30 km</text>
+
+  <!-- load Ostheim -->
+  <line x1="720" y1="330" x2="720" y2="372" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="735" y="366">40 MW, 12 Mvar</text>
+  <text x="735" y="382" fill="#c0392b">P, Q not measured</text>
+
+  <!-- load Mittelbach -->
+  <line x1="395" y1="500" x2="395" y2="542" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="385" y="538" text-anchor="end">60 MW, 20 Mvar</text>
+
+  <!-- T3 in-phase regulator -->
+  <line x1="450" y1="500" x2="450" y2="522" stroke="#222" stroke-width="2"/>
+  <circle cx="450" cy="540" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="450" cy="570" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="450" y1="588" x2="450" y2="620" stroke="#222" stroke-width="2"/>
+  <line x1="424" y1="592" x2="476" y2="518" stroke="#c0392b" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="484" y="545" font-weight="bold">T3 in-phase regulator 110/20 kV, 40 MVA</text>
+  <text x="484" y="562">ratio tap ±12 × 1.25 %  → U Lindenau_20</text>
+  <text x="484" y="579">uk 10 %</text>
+
+  <!-- 20 kV -->
+  <line x1="380" y1="620" x2="520" y2="620" stroke="#222" stroke-width="5" stroke-linecap="square"/>
+  <text x="370" y="625" text-anchor="end" font-weight="bold">Lindenau_20</text>
+  <line x1="450" y1="620" x2="450" y2="662" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="465" y="658">25 MW, 8 Mvar</text>
+
+  <!-- network B: 110/20 kV with its own machine -->
+  <rect x="905" y="232" width="445" height="570" fill="none" stroke="#b0b8c0" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="917" y="252" font-weight="bold" fill="#555">Network B: 110/20 kV, own machine</text>
+
+  <!-- tie Ostheim_Haldorf with its breaker (filled: closed) -->
+  <polyline points="745,330 745,300 960,300" fill="none" stroke="#1f5fa8" stroke-width="2.5"/>
+  <rect x="868" y="293" width="14" height="14" fill="#1f5fa8" stroke="#1f5fa8" stroke-width="2"/>
+  <text x="875" y="272" text-anchor="middle" font-weight="bold" fill="#1f5fa8">Tie Ostheim_Haldorf</text>
+  <text x="875" y="288" text-anchor="middle" fill="#1f5fa8">110 kV, 20 km</text>
+  <text x="875" y="320" text-anchor="middle" fill="#c0392b">no flow measured</text>
+
+  <!-- 110 kV of B -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="960" y1="300" x2="1200" y2="300"/>
+    <line x1="940" y1="470" x2="1060" y2="470"/>
+    <line x1="1120" y1="470" x2="1240" y2="470"/>
+  </g>
+  <text x="1080" y="288" text-anchor="middle" font-weight="bold">Haldorf_110</text>
+  <text x="945" y="460" font-weight="bold">Weidach_110</text>
+  <text x="1250" y="475" font-weight="bold">Rotbuch_110</text>
+
+  <!-- load Haldorf -->
+  <line x1="1110" y1="300" x2="1110" y2="342" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="1110" y="360" text-anchor="middle">10 MW, 3 Mvar</text>
+  <text x="1110" y="376" text-anchor="middle" fill="#c0392b">P, Q not measured</text>
+
+  <!-- Haldorf_Weidach, Haldorf_Rotbuch, Weidach_Rotbuch -->
+  <line x1="1045" y1="300" x2="1045" y2="470" stroke="#222" stroke-width="2"/>
+  <text x="1051" y="420">15 km</text>
+  <line x1="1190" y1="300" x2="1190" y2="470" stroke="#222" stroke-width="2"/>
+  <text x="1196" y="420">22 km</text>
+  <polyline points="1020,470 1020,520 1140,520 1140,470" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="1080" y="538" text-anchor="middle">18 km</text>
+
+  <!-- machine Weidach -->
+  <line x1="970" y1="470" x2="970" y2="538" stroke="#222" stroke-width="2"/>
+  <circle cx="970" cy="560" r="22" fill="#fff" stroke="#222" stroke-width="2"/>
+  <text x="970" y="566" text-anchor="middle" font-size="18">~</text>
+  <text x="1000" y="566">G 30 MW, PV</text>
+  <text x="1000" y="582">U = 1.01 pu, Q ±15 Mvar</text>
+
+  <!-- transformer Rotbuch_110_20 -->
+  <line x1="1180" y1="470" x2="1180" y2="504" stroke="#222" stroke-width="2"/>
+  <circle cx="1180" cy="522" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <circle cx="1180" cy="552" r="18" fill="none" stroke="#222" stroke-width="2"/>
+  <line x1="1180" y1="570" x2="1180" y2="620" stroke="#222" stroke-width="2"/>
+  <text x="1206" y="531" font-weight="bold">Rotbuch_110_20</text>
+  <text x="1206" y="548">40 MVA, uk 10 %</text>
+  <text x="1206" y="565">no controller</text>
+
+  <!-- 20 kV of B -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="1120" y1="620" x2="1240" y2="620"/>
+    <line x1="1080" y1="740" x2="1200" y2="740"/>
+  </g>
+  <text x="1250" y="625" font-weight="bold">Rotbuch_20</text>
+  <text x="1070" y="745" text-anchor="end" font-weight="bold">Lerchau_20</text>
+  <line x1="1225" y1="620" x2="1225" y2="662" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="1236" y="658">12 MW, 4 Mvar</text>
+  <line x1="1140" y1="620" x2="1140" y2="740" stroke="#222" stroke-width="2"/>
+  <text x="1148" y="690">4 km</text>
+  <line x1="1185" y1="740" x2="1185" y2="782" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="1196" y="778">6 MW, 2 Mvar</text>
+
+  <!-- network C: 20 kV, loads only -->
+  <rect x="30" y="735" width="800" height="290" fill="none" stroke="#b0b8c0" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="42" y="755" font-weight="bold" fill="#555">Network C: 20 kV, loads only</text>
+
+  <!-- tie Lindenau_Erlbach with its breaker (filled: closed) -->
+  <line x1="400" y1="620" x2="400" y2="760" stroke="#1f5fa8" stroke-width="2.5"/>
+  <rect x="393" y="683" width="14" height="14" fill="#1f5fa8" stroke="#1f5fa8" stroke-width="2"/>
+  <text x="388" y="688" text-anchor="end" font-weight="bold" fill="#1f5fa8">Tie Lindenau_Erlbach</text>
+  <text x="388" y="704" text-anchor="end" fill="#1f5fa8">20 kV cable, 3 km</text>
+
+  <!-- 20 kV of C -->
+  <g stroke="#222" stroke-width="5" stroke-linecap="square">
+    <line x1="330" y1="760" x2="560" y2="760"/>
+    <line x1="150" y1="860" x2="290" y2="860"/>
+    <line x1="150" y1="960" x2="290" y2="960"/>
+    <line x1="560" y1="860" x2="700" y2="860"/>
+    <line x1="560" y1="960" x2="700" y2="960"/>
+  </g>
+  <text x="575" y="765" font-weight="bold">Erlbach_20</text>
+  <text x="140" y="865" text-anchor="end" font-weight="bold">Kranzbach_20</text>
+  <text x="140" y="965" text-anchor="end" font-weight="bold">Moosried_20</text>
+  <text x="710" y="865" font-weight="bold">Wiesbach_20</text>
+  <text x="710" y="965" font-weight="bold">Ulmenau_20</text>
+
+  <!-- feeders -->
+  <polyline points="350,760 350,800 220,800 220,860" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="285" y="792" text-anchor="middle">2.5 km</text>
+  <line x1="180" y1="860" x2="180" y2="960" stroke="#222" stroke-width="2"/>
+  <text x="188" y="915">2 km</text>
+  <polyline points="500,760 500,800 620,800 620,860" fill="none" stroke="#222" stroke-width="2"/>
+  <text x="560" y="792" text-anchor="middle">3 km</text>
+  <line x1="600" y1="860" x2="600" y2="960" stroke="#222" stroke-width="2"/>
+  <text x="608" y="915">2 km</text>
+
+  <!-- loads of C -->
+  <line x1="430" y1="760" x2="430" y2="802" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="430" y="822" text-anchor="middle">1.2 MW, 0.4 Mvar</text>
+  <line x1="270" y1="860" x2="270" y2="902" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="282" y="898">1.5 MW, 0.5 Mvar</text>
+  <line x1="270" y1="960" x2="270" y2="1002" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="282" y="998">0.8 MW, 0.3 Mvar</text>
+  <line x1="680" y1="860" x2="680" y2="902" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="692" y="898">1.0 MW, 0.3 Mvar</text>
+  <line x1="680" y1="960" x2="680" y2="1002" stroke="#222" stroke-width="2" marker-end="url(#load)"/>
+  <text x="692" y="998">0.6 MW, 0.2 Mvar</text>
+
+  <!-- notes -->
+  <rect x="30" y="1045" width="1300" height="130" fill="#f4f6f8" stroke="#b0b8c0"/>
+  <text x="44" y="1066"><tspan font-weight="bold">Base state:</tspan> both tie breakers closed (filled squares), one network island; the power flow converges.</text>
+  <text x="44" y="1085"><tspan font-weight="bold">Measurement gap:</tspan> no flows on Ostheim_Haldorf and no P and Q injections at Ostheim_110 and Haldorf_110: two observable islands</text>
+  <text x="44" y="1104">(network B and the rest), the tie unobservable. Zero injection stays on: both tie ends carry a load.</text>
+  <text x="44" y="1123"><tspan font-weight="bold">Scenarios:</tspan> ties_out_three_islands opens both ties (three network islands; C has no source), tie_Ostheim_Haldorf_out opens the tie to B</text>
+  <text x="44" y="1142">(B runs on its machine Gen_Weidach). The sp_case6tap part is unchanged: all steps at 0, its three controllers as in sp_case6tap.</text>
+  <text x="44" y="1161">Nominal voltages 220 / 110 / 20 kV, base 100 MVA, 50 Hz.</text>
+</svg>

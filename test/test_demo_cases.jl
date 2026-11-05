@@ -97,6 +97,71 @@ function run_demo_case_tests()
       @test row("T1_Nordwerk_Kreuzau PST").achieved_p_mw ≈ Sparlectra.get_branch_p_from_to_mw(net, "Nordwerk_220", "Kreuzau_110")
     end)() end
 
+    # sp_case16_islands, the island case (diagram
+    # data/scf/sp_case16_islands_single_line.svg): sp_case6tap plus network B
+    # (machine Gen_Weidach) on the tie Ostheim_Haldorf and network C (loads
+    # only) on the tie Lindenau_Erlbach. By hand: the table has every U row,
+    # every flow and injection except both flows of Ostheim_Haldorf and the
+    # P and Q injections at its two ends. No remaining row contains the
+    # angle difference over that tie, so B floats against the rest: two
+    # observable islands (11 and 5 buses), the tie unobservable, angle
+    # deficit 1; every magnitude has its U row, magnitude deficit 0.
+    @testset "sp_case16_islands observable islands and tie scenarios" begin (function ()
+      path = joinpath(_DEMO_CASE_DIR, "sp_case16_islands.scf.json")
+      table = joinpath(_DEMO_CASE_DIR, "sp_case16_islands.measurements.csv")
+      cfg = _DEMO_REF_CONFIG()
+      net = Sparlectra.import_case(path, cfg).net
+      @test (length(net.nodeVec), length(net.branchVec)) == (16, 18)
+      _, erg = runpf!(net; verbose = 0)
+      @test erg == 0
+      # the sp_case6tap part is that case unchanged: its buses and branches
+      # come first, with the per-unit values of the shipped sp_case6tap
+      six = Sparlectra.import_case(joinpath(_DEMO_CASE_DIR, "sp_case6tap.scf.json"), cfg).net
+      @test [n.comp.cName for n in net.nodeVec[1:6]] == [n.comp.cName for n in six.nodeVec]
+      @test [b.comp.cName for b in net.branchVec[1:7]] == [b.comp.cName for b in six.branchVec]
+      @test all(isapprox(getfield(a, f), getfield(b, f); atol = 1.0e-15) for (a, b) in zip(net.branchVec[1:7], six.branchVec) for f in (:r_pu, :x_pu, :b_pu, :g_pu, :ratio, :tap_min, :tap_max))
+      tie(n, name) = n.branchVec[findfirst(b -> b.comp.cName == name, n.branchVec)]
+      Sparlectra.with_sparlectra_config(cfg) do
+        # base state: one network island, two observable islands
+        readMeasurementTable!(net; file = table)
+        isl = identify_observable_islands(net)
+        @test length(isl.network_islands) == 1
+        @test isl.island_labels == ["1.1", "1.2"] && length.(isl.island_buses) == [11, 5]
+        @test isl.unobservable_branch_names == ["Ostheim_110 - Haldorf_110"]
+        @test (isl.rank_deficit, isl.angle_rank_deficit, isl.magnitude_rank_deficit) == (1, 1, 0)
+
+        icase = read_scf_json(path)
+        scen = Dict(s.name => s for s in Sparlectra.scf_case_scenarios(icase).scenarios)
+        index = Sparlectra.ScenarioIndex(icase)
+        # only the tie to B open: two network islands, B solved on its own
+        # machine; the set without the tie rows observes both, no deficit
+        one = Sparlectra.import_case(path, cfg).net
+        Sparlectra.apply!(one, scen["tie_Ostheim_Haldorf_out"].ops, index)
+        @test tie(one, "Ostheim_Haldorf").status == 0
+        _, erg1 = runpf!(one; verbose = 0)
+        @test erg1 == 0
+        readMeasurementTable!(one; file = table)
+        isl1 = identify_observable_islands(one)
+        @test [(r.measured, r.n_islands, r.rank_deficit) for r in isl1.network_islands] == [(true, 1, 0), (true, 1, 0)]
+        @test isempty(isl1.unobservable_branches)
+
+        # both ties open: three network islands. C has no source then; a
+        # dead network sends no readings and the open tie no flow, so the
+        # rows located in C and on its tie are taken out. The report names
+        # C as not measured, and C adds no deficit.
+        three = Sparlectra.import_case(path, cfg).net
+        Sparlectra.apply!(three, scen["ties_out_three_islands"].ops, index)
+        readMeasurementTable!(three; file = table)
+        tieC = findfirst(b -> b.comp.cName == "Lindenau_Erlbach", three.branchVec)
+        netC = Set(findall(n -> split(n.comp.cName, "_")[1] in ("Erlbach", "Kranzbach", "Moosried", "Wiesbach", "Ulmenau"), three.nodeVec))
+        filter!(m -> !((m.busIdx !== nothing && m.busIdx in netC) || (m.branchIdx !== nothing && (m.branchIdx == tieC || three.branchVec[m.branchIdx].fromBus in netC))), three.measurements)
+        isl3 = identify_observable_islands(three)
+        @test [(r.n_bus, r.measured, r.n_islands, r.rank_deficit) for r in isl3.network_islands] == [(6, true, 1, 0), (5, true, 1, 0), (5, false, 0, 0)]
+        @test isl3.unmeasured_network_islands == [3] && isl3.rank_deficit == 0
+        @test Set(b for b in eachindex(three.nodeVec) if isl3.network_island_of_bus[b] == 3) == netC
+      end
+    end)() end
+
     # the shipped cases load through the Web
     # UI. The chooser offers them without any cache copy, and the run path
     # stages a bundled case into the cache WITH its sidecars (the per-case

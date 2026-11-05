@@ -2191,6 +2191,9 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     # chain reference; all read as plain request keys like contingency_kind
     "se_mode" => _webui_parse_form_value(_webui_form_value(form, "se_mode", "false"), Bool, "se_mode"),
     "measurement_file" => strip(String(something(_webui_form_value(form, "measurement_file", ""), ""))),
+    # the set of a table with several timestamps; the select is posted only
+    # for such a table, without it the service takes the first set
+    "se_timestamp" => (v = strip(String(something(_webui_form_value(form, "se_timestamp", ""), ""))); isempty(v) ? nothing : v),
     "se_max_iter" => _webui_parse_form_value(_webui_form_value(form, "se_max_iter", "30"), Int, "se_max_iter"),
     "se_tol" => _webui_parse_form_value(_webui_form_value(form, "se_tol", "1e-8"), Float64, "se_tol"),
     "se_flatstart" => _webui_parse_form_value(_webui_form_value(form, "se_flatstart", "true"), Bool, "se_flatstart"),
@@ -2206,6 +2209,11 @@ function powerflow_webui_request(form::AbstractDict; default_output_root::Abstra
     "se_report_correlation" => _webui_parse_form_value(_webui_form_value(form, "se_report_correlation", "false"), Bool, "se_report_correlation"),
     "se_start_run_id" => (v = strip(String(something(_webui_form_value(form, "se_start_run_id", ""), ""))); isempty(v) ? nothing : v),
     "se_start_mode" => strip(String(something(_webui_form_value(form, "se_start_mode", "se_state"), "se_state"))),
+    # the measurement placement (placement page): an SE request with a
+    # kind (injection, flow, pmu) and a target (observable, no_critical);
+    # an empty kind is a state estimation. The service checks the values.
+    "se_placement_kind" => (v = strip(String(something(_webui_form_value(form, "se_placement_kind", ""), ""))); isempty(v) ? nothing : v),
+    "se_placement_target" => (v = strip(String(something(_webui_form_value(form, "se_placement_target", ""), ""))); isempty(v) ? nothing : v),
   )
 end
 
@@ -2545,6 +2553,35 @@ function _webui_measurement_table_counts(path::AbstractString)::Vector{Tuple{Str
     counts[t] = get(counts, t, 0) + 1
   end
   return sort!([(k, v) for (k, v) in counts]; by = first)
+end
+
+## The timestamps of a measurement table in the order of its sets (the order
+## importMeasurementTable gives them: first appearance, rejected rows left
+## out), cached by path, mtime and size: the SE section reads them for every
+## offered set on each page load. Empty for a file that is no table the
+## reader accepts (its ArgumentError); the run names the reason.
+const _WEBUI_TABLE_TIMESTAMP_CACHE = Dict{String,Tuple{Float64,Int,Vector{String}}}()
+const _WEBUI_TABLE_TIMESTAMP_CACHE_LOCK = ReentrantLock()
+
+function _webui_measurement_table_timestamps(path::AbstractString)::Vector{String}
+  p = String(path)
+  (isfile(p) && isMeasurementTable(p)) || return String[]
+  stamp, size = mtime(p), filesize(p)
+  hit = lock(() -> get(_WEBUI_TABLE_TIMESTAMP_CACHE, p, nothing), _WEBUI_TABLE_TIMESTAMP_CACHE_LOCK)
+  (hit !== nothing && hit[1] == stamp && hit[2] == size) && return hit[3]
+  rows = try
+    readMeasurementTable(p)
+  catch err
+    err isa ArgumentError || rethrow()
+    return String[]
+  end
+  out = String[]
+  for r in rows
+    r.problem in (:field_count, :bad_timestamp) && continue
+    r.timestamp in out || push!(out, r.timestamp)
+  end
+  lock(() -> (_WEBUI_TABLE_TIMESTAMP_CACHE[p] = (stamp, size, out)), _WEBUI_TABLE_TIMESTAMP_CACHE_LOCK)
+  return out
 end
 
 ## leading metadata comments of a measurement CSV (between the version line

@@ -62,6 +62,13 @@ const _WEBUI_OPERATION_LOG_PHASES = Set((
   "finalizing_aborted",
 ))
 
+## An SE request with a placement kind is the measurement placement (the
+## dispatch of `start_powerflow_run` reads the same key).
+function _webui_request_is_se_placement(request::AbstractDict)::Bool
+  v = _service_request_value(request, "se_placement_kind", nothing)
+  return v isa AbstractString && !isempty(strip(v))
+end
+
 ## What this job computes, for every message the user reads. The request
 ## flags are the same ones the service dispatches on.
 function _webui_run_kind_label(request::AbstractDict)::String
@@ -70,6 +77,7 @@ function _webui_run_kind_label(request::AbstractDict)::String
     v === true || (v isa AbstractString && lowercase(strip(v)) in ("true", "1", "yes", "on"))
   end
   _webui_request_is_qsts(request) && return "QSTS run"
+  (truthy("se_mode") && _webui_request_is_se_placement(request)) && return "Measurement placement"
   truthy("se_mode") && return "State estimation"
   truthy("contingency_mode") && return "N-1 contingency run"
   truthy("short_circuit_mode") && return "Short-circuit run"
@@ -89,6 +97,7 @@ function _webui_request_run_mode(request::AbstractDict)::Union{Nothing,String}
     v === true || (v isa AbstractString && lowercase(strip(v)) in ("true", "1", "yes", "on"))
   end
   _webui_request_is_qsts(request) && return "qsts"
+  (truthy("se_mode") && _webui_request_is_se_placement(request)) && return "se_placement"
   truthy("se_mode") && return "se"
   truthy("contingency_mode") && return "contingency"
   truthy("short_circuit_mode") && return "short_circuit"
@@ -285,7 +294,7 @@ function _webui_job_lifecycle_metadata(job::AbstractDict; run_status = get(job, 
   return meta
 end
 
-function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::String, message::String)
+function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::String, message::String; carry::Union{Nothing,AbstractDict} = nothing)
   output_dir = String(job["output_dir"])
   mkpath(output_dir)
   logfile = joinpath(output_dir, "run.log")
@@ -302,7 +311,11 @@ function _write_webui_job_marker!(job::AbstractDict, status::Symbol, reason::Str
     output_dir = output_dir,
     logfile = logfile,
     result_file = result_file,
-    metadata = _webui_job_lifecycle_metadata(job; run_status = String(status), final_outcome = reason),
+    # `carry`: service metadata kept under the lifecycle keys (the lifecycle
+    # keys win), see the failed-run branch of start_webui_powerflow_run
+    metadata = carry === nothing ? _webui_job_lifecycle_metadata(job; run_status = String(status), final_outcome = reason) :
+               merge(Dict{String,Any}(String(k) => v for (k, v) in carry), Dict{String,Any}("webui_request_settings" => get(job, "webui_request_settings", Dict{String,Any}())),
+                     _webui_job_lifecycle_metadata(job; run_status = String(status), final_outcome = reason)),
   )
   _write_api_result_file(result)
   _POWERFLOW_SERVICE_RUNS[result.run_id] = result
@@ -490,7 +503,13 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
           end
         end
         if !get(result, "success", false) && job["status"] != "not_converged"
-          _write_webui_job_marker!(job, :failed, string(get(result, "reason", "execution_error")), String(job["message"]))
+          # a failed state estimation keeps what its service found (the
+          # observable islands and deficits of a set that is not
+          # observable): the result page builds its Observability section
+          # and the repeat buttons from these keys
+          service_md = get(result, "metadata", nothing)
+          carry = (service_md isa AbstractDict && get(job, "run_mode", "") in ("se", "se_placement")) ? service_md : nothing
+          _write_webui_job_marker!(job, :failed, string(get(result, "reason", "execution_error")), String(job["message"]); carry = carry)
         end
         canonical_case = lowercase(splitext(String(something(job["casefile"], "")))[2]) == ".jl" && lowercase(splitext(String(something(job["resolved_casefile"], "")))[2]) == ".m"
         failure_metadata = get(result, "metadata", Dict{String,Any}())
@@ -509,7 +528,19 @@ function start_webui_powerflow_run(request::AbstractDict; case_directory::Union{
         # estimation that is weakly observable at its estimate) gets its own
         # line next to the completion
         if get(failure_metadata, "se_result_usable", true) == false
-          event_callback("se_result_unusable"; run_id = job["run_id"], reason = get(failure_metadata, "se_result_unusable_reason", nothing), weak_directions = get(failure_metadata, "se_weak_directions", nothing), status = "unusable")
+          event_callback("se_result_unusable"; run_id = job["run_id"], reason = get(failure_metadata, "se_result_unusable_reason", nothing), weak_branches = length(get(failure_metadata, "se_weak_branches", Any[])), status = "unusable")
+        end
+        # one line per state estimation with an observability gap (a set
+        # that is not observable, or an estimate per observable island):
+        # the mode, the observable islands and, for scheduled, the restored
+        # rows; the details are in run.log
+        se_mode_md = get(failure_metadata, "se_on_unobservable", nothing)
+        se_islands_md = get(failure_metadata, "se_observable_islands", 0)
+        se_before_md = get(failure_metadata, "se_observable_islands_before_restore", 0)
+        se_gap_md = (se_islands_md isa Integer && se_islands_md > 0) || (se_before_md isa Integer && se_before_md > 0)
+        if se_mode_md isa AbstractString && se_gap_md
+          event_callback("se_observability"; run_id = job["run_id"], mode = se_mode_md, observable_islands = se_islands_md,
+                         restored_rows = se_mode_md == "scheduled" ? get(failure_metadata, "se_restored_rows", 0) : nothing, status = String(job["status"]))
         end
         if detailed_result_csv
           rescanned_artifacts = list_powerflow_artifacts(job["run_id"])

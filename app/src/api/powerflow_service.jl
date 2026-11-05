@@ -356,6 +356,19 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     case_is_scf || return _service_failure("invalid_request", "se_mode requires measurement_file (a Sparlectra Case Format case may carry its measurements instead).")
     measurement_file = ""
   end
+  # the set of a measurement table with several timestamps to estimate;
+  # empty or missing estimates the first set
+  se_timestamp = _service_request_value(request, "se_timestamp", nothing)
+  (se_timestamp === nothing || se_timestamp isa AbstractString) || return _service_failure("invalid_request", "se_timestamp must be a string.")
+  se_timestamp = (se_timestamp === nothing || isempty(strip(se_timestamp))) ? nothing : String(strip(se_timestamp))
+  (se_timestamp !== nothing && !se_mode) && return _service_failure("invalid_request", "se_timestamp requires se_mode.")
+  # the measurement placement (se_placement_kind, se_placement_target):
+  # strings, checked before a run directory exists
+  placement_kind = _service_request_value(request, "se_placement_kind", nothing)
+  (placement_kind === nothing || placement_kind isa AbstractString) || return _service_failure("invalid_request", "se_placement_kind must be a string.")
+  placement_target = _service_request_value(request, "se_placement_target", nothing)
+  (placement_target === nothing || placement_target isa AbstractString) || return _service_failure("invalid_request", "se_placement_target must be a string.")
+  placement_target = String(something(placement_target, "observable"))
   # SE-started chain (SE phase 5): a PF or N-1 run that starts from a
   # preceding SE run's se_state.csv; combinable with contingency_mode only
   se_start_run_id = _service_request_value(request, "se_start_run_id", nothing)
@@ -543,7 +556,12 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
       cached = joinpath(abspath(case_directory), mf)
       isfile(cached) && (mf = abspath(cached))
     end
+    # the measurement placement (Web UI placement page) is an SE request
+    # with a placement kind: the same case and set, no estimation
+    placement = placement_kind !== nothing && !isempty(strip(placement_kind))
     se_result = try
+      placement ? _run_se_placement_service(casefile, config_file, output_dir, run_id, mf; kind = Symbol(strip(placement_kind)), target = Symbol(strip(placement_target)),
+                                            config_overrides = config_overrides, case_format = _normalize_case_format(case_format), phase_callback = phase_callback, timestamp = se_timestamp) :
       _run_state_estimation_service(
         casefile,
         config_file,
@@ -575,6 +593,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
         # the status page reads the JOB phase: without this the page stayed
         # on preparing_configuration for the whole estimation
         phase_callback = phase_callback,
+        timestamp = se_timestamp,
       )
     catch err
       err isa PowerFlowAborted && rethrow()

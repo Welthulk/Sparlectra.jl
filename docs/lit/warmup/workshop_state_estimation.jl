@@ -110,7 +110,50 @@ function warmup()
     wflow = [1.0 -1.0]
     println(vec(round.(nullspace(wflow); digits = 4)))
     isapprox(1.0, 1.0; atol = 1e-9)
+    ## the gap chapter (Examples 13 to 16): a chain A-B-C whose bus C is
+    ## cut off, its observable islands, the estimate per island and with a
+    ## scheduled value, a shifted schedule and the placement of each kind
+    wg = Net(name = "warmup_gap", baseMVA = 100.0)
+    addBus!(net = wg, busName = "A", vn_kV = 110.0, vm_pu = 1.0, va_deg = 0.0)
+    addBus!(net = wg, busName = "B", vn_kV = 110.0)
+    addBus!(net = wg, busName = "C", vn_kV = 110.0)
+    addPIModelACLine!(net = wg, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = wg, fromBus = "B", toBus = "C", r_pu = 0.01, x_pu = 0.08, b_pu = 0.0, status = 1)
+    addProsumer!(net = wg, busName = "A", type = "EXTERNALNETWORKINJECTION", referencePri = "A", vm_pu = 1.0, va_deg = 0.0)
+    addProsumer!(net = wg, busName = "B", type = "LOAD", p = 10.0, q = 3.0)
+    addProsumer!(net = wg, busName = "C", type = "LOAD", p = 5.0, q = 1.0)
+    runpf!(wg, 40, 1e-10, 0)
+    calcNetLosses!(wg)
+    addPflowMeasurement!(wg; fromBus = "A", toBus = "B", value = get_branch_p_from_to_mw(wg, "A", "B"), sigma = 0.8, direction = :from)
+    addQflowMeasurement!(wg; fromBus = "A", toBus = "B", value = get_branch_q_from_to_mvar(wg, "A", "B"), sigma = 0.8, direction = :from)
+    addVmMeasurement!(wg; busName = "A", value = 1.0, sigma = 0.002)
+    wm = Measurement[deepcopy(m) for m in wg.measurements]
+    Base.CoreLogging.with_logger(Base.CoreLogging.NullLogger()) do
+      with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+        wi = identify_observable_islands(wg)
+        print_observable_islands(wi)
+        println(wi.n_islands, wi.island_labels, wi.unobservable_branch_names, wi.rank_deficit)
+        for kind in (:injection, :flow, :pmu)
+          wr = suggest_measurement_placement(wg, wm; kind = kind)
+          for st in wr.steps
+            println(st.quantity, st.location, st.angle_rank_deficit_after, st.magnitude_rank_deficit_after)
+          end
+          evaluate_global_observability(wg, vcat(wm, wr.rows))
+        end
+      end
+      addVmMeasurement!(wg; busName = "C", value = wg.nodeVec[3]._vm_pu, sigma = 0.002)
+      for mode in (:observable_islands, :scheduled)
+        wc = deepcopy(wg)
+        mode === :scheduled && updatePQ!(only(ps for ps in wc.prosumpsVec if getPosumerBusIndex(ps) == 3), 6.0, nothing)
+        wres = with_state_estimation_config(max_iter = 15, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true, observability = Sparlectra.ObservabilityConfig(on_unobservable = mode)) do
+          runse!(wc)
+        end
+        mode === :observable_islands && print_observable_islands(wres)
+        get_branch_p_from_to_mw(wc, "B", "C")
+        @printf("%s at %s, value %.1f MW, sigma %.1f MW, source %s\n", :P, "C", 1.0, 1.0, :schedule)
+      end
+    end
   end
-  @printf("warm-up time, all further paths (observability, manual and zero-injection rows, Jacobian, PMU): %.2f s\n", t_paths)
+  @printf("warm-up time, all further paths (observability, manual and zero-injection rows, Jacobian, PMU, observable islands, restoration, placement): %.2f s\n", t_paths)
   return nothing
 end

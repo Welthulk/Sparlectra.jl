@@ -96,11 +96,15 @@ Fields:
   value (a measurement table row whose `source` carries the token
   `pseudo`, for example a row of `generatePseudoMeasurementTable`),
   `:derived` a value computed from other measurements
-  (`deriveShuntPseudoMeasurements!`), `:pseudo_restore` reserved for the
-  substitute values of an observability restoration. Rows with `:derived` or
-  `:pseudo_restore` are protected from bad-data elimination like
-  zero-injection rows; `:pseudo` rows are not. A copy of a measurement
-  keeps its origin. Any other value is an error.
+  (`deriveShuntPseudoMeasurements!`), `:pseudo_restore` a replacement value
+  of [`restore_observability`](@ref), `:last_value` the last
+  valid value of a meter standing in for a missing one (a measurement table
+  row whose `source` carries the token `last_value`, see
+  `state_estimation.last_value`), `:range_check` the substitute of the
+  voltage range check for an out-of-range U row on an energized bus. Rows
+  with `:derived` or `:pseudo_restore` are protected from bad-data
+  elimination like zero-injection rows; the others are not. A copy of a
+  measurement keeps its origin. Any other value is an error.
 """
 struct Measurement
   typ::MeasurementType
@@ -126,26 +130,30 @@ function Measurement(; typ::MeasurementType, value::Real, sigma::Real, active::B
 end
 
 # the values of Measurement.origin
-const MEASUREMENT_ORIGINS = (:measured, :pseudo, :derived, :pseudo_restore)
+const MEASUREMENT_ORIGINS = (:measured, :pseudo, :derived, :pseudo_restore, :last_value, :range_check)
 
 # The origin of a row that sums several measurements (a LINKAGG cluster
 # aggregate, a group sum of a measurement table): the common origin when
 # all parts share one, otherwise :pseudo when any part is a substitute
 # value (the sum is no meter reading then, and the protection of a
 # :pseudo_restore part does not extend to the measured parts), else
-# :measured.
+# :last_value when any part is a last value (the sum is no reading of this
+# instant), else :measured.
 function _combined_measurement_origin(origins)::Symbol
   common = nothing
   mixed = false
   any_pseudo = false
+  any_last = false
   for o in origins
     common === nothing && (common = o)
     o === common || (mixed = true)
     o in (:pseudo, :pseudo_restore) && (any_pseudo = true)
+    o === :last_value && (any_last = true)
   end
   common === nothing && return :measured
   mixed || return common
-  return any_pseudo ? :pseudo : :measured
+  any_pseudo && return :pseudo
+  return any_last ? :last_value : :measured
 end
 
 @inline function _default_measurement_id(typ::MeasurementType; busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, linkIdx::Union{Nothing,Int} = nothing)
@@ -204,7 +212,7 @@ end
 
 Append a state-estimation measurement to `measurements` and return it.
 `origin` says where the value comes from (`:measured`, `:pseudo`,
-`:derived`, `:pseudo_restore`, see [`Measurement`](@ref)).
+`:derived`, `:pseudo_restore`, `:last_value`, see [`Measurement`](@ref)).
 """
 function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false, origin::Symbol = :measured)
   if !isnothing(linkIdx) && (typ != PflowMeas && typ != QflowMeas)

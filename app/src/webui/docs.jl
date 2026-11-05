@@ -53,6 +53,11 @@ const WEBUI_HELP_TOPICS = Dict(
   "webui.se_generator_tap_count" => (label = "Generator: tap deviation transformers", hint = "At most this many transformers get the tap deviation; the seed picks them among transformers the tap estimation can absorb. Unused when the deviation is 0.", doc = "state_estimation_measurements/#se-generator-tap-error"),
   "state_estimation.tap_estimation.impedance_correction" => (label = "Tap impedance per step", hint = "Tap tables and curves always follow the step. auto adds the analytic correction of typed models under tap_changer_model impedance_correction, off does not.", doc = "state_estimation_extensions/#se-tap-estimation"),
   "state_estimation.zero_injection_sigma_mva" => (label = "Zero-injection sigma", hint = "Sigma of one zero-injection row in MVA (MW, Mvar) when the rows are weighted (zero_injection on). Smaller binds the balance harder and worsens the conditioning.", doc = "state_estimation/#se_zero_injection"),
+  # observability gaps (1.1.0): both point to the section of
+  # observability.md that explains the three modes and the placement
+  "state_estimation.observability.on_unobservable" => (label = "On gaps", hint = "Set not observable: abort names the observable islands, observable_islands estimates them one by one, scheduled first adds scheduled values.", doc = "observability/#se_observability_gaps"),
+  "webui.se_timestamp" => (label = "Timestamp", hint = "Set of a table with several timestamps that the run estimates. The earlier timestamps are the history for the last valid value.", doc = "state_estimation_measurement_table/#se_table_service"),
+  "webui.se_placement" => (label = "Measurement placement", hint = "Suggests meter places step by step (injection, flow or PMU) until the set is observable or no row is critical. Places only, no readings.", doc = "observability/#se_observability_gaps"),
   "webui.se_tap_estimation" => (label = "Estimate transformer taps", hint = "On: each observable tap changer not excluded is estimated and fixed to a step. Off: each keeps its transferred step.", doc = "state_estimation/#se-tap-fallback"),
   "state_estimation.tap_estimation.fallback" => (label = "Tap fallback", hint = "Without convergence, or a worse fit than the transferred steps (worse_fit), a run without tap estimation is the result. Off: the first run is shown as it is.", doc = "state_estimation/#se-tap-fallback"),
   "state_estimation.tap_estimation.exclude" => (label = "Tap estimation per transformer", hint = "Unchecked transformers keep their transferred step (reason excluded). Machine transformers are unchecked by default; their step is calculated if Q is measured.", doc = "state_estimation/#se-tap-exclude"),
@@ -196,6 +201,7 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   # labels the case-export actions row, not a single input
   "scf_export" => "webui.scf_export",
   "measurement_file" => "webui.se_measurement_file",
+  "se_timestamp" => "webui.se_timestamp",
   "noise_seed" => "webui.se_noise_seed",
   "se_flatstart" => "state_estimation.flatstart",
   "se_rotate_behind_pst" => "state_estimation.start_mode.rotate_behind_pst",
@@ -223,6 +229,9 @@ const WEBUI_FORM_HELP_TOPICS = Dict(
   "se_generator_gross_count" => "webui.se_generator_gross_count",
   "se_generator_tap_count" => "webui.se_generator_tap_count",
   "se_tap_estimation" => "webui.se_tap_estimation",
+  "se_on_unobservable" => "state_estimation.observability.on_unobservable",
+  "se_placement_kind" => "webui.se_placement",
+  "se_placement_target" => "webui.se_placement",
   "se_tap_fallback" => "state_estimation.tap_estimation.fallback",
   "se_tap_impedance_correction" => "state_estimation.tap_estimation.impedance_correction",
   "se_zero_injection_sigma_mva" => "state_estimation.zero_injection_sigma_mva",

@@ -228,6 +228,11 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   # scope like the switch; rides in config_overrides like the other
   # config fields
   WebUIOptionSpec("state_estimation.zero_injection_sigma_mva", "se_zero_injection_sigma_mva", Float64, :number, ZERO_INJECTION_SIGMA, (), :expert, :case, true),
+  # what a run does with a set that is not observable (1.1.0): stop with
+  # the observable islands named (default), estimate them one by one, or
+  # close the gaps with scheduled values first; a config key, so it rides
+  # in config_overrides and the repeat buttons of the result page set it
+  WebUIOptionSpec("state_estimation.observability.on_unobservable", "se_on_unobservable", String, :select, "abort", ("abort", "observable_islands", "scheduled"), :expert, :case, true),
   # default ON: a noise-free set puts J near 0 instead of near dof, which
   # reads like a broken statistic (the low-band note explains it, but the
   # recommended demo profile is noisy)
