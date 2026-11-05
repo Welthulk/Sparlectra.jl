@@ -510,6 +510,27 @@ function _scf_feeder_for_bus(net::Net, busIdx::Int)
   return nothing
 end
 
+# The sym_gen row of a generator (PGM type 0, set points in W and var) and the
+# voltage_regulator row of its voltage control. One builder for the regular
+# generators and for the external network injections the strict export
+# demotes from source to generator.
+function _scf_sym_gen_row(ps::ProSumer, id, node)::Dict{String,Any}
+  p_w = (ps.pVal === nothing ? 0.0 : ps.pVal) * 1.0e6
+  q_var = (ps.qVal === nothing ? 0.0 : ps.qVal) * 1.0e6
+  return Dict{String,Any}("id" => id, "node" => node, "status" => 1, "type" => 0, "p_specified" => p_w, "q_specified" => q_var)
+end
+
+function _scf_regulator_row(ps::ProSumer, rid, regulated_id)::Dict{String,Any}
+  row = Dict{String,Any}("id" => rid, "regulated_object" => regulated_id, "status" => 1, "u_ref" => ps.vm_pu === nothing ? 1.0 : ps.vm_pu)
+  # An unlimited Q band is normal (a generator without Q limits, common in
+  # the pegase cases) and arrives as +-Inf. JSON cannot carry that, and the
+  # dataset says "no limit" by ABSENCE, which is exactly how the reader takes
+  # a missing key. Writing it would abort the export.
+  (ps.minQ === nothing || !isfinite(ps.minQ)) || (row["q_min"] = ps.minQ * 1.0e6)
+  (ps.maxQ === nothing || !isfinite(ps.maxQ)) || (row["q_max"] = ps.maxQ * 1.0e6)
+  return row
+end
+
 function _scf_appliances(net::Net, ids::ScfIdMap)
   sources = Vector{Any}()
   loads = Vector{Any}()
@@ -543,18 +564,9 @@ function _scf_appliances(net::Net, ids::ScfIdMap)
       end
       push!(sources, row)
     elseif isGenerator(ps)
-      push!(gens, Dict{String,Any}("id" => id, "node" => node, "status" => 1, "type" => 0, "p_specified" => p_w, "q_specified" => q_var))
+      push!(gens, _scf_sym_gen_row(ps, id, node))
       rid = get(ids.regulator, i, nothing)
-      if rid !== nothing
-        row = Dict{String,Any}("id" => rid, "regulated_object" => id, "status" => 1, "u_ref" => ps.vm_pu === nothing ? 1.0 : ps.vm_pu)
-        # An unlimited Q band is normal (a generator without Q limits, common
-        # in the pegase cases) and arrives as +-Inf. JSON cannot carry that,
-        # and the dataset says "no limit" by ABSENCE, which is exactly how the
-        # reader takes a missing key. Writing it would abort the export.
-        (ps.minQ === nothing || !isfinite(ps.minQ)) || (row["q_min"] = ps.minQ * 1.0e6)
-        (ps.maxQ === nothing || !isfinite(ps.maxQ)) || (row["q_max"] = ps.maxQ * 1.0e6)
-        push!(regs, row)
-      end
+      rid === nothing || push!(regs, _scf_regulator_row(ps, rid, id))
     else
       push!(loads, Dict{String,Any}("id" => id, "node" => node, "status" => 1, "type" => 0, "p_specified" => p_w, "q_specified" => q_var))
     end
@@ -1643,14 +1655,9 @@ function net_to_scf(
       if !isempty(demoted)
         for row in demoted
           ps = net.prosumpsVec[pos_of_id[Int(row["id"])]]
-          p_w = (ps.pVal === nothing ? 0.0 : ps.pVal) * 1.0e6
-          q_var = (ps.qVal === nothing ? 0.0 : ps.qVal) * 1.0e6
-          push!(gens_rows, Dict{String,Any}("id" => row["id"], "node" => row["node"], "status" => row["status"], "type" => 0, "p_specified" => p_w, "q_specified" => q_var))
+          push!(gens_rows, _scf_sym_gen_row(ps, row["id"], row["node"]))
           next_id[] += 1
-          reg = Dict{String,Any}("id" => next_id[], "regulated_object" => row["id"], "status" => 1, "u_ref" => row["u_ref"])
-          (ps.minQ === nothing || !isfinite(ps.minQ)) || (reg["q_min"] = ps.minQ * 1.0e6)
-          (ps.maxQ === nothing || !isfinite(ps.maxQ)) || (reg["q_max"] = ps.maxQ * 1.0e6)
-          push!(regs_rows, reg)
+          push!(regs_rows, _scf_regulator_row(ps, next_id[], row["id"]))
         end
         demoted_ids = Set(Int(r["id"]) for r in demoted)
         filter!(r -> !(Int(r["id"]) in demoted_ids), srcs)

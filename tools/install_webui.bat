@@ -42,8 +42,14 @@ if defined SPARLECTRA_INSTALL_DIR set "DIR=%SPARLECTRA_INSTALL_DIR%\"
 set "REPO=Welthulk/Sparlectra.jl"
 
 rem arguments; %%~dp0 is read above, before shift moves %%0
+rem Each value is kept in its own variable and only joined at the call,
+rem with delayed expansion, so a folder name with & or ^ is passed through
+rem as text instead of being parsed as a command separator or escape.
 set "WORKSHOPS="
-set "WS_ARGS="
+set "WS_NOSTART="
+set "WS_DIR="
+set "WS_REV="
+set "WS_PATH="
 set "WS_ONLY="
 :parse_args
 if "%~1"=="" goto args_done
@@ -60,7 +66,7 @@ shift
 goto parse_args
 :arg_no_start
 set "SPARLECTRA_START_WEBUI=0"
-set "WS_ARGS=%WS_ARGS% --no-start"
+set "WS_NOSTART=1"
 shift
 goto parse_args
 :arg_value
@@ -68,7 +74,9 @@ if "%~2"=="" (
   echo Option %~1 needs a value.
   exit /b 1
 )
-set "WS_ARGS=%WS_ARGS% %~1 "%~2""
+if /i "%~1"=="--dir" set "WS_DIR=%~2"
+if /i "%~1"=="--rev" set "WS_REV=%~2"
+if /i "%~1"=="--path" set "WS_PATH=%~2"
 set "WS_ONLY=1"
 shift
 shift
@@ -93,7 +101,7 @@ rem juliaup puts julia into %USERPROFILE%\.juliaup\bin - make it visible NOW.
 set "PATH=%USERPROFILE%\.juliaup\bin;%PATH%"
 where julia >nul 2>nul
 if errorlevel 1 (
-  echo Julia was installed but is not on PATH yet. Open a NEW terminal and run start_webui.bat.
+  echo Julia was installed but is not on PATH yet. Open a NEW terminal and run this installer again.
   pause
   exit /b 1
 )
@@ -119,18 +127,30 @@ set "WS_TMP="
 if exist "%WS_JL%" goto ws_run
 set "WS_TMP=%TEMP%\sparlectra_install_workshops.jl"
 set "WS_JL=%WS_TMP%"
-powershell -NoProfile -Command "Invoke-WebRequest 'https://raw.githubusercontent.com/%REPO%/main/tools/install_workshops.jl' -OutFile '%WS_JL%'"
-if not exist "%WS_JL%" (
-  echo Download of install_workshops.jl failed.
-  pause
-  exit /b 1
-)
+rem a copy left by a run stopped with Ctrl+C must not stand in for a failed
+rem download, so it goes first and the exit code of the download counts
+if exist "%WS_TMP%" del "%WS_TMP%" >nul 2>nul
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Invoke-WebRequest 'https://raw.githubusercontent.com/%REPO%/main/tools/install_workshops.jl' -OutFile '%WS_JL%' } catch { exit 1 }"
+if errorlevel 1 goto ws_download_failed
+if not exist "%WS_JL%" goto ws_download_failed
+goto ws_run
+:ws_download_failed
+echo Download of install_workshops.jl failed.
+if exist "%WS_TMP%" del "%WS_TMP%" >nul 2>nul
+pause
+exit /b 1
 :ws_run
-julia --startup-file=no "%WS_JL%" %WS_ARGS%
-set "WS_CODE=%errorlevel%"
-if defined WS_TMP del "%WS_TMP%" >nul 2>nul
-if not "%WS_CODE%"=="0" pause
-exit /b %WS_CODE%
+setlocal EnableDelayedExpansion
+set "WS_A="
+if defined WS_DIR set WS_A=!WS_A! --dir "!WS_DIR!"
+if defined WS_REV set WS_A=!WS_A! --rev "!WS_REV!"
+if defined WS_PATH set WS_A=!WS_A! --path "!WS_PATH!"
+if defined WS_NOSTART set WS_A=!WS_A! --no-start
+julia --startup-file=no "!WS_JL!" !WS_A!
+set "WS_CODE=!errorlevel!"
+if defined WS_TMP del "!WS_TMP!" >nul 2>nul
+if not "!WS_CODE!"=="0" pause
+exit /b !WS_CODE!
 
 :webui_mode
 

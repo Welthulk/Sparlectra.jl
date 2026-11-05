@@ -438,7 +438,7 @@ function suggest_measurement_placement(net::Net, measurements::Vector{Measuremen
     append!(unobsAfter, Int[toCallerBranch[j] for j in st.unobs])
     push!(perIsland, (network_island = k, n_steps = nSteps, angle_rank_deficit_before = first0.angle_d, magnitude_rank_deficit_before = first0.mag_d, angle_rank_deficit_after = st.angle_d, magnitude_rank_deficit_after = st.mag_d, reached = reachedK))
   end
-  isempty(perIsland) && error("suggest_measurement_placement: no active measurements (current magnitudes are excluded; the system must be observable without them)")
+  isempty(perIsland) && throw(SENoActiveMeasurementsError("suggest_measurement_placement: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
   reached = all(r -> r.reached, perIsland)
   reached && (stop = :reached)
   return (kind = kind, target = target, max_steps = Int(max_steps), reached = reached, stop_reason = stop, steps = steps, rows = rows, network_islands = perIsland,

@@ -23,10 +23,12 @@
 #            julia install_workshops.jl [--dir <folder>]
 #                  [--rev <branch> | --path <checkout>] [--no-start]
 
-using Pkg
+using Pkg, SHA, TOML, Dates
 
 const REPO_URL = "https://github.com/Welthulk/Sparlectra.jl"
-const KERNEL_NAME = "Sparlectra workshops"
+# what the installer last wrote into the folder (notebook name => SHA-256),
+# so a rerun can tell a notebook the user changed from an old copy
+const RECORD_FILE = ".sparlectra_workshops.toml"
 
 const USAGE = """
 usage: julia install_workshops.jl [options]
@@ -76,26 +78,92 @@ function with_kernel(text::String, spec::String, display::String)
   return replace(text, r"\"kernelspec\"\s*:\s*\{[^{}]*\}" => kernel)
 end
 
+# One kernel per workshop folder: the spec name carries the folder name and a
+# short hash of its full path, so a second --dir gets its own kernel instead
+# of redirecting the first folder's notebooks into the second environment.
+function kernel_names(dir::String)
+  h = bytes2hex(sha256(dir))[1:8]
+  base = replace(lowercase(basename(dir)), r"[^a-z0-9._-]" => "-")
+  isempty(base) && (base = "folder")
+  return (spec = "sparlectra-$(base)-$(h)", display = "Sparlectra workshops ($(basename(dir)) $(h))")
+end
+
+# Sparlectra is removed first when the folder already has it, so a second run
+# takes the source asked for now and, for the registered release, the newest
+# version. Project.toml and Manifest.toml are saved before and put back when
+# the removal or the new install fails, so a failed run leaves the folder as
+# it was instead of without Sparlectra.
+function install_sparlectra(o)
+  saved = Dict{String,String}()
+  for f in ("Project.toml", "Manifest.toml")
+    p = joinpath(o.dir, f)
+    isfile(p) && (saved[p] = read(p, String))
+  end
+  try
+    haskey(Pkg.project().dependencies, "Sparlectra") && Pkg.rm("Sparlectra")
+    if o.path !== nothing
+      println("Installing Sparlectra from ", o.path)
+      Pkg.develop(path = o.path)
+    elseif o.rev !== nothing
+      println("Installing Sparlectra from ", o.url, " at ", o.rev)
+      Pkg.add(url = o.url, rev = o.rev)
+    else
+      println("Installing the registered Sparlectra release")
+      Pkg.add("Sparlectra")
+    end
+  catch
+    # not a handler: any failure (resolver, network, bad --rev) is rethrown
+    # unchanged, only the environment files are restored first
+    for (p, text) in saved
+      write(p, text)
+    end
+    isempty(saved) || println("Install failed; the previous Project.toml and Manifest.toml are restored.")
+    rethrow()
+  end
+  return nothing
+end
+
+# Copies the workshop notebooks `files` from `src` into `dir`, with the
+# kernel of the folder. A notebook the user ran or edited is kept next to the
+# new copy as <name>.ipynb.<date>-<time>.bak; a copy that is still what the
+# installer wrote last time (RECORD_FILE) is replaced without a backup.
+# Without a record (a folder set up by an older installer) every differing
+# copy counts as changed. Returns the number of replaced notebooks and the
+# names of the backups.
+function copy_notebooks(src::String, dir::String, files::Vector{String}, spec::String, display::String; stamp::String = Dates.format(now(), "yyyymmdd-HHMMSS"))
+  record_path = joinpath(dir, RECORD_FILE)
+  record = isfile(record_path) ? TOML.parsefile(record_path) : Dict{String,Any}()
+  written = Dict{String,Any}()
+  backups = String[]
+  updated = 0
+  for f in files
+    text = with_kernel(read(joinpath(src, f), String), spec, display)
+    dst = joinpath(dir, f)
+    if isfile(dst)
+      old = read(dst, String)
+      if old != text
+        updated += 1
+        if get(record, f, "") != bytes2hex(sha256(old))
+          bak = string(dst, ".", stamp, ".bak")
+          cp(dst, bak)
+          push!(backups, basename(bak))
+        end
+      end
+    end
+    write(dst, text)
+    written[f] = bytes2hex(sha256(text))
+  end
+  open(io -> TOML.print(io, written), record_path, "w")
+  return (updated = updated, backups = backups)
+end
+
 function main(args::Vector{String})
   o = parse_options(args)
   mkpath(o.dir)
   println("Workshop folder: ", o.dir)
   Pkg.activate(o.dir)
 
-  # Sparlectra: removed first when the folder already has it, so a second run
-  # takes the source asked for now and, for the registered release, the
-  # newest version
-  haskey(Pkg.project().dependencies, "Sparlectra") && Pkg.rm("Sparlectra")
-  if o.path !== nothing
-    println("Installing Sparlectra from ", o.path)
-    Pkg.develop(path = o.path)
-  elseif o.rev !== nothing
-    println("Installing Sparlectra from ", o.url, " at ", o.rev)
-    Pkg.add(url = o.url, rev = o.rev)
-  else
-    println("Installing the registered Sparlectra release")
-    Pkg.add("Sparlectra")
-  end
+  install_sparlectra(o)
   Pkg.add("IJulia")
   Pkg.precompile()
 
@@ -103,29 +171,20 @@ function main(args::Vector{String})
   # a notebook is opened from. IJulia is loaded at run time, after the
   # activation above, so every access goes through invokelatest.
   ijulia(name) = Base.invokelatest(getfield, Base.require(Main, :IJulia), name)
-  kdir = Base.invokelatest(ijulia(:installkernel), KERNEL_NAME, "--project=$(o.dir)")
+  kn = kernel_names(o.dir)
+  kdir = Base.invokelatest(ijulia(:installkernel), kn.display, "--project=$(o.dir)"; specname = kn.spec, displayname = kn.display)
   spec = basename(kdir)
-  m = match(r"\"display_name\"\s*:\s*\"([^\"]*)\"", read(joinpath(kdir, "kernel.json"), String))
-  display = m === nothing ? KERNEL_NAME : String(m.captures[1])
+  display = kn.display
+  println("Jupyter kernel: \"", display, "\" (", spec, ")")
 
   # the notebooks of exactly the Sparlectra just installed
   sp = only(d for d in values(Pkg.dependencies()) if d.name == "Sparlectra")
   src = joinpath(sp.source, "notebooks")
   files = sort(filter(f -> startswith(f, "workshop_") && endswith(f, ".ipynb"), readdir(src)))
   isempty(files) && error("no workshop notebooks in $(src)")
-  backups = 0
-  for f in files
-    text = with_kernel(read(joinpath(src, f), String), spec, display)
-    dst = joinpath(o.dir, f)
-    # a notebook the user ran or edited is kept next to the new copy
-    if isfile(dst) && read(dst, String) != text
-      cp(dst, dst * ".bak"; force = true)
-      backups += 1
-    end
-    write(dst, text)
-  end
-  println("Sparlectra ", sp.version, ": ", length(files), " notebooks copied to ", o.dir)
-  backups > 0 && println(backups, " changed notebook(s) kept as <name>.ipynb.bak")
+  c = copy_notebooks(src, o.dir, files, spec, display)
+  println("Sparlectra ", sp.version, ": ", length(files), " notebooks in ", o.dir, " (", c.updated, " updated)")
+  isempty(c.backups) || println("Notebooks you changed are kept as: ", join(c.backups, ", "))
   println()
   println("Open the notebooks:")
   println("  Jupyter:  cd \"", o.dir, "\" and run  julia --project=. -e \"using IJulia; notebook(dir = pwd())\"")

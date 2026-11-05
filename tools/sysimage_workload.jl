@@ -310,10 +310,11 @@ end
 """
 Resolve the MiniGrid CGMES delivery, which covers the CGMES compile paths
 (ZIP and XML reading, profile harvesting, net construction, control mapping).
-It comes from the same case cache the Web UI uses; when absent it is fetched
-once through the existing registry (network). A failed fetch only skips the
-CGMES traces, never the build, but the gap is logged so the coverage loss is
-visible rather than silent.
+It is fetched through the existing registry into the workload's temporary
+case directory (`server.runtime.case_directory`, below the temporary root);
+the conformity package itself is cached in `data/CGMES`. A failed fetch only
+skips the CGMES traces, never the build, but the gap is logged so the
+coverage loss is visible rather than silent.
 """
 function _workload_cgmes_zip(server)
   zip = joinpath(server.runtime.case_directory, "cgmes_minigrid.zip")
@@ -382,9 +383,11 @@ function _trace_apslf()
 end
 
 function run_workload(; root::AbstractString)
-  # The Web UI of the workload runs on the temporary output root `root`, so
-  # its case directory, configuration copy, run registry and operation log
-  # are temporary too: the traces below stage cases and write measurement
+  # The Web UI of the workload runs on `root/runs`, so its case directory,
+  # configuration copy, run registry and operation log are temporary too
+  # (the Web UI places config, data/mpower and logs NEXT TO the output root,
+  # see default_webui_config_path; with `root` itself as output root they
+  # landed in the shared parent, /tmp/config, /tmp/data and /tmp/logs): the traces below stage cases and write measurement
   # tables into server.runtime.case_directory. 1.1.0 started it on the
   # default root, wrote five files into the user's case directory and
   # overwrote a measurement table there.
@@ -397,7 +400,7 @@ function run_workload(; root::AbstractString)
     # wording differs per platform: on Windows the same condition arrives as
     # an IOError with a different text, so the build died on a busy port.
     server = try
-      start_sparlectra_webui(open_browser = false, port = candidate, output_root = root, _refresh_shipped_cases = false)
+      start_sparlectra_webui(open_browser = false, port = candidate, output_root = joinpath(root, "runs"), _refresh_shipped_cases = false)
     catch err
       @warn "sysimage workload: port $(candidate) not usable" exception = err
       nothing

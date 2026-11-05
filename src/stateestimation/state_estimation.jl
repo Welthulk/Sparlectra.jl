@@ -28,6 +28,15 @@ struct SENotObservableError <: Exception
   msg::String
 end
 Base.showerror(io::IO, e::SENotObservableError) = print(io, e.msg)
+
+## Raised when a set has no active measurement to work on (every row is
+## inactive, or only current magnitudes are left, which the observability
+## checks exclude). The SE service and the placement service catch this type
+## and report the reason invalid_measurements.
+struct SENoActiveMeasurementsError <: Exception
+  msg::String
+end
+Base.showerror(io::IO, e::SENoActiveMeasurementsError) = print(io, e.msg)
 """
     SEResult
 
@@ -323,7 +332,7 @@ end
 ## tolerance is fed from the SAME effective tolerance the callers derive
 ## (rank_tol_factor * jacEps * sigma_max, or the SVD default formula).
 """
-    numeric_rank_pivots(H; tol = nothing, dense_max_n = $(_SE_DENSE_LINALG_MAX_N)) -> Int
+    numeric_rank_pivots(H; tol = nothing, dense_max_n = $(_SE_DENSE_LINALG_MAX_N)) -> Tuple{Int,Symbol}
 
 Numerical rank of the Jacobian read from the LDLt factorization of the
 gain matrix `G = H' H` (unit weights, no column scaling: a column that
@@ -342,12 +351,18 @@ handed to `numeric_rank`, and the method is reported as `:decomposition`;
 `state_estimation.rank_method = pivots`; `decomposition` (SVD below
 $(_SE_DENSE_LINALG_MAX_N) states, sparse QR above) is the default, the
 exact answer at the same cost on every shipped case. `dense_max_n` is
-handed to `numeric_rank` for the deficit count.
+handed to `numeric_rank` for the deficit count. Returns the rank and the
+method that gave it (`:pivots` or `:decomposition`). Throws an
+`ArgumentError` naming the first entry when `H` has a NaN or Inf entry,
+with or without an explicit `tol`.
 """
 function numeric_rank_pivots(H::AbstractMatrix{<:Real}; tol = nothing, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)::Tuple{Int,Symbol}
   m, n = size(H)
   (m == 0 || n == 0) && return 0, :pivots
   Hs = H isa SparseMatrixCSC{Float64} ? H : sparse(Matrix{Float64}(H))
+  # checked here and not only in _sigma_max: with an explicit `tol` a NaN
+  # would otherwise reach CHOLMOD and then the SVD of numeric_rank
+  _se_require_finite(Hs)
   if tol === nothing
     tol = eps(Float64) * max(m, n) * _sigma_max(Hs)
   end
@@ -3499,7 +3514,7 @@ end
 function _observability_rows(net::Net, measurements::Vector{Measurement}, caller::AbstractString)
   prep = _se_prepare(net, measurements)
   keep = [k for k in eachindex(prep.meas) if !(prep.meas[k].typ in (ImagMeas, IaMeas))]
-  isempty(keep) && error("$(caller): no active measurements (current magnitudes are excluded; the system must be observable without them)")
+  isempty(keep) && throw(SENoActiveMeasurementsError("$(caller): no active measurements (current magnitudes are excluded; the system must be observable without them)"))
   return prep, prep.meas[keep], prep.origIdx[keep]
 end
 
@@ -3574,7 +3589,7 @@ function _evaluate_weak_observability(net::Net, measurements::Vector{Measurement
       w = single(sub.inet, meas_k)
       parts[k] = merge(w, (buses = Int[row.buses[b] for b in w.buses], branches = Int[row.branches[j] for j in w.branches]))
     end
-    all(isnothing, parts) && error("evaluate_weak_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)")
+    all(isnothing, parts) && throw(SENoActiveMeasurementsError("evaluate_weak_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
   end
   w = _weak_report_merge(parts)
   return merge((weakly_observable = w.n_buses > 0,), w)
@@ -3841,7 +3856,7 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
     weakParts[iid] = _weak_part_in_caller(wk, row)
     push!(islandsOut, (island = iid, n_bus = row.n_bus, measured = true, result = r))
   end
-  measured == 0 && error("evaluate_global_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)")
+  measured == 0 && throw(SENoActiveMeasurementsError("evaluate_global_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
   ν = nMeas - nStates
   want = islands_mode === :always || (islands_mode === :unobservable && worst === :not_observable)
   isl = ObservableIslands()
@@ -4108,7 +4123,7 @@ function measurement_jacobian(net::Net)
   net = prep.snet
   activeMeas = prep.meas
   activeIdx = prep.origIdx
-  isempty(activeMeas) && error("measurement_jacobian: no active measurements")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("measurement_jacobian: no active measurements"))
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
   Ybus = createYBUS(net = net)
@@ -4201,7 +4216,7 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   keep = [k for k in eachindex(activeMeas) if !(activeMeas[k].typ in (ImagMeas, IaMeas))]
   activeMeas = activeMeas[keep]
   activeIdx = activeIdx[keep]
-  isempty(activeMeas) && error("evaluate_local_observability: no active measurements (current magnitudes are excluded)")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("evaluate_local_observability: no active measurements (current magnitudes are excluded)"))
 
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
@@ -5457,7 +5472,7 @@ function restore_observability(net::Net, measurements::Vector{Measurement}; dens
     end
     push!(perIsland, (network_island = k, angle_rank_deficit = selP.before, magnitude_rank_deficit = selQ.before, angle_rank_deficit_after = selP.after, magnitude_rank_deficit_after = selQ.after, n_taken = length(selP.taken) + length(selQ.taken)))
   end
-  isempty(perIsland) && error("restore_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)")
+  isempty(perIsland) && throw(SENoActiveMeasurementsError("restore_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
   before = sum(r -> r.angle_rank_deficit + r.magnitude_rank_deficit, perIsland)
   after = sum(r -> r.angle_rank_deficit_after + r.magnitude_rank_deficit_after, perIsland)
   # concept R1: the set with the taken rows, judged again, the weak class
@@ -5671,7 +5686,7 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
     # an observable-island partition without a unit of full rank is the
     # failure of runse! under observable_islands and scheduled
     obsMode && throw(SENotObservableError("validate_measurements: the set is not observable and none of its observable islands can be estimated"))
-    error("validate_measurements: no active measurements")
+    throw(SENoActiveMeasurementsError("validate_measurements: no active measurements"))
   end
   sort!(ranking; by = x -> x.abs_normalized_residual, rev = true)
   verdict = _band_test_verdict(Jsum, νsum)
@@ -6046,7 +6061,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   net = prep.snet
   activeMeas = prep.meas
   activeOrig = prep.origIdx   # caller-vector positions (0 = LINKAGG aggregate)
-  isempty(activeMeas) && error("runse!: no active measurements")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("runse!: no active measurements"))
 
   # ImagMeas value gate: near zero current the derivative of
   # |I| is discontinuous, so a current measurement below 3 sigma is excluded
@@ -6079,7 +6094,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       activeMeas = activeMeas[keepIa]
       activeOrig = activeOrig[keepIa]
     end
-    isempty(activeMeas) && error("runse!: no active measurements left after the ImagMeas 3-sigma value gate")
+    isempty(activeMeas) && throw(SENoActiveMeasurementsError("runse!: no active measurements left after the ImagMeas 3-sigma value gate"))
   end
   # r0.9.10 scope guard: the estimator's measurement model does not carry
   # the one-sided branch reduction yet; a flow measurement on a partially
@@ -8031,7 +8046,12 @@ function _runse_weak_gaps!(net::Net, measurements::Vector{Measurement}, cfg::Sta
     end
     # the cut must leave an island that passes its rank check; otherwise
     # the weak part cannot be cut out and the estimate stays with its weak
-    # report (marked below, as under abort)
+    # report (marked below, as under abort). The trial partition is cut at
+    # the estimate, before restoreStart!(), and still holds for the next
+    # round: with `removed` set it comes from the network islands and the
+    # decoupled P-theta and Q-V models, which carry no state (measured
+    # 1.1.0 on sp_case118 with 101 weak buses: the same partition at the
+    # estimate and at the flat start, with flatstart on and off).
     trialPart = _se_run_partition(net, measurements, true; removed = trial, log = false)
     if !_se_partition_estimable(net, measurements, trialPart, cfg)
       @info string("runse!: weakly observable at the estimate (", w.n_branches, " branch(es) above the flow bound); without the ", length(new), " affected bus(es) no observable island passes its rank check, the estimate is kept")
@@ -8176,7 +8196,7 @@ function _validate_measurements(net::Net, measurements::Vector{Measurement}, tap
   end
   activeMeas = activeMeas[keep]
   activeIdx = activeIdx[keep]
-  isempty(activeMeas) && error("validate_measurements: no active measurements")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("validate_measurements: no active measurements"))
 
   netLocal = deepcopy(net)
   # topologyPrecheck off: the diagnostics re-run this solve per elimination
@@ -8210,7 +8230,7 @@ function _validate_measurements(net::Net, measurements::Vector{Measurement}, tap
     end
     activeMeas = activeMeas[keep2]
     activeIdx = activeIdx[keep2]
-    isempty(activeMeas) && error("validate_measurements: no active measurements left after the IaMeas gate")
+    isempty(activeMeas) && throw(SENoActiveMeasurementsError("validate_measurements: no active measurements left after the IaMeas gate"))
   end
 
   nbus = length(netLocal.nodeVec)

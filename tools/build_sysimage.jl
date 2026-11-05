@@ -360,8 +360,8 @@ function _run_build()
   # because an older run had left the file in the cache.
   # The MiniGrid CGMES delivery is the one exception, because a CGMES
   # delivery cannot be assembled from the raw model directories; the
-  # workload fetches it into its own temporary case directory (the
-  # conformity package is cached in data/CGMES), and a failed fetch only
+  # workload fetches it into the case directory below its temporary root
+  # (the conformity package is cached in data/CGMES), and a failed fetch only
   # costs that trace (the workload logs the gap), never the build. Nothing
   # is written into the user's Web UI case directory.
 

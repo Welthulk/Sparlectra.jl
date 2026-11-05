@@ -1,6 +1,6 @@
 # Shipped Demo Cases
 
-Sparlectra ships six self-built networks in the [Sparlectra Case
+Sparlectra ships seven self-built networks in the [Sparlectra Case
 Format](scf.md), tracked in `data/scf`, so a fresh install can run power
 flow, state estimation, short circuit, N-1 and scenarios without
 downloading anything.

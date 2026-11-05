@@ -2558,10 +2558,15 @@ function _webui_measurement_table_counts(path::AbstractString)::Vector{Tuple{Str
 end
 
 ## The timestamps of a measurement table in the order of its sets (the order
-## importMeasurementTable gives them: first appearance, rejected rows left
-## out), cached by path, mtime and size: the SE section reads them for every
-## offered set on each page load. Empty for a file that is no table the
-## reader accepts (its ArgumentError); the run names the reason.
+## importMeasurementTable gives them: first appearance, rows with a format
+## problem left out), cached by path, mtime and size: the SE section reads
+## them for every offered set on each page load. Empty for a file that is no
+## table the reader accepts (its ArgumentError); the run names the reason.
+## The list comes from the rows alone, without the case: a timestamp whose
+## rows all fail to bind to the case (unknown key, not modelled) is offered,
+## and the run then rejects it naming the sets the table has. Binding every
+## offered table to its case on each page load would cost a case import per
+## table. Entries of files that are gone are dropped on every cache miss.
 const _WEBUI_TABLE_TIMESTAMP_CACHE = Dict{String,Tuple{Float64,Int,Vector{String}}}()
 const _WEBUI_TABLE_TIMESTAMP_CACHE_LOCK = ReentrantLock()
 
@@ -2571,6 +2576,7 @@ function _webui_measurement_table_timestamps(path::AbstractString)::Vector{Strin
   stamp, size = mtime(p), filesize(p)
   hit = lock(() -> get(_WEBUI_TABLE_TIMESTAMP_CACHE, p, nothing), _WEBUI_TABLE_TIMESTAMP_CACHE_LOCK)
   (hit !== nothing && hit[1] == stamp && hit[2] == size) && return hit[3]
+  lock(() -> filter!(kv -> isfile(first(kv)), _WEBUI_TABLE_TIMESTAMP_CACHE), _WEBUI_TABLE_TIMESTAMP_CACHE_LOCK)
   rows = try
     readMeasurementTable(p)
   catch err

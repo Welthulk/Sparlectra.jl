@@ -35,26 +35,30 @@
 
 set -e
 WORKSHOPS=""
-WS_ARGS=""
-# arguments are passed on to tools/install_workshops.jl one by one; a value
-# with a space would split, so the workshop folder takes no spaces here
-while [ $# -gt 0 ]; do
+WS_ONLY=""
+# The arguments for tools/install_workshops.jl are collected in "$@" itself
+# (each one appended at the end, the parsed one shifted off the front), so a
+# value with a space or a glob character reaches Julia as one argument,
+# unchanged. N counts the arguments not yet parsed.
+N=$#
+while [ "$N" -gt 0 ]; do
   case "$1" in
-    --workshops) WORKSHOPS=1 ;;
-    --no-start) SPARLECTRA_START_WEBUI=0; WS_ARGS="$WS_ARGS --no-start" ;;
+    --workshops) WORKSHOPS=1; shift; N=$((N - 1)) ;;
+    --no-start) SPARLECTRA_START_WEBUI=0; set -- "$@" "$1"; shift; N=$((N - 1)) ;;
     --dir|--rev|--path)
-      [ $# -ge 2 ] || { echo "Option $1 needs a value."; exit 1; }
-      WS_ARGS="$WS_ARGS $1 $2"
-      shift
+      [ "$N" -ge 2 ] || { echo "Option $1 needs a value."; exit 1; }
+      WS_ONLY=1
+      set -- "$@" "$1" "$2"
+      shift 2
+      N=$((N - 2))
       ;;
     *)
       echo "Unknown option $1. Options: --workshops [--dir <folder>] [--rev <branch> | --path <checkout>] [--no-start]"
       exit 1
       ;;
   esac
-  shift
 done
-if [ -z "$WORKSHOPS" ] && [ -n "$(printf '%s' "$WS_ARGS" | sed 's/ --no-start//g')" ]; then
+if [ -z "$WORKSHOPS" ] && [ -n "$WS_ONLY" ]; then
   echo "--dir, --rev and --path belong to the workshop mode (--workshops)."
   exit 1
 fi
@@ -115,7 +119,7 @@ if ! command -v julia >/dev/null 2>&1; then
   PATH="$HOME/.juliaup/bin:$PATH"
   export PATH
   if ! command -v julia >/dev/null 2>&1; then
-    echo "Julia was installed but is not on PATH yet. Open a new terminal and run start_webui.sh."
+    echo "Julia was installed but is not on PATH yet. Open a new terminal and run this installer again."
     exit 1
   fi
 fi
@@ -139,23 +143,26 @@ if [ -n "$WORKSHOPS" ]; then
   WS_TMP=""
   if [ ! -f "$WS_JL" ]; then
     WS_TMP=$(mktemp "${TMPDIR:-/tmp}/sparlectra_install_workshops.XXXXXX")
+    # the downloaded copy goes on every exit, also after Ctrl+C or a kill
+    trap 'rm -f "$WS_TMP"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    trap 'exit 129' HUP
     WS_JL="$WS_TMP"
     if command -v curl >/dev/null 2>&1; then
-      curl -fsSL "https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_workshops.jl" -o "$WS_JL" || { echo "Download of install_workshops.jl failed."; rm -f "$WS_TMP"; exit 1; }
+      curl -fsSL "https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_workshops.jl" -o "$WS_JL" || { echo "Download of install_workshops.jl failed."; exit 1; }
     else
-      wget -qO "$WS_JL" "https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_workshops.jl" || { echo "Download of install_workshops.jl failed."; rm -f "$WS_TMP"; exit 1; }
+      wget -qO "$WS_JL" "https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_workshops.jl" || { echo "Download of install_workshops.jl failed."; exit 1; }
     fi
   fi
   # piped (curl | sh), stdin is this script; Jupyter's questions and Ctrl+C
   # need the terminal
   WS_CODE=0
-  # shellcheck disable=SC2086
   if [ ! -t 0 ] && ( : < /dev/tty ) 2>/dev/null; then
-    julia --startup-file=no "$WS_JL" $WS_ARGS < /dev/tty || WS_CODE=$?
+    julia --startup-file=no "$WS_JL" "$@" < /dev/tty || WS_CODE=$?
   else
-    julia --startup-file=no "$WS_JL" $WS_ARGS || WS_CODE=$?
+    julia --startup-file=no "$WS_JL" "$@" || WS_CODE=$?
   fi
-  [ -n "$WS_TMP" ] && rm -f "$WS_TMP"
   exit $WS_CODE
 fi
 

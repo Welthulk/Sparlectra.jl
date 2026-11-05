@@ -42,9 +42,12 @@ iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/in
 Options: `--dir <folder>` for another folder, `--rev <branch>` for
 Sparlectra from a branch instead of the registered release, `--no-start` to
 set up only. Without a Jupyter installation IJulia offers to install one. In
-VS Code, open the folder and select the kernel "Sparlectra workshops".
-Running the command again updates Sparlectra and the notebooks; a notebook
-you changed is kept as `.ipynb.bak`.
+VS Code, open the folder and select the kernel
+"Sparlectra workshops (<folder> <hash>)": every workshop folder gets its
+own kernel, named after the folder with a short hash of its path, and the
+installer prints the name. Running the command again updates Sparlectra and
+the notebooks; a notebook you changed is kept next to the new copy as
+`<name>.ipynb.<date>-<time>.bak`.
 
 | Notebook | File |
 |---|---|

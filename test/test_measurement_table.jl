@@ -1543,16 +1543,40 @@ function run_measurement_table_tests()
         write(two, join(vcat(lines5[1:hdr], ["2026-01-01T12:00Z" * l for l in data5], data5), "\n") * "\n")
         se5(tag; kw...) = SparlectraApp.to_dict(_se_run_quiet(() -> redirect_stdout(() -> SparlectraApp._run_state_estimation_service(case5, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, tag), tag, two; kw...), devnull)))
         first5 = se5("ts_first")
-        none5 = se5("ts_none"; timestamp = SparlectraApp.SE_NO_TIMESTAMP)
+        none5 = se5("ts_none"; timestamp = Sparlectra.MEASUREMENT_SET_NO_TIMESTAMP)
         @test (first5["status"], first5["metadata"]["se_measurement_timestamp"]) == ("succeeded", "2026-01-01T12:00Z")
         @test (none5["status"], none5["metadata"]["se_measurement_timestamp"]) == ("succeeded", "")
         @test occursin("estimating set (no timestamp): ", read(joinpath(d, "ts_none", "run.log"), String))
-        @test ("se_timestamp" => SparlectraApp.SE_NO_TIMESTAMP) in SparlectraApp._webui_se_rerun_fields(none5)
-        for (tag, ts, want) in (("pl_first", "2026-01-01T12:00Z", "2026-01-01T12:00Z"), ("pl_none", SparlectraApp.SE_NO_TIMESTAMP, ""))
+        @test ("se_timestamp" => Sparlectra.MEASUREMENT_SET_NO_TIMESTAMP) in SparlectraApp._webui_se_rerun_fields(none5)
+        for (tag, ts, want) in (("pl_first", "2026-01-01T12:00Z", "2026-01-01T12:00Z"), ("pl_none", Sparlectra.MEASUREMENT_SET_NO_TIMESTAMP, ""))
           pl = SparlectraApp.to_dict(redirect_stdout(() -> SparlectraApp._run_se_placement_service(case5, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, tag), tag, two; kind = :injection, target = :observable, timestamp = ts), devnull))
           @test (tag, pl["status"], pl["metadata"]["se_measurement_timestamp"]) == (tag, "succeeded", want)
           @test (tag, ("se_timestamp" => ts) in SparlectraApp._webui_se_rerun_fields(pl)) == (tag, true)
         end
+        # the library reader selects with the same helper and names the
+        # sets with the same label as the service
+        net5 = importSCF(case5)
+        @test readMeasurementTable!(net5; file = two, timestamp = Sparlectra.MEASUREMENT_SET_NO_TIMESTAMP).timestamp == ""
+        miss = @test_throws ArgumentError readMeasurementTable!(net5; file = two, timestamp = "2030-01-01T00:00Z")
+        @test occursin("the table has 2026-01-01T12:00Z, (no timestamp)", miss.value.msg)
+        # a placement on the measurements of the case file refuses a
+        # timestamp like the SE service (1.1.0 ignored it)
+        plc = SparlectraApp.to_dict(redirect_stdout(() -> SparlectraApp._run_se_placement_service(case5, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "pl_case"), "pl_case", joinpath(d, "no_such.csv"); kind = :injection, target = :observable, timestamp = "2026-01-01T12:00Z"), devnull))
+        @test (plc["status"], plc["reason"]) == ("failed", "invalid_measurements")
+        @test occursin("takes the measurements of the case file", plc["message"])
+        # a set whose every row is inactive: the observability check throws
+        # the named error, the service reports invalid_measurements
+        inactive = joinpath(d, "sp_case5.inactive.measurements.csv")
+        hcols = split(lines5[hdr], ',')
+        kv = findfirst(==("valid"), hcols)
+        @test kv !== nothing
+        write(inactive, join(vcat(lines5[1:hdr], [join([k == kv ? "false" : c for (k, c) in enumerate(split(l, ','; keepempty = true))], ",") for l in data5]), "\n") * "\n")
+        off5 = SparlectraApp.to_dict(_se_run_quiet(() -> redirect_stdout(() -> SparlectraApp._run_state_estimation_service(case5, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, joinpath(d, "inactive"), "inactive", inactive), devnull)))
+        @test (off5["status"], off5["reason"]) == ("failed", "invalid_measurements")
+        @test occursin("no active measurements", off5["message"])
+        netI = importSCF(case5)
+        readMeasurementTable!(netI; file = inactive, zero_injection = false)
+        @test_throws Sparlectra.SENoActiveMeasurementsError evaluate_global_observability(netI)
       end
     end)()
   end

@@ -1306,7 +1306,7 @@ function _import_measurement_table(rows::Vector{MeasurementRow}, index::Measurem
       sets = MeasurementSet[built[ts] for ts in order]
       return MeasurementTableImport(sets, rejected, filled_report, note)
     end
-    note = string("last values not filled: set ", isempty(order[k_bad]) ? "(no timestamp)" : order[k_bad], " has no timestamp that reads as a time")
+    note = string("last values not filled: set ", _measurement_set_label(order[k_bad]), " has no timestamp that reads as a time")
     @warn note
   end
   sets = MeasurementSet[_measurement_set(ts, by_ts[ts], index, default_sigmas, energized, levels, sigma_floor; filled_sigmas = filled_sigmas) for ts in order]
@@ -1706,6 +1706,23 @@ function applyMeasurementSet!(net::Net, set::MeasurementSet; replace::Bool = tru
   return net
 end
 
+# Label of a set without a timestamp, in messages, logs and the Web UI
+# timestamp field (the SE service accepts it as se_timestamp).
+const MEASUREMENT_SET_NO_TIMESTAMP = "(no timestamp)"
+_measurement_set_label(ts::AbstractString) = isempty(ts) ? MEASUREMENT_SET_NO_TIMESTAMP : String(ts)
+
+# The set of `imp` that `timestamp` selects, read like the table reader
+# (12:00Z and 12:00:00Z are one set); "" and MEASUREMENT_SET_NO_TIMESTAMP
+# select the set without a timestamp. Returns the set index and "", or
+# nothing and the message naming the sets the table has. The one selection
+# for readMeasurementTable! and the SE service.
+function _select_measurement_set(imp::MeasurementTableImport, timestamp::AbstractString)::Tuple{Union{Nothing,Int},String}
+  ts = (isempty(timestamp) || timestamp == MEASUREMENT_SET_NO_TIMESTAMP) ? "" : something(_measurement_table_timestamp(timestamp), String(timestamp))
+  k = findfirst(s -> s.timestamp == ts, imp.sets)
+  k === nothing || return k, ""
+  return nothing, "no measurement set with timestamp $(timestamp); the table has $(join((_measurement_set_label(s.timestamp) for s in imp.sets), ", "))"
+end
+
 """
     readMeasurementTable!(net; file, index = nameMeasurementKeys(net), timestamp = nothing, replace = true, zero_injection = <state_estimation.zero_injection is not off>, zero_injection_sigma = <state_estimation.zero_injection_sigma_mva>, last_value = <state_estimation.last_value>) -> MeasurementSet
 
@@ -1726,9 +1743,8 @@ function readMeasurementTable!(net::Net; file::AbstractString, index::Measuremen
   set = if timestamp === nothing
     first(imp.sets)
   else
-    ts = something(_measurement_table_timestamp(timestamp), String(timestamp))
-    k = findfirst(s -> s.timestamp == ts, imp.sets)
-    k === nothing && throw(ArgumentError("$(file): no measurement set with timestamp $(timestamp); the table has $(join((isempty(s.timestamp) ? "(none)" : s.timestamp for s in imp.sets), ", "))"))
+    k, why = _select_measurement_set(imp, timestamp)
+    k === nothing && throw(ArgumentError("$(file): $(why)"))
     imp.sets[k]
   end
   applyMeasurementSet!(net, set; replace = replace, zero_injection = zero_injection, zero_injection_sigma = zero_injection_sigma)
@@ -1754,7 +1770,7 @@ function measurementImportReport(imp::MeasurementTableImport)::String
     zi = haskey(s.counts, :zero_injection) ? string(", zero-injection rows ", s.counts[:zero_injection]) : ""
     lv = findfirst(e -> e.timestamp == s.timestamp, imp.last_value)
     lv_text = lv === nothing ? "" : string(", oldest last value from ", imp.last_value[lv].oldest)
-    println(io, "set ", isempty(s.timestamp) ? "(no timestamp)" : s.timestamp, ": rows ", s.counts[:rows], ", measurements ", length(s.measurements), " (active ", s.counts[:active], ", inactive ", s.counts[:inactive], ")", zi, isempty(probs) ? "" : string(", ", join(("$(k) $(v)" for (k, v) in probs), ", ")), lv_text)
+    println(io, "set ", _measurement_set_label(s.timestamp), ": rows ", s.counts[:rows], ", measurements ", length(s.measurements), " (active ", s.counts[:active], ", inactive ", s.counts[:inactive], ")", zi, isempty(probs) ? "" : string(", ", join(("$(k) $(v)" for (k, v) in probs), ", ")), lv_text)
     for p in s.problems
       println(io, "  line ", p.line, ": ", p.problem, ": ", p.detail)
     end

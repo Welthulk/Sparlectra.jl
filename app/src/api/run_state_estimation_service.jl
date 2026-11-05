@@ -418,10 +418,10 @@ function _se_convert_measurements_v1(case_path::AbstractString, v1_path::Abstrac
   return convertMeasurementsV1(v1_path, imported.net; out = out, index = index)
 end
 
-## The request value (se_timestamp) that names the set of a table without a
-## timestamp; a table reader refuses it as a timestamp, so it names no other
-## set. Web UI: the label of that set in the Timestamp select.
-const SE_NO_TIMESTAMP = "(no timestamp)"
+## The request value se_timestamp = MEASUREMENT_SET_NO_TIMESTAMP (library)
+## names the set of a table without a timestamp; a table reader refuses it as
+## a timestamp, so it names no other set. Web UI: the label of that set in
+## the Timestamp select.
 
 function _se_load_measurement_table!(net, imported, format::Symbol, measurement_file::String, config, logfile, output_dir::String; timestamp::Union{Nothing,String} = nothing)
   name = basename(measurement_file)
@@ -450,13 +450,11 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   end
   k_set = 1
   if timestamp !== nothing
-    # the same reading of one instant as the table reader (12:00Z and
-    # 12:00:00Z are one set)
-    ts = timestamp == SE_NO_TIMESTAMP ? "" : something(_measurement_table_timestamp(timestamp), timestamp)
-    k = findfirst(s -> s.timestamp == ts, imp.sets)
+    # the selection of readMeasurementTable! (12:00Z and 12:00:00Z are one set)
+    k, why = _select_measurement_set(imp, timestamp)
     if k === nothing
       write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
-      return nothing, "$(name) has no measurement set with timestamp $(timestamp); the table has $(join((isempty(s.timestamp) ? "(no timestamp)" : s.timestamp for s in imp.sets), ", "))."
+      return nothing, "$(name): $(why)."
     end
     k_set = k
   end
@@ -467,7 +465,7 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
   zi = set.counts[:zero_injection]
   open(logfile, "a") do io
-    println(io, "measurements: measurement table ", name, ", ", length(imp.sets), " set(s); estimating set ", isempty(set.timestamp) ? "(no timestamp)" : set.timestamp, ": ", set.counts[:rows], " rows, ", length(set.measurements), " measurements (active ", set.counts[:active], ", inactive ", set.counts[:inactive], "), ", length(set.problems), " row(s) not used, see measurement_import.txt")
+    println(io, "measurements: measurement table ", name, ", ", length(imp.sets), " set(s); estimating set ", _measurement_set_label(set.timestamp), ": ", set.counts[:rows], " rows, ", length(set.measurements), " measurements (active ", set.counts[:active], ", inactive ", set.counts[:inactive], "), ", length(set.problems), " row(s) not used, see measurement_import.txt")
     _se_log_zero_injection(io, config, zi)
     # state_estimation.last_value: per timestamp the values filled from an
     # earlier one and the oldest timestamp used
@@ -808,7 +806,9 @@ function _se_criticality_lines(net::Net, obs)::Vector{String}
   if !isempty(obs.criticality_wii)
     wii = obs.criticality_wii
     act = collect(obs.active_measurement_indices)
-    near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && wii[k] > 1e-8 && wii[k] < 0.3]
+    # index 0 in active_measurement_indices is a LINKAGG aggregate of a link
+    # cluster, which has no row of the set to name; it is left out here
+    near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && act[k] != 0 && wii[k] > 1e-8 && wii[k] < 0.3]
     if !isempty(near)
       sort!(near; by = x -> x[2])
       push!(lines, string("  nearly critical rows (wii below 0.3, not critical): ", length(near), ": ", join((string(first(ids([i])), " (", round(w; digits = 3), ")") for (i, w) in first(near, 10)), ", "), length(near) > 10 ? ", ..." : ""))
@@ -1595,7 +1595,7 @@ function _run_state_estimation_service_body(
       # not stacked
       filter!(c -> !startswith(c, "measurement set of state-estimation run ") && !startswith(c, "not in the table: "), table_comments)
       tset = table_summary.table.set
-      push!(table_comments, string("measurement set of state-estimation run ", run_id, ": set ", isempty(tset.timestamp) ? "(no timestamp)" : tset.timestamp, " of ", basename(String(measurement_file)), ", ", sum(length, values(tset.sources); init = 0), " of ", tset.counts[:rows], " row(s) used (the others: measurement_import.txt); verdict per row in measurements_verdict.csv"))
+      push!(table_comments, string("measurement set of state-estimation run ", run_id, ": set ", _measurement_set_label(tset.timestamp), " of ", basename(String(measurement_file)), ", ", sum(length, values(tset.sources); init = 0), " of ", tset.counts[:rows], " row(s) used (the others: measurement_import.txt); verdict per row in measurements_verdict.csv"))
       artifact = _se_write_measurement_artifact!(net, table_summary.index, joinpath(output_dir, "measurements.csv"), table_comments, logfile, config.state_estimation.zero_injection_sigma_mva; table = table_summary.table)
       table_summary
     else
@@ -1655,7 +1655,7 @@ function _run_state_estimation_service_body(
     with_sparlectra_config(() -> evaluate_global_observability(net), config)
   catch err
     # the one rejection of the check: no active power or voltage row
-    (err isa ErrorException && occursin("no active measurements", err.msg)) || rethrow()
+    err isa SENoActiveMeasurementsError || rethrow()
     return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   base_metadata["se_observability_quality"] = String(obs.quality)
@@ -2496,6 +2496,11 @@ function _run_se_placement_service(case_path::AbstractString, config_file::Abstr
   config = imported.config
   from_case_file = format === :scf && !isfile(measurement_file) && !isempty(net.measurements)
   base_metadata["se_measurement_file"] = from_case_file ? "" : measurement_file
+  # same rejection as the SE service: a timestamp only selects a set of a
+  # measurement table, the case file carries one set without a choice
+  if from_case_file && timestamp !== nothing
+    return fail("invalid_measurements", "se_timestamp $(timestamp) names a set of a measurement table, but this run takes the measurements of the case file.")
+  end
   if from_case_file
     open(logfile, "a") do io
       println(io, "measurements: ", length(net.measurements), " row(s) taken from the case file itself")
@@ -2518,8 +2523,8 @@ function _run_se_placement_service(case_path::AbstractString, config_file::Abstr
     with_sparlectra_config(() -> suggest_measurement_placement(net; kind = kind, target = target), config)
   catch err
     # the one documented failure: no active measurement left to start from
-    # (suggest_measurement_placement errors like evaluate_global_observability)
-    (err isa ErrorException && occursin("no active measurements", err.msg)) || rethrow()
+    # (suggest_measurement_placement throws it like evaluate_global_observability)
+    err isa SENoActiveMeasurementsError || rethrow()
     return fail("invalid_measurements", sprint(showerror, err))
   end
   fmt = _resolve_detailed_csv_format(String(config.output.csv_format))

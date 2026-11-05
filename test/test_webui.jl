@@ -2042,6 +2042,31 @@ function run_webui_fast_tests()
                     @test occursin("Update FAILED: could not determine the latest release", text)
                     @test read(joinpath(copy_dir, "Project.toml"), String) == "name = \"Sparlectra\"\nversion = \"0.1.0\"\n"
                     @test !isdir(joinpath(sandbox, "Sparlectra.old"))
+
+                    # --- the sh installer in workshop mode, outside a checkout:
+                    # every value reaches install_workshops.jl as one argument
+                    # (a space and a glob character in the folder name), and
+                    # the downloaded copy of the script is gone after the run.
+                    # A fake julia prints its arguments, a fake curl writes
+                    # the download.
+                    wsbin = joinpath(tmp, "wsbin")
+                    mkpath(wsbin)
+                    write(joinpath(wsbin, "julia"), "#!/bin/sh\n[ \"\$1\" = --version ] && { echo 'julia version 1.12.0'; exit 0; }\n[ \"\$2\" = -e ] && exit 0\nshift 2\nfor a in \"\$@\"; do echo \"ARG=\$a\"; done\n")
+                    write(joinpath(wsbin, "curl"), "#!/bin/sh\nwhile [ \$# -gt 0 ]; do [ \"\$1\" = -o ] && { echo 'exit(0)' > \"\$2\"; exit 0; }; shift; done\nexit 22\n")
+                    chmod(joinpath(wsbin, "julia"), 0o755)
+                    chmod(joinpath(wsbin, "curl"), 0o755)
+                    wsdir = joinpath(tmp, "ws plain")
+                    mkpath(wsdir)
+                    cp(script, joinpath(wsdir, "install_webui.sh"))
+                    wstmp = mkpath(joinpath(tmp, "wstmp"))
+                    folder = joinpath(tmp, "my ws", "*")
+                    wsbuf = IOBuffer()
+                    wsproc = run(pipeline(ignorestatus(setenv(Cmd(`sh $(joinpath(wsdir, "install_webui.sh")) --workshops --dir $(folder) --rev "a b" --no-start`; dir = wsdir), Dict("PATH" => wsbin * ":" * ENV["PATH"], "HOME" => tmp, "TMPDIR" => wstmp))); stdout = wsbuf, stderr = wsbuf))
+                    wsout = String(take!(wsbuf))
+                    @test wsproc.exitcode == 0
+                    wsargs = [l[5:end] for l in split(wsout, '\n') if startswith(l, "ARG=")]
+                    @test wsargs == ["--dir", folder, "--rev", "a b", "--no-start"]
+                    @test isempty(readdir(wstmp))
                     println("  update: sh installer and updater runs ran")
                 end
             end

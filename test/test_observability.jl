@@ -355,8 +355,7 @@ function test_observability_fd_rank_tolerance(fx)::Bool
   # Island-wise SE (0.10.0): two-stage observability.
   # An OPEN link is a real separation; with island-wise estimation each
   # measured island is judged on its own subnet and the merged verdict is
-  # :good with the :island_partition note (the pre-island contract returned
-  # :not_observable/:structural_islands here). The FD-aware tolerance is
+  # :good with the :island_partition note. The FD-aware tolerance is
   # still exercised by the local check below, whose column selection spans
   # the island-internal angle-offset null space.
   @testset "State estimation FD-aware rank tolerance" begin (function ()
@@ -1331,6 +1330,17 @@ function test_observability_islands(fx)::Bool
     # a non-finite Jacobian entry is named, not a LAPACK argument error
     t = @test_throws ArgumentError Sparlectra._sigma_max(Sparlectra.sparse([1.0 NaN; 0.0 2.0]))
     @test occursin("non-finite entries (first at row 1, column 2)", t.value.msg)
+    # also with an explicit tolerance, where _sigma_max is not called and
+    # the NaN reached CHOLMOD and the SVD before
+    tp = @test_throws ArgumentError Sparlectra.numeric_rank_pivots(Sparlectra.sparse([1.0 NaN; 0.0 2.0]); tol = 1e-8)
+    @test occursin("non-finite entries (first at row 1, column 2)", tp.value.msg)
+    # a LINKAGG aggregate (index 0 in active_measurement_indices) has no row
+    # to name: the nearly critical list leaves it out instead of "#0"
+    obs0 = (criticality_skipped = false, criticality_method = :omega, numerical_critical_measurement_indices = Int[], structural_critical_measurement_indices = Int[], structural_criticality_skipped = false, criticality_wii = [0.1, 0.2], active_measurement_indices = [0, 1])
+    netM = deepcopy(net)
+    netM.measurements = [Sparlectra.Measurement(typ = Sparlectra.VmMeas, value = 1.0, sigma = 0.01, busIdx = 1, id = "u1")]
+    near0 = only(filter(l -> occursin("nearly critical", l), SparlectraApp._se_criticality_lines(netM, obs0)))
+    @test occursin("u1 (0.2)", near0) && !occursin("#0", near0) && occursin(": 1: ", near0)
   end)() end
 
   return true

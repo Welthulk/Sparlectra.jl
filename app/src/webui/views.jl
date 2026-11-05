@@ -5115,7 +5115,7 @@ function _webui_se_rerun_fields(result::AbstractDict)::Vector{Pair{String,String
   # (a set without one by its request value)
   if haskey(metadata, "se_measurement_timestamp")
     mts = String(something(metadata["se_measurement_timestamp"], ""))
-    push!(fields, "se_timestamp" => isempty(mts) ? SE_NO_TIMESTAMP : mts)
+    push!(fields, "se_timestamp" => _measurement_set_label(mts))
   end
   settings = get(metadata, "webui_request_settings", nothing)
   settings isa AbstractDict || return fields
@@ -5470,8 +5470,8 @@ function render_se_form(; cases::Vector{String} = String[], measurements::Vector
   end
   # a table with several timestamps carries them on its option, so the
   # timestamp select follows a change of the set without a reload
-  # a set without a timestamp is posted and shown as SE_NO_TIMESTAMP
-  tsval(t) = isempty(t) ? SE_NO_TIMESTAMP : String(t)
+  # a set without a timestamp is posted and shown as MEASUREMENT_SET_NO_TIMESTAMP
+  tsval(t) = _measurement_set_label(t)
   meas_ts_attr(name) = haskey(meas_timestamps, name) ? " data-timestamps=\"$(esc(join(tsval.(meas_timestamps[name]), "|")))\"" : ""
   meas_options = join(("<option value=\"$(esc(name))\"$(meas_ts_attr(name))$(name == selected_measurement ? " selected" : "")>$(esc(meas_label(name)))</option>" for name in measurements), "")
   # the timestamp select: shown and posted only for a table with more than
