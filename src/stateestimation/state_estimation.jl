@@ -66,11 +66,16 @@ result does not carry them; `calcLinkFlowsSE!` adds them to the link
 flows).
 
 `conditioning` describes the linear system of the last Gauss-Newton step:
-`(zero_injection, matrix, condition_number, method)`. `zero_injection` is
-the mode of the run (`:on`, `:off`, `:constraint`), `matrix` is `:gain`
-(the gain matrix `H' W H` with the zero-injection rows weighted) or `:kkt`
-(the scaled KKT matrix of `zero_injection = constraint`). The condition
-number is the 1-norm estimate of `condestJacobian` on that sparse matrix
+`(zero_injection, matrix, scaling, condition_number, method)`.
+`zero_injection` is the mode of the run (`:on`, `:off`, `:constraint`),
+`matrix` is `:gain` (the gain matrix `G = H' W H` with the zero-injection
+rows weighted) or `:kkt` (the scaled KKT matrix of
+`zero_injection = constraint`). The condition number is taken of the
+Jacobi-scaled matrix `D^-1/2 M D^-1/2`, `D` its diagonal (`scaling =
+:jacobi`; a KKT constraint row, which has no diagonal, is scaled to a
+largest entry of 1), so the units of the states (rad, pu, and MW or Mvar
+for the circulation states of coupler rings) do not enter it. It is the
+1-norm estimate of `condestJacobian` on that sparse matrix
 (`method = :hager_1norm`, one extra sparse LU), `Inf` when the matrix is
 singular. On a net with several AC islands it is the largest island
 value. J and the degrees of freedom are `objectiveJ` and `dof`.
@@ -5898,10 +5903,44 @@ function _se_solve_constrained!(ctx::_SENormalEquationsSolver, G::SparseMatrixCS
   return sol[1:n], a .* sol[(n + 1):end], ctx.lu_ctx.fallback_count > fallbacks
 end
 
+# _se_jacobi_scaled(M) -> S M S with S diagonal: the symmetric Jacobi
+# scaling of the gain or KKT matrix. A row with a positive diagonal gets
+# 1/sqrt(M_ii), so the scaled gain matrix has a unit diagonal. A row with a
+# zero diagonal (a constraint row of the KKT matrix, or an empty column of
+# a singular gain matrix) gets 1/max_j |M_ij| s_j over the scaled columns,
+# so its largest entry becomes 1 (1 for an empty row). The scaling removes
+# the unit mix of the state vector: angles and magnitudes in rad and pu,
+# the circulation states of coupler rings in MW and Mvar. What remains
+# is the conditioning of the estimation problem itself (tiny sigmas, weak
+# redundancy), which a unit choice cannot change.
+function _se_jacobi_scaled(M::SparseMatrixCSC{Float64,Int64})::SparseMatrixCSC{Float64,Int64}
+  d = diag(M)
+  s = [di > 0.0 ? 1.0 / sqrt(di) : 0.0 for di in d]
+  zero_rows = findall(<=(0.0), d)
+  if !isempty(zero_rows)
+    # largest scaled entry per row, read column-wise (M is symmetric)
+    rowmax = zeros(length(d))
+    rv = rowvals(M)
+    nz = nonzeros(M)
+    for j in axes(M, 2)
+      s[j] > 0.0 || continue
+      for p in nzrange(M, j)
+        rowmax[rv[p]] = max(rowmax[rv[p]], abs(nz[p]) * s[j])
+      end
+    end
+    for i in zero_rows
+      s[i] = rowmax[i] > 0.0 ? 1.0 / rowmax[i] : 1.0
+    end
+  end
+  S = Diagonal(s)
+  return S * M * S
+end
+
 # _se_conditioning(G, C, mode) -> NamedTuple: the condition number of the
 # matrix of the last Gauss-Newton step, for SEResult.conditioning. With
 # constraint rows (C not nothing) the scaled KKT matrix, else the gain
-# matrix G as solved (zero-injection rows weighted, the tap prior in).
+# matrix G as solved (zero-injection rows weighted, the tap prior in), in
+# both cases Jacobi-scaled (`_se_jacobi_scaled`, `scaling = :jacobi`).
 # condestJacobian: the Hager/Higham 1-norm estimate on one sparse LU, never
 # a dense cond. A singular matrix has no finite condition number: the LU
 # throws SingularException (UMFPACK) or ZeroPivotException, and the run
@@ -5909,14 +5948,14 @@ end
 function _se_conditioning(G::Union{Nothing,SparseMatrixCSC{Float64,Int64}}, C::Union{Nothing,SparseMatrixCSC{Float64,Int64}}, mode::Symbol)
   G === nothing && return nothing
   matrix = C === nothing ? :gain : :kkt
-  M = C === nothing ? G : first(_se_kkt_matrix(G, C))
+  M = _se_jacobi_scaled(C === nothing ? G : first(_se_kkt_matrix(G, C)))
   kappa = try
     condestJacobian(M)
   catch err
     (err isa SingularException || err isa ZeroPivotException) || rethrow()
     Inf
   end
-  return (zero_injection = mode, matrix = matrix, condition_number = kappa, method = :hager_1norm)
+  return (zero_injection = mode, matrix = matrix, scaling = :jacobi, condition_number = kappa, method = :hager_1norm)
 end
 
 # _se_pin_steps(G, g, pins) -> (G2, g2): the normal equations with the steps

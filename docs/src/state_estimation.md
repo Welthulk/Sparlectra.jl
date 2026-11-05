@@ -276,9 +276,11 @@ $\lambda_k$ is the force of the measurements against the balance at bus $k$; a l
 measurement error nearby. A small sigma makes the gain matrix ill-conditioned. The KKT system scales
 the constraint rows by $a = \max \operatorname{diag}(G) / \max |C|$ with $G = H_M^T W H_M$, so both blocks are of the same
 order; the solution does not depend on $a$, the condition number does. `SEResult.conditioning` gives the
-condition number of the run. On sp_case14 with a noisy generated set and the passive buses as zero
-injections it is about 6.9e9 for the gain matrix under `on` with the default sigma and 2.6e4 for the
-KKT matrix under `constraint`. Inside a cluster the link flows $f = A^{+} b(x) + N c$ meet every member balance by
+condition number of the run, taken of the Jacobi-scaled matrix $D^{-1/2} M D^{-1/2}$ with $D$ the
+diagonal of $M$, so the units of the states (rad, pu, MW for the circulation of a coupler ring) do not
+enter it. On sp_case14 with a noisy generated set and the passive buses as zero injections it is about
+2.3e9 for the gain matrix under `on` with the default sigma and 6.2e3 for the KKT matrix under
+`constraint`. Inside a cluster the link flows $f = A^{+} b(x) + N c$ meet every member balance by
 construction, and the fused balance is the `LINKAGG` row, so there is no separate link multiplier.
 
 ## Observability

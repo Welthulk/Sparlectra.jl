@@ -29,8 +29,6 @@
 #
 # > **Level: Advanced**, builds on the N-1 chapter of the tour.
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_scenarios.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -42,32 +40,15 @@
 # with the generators of the API, the way the example
 # `examples/others/exp_contingency_events.jl` does. Both routes run on the
 # same engine path as N-1 and give the same rows.
-#
-# > **Note:** On Google Colab the install cell takes a minute or two on a
-# > fresh session (package download and precompilation). Colab's Julia
-# > version may change over time; this notebook targets Julia >= 1.12.
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. The isolation matters on Colab: the shared
-#nb # default environment ships many preinstalled packages, and installing
-#nb # anything there triggers precompilation of that whole stack. Run this
-#nb # cell first, once per session; it takes a minute or two.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.10.0".
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and the study cases
 #
@@ -100,9 +81,9 @@ end
 c14 = study("sp_case14")
 c60 = study("sp_case60")
 println("sp_case14: ", length(c14.net.nodeVec), " buses, ", length(c14.net.branchVec), " branches; sp_case60: ", length(c60.net.nodeVec), " buses, ", length(c60.net.branchVec), " branches, ", length(c60.net.linkVec), " coupler")
-@assert length(c14.net.branchVec) == 17
-@assert length(c60.net.branchVec) == 74
-@assert length(c60.net.linkVec) == 1
+@assert length(c14.net.branchVec) == 17                                     #src
+@assert length(c60.net.branchVec) == 74                                     #src
+@assert length(c60.net.linkVec) == 1                                        #src
 
 ## compile every path the chapters use once; the warm-up code is in
 ## docs/lit/warmup/workshop_scenarios.jl of the installed package
@@ -118,9 +99,9 @@ warmup()
 ## uses: c14 (warm-up cell)
 n1 = runContingencies!(c14.net, generateN1Branches(c14.net; names=c14.names); names=c14.names)
 println("N-1 on sp_case14: ", length(n1), " branch outages, ", count(r -> r.converged, n1), " converged, ", count(r -> r.error !== nothing && occursin("island", r.error), n1), " cut a bus off")
-@assert length(n1) == 17
-@assert count(r -> r.converged, n1) == 14
-@assert all(r -> r.kind === :branch && length(r.elements) == 1, n1)
+@assert length(n1) == 17                                                    #src
+@assert count(r -> r.converged, n1) == 14                                   #src
+@assert all(r -> r.kind === :branch && length(r.elements) == 1, n1)         #src
 
 # ## 2. The double circuit: by hand and generated
 #
@@ -141,10 +122,10 @@ println("  case                          kind            lowest bus Vm [pu]   hi
 for r in (r_hand, r_gen)
     println("  ", rpad(r.name, 30), rpad(String(r.kind), 16), lpad(round(r.min_vm_pu; digits=4), 18), lpad(round(r.max_branch_loading_pct; digits=1), 29))
 end
-@assert ids == [26, 27]
-@assert r_hand.kind === :explicit && r_gen.kind === :double_circuit
-@assert r_hand.elements == r_gen.elements == ["Ostheim_Neuwiese_1", "Ostheim_Neuwiese_2"]
-@assert r_hand.min_vm_pu == r_gen.min_vm_pu && r_hand.max_branch_loading_pct == r_gen.max_branch_loading_pct
+@assert ids == [26, 27]                                                     #src
+@assert r_hand.kind === :explicit && r_gen.kind === :double_circuit         #src
+@assert r_hand.elements == r_gen.elements == ["Ostheim_Neuwiese_1", "Ostheim_Neuwiese_2"]  #src
+@assert r_hand.min_vm_pu == r_gen.min_vm_pu && r_hand.max_branch_loading_pct == r_gen.max_branch_loading_pct  #src
 
 # ## 3. Generated events from the file and from the configuration
 #
@@ -168,9 +149,9 @@ println("scenarios block read back from the file: ", length(from_file), " cases 
 cfg = ContingencyEventsConfig(enabled=true, double_circuits=true, busbars=true)
 from_cfg = generateCorrelatedEvents(c14.net; names=c14.names, double_circuits=cfg.double_circuits, busbars=cfg.busbars, max_members=cfg.max_members)
 println("events generated from the configuration (double circuits, busbars): ", length(from_cfg))
-@assert back.events == [:double_circuits, :busbars]
-@assert kinds[:explicit] == 1 && kinds[:double_circuit] == 1 && kinds[:busbar] == 12
-@assert length(from_cfg) == 13
+@assert back.events == [:double_circuits, :busbars]                         #src
+@assert kinds[:explicit] == 1 && kinds[:double_circuit] == 1 && kinds[:busbar] == 12  #src
+@assert length(from_cfg) == 13                                              #src
 
 # One of the busbar events, `BB Ostheim_110`, cuts off the slack bus of
 # sp_case14. For that event the engine makes another generator the slack
@@ -198,9 +179,9 @@ neubach = vcat(generateLinkOutages(c60.net; names=c60.names),
 for r in runContingencies!(c60.net, neubach; names=c60.names)
     println(rpad(r.name, 20), rpad(String(r.kind), 12), "out: ", join(r.elements, ", "), "; shed load ", r.shed_load_mw, " MW; ", something(r.error, "nothing cut off"))
 end
-@assert [c.kind for c in neubach] == [:link, :busbar, :busbar, :substation]
-@assert "Link_1" in neubach[2].elements && "Link_1" in neubach[3].elements
-@assert !("Link_1" in neubach[4].elements)
+@assert [c.kind for c in neubach] == [:link, :busbar, :busbar, :substation] #src
+@assert "Link_1" in neubach[2].elements && "Link_1" in neubach[3].elements  #src
+@assert !("Link_1" in neubach[4].elements)                                  #src
 
 # ## 5. A name group across two sections
 #
@@ -212,8 +193,8 @@ end
 ## uses: c60 (warm-up cell)
 ng = only(c for c in generateNameGroups(c60.net; names=c60.names) if c.name == "NG Neubach_Waldsee")
 println(ng.name, ": ", join(ng.elements, ", "))
-@assert length(ng.elements) == 2 && all(e -> startswith(e, "Neubach_Waldsee#"), ng.elements)
-@assert !any(c -> Set(c.elements) == Set(ng.elements), generateDoubleCircuits(c60.net; names=c60.names))
+@assert length(ng.elements) == 2 && all(e -> startswith(e, "Neubach_Waldsee#"), ng.elements)  #src
+@assert !any(c -> Set(c.elements) == Set(ng.elements), generateDoubleCircuits(c60.net; names=c60.names))  #src
 
 # ## 6. Two generators in one event
 #
@@ -228,7 +209,7 @@ ab, ba = runScenarios!(c60.net, [Scenario(name="a then b", ops=[unit(gens[1]), u
 println("sp_case60, units gens[1] and gens[2] out, lowest bus Vm [pu] (power flow result):")
 println("  order a then b:   ", round(ab.min_vm_pu; digits=4))
 println("  order b then a:   ", round(ba.min_vm_pu; digits=4))
-@assert ab.min_vm_pu == ba.min_vm_pu && ab.max_branch_loading_pct == ba.max_branch_loading_pct
+@assert ab.min_vm_pu == ba.min_vm_pu && ab.max_branch_loading_pct == ba.max_branch_loading_pct  #src
 
 # `gens[1]` is the slack unit of sp_case60 (`Gen_220` at `Altau_220`), so
 # both scenarios lose the slack. Each run prints one `auto_slack:` line
@@ -259,11 +240,11 @@ for (label, n) in (("all pairs", length(pairs)), ("harmful", count(harmful, pair
     ("of these, double circuits ($(length(circuits)) in the case)", count(p -> Set(p.elements) in circuits, emergent)))
     println("  ", rpad(label * ":", 46), lpad(n, 5))
 end
-@assert length(pairs) == 2701
+@assert length(pairs) == 2701                                               #src
 ## 0.50.0: harmful old 1106, new 1115; emergent old 124, new 133; demo case rebuilt, transformer magnetizing from nameplate since 0.32.1 #src
-@assert count(harmful, pair_results) == 1115
-@assert length(emergent) == 133
-@assert count(p -> Set(p.elements) in circuits, emergent) == 0
+@assert count(harmful, pair_results) == 1115                                #src
+@assert length(emergent) == 133                                             #src
+@assert count(p -> Set(p.elements) in circuits, emergent) == 0              #src
 
 # None of the six double circuits is among them: the ring carries each
 # corridor twice, and losing both legs moves the flow to the other half of
@@ -286,8 +267,8 @@ println("sp_case60 report, cases by kind: ", join(["$(k) $(n)" for (k, n) in rep
 ## format="technical" fixes comma and decimal point; the default follows the regional settings
 csv = writeContingencyResultsCSV(joinpath(workdir, "events.csv"), redirect_stdout(() -> runContingencies!(c60.net, neubach; names=c60.names), devnull); format="technical")
 println(first(readlines(csv)))
-@assert report.n_by_kind == [:branch => 74, :link => 1, :busbar => 2, :substation => 1]
-@assert startswith(first(readlines(csv)), "name,kind,elements,")
+@assert report.n_by_kind == [:branch => 74, :link => 1, :busbar => 2, :substation => 1]  #src
+@assert startswith(first(readlines(csv)), "name,kind,elements,")            #src
 
 # The Web UI shows the same: a `kind` column, the elements and the
 # overloaded branches in the line below each row, and the count of events

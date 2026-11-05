@@ -28,7 +28,7 @@ how long the first solve and the single paths took. The output of the
 further paths is discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   ## tiny warm-up net: a grid connection WITH declared short-circuit data
   wnet = Net(name = "warmup", baseMVA = 100.0)
   addBus!(net = wnet, busName = "A", vn_kV = 110.0)

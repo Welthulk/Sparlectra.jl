@@ -180,8 +180,10 @@ end
 
 Stage-1 topology pre-checks: pure, linear in the measurement
 count, no state estimation involved. Returns
-`(findings, summary, n_checked_branches, n_checked_links)` where each
-finding is `(stage = :precheck, kind, location, evidence, severity)`.
+`(findings, summary, notes, n_checked_branches, n_checked_links)` where
+each finding is `(stage = :precheck, kind, location, evidence, severity)`
+and `notes` lists the checks that could not judge (also appended to
+`summary`).
 ADVISORY only: nothing is blocked or mutated; the caller decides what to
 do with the findings. Out-of-service elements are exempt from the
 plausibility checks; only the status-contradiction check
@@ -198,8 +200,9 @@ Checks (thresholds as sigma multiples, keywords mirror the
   both ends, while the model expects a flow above `k * sigma` on it. The
   expectation comes from the net's present voltage state (case start
   values, the last power flow, or the last SE state); a lightly loaded
-  branch that is expected near zero never fires, and a flat start state
-  (no expectation) gives no verdict.
+  branch that is expected near zero never fires. A state with all bus
+  angles equal (flat start, no stored result) gives no expectation: the
+  rule is skipped and a note says so.
 - `:closed_link_voltage_mismatch` (`k_v`, default 4.0): a closed link with
   voltage-magnitude measurements on both sides disagreeing by more than
   `k * sqrt(sigma_a^2 + sigma_b^2)`.
@@ -310,10 +313,22 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
   # expected near zero: no contradiction, no finding. The former
   # "terminal station carries load" guard was a weak substitute for this
   # expectation and is gone. A flat start state (every bus 1.0 pu / 0 deg)
-  # expects no flow anywhere, so the rule stays silent on it: no
+  # expects no flow anywhere, so the rule gives no verdict on it: no
   # expectation means no verdict, never a guess. Needs at least one
   # measurement per end; an unmeasured end also means no verdict.
   V_state = buildVoltageVector(net)
+  # A state with all bus angles equal carries no solved operating point
+  # (a loaded network always has angle differences): it is a flat start or
+  # a case without stored results. Rule 2 then has no expectation to judge
+  # against and is skipped, but it says so in the summary (`notes`), with
+  # the number of closed branches whose measurements read dead and went
+  # unjudged. A power flow on a copy as the expectation was not chosen: it
+  # costs a full Newton-Raphson per precheck, needs schedules the
+  # estimation case may not carry, and can fail on exactly the data the
+  # precheck is meant to question.
+  va0 = isempty(net.nodeVec) ? 0.0 : net.nodeVec[1]._va_deg
+  flat_state = length(net.nodeVec) > 1 && all(n -> abs(n._va_deg - va0) <= 1e-9, net.nodeVec)
+  n_unjudged = 0
   expected_value(m, br) = begin
     if m.typ == ImagMeas
       abs(_end_current_A(net, br, m.direction, V_state))
@@ -332,6 +347,10 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
     has_to = any(endbus(m) == tb for m in rows)
     (has_from && has_to) || continue
     all(abs(m.value) <= k_dead * m.sigma for m in rows) || continue
+    if flat_state
+      n_unjudged += 1
+      continue
+    end
     # the strongest expectation among the dead rows, in sigma units; the
     # rule fires only when the model clearly expects a flow that the
     # measurements do not show
@@ -412,8 +431,11 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
   # 5) meshes without an active power row (uniqueness, not plausibility)
   append!(findings, _topology_mesh_without_p(net, active, reps, members, busname))
 
+  notes = String[]
+  flat_state && push!(notes, string("rule 2 (closed branch without flow) skipped: flat start, no expected state (", n_unjudged, " closed branch(es) with dead readings not judged)"))
   summary = isempty(findings) ? string("topology precheck: no findings (", n_checked_branches, " branches, ", n_checked_links, " links checked)") : string("topology precheck: ", length(findings), " finding(s): ", join(("$(f.kind) at $(f.location)" for f in findings), "; "))
-  return (findings = findings, summary = summary, n_checked_branches = n_checked_branches, n_checked_links = n_checked_links)
+  isempty(notes) || (summary = string(summary, "; ", join(notes, "; ")))
+  return (findings = findings, summary = summary, notes = notes, n_checked_branches = n_checked_branches, n_checked_links = n_checked_links)
 end
 
 ## candidate list for stage 3: explicit element references, or :auto from

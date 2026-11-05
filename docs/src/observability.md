@@ -245,6 +245,7 @@ measured coupler rings, plus `alpha` when PMU angle measurements activate
 the reference-offset state). It shows which rows touch which columns
 before any SVD runs. The example suite
 `examples/run_state_estimation_suite.jl` writes such a measurement-matrix
-page with a stability verdict from rank, redundancy and `cond(H)`; the
+page with a stability verdict from rank, redundancy and `cond(H)` with
+the columns of `H` scaled to unit norm; the
 [state estimation workshop](generated/workshop_state_estimation.md)
 walks the same matrix on a small network.

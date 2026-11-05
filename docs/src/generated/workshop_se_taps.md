@@ -8,8 +8,6 @@ EditURL = "../../lit/workshop_se_taps.jl"
 > [basics notebook](https://welthulk.github.io/Sparlectra.jl/generated/workshop_state_estimation/)
 > and [bad data and parameter estimation](https://welthulk.github.io/Sparlectra.jl/generated/workshop_se_diagnostics/).
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_taps.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -54,8 +52,7 @@ in all three modes, current and PMU measurements, the observability
 check, the topology precheck, island-wise estimation and the robust
 replacement mode), so the real study runs at full speed; its code is in
 `docs/lit/warmup/workshop_se_taps.jl` of the package. How long the
-warm-up takes depends on the machine: a Colab session is several times
-slower than a desktop; every later cell then runs without compile
+warm-up takes depends on the machine; every later cell then runs without compile
 pauses.
 
 ````@example workshop_se_taps
@@ -776,8 +773,8 @@ beautifully converged estimate of a network that does not exist.
   how sets travel as CSV files:
   [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).
 - Bad-data localization, robust estimation and shunt estimation in
-  depth: the [diagnostics notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb).
+  depth: the [diagnostics notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb).
 - New to the estimator? The
-  [basics notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
+  [basics notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
   walks from network build to estimated state.
 

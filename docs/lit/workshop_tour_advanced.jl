@@ -20,8 +20,6 @@
 
 # # The Sparlectra workshop tour, advanced
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -43,35 +41,15 @@
 #
 # **Beyond**
 # 6. Using your cores: parallel sweeps on Julia threads
-#
-# > **Note:** On Google Colab the install cell takes a minute or two on a
-# > fresh session (package download and precompilation). Colab's Julia
-# > version may change over time; this notebook targets Julia ≥ 1.12.
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. The isolation matters on Colab: the shared
-#nb # default environment ships many preinstalled packages, and installing
-#nb # anything there triggers precompilation of that whole stack. Run this
-#nb # cell first, once per session; it takes a minute or two.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.9.12".
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
-#nb ## Switching versions in a running session? A "[loaded: ...]" note means
-#nb ## the old version is still active: restart the runtime, then rerun
-#nb ## this cell.
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and shared helpers
 #
@@ -86,8 +64,7 @@
 # with its report, and the IEC 60909 short circuit, serial and under
 # threads), so nothing stalls mid-tour; its code is in
 # `docs/lit/warmup/workshop_tour_advanced.jl` of the package. How long the
-# warm-up takes depends on the machine: a Colab session is several times
-# slower than a desktop; every later cell then runs without compile pauses.
+# warm-up takes depends on the machine; every later cell then runs without compile pauses.
 
 using Sparlectra
 using Random
@@ -676,7 +653,7 @@ end
 # (`build_ring7`, see the warm-up; diagram in the basic tour), derive a
 # noisy synthetic measurement set from it, check observability, and let
 # the WLS estimator reconstruct the state. The full narrative is the
-# [state-estimation notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
+# [state-estimation notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
 
 ## uses: build_ring7 (warm-up cell)
 net_se = build_ring7("tour_se")
@@ -981,7 +958,7 @@ println("quadrature-forced UPFC, series converter active power P_se [MW], comput
 # [FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/) page;
 # `examples/others/exp_facts_limit_modes.jl` runs these contrasts as a
 # script, and the TCSC has its own
-# [notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb).
+# [notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb).
 #
 # ## Chapter 5: N-1 contingency analysis
 #
@@ -1109,9 +1086,9 @@ println("  parallel:                         ", round(t_par * 1000; digits = 1))
 println("  speed-up serial / parallel [-]:   ", round(t_ser / t_par; digits = 2))
 println("result rows identical: ", isequal(sc_ser.rows, sc_par.rows))
 
-# Reading aid (Example 6.1): on Colab's free tier you usually get 1-2
-# vCPUs, so the
-# factor here stays modest. With one thread the parallel call falls back
+# Reading aid (Example 6.1): a notebook kernel starts with one Julia
+# thread unless `JULIA_NUM_THREADS` is set, so the factor here stays
+# modest. With one thread the parallel call falls back
 # to the very same serial function, so the two times differ only by
 # measurement noise (garbage collection, caches), in either direction. The
 # real effect wants your local
@@ -1128,12 +1105,12 @@ println("result rows identical: ", isequal(sc_ser.rows, sc_par.rows))
 #
 # The basic tour (Newcomer to Advanced) and the focused notebooks:
 #
-# - [Workshop tour, basic](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-# - [Slack types and short circuit](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
-# - [Distributed slack](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
-# - [Transformer taps](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
-# - [TCSC flow steering](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
-# - [State estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
+# - [Workshop tour, basic](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
+# - [Slack types and short circuit](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
+# - [Distributed slack](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
+# - [Transformer taps](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
+# - [TCSC flow steering](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
+# - [State estimation](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 #
 # And the documentation for going further:
 #

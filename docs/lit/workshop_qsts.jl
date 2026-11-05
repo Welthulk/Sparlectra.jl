@@ -28,8 +28,6 @@
 #
 # > **Level: Advanced**, builds on the OLTC chapter of the basic tour.
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_qsts.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -40,32 +38,15 @@
 # to the next, so the controllers act as they would over a day. This
 # workshop runs the shipped example day on `sp_case14` in both modes and
 # shows where the results differ.
-#
-# > **Note:** On Google Colab the install cell takes a minute or two on a
-# > fresh session (package download and precompilation). Colab's Julia
-# > version may change over time; this notebook targets Julia >= 1.12.
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. The isolation matters on Colab: the shared
-#nb # default environment ships many preinstalled packages, and installing
-#nb # anything there triggers precompilation of that whole stack. Run this
-#nb # cell first, once per session; it takes a minute or two.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.10.0".
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and the example series
 #
@@ -94,9 +75,9 @@ control_file = joinpath(data, "sp_case14_day.control.yaml")
 println("series ", series.name, ": ", length(series.steps), " steps of ", Int(series.step_minutes), " min (", series.steps[1].label, " to ", series.steps[end].label, "), ", sum(length, series.ops), " patch operations")
 outage = only(filter(op -> op.op === :status, series.ops[57]))
 println("step 57 (", series.steps[57].label, "), status operation: ", outage.target, " ", outage.id, " status set to ", outage.value, " (0 = out of service)")
-@assert length(series.steps) == 96 && series.step_minutes == 15.0
-@assert sum(length, series.ops) == 968
-@assert [k for k in eachindex(series.ops) if any(op -> op.op === :status, series.ops[k])] == collect(57:64)
+@assert length(series.steps) == 96 && series.step_minutes == 15.0           #src
+@assert sum(length, series.ops) == 968                                      #src
+@assert [k for k in eachindex(series.ops) if any(op -> op.op === :status, series.ops[k])] == collect(57:64)  #src
 
 ## compile every path the chapters use once; the warm-up code is in
 ## docs/lit/warmup/workshop_qsts.jl of the installed package
@@ -119,8 +100,8 @@ catch err
     sprint(showerror, err)
 end
 println(refusal)
-@assert SparlectraConfig().qsts.mode === :off
-@assert occursin("qsts.mode is off", refusal)
+@assert SparlectraConfig().qsts.mode === :off                               #src
+@assert occursin("qsts.mode is off", refusal)                               #src
 
 # ## 2. Mode A: every step on its own
 #
@@ -151,10 +132,10 @@ for (name, vm) in (("Moorau_20 (bus 8)", vm_moorau), ("Wehrden_20 (bus 14)", vm_
     @printf("  %-19s %6.4f   %6.4f    %2d\n", name, minimum(vm), maximum(vm), count(<(0.99), vm))
 end
 println("  Moorau_20 below 0.99 pu from ", labels[findfirst(<(0.99), vm_moorau)], " to ", labels[findlast(<(0.99), vm_moorau)])
-@assert all(s -> s.status === :solved && s.control_status === :none, plain.steps)
-@assert line_out == collect(57:64)
-@assert findall(<(0.99), vm_moorau) == collect(73:83)
-@assert count(<(0.99), vm_wehrden) == 67 && maximum(vm_wehrden) < 1.0
+@assert all(s -> s.status === :solved && s.control_status === :none, plain.steps)  #src
+@assert line_out == collect(57:64)                                          #src
+@assert findall(<(0.99), vm_moorau) == collect(73:83)                       #src
+@assert count(<(0.99), vm_wehrden) == 67 && maximum(vm_wehrden) < 1.0       #src
 
 # Without control the evening peak (18:00 to 20:30) pulls `Moorau_20`
 # below 0.99 pu, and `Wehrden_20` stays below 1.0 pu all day.
@@ -187,11 +168,11 @@ for (id, name) in zip(day.elements.controller_ids, day.elements.controller_names
     changes = [k for k in 2:length(position) if position[k] != position[k - 1]]
     println("  ", rpad(id, 12), rpad(name, 19), lpad(Int(position[1]), 8), "   ", join([string(Int(position[k]), " at ", day.steps[k].label) for k in changes], ", "))
 end
-@assert day.mode === :sequential && all(s -> s.status === :solved, day.steps)
-@assert day.elements.controller_ids == ["30#OLTC", "31#OLTC", "8#MSC"]
-@assert qstsValues(day, "30#OLTC", "position") == vcat(fill(0.0, 3), fill(1.0, 23), fill(0.0, 62), fill(1.0, 8))
-@assert qstsValues(day, "31#OLTC", "position") == vcat(fill(0.0, 25), fill(-1.0, 7), fill(-2.0, 64))
-@assert qstsValues(day, "8#MSC", "bs_mvar") == vcat(fill(0.0, 72), fill(2.5, 24))
+@assert day.mode === :sequential && all(s -> s.status === :solved, day.steps)  #src
+@assert day.elements.controller_ids == ["30#OLTC", "31#OLTC", "8#MSC"]      #src
+@assert qstsValues(day, "30#OLTC", "position") == vcat(fill(0.0, 3), fill(1.0, 23), fill(0.0, 62), fill(1.0, 8))  #src
+@assert qstsValues(day, "31#OLTC", "position") == vcat(fill(0.0, 25), fill(-1.0, 7), fill(-2.0, 64))  #src
+@assert qstsValues(day, "8#MSC", "bs_mvar") == vcat(fill(0.0, 72), fill(2.5, 24))  #src
 
 # The Moorau tap goes one step up at 00:45, back to its limit 1.0 at
 # 06:30 and up again at 22:00. The Wehrden tap goes two steps down in the morning and stays
@@ -220,11 +201,11 @@ println("  switching operations, all controllers:     ", Int(metric("", "switch_
 println("  hunting patterns, all controllers:         ", Int(metric("", "n_hunting_total")))
 @printf("  loss energy of the day [MWh]:              %.2f\n", metric("", "loss_energy_mwh"))
 println("  30#OLTC Moorau, steps at the tap limit:    ", Int(metric("30#OLTC", "steps_at_limit")), " of ", length(day.steps))
-@assert sw.step == [4, 26, 27, 33, 73, 89] && all(==("control"), sw.trigger)
-@assert metric("", "switch_count_total") == 6 && metric("", "n_hunting_total") == 0
-@assert metric("", "loss_energy_mwh") ≈ sum(qstsValues(day, "", "total_p_loss_mw")) / 4
-@assert round(metric("", "loss_energy_mwh"); digits = 2) == 21.91
-@assert metric("30#OLTC", "steps_at_limit") == 65
+@assert sw.step == [4, 26, 27, 33, 73, 89] && all(==("control"), sw.trigger)  #src
+@assert metric("", "switch_count_total") == 6 && metric("", "n_hunting_total") == 0  #src
+@assert metric("", "loss_energy_mwh") ≈ sum(qstsValues(day, "", "total_p_loss_mw")) / 4  #src
+@assert round(metric("", "loss_energy_mwh"); digits = 2) == 21.91           #src
+@assert metric("30#OLTC", "steps_at_limit") == 65                           #src
 
 # Six moves in 96 steps and no hunting. The loss energy is the sum of the
 # step losses times 15 minutes.
@@ -244,8 +225,8 @@ println("Wehrden_20 (bus 14), Vm [pu], mode B (power flow result):")
 @printf("  lowest of the day:                 %.4f\n", minimum(chart.values))
 @printf("  highest of the day:                %.4f\n", maximum(chart.values))
 @printf("  band of 31#OLTC (dashed):          %.2f to %.2f\n", chart.band...)
-@assert count(!isnan, chart.values) == 96 && chart.band == (0.99, 1.01)
-@assert all(v -> 0.99 <= v <= 1.01, chart.values)
+@assert count(!isnan, chart.values) == 96 && chart.band == (0.99, 1.01)     #src
+@assert all(v -> 0.99 <= v <= 1.01, chart.values)                           #src
 chart
 
 # In mode A without control the same bus stays below 0.99 pu in 67 steps
@@ -281,14 +262,14 @@ println("whole day:")
 @printf("  %-45s %6d    %6d\n", "Newton iterations, sum over 96 steps", sum(s.iterations for s in each.steps), sum(s.iterations for s in day.steps))
 @printf("  %-45s %6d    %6d\n", "switching rows", length(each.switching), length(day.switching))
 @printf("  %-45s %6d    %6d\n", "metric rows", length(each.metrics), length(day.metrics))
-@assert isequal(each.bus_values[:, :, 1], day.bus_values[:, :, 1]) && isequal(each.branch_values[:, :, 1], day.branch_values[:, :, 1])
-@assert step_changes(qstsValues(each, "30", "tap_ratio")) == 2 && step_changes(qstsValues(day, "30", "tap_ratio")) == 3
-@assert step_changes(qstsValues(each, "31", "tap_ratio")) == 10 && step_changes(qstsValues(day, "31", "tap_ratio")) == 2
-@assert (qstsValues(each, "30", "tap_ratio")[22], qstsValues(day, "30", "tap_ratio")[22]) == (1.0, 1.0125)
-@assert all(v -> 0.99 <= v <= 1.01, (qstsValues(each, "8", "vm_pu")[22], qstsValues(day, "8", "vm_pu")[22]))
-@assert 0.99 <= qstsValues(each, "8", "vm_pu")[84] < 1.0 && qstsValues(day, "8", "vm_pu")[84] > 1.0
-@assert sum(s.iterations for s in each.steps) > 2 * sum(s.iterations for s in day.steps)
-@assert isempty(each.switching) && isempty(each.metrics)
+@assert isequal(each.bus_values[:, :, 1], day.bus_values[:, :, 1]) && isequal(each.branch_values[:, :, 1], day.branch_values[:, :, 1])  #src
+@assert step_changes(qstsValues(each, "30", "tap_ratio")) == 2 && step_changes(qstsValues(day, "30", "tap_ratio")) == 3  #src
+@assert step_changes(qstsValues(each, "31", "tap_ratio")) == 10 && step_changes(qstsValues(day, "31", "tap_ratio")) == 2  #src
+@assert (qstsValues(each, "30", "tap_ratio")[22], qstsValues(day, "30", "tap_ratio")[22]) == (1.0, 1.0125)  #src
+@assert all(v -> 0.99 <= v <= 1.01, (qstsValues(each, "8", "vm_pu")[22], qstsValues(day, "8", "vm_pu")[22]))  #src
+@assert 0.99 <= qstsValues(each, "8", "vm_pu")[84] < 1.0 && qstsValues(day, "8", "vm_pu")[84] > 1.0  #src
+@assert sum(s.iterations for s in each.steps) > 2 * sum(s.iterations for s in day.steps)  #src
+@assert isempty(each.switching) && isempty(each.metrics)                    #src
 
 # Step 1 is the same in both modes: mode B starts the day from the base
 # solution, as mode A starts every step. After that the history decides.
@@ -333,8 +314,8 @@ files_a = writeQstsResults(mktempdir(), plain; format = "technical")
 files_b = writeQstsResults(mktempdir(), day; format = "technical")
 println("mode A: ", join(basename.(files_a), ", "))
 println("mode B: ", join(basename.(files_b), ", "))
-@assert basename.(files_a) == ["qsts_values.csv", "qsts_steps.csv", "qsts_elements.csv", "qsts_manifest.json"]
-@assert setdiff(basename.(files_b), basename.(files_a)) == ["qsts_switching.csv", "qsts_metrics.csv"]
+@assert basename.(files_a) == ["qsts_values.csv", "qsts_steps.csv", "qsts_elements.csv", "qsts_manifest.json"]  #src
+@assert setdiff(basename.(files_b), basename.(files_a)) == ["qsts_switching.csv", "qsts_metrics.csv"]  #src
 
 # ## Where to go from here
 #

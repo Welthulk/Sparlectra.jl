@@ -27,7 +27,7 @@ example series and print how long it took. The output of the paths is
 discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   ## every path of the chapters once on two steps, output discarded: the
   ## series read, mode off, mode A with and without controllers, mode B,
   ## the accessors, the chart and the result files

@@ -4,8 +4,6 @@ EditURL = "../../lit/workshop_tour.jl"
 
 # The Sparlectra workshop tour
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -13,7 +11,7 @@ This tour is the FIRST HALF of the Sparlectra workshop: install
 [Sparlectra.jl](https://github.com/Welthulk/Sparlectra.jl) once, warm the
 compiler up once, and then climb from the very first bus to the solver's
 control features in one session. The
-[ADVANCED tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
+[ADVANCED tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
 continues with the Expert and Beyond tiers (remote voltage control,
 HVDC, state estimation, FACTS, N-1, threads); the focused single-topic
 notebooks go deeper on individual chapters.
@@ -32,10 +30,6 @@ the chapters climb three tiers:
 4. Transformer tap control (OLTC)
 5. Voltage-dependent reactive power, Q(U)
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia ≥ 1.12.
-
 ## Warm-up and shared helpers
 
 Julia compiles each function on first use. This cell defines what the
@@ -47,8 +41,7 @@ Its last line, `warmup()`, runs every path the chapters exercise once
 MATPOWER export, bus links, the IEC 60909 short circuit, the tap control
 loop and Q(U)), so nothing stalls mid-tour; its code is in
 `docs/lit/warmup/workshop_tour.jl` of the package. How long the warm-up
-takes depends on the machine: a Colab session is several times slower
-than a desktop; every later cell then runs without compile pauses.
+takes depends on the machine; every later cell then runs without compile pauses.
 
 ````@example workshop_tour
 using Sparlectra
@@ -632,7 +625,7 @@ example: never link the slack bus itself).
 One grid connection, modeled three ways, plus an IEC 60909-0 fault-current
 sweep from the declared feeder data. The detailed walk-through with full
 reading aids is the
-[slack-types notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb).
+[slack-types notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb).
 
 All examples of this chapter share one 8-bus network (`build_grid`):
 a ring with two chords, generators at `B3` and `B6`, loads at `B2`,
@@ -815,18 +808,18 @@ flips with the voltage level, exactly along the declared characteristic.
 ## Where to go next
 
 The workshop continues in the
-[ADVANCED tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
+[ADVANCED tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
 (Expert and Beyond tiers): remote voltage control by a machine, a
 steerable HVDC link, state estimation, the FACTS devices and their
 limits, N-1 contingency analysis, and parallel sweeps on Julia threads.
 
 The focused notebooks with the full narrative of single topics:
 
-- [Slack types and short circuit](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
-- [Distributed slack](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
-- [Transformer taps](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
-- [TCSC flow steering](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
-- [State estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
+- [Slack types and short circuit](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
+- [Distributed slack](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
+- [Transformer taps](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
+- [TCSC flow steering](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
+- [State estimation](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 
 And the documentation for going further:
 

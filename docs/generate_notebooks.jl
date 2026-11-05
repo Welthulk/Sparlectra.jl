@@ -14,8 +14,8 @@
 
 # file: docs/generate_notebooks.jl
 # purpose: regenerate the committed Literate.jl outputs from docs/lit/*.jl:
-#          a Documenter page under docs/src/generated/ and a Colab-ready
-#          notebook under notebooks/. Run manually after editing a source:
+#          a Documenter page under docs/src/generated/ and a notebook under
+#          notebooks/. Run manually after editing a source:
 #          `julia --project=docs docs/generate_notebooks.jl`. Both outputs
 #          are committed; docs/make.jl does NOT call this script. As a safety
 #          net, the Documentation workflow (jekyll-gh-pages.yml) reruns this
@@ -49,12 +49,12 @@ const NOTEBOOK_DIR  = normpath(joinpath(@__DIR__, "..", "notebooks"))
     patch_notebook_metadata!(path::AbstractString)
 
 Rewrite the generated notebook's `metadata.kernelspec` to the generic
-`{name: "julia", display_name: "Julia", language: "julia"}` so Google Colab
-selects its Julia runtime automatically when the notebook is opened.
-Literate stamps the kernelspec (and `language_info.version`) with the local
-Julia version, which would both confuse Colab's kernel matching and churn
-the committed file on every local Julia upgrade; `language_info` is
-therefore normalized to a version-free form as well. The rewritten file is
+`{name: "julia", display_name: "Julia", language: "julia"}`. Literate stamps
+the kernelspec (and `language_info.version`) with the local Julia version,
+which would churn the committed file on every local Julia upgrade;
+`language_info` is therefore normalized to a version-free form as well. The
+workshop installer (`tools/install_workshops.jl`) replaces the generic
+kernel name in its copies by the kernel it installs. The rewritten file is
 re-parsed to prove it is still valid JSON.
 """
 function patch_notebook_metadata!(path::AbstractString)
@@ -75,27 +75,17 @@ end
 """
     check_outputs(mdpath, nbpath)
 
-Post-generation sanity checks for the `#nb` line filtering: the Colab
-install cell must be present in the notebook and absent from the Documenter
-page (in-repo the docs project already provides Sparlectra as a path dep).
+Post-generation sanity checks for the `#nb` line filtering: the setup cell
+(the check that Sparlectra is installed in the workshop environment) must be
+present in the notebook and absent from the Documenter page, and no
+notebook may install packages itself (the workshop installer does that).
 """
 function check_outputs(mdpath::AbstractString, nbpath::AbstractString)
   nb = JSON3.read(read(nbpath, String))
-  install_cell = any(occursin("Pkg.add(\"Sparlectra\")", join(cell.source)) for cell in nb.cells)
-  @assert install_cell "Colab install cell missing from $(nbpath)"
-  @assert !occursin("Pkg.add", read(mdpath, String)) "install cell leaked into $(mdpath)"
-  # Only the APSLF workshop uses AnalyticLoadFlow. Every other install cell
-  # switches its precompile workload off before Pkg.add, so the install does
-  # not compile a solver path the workshop never calls; the APSLF workshop
-  # keeps a workload.
-  install_source = join(join(cell.source) for cell in nb.cells if occursin("Pkg.add(url", join(cell.source)))
-  alf_off = occursin("ENV[\"ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD\"] = \"off\"", install_source)
-  if first(splitext(basename(nbpath))) == "workshop_apslf"
-    @assert !alf_off "the APSLF workshop must not switch the AnalyticLoadFlow workload off: $(nbpath)"
-  else
-    @assert alf_off "install cell of $(nbpath) does not switch the AnalyticLoadFlow workload off"
-    @assert findfirst("ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD", install_source).start < findfirst("Pkg.add(url", install_source).start "the workload switch of $(nbpath) comes after Pkg.add, too late for the precompile"
-  end
+  sources = [join(cell.source) for cell in nb.cells if cell.cell_type == "code"]
+  @assert any(occursin("Base.find_package(\"Sparlectra\")", s) for s in sources) "setup cell missing from $(nbpath)"
+  @assert !any(occursin(r"Pkg\.(add|develop|activate)\(", s) for s in sources) "a code cell of $(nbpath) installs packages; the workshop installer does that"
+  @assert !occursin("find_package", read(mdpath, String)) "setup cell leaked into $(mdpath)"
   return nothing
 end
 

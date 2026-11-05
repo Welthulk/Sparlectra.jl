@@ -6,8 +6,6 @@ EditURL = "../../lit/workshop_se_diagnostics.jl"
 
 > **Level: Expert**, sequel to the [state-estimation basics notebook](https://welthulk.github.io/Sparlectra.jl/generated/workshop_state_estimation/); this chapter assumes you know what $J$, `dof`, and observability mean.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -42,10 +40,6 @@ and B3-B6):
    B7 ---- B6 ---- B5 ------+
 ```
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia >= 1.12.
-
 ## Warm-up
 
 Julia compiles each function on first use. This cell loads the packages.
@@ -62,8 +56,7 @@ and robust estimator, the observability check with a current
 measurement, and the shunt parameter estimation), so the real study
 runs at full speed; its code is in
 `docs/lit/warmup/workshop_se_diagnostics.jl` of the package. How long
-the warm-up takes depends on the machine: a Colab session is several
-times slower than a desktop; every later cell then runs without compile
+the warm-up takes depends on the machine; every later cell then runs without compile
 pauses.
 
 ````@example workshop_se_diagnostics
@@ -503,7 +496,7 @@ report row says so (`frozen = true`).
   thresholds used above:
   [State-Estimation Configuration](https://welthulk.github.io/Sparlectra.jl/state_estimation_configuration/).
 - New to the estimator? Start with the
-  [state-estimation basics notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb):
+  [state-estimation basics notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb):
   the closed loop from network build to estimated state, and the
   observability deep dive.
 

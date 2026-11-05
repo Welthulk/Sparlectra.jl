@@ -9,8 +9,6 @@ EditURL = "../../lit/workshop_series_compensation.jl"
 > **UPFC** (unified power flow controller), including the DC-link-coupled
 > model that steers a line's active and reactive flow independently.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -25,10 +23,6 @@ watch the natural flow split, and then let the
 target, including the honest failure mode when the target is out of
 reach.
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia ≥ 1.12.
-
 ## Warm-up and shared helpers
 
 Julia compiles each function on first use. This cell loads the package
@@ -39,8 +33,7 @@ uses a name from another cell says so in a comment. Its last line,
 solver, the outer control loop with a series-reactance controller, the
 result tables, both UPFC models), so nothing stalls mid-study; its code
 is in `docs/lit/warmup/workshop_series_compensation.jl` of the package.
-How long the warm-up takes depends on the machine: a Colab session is
-several times slower than a desktop; every later cell then runs without
+How long the warm-up takes depends on the machine; every later cell then runs without
 compile pauses.
 
 ````@example workshop_series_compensation
@@ -376,6 +369,6 @@ limitation list and the phasor picture are on the FACTS Devices page.
   resonance guard.
 - [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/):
   the outer loop all controllers share, and the uniform element view.
-- [Workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb):
-  all workshop examples in one Colab session.
+- [Workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb):
+  all workshop examples in one notebook.
 

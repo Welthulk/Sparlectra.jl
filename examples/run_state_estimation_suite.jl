@@ -18,7 +18,7 @@
 
 include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 using Sparlectra
-using LinearAlgebra: svdvals
+using LinearAlgebra: norm, svdvals
 
 # state_estimation_observability.jl internally includes
 # state_estimation_wls.jl; that duplication is contained in its own
@@ -83,8 +83,14 @@ function write_measurement_matrix_report(output_dir::AbstractString)
     evaluate_global_observability(net)
   end
   # H is sparse; the workshop-size matrix is tiny, so
-  # the exact dense singular values stay affordable here
-  sv = svdvals(Matrix(mj.H))
+  # the exact dense singular values stay affordable here. The columns are
+  # scaled to unit 2-norm first (the Jacobi scaling of H'H, as the
+  # estimator reports its gain matrix), so the units of the states (rad,
+  # pu, MW for ring circulations) do not enter the verdict.
+  Hd = Matrix(mj.H)
+  colnorm = [norm(view(Hd, :, j)) for j in axes(Hd, 2)]
+  Hs = Hd ./ permutedims([c > 0.0 ? c : 1.0 for c in colnorm])
+  sv = svdvals(Hs)
   cond_H = sv[end] > 0.0 ? sv[1] / sv[end] : Inf
   # heuristic verdict on the WLS problem's conditioning: the normal
   # equations square the condition of H, so cond(H) above ~1e7 means the
@@ -108,8 +114,8 @@ function write_measurement_matrix_report(output_dir::AbstractString)
     println(io, "| redundancy dof (m - n) | ", gobs.dof, " |")
     println(io, "| redundancy ratio m/n | ", round(gobs.redundancy_ratio; digits = 2), " |")
     println(io, "| critical measurements | ", length(gobs.numerical_critical_measurement_indices), " |")
-    println(io, "| sigma_max / sigma_min of H | ", round(sv[1]; digits = 4), " / ", round(sv[end]; digits = 6), " |")
-    println(io, "| cond(H) | ", round(cond_H; digits = 1), " |")
+    println(io, "| sigma_max / sigma_min of H, columns scaled | ", round(sv[1]; digits = 4), " / ", round(sv[end]; digits = 6), " |")
+    println(io, "| cond(H), columns scaled | ", round(cond_H; digits = 1), " |")
     println(io, "| quality | ", gobs.quality, " |")
     println(io, "| verdict | ", verdict, " |")
     println(io)

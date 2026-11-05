@@ -26,8 +26,38 @@
 #            curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.sh | sh
 #          When piped, Sparlectra is placed in a Sparlectra/ folder inside
 #          the CURRENT directory; run the one-liner where it should live.
+#          --workshops sets up the workshop notebooks instead of the Web
+#          UI (Julia, then tools/install_workshops.jl):
+#            curl -fsSL .../tools/install_webui.sh | sh -s -- --workshops
+#          Options of the workshop mode: --dir <folder>, --rev <branch>,
+#          --path <checkout>, --no-start. --no-start also works for the
+#          Web UI (same as SPARLECTRA_START_WEBUI=0).
 
 set -e
+WORKSHOPS=""
+WS_ARGS=""
+# arguments are passed on to tools/install_workshops.jl one by one; a value
+# with a space would split, so the workshop folder takes no spaces here
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --workshops) WORKSHOPS=1 ;;
+    --no-start) SPARLECTRA_START_WEBUI=0; WS_ARGS="$WS_ARGS --no-start" ;;
+    --dir|--rev|--path)
+      [ $# -ge 2 ] || { echo "Option $1 needs a value."; exit 1; }
+      WS_ARGS="$WS_ARGS $1 $2"
+      shift
+      ;;
+    *)
+      echo "Unknown option $1. Options: --workshops [--dir <folder>] [--rev <branch> | --path <checkout>] [--no-start]"
+      exit 1
+      ;;
+  esac
+  shift
+done
+if [ -z "$WORKSHOPS" ] && [ -n "$(printf '%s' "$WS_ARGS" | sed 's/ --no-start//g')" ]; then
+  echo "--dir, --rev and --path belong to the workshop mode (--workshops)."
+  exit 1
+fi
 # When executed from a file, everything is anchored next to the script.
 # When piped (curl | sh), $0 is the shell itself; anchoring at its dirname
 # would point at /bin, so fall back to the current directory instead.
@@ -90,6 +120,44 @@ if ! command -v julia >/dev/null 2>&1; then
   fi
 fi
 echo "Julia: $(julia --version)"
+
+# --- Workshop mode ------------------------------------------------------------
+# Everything after Julia is in tools/install_workshops.jl, one file for Linux,
+# macOS and Windows. Inside a checkout that file is used; piped from the docs
+# it is fetched from main, like this script.
+if [ -n "$WORKSHOPS" ]; then
+  # Sparlectra needs Julia 1.12 or newer (julia = "1.12" in Project.toml).
+  # Only here: the Web UI path reports a Julia that does not start at its
+  # own steps, and the update tests rely on that order.
+  if ! julia --startup-file=no -e 'exit(VERSION < v"1.12" ? 1 : 0)'; then
+    echo "This Julia does not start or is older than 1.12, which Sparlectra needs. With juliaup:"
+    echo "  juliaup add release"
+    echo "  juliaup default release"
+    exit 1
+  fi
+  WS_JL="$DIR/tools/install_workshops.jl"
+  WS_TMP=""
+  if [ ! -f "$WS_JL" ]; then
+    WS_TMP=$(mktemp "${TMPDIR:-/tmp}/sparlectra_install_workshops.XXXXXX")
+    WS_JL="$WS_TMP"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsSL "https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_workshops.jl" -o "$WS_JL" || { echo "Download of install_workshops.jl failed."; rm -f "$WS_TMP"; exit 1; }
+    else
+      wget -qO "$WS_JL" "https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_workshops.jl" || { echo "Download of install_workshops.jl failed."; rm -f "$WS_TMP"; exit 1; }
+    fi
+  fi
+  # piped (curl | sh), stdin is this script; Jupyter's questions and Ctrl+C
+  # need the terminal
+  WS_CODE=0
+  # shellcheck disable=SC2086
+  if [ ! -t 0 ] && ( : < /dev/tty ) 2>/dev/null; then
+    julia --startup-file=no "$WS_JL" $WS_ARGS < /dev/tty || WS_CODE=$?
+  else
+    julia --startup-file=no "$WS_JL" $WS_ARGS || WS_CODE=$?
+  fi
+  [ -n "$WS_TMP" ] && rm -f "$WS_TMP"
+  exit $WS_CODE
+fi
 
 # --- 2. Sparlectra at the latest tagged release -----------------------------
 if grep -q '^name = "Sparlectra"' "$DIR/Project.toml" 2>/dev/null; then

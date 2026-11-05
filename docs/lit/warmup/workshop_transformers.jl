@@ -28,7 +28,7 @@ long the first power flow, the control loop and the rest took. The output
 of the paths is discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   ## warm both paths on a throwaway 2-bus net with a transformer
   wnet = Net(name = "warmup", baseMVA = 100.0)
   addBus!(net = wnet, busName = "A", vn_kV = 110.0)

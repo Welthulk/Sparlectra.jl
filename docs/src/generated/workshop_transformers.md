@@ -6,8 +6,6 @@ EditURL = "../../lit/workshop_transformers.jl"
 
 > **Level: Advanced**, companion of basic-tour chapter 4.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -21,10 +19,6 @@ tap type move its quantity, close the loop with the outer phase-tap
 controller, and finish with a three-winding transformer carrying a tap
 on one leg.
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia ≥ 1.12.
-
 ## Warm-up and shared helpers
 
 Julia compiles each function on first use. This cell loads the package
@@ -36,8 +30,7 @@ exercise once (power flow, the tap device formulas, the phase-tap
 control loop with its $X(\alpha)$ characteristic, the 3WT star
 equivalent), so nothing stalls mid-workshop; its code is in
 `docs/lit/warmup/workshop_transformers.jl` of the package. How long the
-warm-up takes depends on the machine: a Colab session is several times
-slower than a desktop; every later cell then runs without compile
+warm-up takes depends on the machine; every later cell then runs without compile
 pauses.
 
 ````@example workshop_transformers
@@ -171,7 +164,7 @@ roughly the same amount, in the opposite direction: raising tau means
 more turns on the primary, so the secondary voltage drops. This manual
 sweep is exactly what the OLTC CONTROLLER automates against a voltage
 target; the closed loop is chapter 4 of the
-[workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb).
+[workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb).
 
 ## Chapter 2: the phase tap (PST) moves power
 
@@ -322,6 +315,6 @@ the same arithmetic the wiring would do. The full three-case study
   the OLTC and phase-tap controllers, targets, deadbands, and limits.
 - [Branch Model](https://welthulk.github.io/Sparlectra.jl/branchmodel/):
   how tau and phi enter the admittance stamp.
-- [Workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb),
+- [Workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb),
   chapter 4: the closed-loop OLTC holding a bus voltage.
 

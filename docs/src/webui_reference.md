@@ -41,6 +41,9 @@ Unattended installs answer with `SPARLECTRA_UPDATE=1/0`,
 `SPARLECTRA_INSTALL_DIR` names the folder for `Sparlectra/` instead of the
 current one, `SPARLECTRA_START_WEBUI=0` ends the script without starting
 the Web UI; the update from the Web UI uses both ([Updates](@ref webui_update)).
+The option `--no-start` does the same as `SPARLECTRA_START_WEBUI=0`.
+`--workshops` sets up the workshop notebooks instead of the Web UI
+([Workshops](index.md#Workshops)).
 
 ### Start script
 

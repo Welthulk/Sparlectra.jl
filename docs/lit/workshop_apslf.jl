@@ -24,8 +24,6 @@
 #
 # > **Level: Intermediate**, after the [basic tour](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/). The theory of the analytic power-series load flow (APSLF) and the raw solver have their own workshop in [AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl); this chapter is the complement from the network side: the same solver used on a Sparlectra model, through the configuration, with the diagnostics a run reports.
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_apslf.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -51,23 +49,16 @@
 # Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 # dependency of Sparlectra, and `power_flow.solver = apslf` in the
 # configuration switches a run over to it. Sparlectra 0.31 needs
-# AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one,
-# so the version below is the one this workshop was written against:
+# AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one.
 
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## AnalyticLoadFlow keeps its default precompile workload (core): against full, install plus the first three APSLF cells took less time
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## The notebook installs the development version from GitHub.
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and shared helpers
 #
@@ -79,8 +70,7 @@
 # exercise once with the output discarded (both solvers, the series order
 # and radius options, the hybrid start, the case import), so nothing
 # stalls mid-workshop; its code is in `docs/lit/warmup/workshop_apslf.jl`
-# of the package. How long the warm-up takes depends on the machine: a
-# Colab session is several times slower than a desktop; every later cell
+# of the package. How long the warm-up takes depends on the machine; every later cell
 # then runs without compile pauses.
 
 using Sparlectra

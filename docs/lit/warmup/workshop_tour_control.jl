@@ -28,7 +28,7 @@ once and print how long the first power flow and the tap-group control
 loop took. The output of the paths is discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   wnet = build_substation("warmup")
   t_pf = @elapsed solve!(wnet)
   t_ctrl = @elapsed redirect_stdout(devnull) do

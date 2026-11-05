@@ -27,7 +27,7 @@ Run every compile-heavy path of the scenarios workshop once on the 5-bus
 case and print how long it took. The output of the paths is discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   ## every path of the chapters once on the 5-bus case, output discarded:
   ## the SCF read, the name map, N-1, events by hand and generated,
   ## the scenarios block with events, pairs, the report and the CSV

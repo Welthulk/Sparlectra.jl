@@ -29,7 +29,7 @@ print how long the first solves and the rest took. The output of the
 paths is discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   t_first = @elapsed runpf!(load_case(), 30, 1e-8, 0)
   t_dslack = @elapsed runpf!(load_case(), 30, 1e-8, 0; distributed_slack_enabled = true)
   println("warm-up wall time, first calls include compilation:")

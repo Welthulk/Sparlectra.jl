@@ -24,6 +24,7 @@ using Logging
 using Sparlectra
 using Random
 import ZipArchives
+import LinearAlgebra
 
 function test_state_estimation_wls_first_version()::Bool
   # Verifies the baseline WLS state-estimation workflow:
@@ -313,8 +314,9 @@ function test_state_estimation_zero_injection_constraint()::Bool
       end
       # SEResult.conditioning: the gain matrix under on, the scaled KKT
       # matrix under constraint, and the KKT matrix is not worse conditioned
-      # than the gain matrix with rows at 1e-3 (1-norm estimates, measured
-      # 2.6e4 against 6.9e9 on sp_case14, 2.4e7 against 2.3e11 on sp_case60)
+      # than the gain matrix with rows at 1e-3 (Jacobi-scaled 1-norm
+      # estimates, measured 6.2e3 against 2.3e9 on sp_case14, 9.0e6 against
+      # 4.9e10 on sp_case60)
       con_c = runs[:constraint].r.conditioning
       on_c = runs[:on].r.conditioning
       @test (on_c.zero_injection, on_c.matrix, con_c.zero_injection, con_c.matrix) == (:on, :gain, :constraint, :kkt)
@@ -1456,6 +1458,20 @@ function test_state_estimation_link_contraction()::Bool
     end
     @test resR.converged
     @test resR.linkCirculations !== nothing && length(resR.linkCirculations) == 1
+    # the reported condition number is that of the Jacobi-scaled gain
+    # matrix D^-1/2 G D^-1/2. Dense reference: G = H' W H at the estimated
+    # state (the circulation column in MW, the others in rad and pu), its
+    # exact 1-norm condition after scaling. Unscaled the unit mix alone
+    # puts it about five orders higher (6.6e6 against 19 when written).
+    mjR = with_state_estimation_config(flatstart = false) do
+      measurement_jacobian(netR)
+    end
+    @test mjR.cols[end] == "circP(1)"
+    GR = mjR.H' * (LinearAlgebra.Diagonal([1 / row.sigma^2 for row in mjR.rows]) * mjR.H)
+    SR = LinearAlgebra.Diagonal(1 ./ sqrt.(LinearAlgebra.diag(GR)))
+    @test resR.conditioning.scaling === :jacobi
+    @test isapprox(resR.conditioning.condition_number, LinearAlgebra.cond(SR * GR * SR, 1); rtol = 1e-6)
+    @test LinearAlgebra.cond(GR, 1) > 1e4 * resR.conditioning.condition_number
     rowsR = calcLinkFlowsSE!(netR)
     @test all(abs(rowsR[j].pFlow_MW - fR[j]) < 1e-6 for j in 1:3)
     @test all(r.source == :estimated for r in rowsR)
@@ -1995,6 +2011,32 @@ function test_state_estimation_diagnostics_unification()::Bool
     @test only(r for r in repFrozen.result.shuntEstimates).frozen
     mF = length(repFrozen.measurement_ranking)
     @test repFrozen.objective.dof == mF - (2 * nbus - 1)
+  end)() end
+
+  @testset "Topology precheck notes the skipped flow rule at a flat start" begin (function ()
+    # shipped sp_case14 with its measurement set; the readings of the most
+    # loaded measured branch are set to zero. Under the stored solved
+    # state the precheck names that branch (closed, no flow); with every
+    # angle at 0 there is no expectation, the rule is skipped and the
+    # summary says so instead of staying silent.
+    net = importSCF(joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json"))
+    readMeasurementTable!(net; file = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.measurements.csv"), zero_injection = false)
+    isflow(m) = m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas, Sparlectra.ImagMeas) && m.branchIdx !== nothing
+    pf = [m for m in net.measurements if m.typ == Sparlectra.PflowMeas && m.branchIdx !== nothing]
+    k = pf[argmax([abs(m.value) for m in pf])].branchIdx
+    dead = [isflow(m) && m.branchIdx == k ? Measurement(typ = m.typ, value = 0.0, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id) : m for m in net.measurements]
+    rule2(pre) = [f for f in pre.findings if f.kind == :closed_element_without_flow]
+    pre = validate_topology(net, dead)
+    @test isempty(pre.notes)
+    @test any(f -> occursin("branch $(k) ", f.location), rule2(pre))
+    for n in net.nodeVec
+      n._vm_pu = 1.0
+      n._va_deg = 0.0
+    end
+    pre = validate_topology(net, dead)
+    @test isempty(rule2(pre))
+    @test length(pre.notes) == 1
+    @test occursin("rule 2 (closed branch without flow) skipped: flat start, no expected state", pre.summary)
   end)() end
 
   return true

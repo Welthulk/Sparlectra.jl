@@ -762,8 +762,8 @@ function _se_log_zero_injection(io::IO, config, added::Int)
 end
 
 # the run.log summary line of the numerics of the reported run: the matrix
-# of the last Gauss-Newton step with its condition number (1-norm
-# estimate), J and dof, and under zero_injection = constraint where the
+# of the last Gauss-Newton step with its condition number (Jacobi-scaled,
+# 1-norm estimate), J and dof, and under zero_injection = constraint where the
 # multipliers are
 function _se_conditioning_line(res)::String
   c = res.conditioning
@@ -771,7 +771,7 @@ function _se_conditioning_line(res)::String
   what = c.matrix === :kkt ? "KKT matrix" : "gain matrix"
   kappa = isfinite(c.condition_number) ? string(round(c.condition_number; sigdigits = 3)) : "Inf (singular)"
   zi = res.zeroInjectionMultipliers === nothing ? "" : string(", multipliers of ", length(res.zeroInjectionMultipliers), " bus(es) in se_zero_injection_multipliers.csv")
-  return string("numerics: zero_injection ", c.zero_injection, ", condition number of the ", what, " ", kappa, " (1-norm estimate), J = ", round(res.objectiveJ; sigdigits = 6), ", dof = ", res.dof, zi)
+  return string("numerics: zero_injection ", c.zero_injection, ", condition number of the ", what, " ", kappa, " (Jacobi-scaled, 1-norm estimate), J = ", round(res.objectiveJ; sigdigits = 6), ", dof = ", res.dof, zi)
 end
 
 ## headline mapping for the state-estimation timing file
@@ -2329,6 +2329,7 @@ function _run_state_estimation_service_body(
       "se_condition_matrix" => res.conditioning === nothing ? nothing : String(res.conditioning.matrix),
       "se_condition_number" => (res.conditioning === nothing || !isfinite(res.conditioning.condition_number)) ? nothing : res.conditioning.condition_number,
       "se_condition_method" => res.conditioning === nothing ? nothing : String(res.conditioning.method),
+      "se_condition_scaling" => res.conditioning === nothing ? nothing : String(res.conditioning.scaling),
       "se_zero_injection_multipliers" => res.zeroInjectionMultipliers === nothing ? 0 : length(res.zeroInjectionMultipliers),
       "se_converged" => res.converged,
       # the maximum over the solves of the run, see _se_reported_iterations
