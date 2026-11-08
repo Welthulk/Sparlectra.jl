@@ -495,18 +495,22 @@ end
 function _null_basis(A::SparseMatrixCSC{Float64}, tol::Float64, dense_max_n::Integer, k0::Int; extra_steps::Int = 0)
   m, n = size(A)
   m == 0 && return Matrix{Float64}(I, n, n), 0, NaN, 0.0
-  if max(m, n) <= dense_max_n
-    S = svd(Matrix(A); full = true)
-    r = count(>(tol), S.S)
-    kept = r > 0 ? S.S[r] : NaN
-    # a wide matrix has n - m singular values zero beyond the computed ones
-    dropped = r < length(S.S) ? S.S[r+1] : 0.0
-    return S.V[:, (r+1):n], r, kept, dropped
-  end
+  max(m, n) <= dense_max_n && return _null_basis_svd(svd(Matrix(A); full = true), tol, n)
   d, N, sv = _gain_null_space(A, tol, k0; extra_steps = extra_steps)
   kept = d < length(sv) ? sv[d+1] : NaN
   dropped = d > 0 ? sv[d] : 0.0
   return N, n - d, kept, dropped
+end
+
+## The dense branch of `_null_basis` on the full SVD `S` of an m x n
+## matrix (m > 0), shared with `_decoupled_null`, which takes sigma_max
+## from the same factorization.
+function _null_basis_svd(S::SVD, tol::Float64, n::Int)
+  r = count(>(tol), S.S)
+  kept = r > 0 ? S.S[r] : NaN
+  # a wide matrix has n - m singular values zero beyond the computed ones
+  dropped = r < length(S.S) ? S.S[r+1] : 0.0
+  return S.V[:, (r+1):n], r, kept, dropped
 end
 
 ## The probe tolerance, coupled to the rank tolerance: a state is dark
@@ -3043,6 +3047,32 @@ _qv_model(snet::Net, meas::Vector{Measurement}) = _decoupled_model(snet, meas, :
 ## the probe tolerance of the dark rule (concept D1,
 ## `_null_probe_tolerance`) and the gap at the rank cut.
 function _decoupled_null(A::SparseMatrixCSC{Float64}, dense_max_n::Integer)
+  c = _SE_DECOUPLED_NULL_CACHE[]
+  c === nothing && return _decoupled_null_compute(A, dense_max_n)
+  key = hash((size(A), A.colptr, A.rowval, A.nzval, dense_max_n))
+  hit = lock(c.lock) do
+    for e in get(c.entries, key, ())
+      (e.dense_max_n == dense_max_n && _same_sparse(e.A, A)) && return e.res
+    end
+    return nothing
+  end
+  hit === nothing || return _decoupled_null_copy(hit)
+  res = _decoupled_null_compute(A, dense_max_n)
+  entry = (A = copy(A), dense_max_n = Int(dense_max_n), res = _decoupled_null_copy(res))
+  lock(c.lock) do
+    push!(get!(() -> Any[], c.entries, key), entry)
+  end
+  return res
+end
+
+## `_decoupled_null` without the cache of the runse! call. Up to
+## `dense_max_n` and `_SE_DENSE_LINALG_MAX_N` rows or columns sigma_max
+## and the null basis come from one full SVD: its singular values differ
+## from `svdvals` only in the last bits, the tolerance with them, and the
+## rank cut lies orders of magnitude away from the tolerance (measured
+## 1.1.0, a margin above 100 on sp_case14 and sp_case16_islands, above 1e7
+## on sp_case1354). Every other size takes `_sigma_max` and `_null_basis`.
+function _decoupled_null_compute(A::SparseMatrixCSC{Float64}, dense_max_n::Integer)
   m, n = size(A)
   As = copy(A)
   cn = ones(Float64, n)
@@ -3058,7 +3088,16 @@ function _decoupled_null(A::SparseMatrixCSC{Float64}, dense_max_n::Integer)
       nzero += 1
     end
   end
-  smax = (m == 0 || n == 0) ? 0.0 : _sigma_max(As)
+  dense = m > 0 && n > 0 && max(m, n) <= min(dense_max_n, _SE_DENSE_LINALG_MAX_N)
+  F = nothing
+  if dense
+    # the finiteness check of `_sigma_max`
+    _se_require_finite(As)
+    F = svd(Matrix(As); full = true)
+    smax = maximum(F.S)
+  else
+    smax = (m == 0 || n == 0) ? 0.0 : _sigma_max(As)
+  end
   if smax == 0.0
     # no row sees a state: every column is free
     return (N = Matrix{Float64}(I, n, n), cn = cn, d = n, tau = 1.0e-8, kept = NaN, dropped = 0.0)
@@ -3066,9 +3105,34 @@ function _decoupled_null(A::SparseMatrixCSC{Float64}, dense_max_n::Integer)
   tol = eps(Float64) * max(m, n) * smax
   # two steps past the residual test: the exact tolerance sits below what
   # that test resolves (see `_gain_null_space`)
-  N, r, kept, dropped = _null_basis(As, tol, dense_max_n, max(1, n - m, nzero); extra_steps = 2)
+  N, r, kept, dropped = F === nothing ? _null_basis(As, tol, dense_max_n, max(1, n - m, nzero); extra_steps = 2) : _null_basis_svd(F, tol, n)
   return (N = N, cn = cn, d = n - r, tau = _null_probe_tolerance(As, tol; smax = smax), kept = kept, dropped = dropped)
 end
+
+## the same stored matrix, compared on its arrays (the generic `isequal`
+## of two sparse matrices reads them entry by entry, which cost more than
+## the cache saved on sp_case1354); a matrix with other stored zeros
+## counts as a different one
+_same_sparse(A::SparseMatrixCSC, B::SparseMatrixCSC)::Bool = size(A) == size(B) && isequal(A.colptr, B.colptr) && isequal(A.rowval, B.rowval) && isequal(A.nzval, B.nzval)
+
+## A result of `_decoupled_null` with its own arrays: a cache entry is
+## never handed out, a caller that changes N or cn changes its copy.
+_decoupled_null_copy(r) = (N = copy(r.N), cn = copy(r.cn), d = r.d, tau = r.tau, kept = r.kept, dropped = r.dropped)
+
+## The results of `_decoupled_null` within one runse! call under
+## on_unobservable = scheduled or observable_islands: the restoration, its
+## final check, the partition of every round and the rank check of a cut
+## decompose the same P-theta and Q-V matrices again (measured 1.1.0 on
+## sp_case1354: the 1353 x 1353 P-theta matrix three to four times per
+## call). Keyed by the hash of the matrix, a hit compares the stored copy
+## exactly. The lock covers the island tasks of `_se_solve_islands`, which
+## inherit the scope. Outside a runse! call there is no cache.
+struct _SEDecoupledNullCache
+  entries::Dict{UInt,Vector{Any}}
+  lock::ReentrantLock
+end
+_SEDecoupledNullCache() = _SEDecoupledNullCache(Dict{UInt,Vector{Any}}(), ReentrantLock())
+const _SE_DECOUPLED_NULL_CACHE = Base.ScopedValues.ScopedValue{Union{Nothing,_SEDecoupledNullCache}}(nothing)
 
 ## The observable islands of one network island (its working net `prep`,
 ## concept G1 after Monticelli and Wu). `pt` is the P-theta model of the
@@ -3581,9 +3645,10 @@ function _evaluate_weak_observability(net::Net, measurements::Vector{Measurement
   if length(part.rows) <= 1
     parts = Any[single(net, measurements)]
   else
+    base = _se_island_base(net)
     for (k, row) in enumerate(part.rows)
       isempty(part.perIsland[k]) && continue
-      sub = _se_island_subnet(net, row)
+      sub = _se_island_subnet(net, row; base = base)
       meas_k, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[k])
       isempty(meas_k) && continue
       w = single(sub.inet, meas_k)
@@ -3806,6 +3871,7 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
   rankMethod = state_estimation_config().rank_method
   wiiAll = Float64[]
   activeAll = Int[]
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
     idxs = part.perIsland[iid]
     if isempty(idxs)
@@ -3813,7 +3879,7 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
       push!(islandsOut, (island = iid, n_bus = row.n_bus, measured = false, result = nothing))
       continue
     end
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
     if isempty(meas_i)
       unmeasured += 1
@@ -4573,8 +4639,15 @@ end
 
 ## island subnet plus the index maps needed to remap measurements and to
 ## mirror shunt write-backs onto the parent net
-function _se_island_subnet(net::Net, row)
-  inet = _prepare_island_net(net, row)
+## the island-net base of the estimator: an island run gets its rows
+## explicitly (never `inet.measurements`) and reads no AC line catalogue, so
+## neither is copied per island
+_se_island_base(net::Net) = _island_net_base(net; unread = (:measurements, :linesAC))
+
+## `base`: the _se_island_base of `net` when the caller cuts several
+## islands of the unchanged net (one copy of the net per loop, not per island)
+function _se_island_subnet(net::Net, row; base::Union{Nothing,Net} = nothing)
+  inet = _prepare_island_net(net, row; base = base)
   # _prepare_island_net promotes a reference only when detect_ac_islands
   # found a regulating generator (the PF's slack must balance power). The
   # estimator only needs an ANGLE PIN, so an island without any candidate
@@ -4695,6 +4768,21 @@ function _se_solve_islands(part, prepared::Vector{Any}, icfg::StateEstimationCon
   return results
 end
 
+## The subnets of the estimated islands of the last `_runse_islands!` call
+## (island index => `_se_island_subnet` row) with the voltage vector of its
+## result. `_se_weak_at_result` judges the weak class on these subnets
+## instead of cutting each island out of the net again (one copy of the net
+## per island instead of two). The estimate has written into them (state,
+## and with update_shunts and update_taps the shunts and steps it also
+## mirrors into the parent); the weak check sets the voltages of the result
+## again. `voltages` ties the subnets to the result they belong to: a later
+## solve of the same call (tap fallback, start ladder) replaces both.
+mutable struct _SEIslandSubnets
+  voltages::Vector{ComplexF64}
+  subs::Dict{Int,Any}
+end
+_SEIslandSubnets() = _SEIslandSubnets(ComplexF64[], Dict{Int,Any}())
+
 ## island-wise estimation: per-island solve on the subnet, merged result.
 ## A partition with the field `observable` (`_se_observable_island_partition`)
 ## has one row per observable island: rows with a `skip` reason and rows that
@@ -4702,7 +4790,9 @@ end
 ## reference and relative-angle flag, and every bus outside an estimated row
 ## and every closed branch outside one is left empty (NaN voltages and flows),
 ## never at a start value or zero.
-function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig, part; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation))
+## `island_subnets` receives the subnets of the estimated islands
+## (`_SEIslandSubnets`).
+function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig, part; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation), island_subnets::_SEIslandSubnets = _SEIslandSubnets())
   isempty(part.unassigned) || @warn "SE: $(length(part.unassigned)) measurement(s) reference isolated buses outside every island and are ignored"
   obsMode = hasproperty(part, :observable)
   mergedV = buildVoltageVector(net)   # start values for unestimated islands
@@ -4767,6 +4857,9 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   # row that failed the rank check
   skipReason = Dict{Int,Symbol}()
   rankDeficit = Dict{Int,Int}()
+  # the net is not changed before the estimations below, so one base
+  # serves every island
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
     if obsMode && row.skip !== :none
       skipReason[iid] = row.skip
@@ -4774,7 +4867,7 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
     end
     idxs = part.perIsland[iid]
     isempty(idxs) && continue
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
     isempty(meas_i) && continue
     if obsMode && row.rank_check
@@ -4800,6 +4893,12 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   icfg = _copy_se_config_with(cfg; update_net = true)
   # 2. the estimations, large islands on their own tasks (0.30.2)
   island_results = _se_solve_islands(part, prepared, icfg; machine_rows = cfg.update_net, tap_excl = tap_excl)
+  # the subnets stay for the weak check at this estimate
+  empty!(island_subnets.subs)
+  for iid in eachindex(prepared)
+    prepared[iid] === nothing || (island_subnets.subs[iid] = prepared[iid].sub)
+  end
+  island_subnets.voltages = mergedV
   # 3. merged in island order, exactly as the serial loop did
   for (iid, row) in enumerate(part.rows)
     refBus = row.n_ref > 0 ? 0 : row.chosen_ref_bus
@@ -5056,14 +5155,15 @@ end
 ## wins over `observable_islands`. `precheck = false` skips the topology
 ## precheck and attaches `findings` instead (the later rounds of
 ## `_runse_weak_gaps!` reuse the findings of the first).
-function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation), observable_islands::Bool = false, part = nothing, precheck::Bool = true, findings = nothing)
+## `island_subnets` is handed to `_runse_islands!`.
+function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation), observable_islands::Bool = false, part = nothing, precheck::Bool = true, findings = nothing, island_subnets::_SEIslandSubnets = _SEIslandSubnets())
   # stage-1 topology precheck (advisory): run BEFORE the partition,
   # warn per finding, attach the findings to the result. The estimation
   # itself always proceeds; a finding is information, not a gate.
   topo = precheck ? _se_topology_precheck(net, measurements, cfg) : findings
   part === nothing && (part = _se_run_partition(net, measurements, observable_islands))
   islandwise = length(part.rows) > 1 || hasproperty(part, :observable)
-  solve(c::StateEstimationConfig) = islandwise ? _runse_islands!(net, measurements, c, part; tap_excl = tap_excl) : _runse_with_config!(net, measurements, c; tap_excl = tap_excl)
+  solve(c::StateEstimationConfig) = islandwise ? _runse_islands!(net, measurements, c, part; tap_excl = tap_excl, island_subnets = island_subnets) : _runse_with_config!(net, measurements, c; tap_excl = tap_excl)
   # the start voltages of the run: a run that does not converge still writes
   # its last iterate into the net (update_net), the fallback and the second
   # try of the start ladder start from these
@@ -5417,6 +5517,7 @@ function restore_observability(net::Net, measurements::Vector{Measurement}; dens
   skipped = NamedTuple[]
   passiveOff = NamedTuple[]
   perIsland = NamedTuple[]
+  base = length(part.rows) == 1 ? nothing : _se_island_base(net)
   for (k, nrow) in enumerate(part.rows)
     isempty(part.perIsland[k]) && continue
     # the network island on its own net: the caller's net for a single one,
@@ -5424,7 +5525,7 @@ function restore_observability(net::Net, measurements::Vector{Measurement}; dens
     inet, meas_k, toCaller = if length(part.rows) == 1
       (net, measurements, collect(1:length(net.nodeVec)))
     else
-      sub = _se_island_subnet(net, nrow)
+      sub = _se_island_subnet(net, nrow; base = base)
       m_k, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[k])
       (sub.inet, m_k, collect(nrow.buses))
     end
@@ -5495,7 +5596,8 @@ restore_observability(net::Net; kwargs...) = restore_observability(net, Measurem
 ## report of `evaluate_weak_observability` with basis :estimated_state; on
 ## an estimate of the observable islands one by one its rows are per
 ## estimated island (`label`, `network_island`).
-function _se_weak_at_result(net::Net, measurements::Vector{Measurement}, res::SEResult, part)
+## `island_subnets` from the run of `res` saves cutting the islands again.
+function _se_weak_at_result(net::Net, measurements::Vector{Measurement}, res::SEResult, part; island_subnets::_SEIslandSubnets = _SEIslandSubnets())
   if !hasproperty(part, :observable)
     netc = deepcopy(net)
     # a multi-island result is in the bus numbering of the net; a
@@ -5513,10 +5615,12 @@ function _se_weak_at_result(net::Net, measurements::Vector{Measurement}, res::SE
   end
   parts = Any[]
   units = NamedTuple[]
+  shared = island_subnets.voltages === res.voltages
+  base = shared ? nothing : _se_island_base(net)
   for info in res.islands
     info.estimated || continue
     row = part.rows[info.island]
-    sub = _se_island_subnet(net, row)
+    sub = shared ? island_subnets.subs[info.island] : _se_island_subnet(net, row; base = base)
     for (nb, ob) in enumerate(row.buses)
       sub.inet.nodeVec[nb]._vm_pu = abs(res.voltages[ob])
       sub.inet.nodeVec[nb]._va_deg = rad2deg(angle(res.voltages[ob]))
@@ -5641,13 +5745,14 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
   # its boundary rows are out) is not diagnosed either
   obsMode = hasproperty(part, :observable)
   cfg = state_estimation_config()
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
     idxs = part.perIsland[iid]
     if isempty(idxs) || (obsMode && row.skip !== :none)
       push!(islandReports, (island = iid, n_bus = row.n_bus, measured = false, report = nothing))
       continue
     end
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
     if isempty(meas_i)
       push!(islandReports, (island = iid, n_bus = row.n_bus, measured = false, report = nothing))
@@ -7639,7 +7744,10 @@ _se_vm_out_of_range(v::Float64)::Bool = !isfinite(v) || v < _SE_VM_RANGE_PU[1] |
 ## solve). A bus typed Isolated without a closed link to such an island and
 ## every bus of an island without a source are not energized.
 function _se_energized_buses(net::Net)::Set{Int}
-  rows = detect_ac_islands(net; promote_generators = true).rows
+  return _se_energized_buses(net, detect_ac_islands(net; promote_generators = true).rows)
+end
+
+function _se_energized_buses(net::Net, rows)::Set{Int}
   n = length(net.nodeVec)
   parent = collect(1:n)
   function findroot(i::Int)
@@ -7694,10 +7802,90 @@ function _se_measurement_at_bus(net::Net, m::Measurement, b::Int)::Bool
   return false
 end
 
-const _SE_RANGE_ROW = NamedTuple{(:measurement_index, :id, :bus, :value, :reason, :substitute, :source, :sigma, :sigma_substitute, :deactivated),Tuple{Int,String,Int,Float64,Symbol,Float64,Symbol,Float64,Float64,Vector{Int}}}
+## the bus at which row `m` lies in a part the switching state does not
+## energize, 0 when it does not: its bus, an end of its link, the measured
+## end and the closed ends of its branch. A branch open at both ends counts
+## with both (as the 0 kV rule, `_se_measurement_at_bus`); the open end of a
+## branch open at one end is an isolated bus, and the row at its closed end
+## stays for the check of partial branches.
+function _se_dead_row_bus(net::Net, m::Measurement, energized::Set{Int})::Int
+  if m.linkIdx !== nothing
+    1 <= m.linkIdx <= length(net.linkVec) || return 0
+    l = net.linkVec[m.linkIdx]
+    for b in (Int(l.fromBus), Int(l.toBus))
+      b in energized || return b
+    end
+    return 0
+  elseif m.branchIdx !== nothing
+    1 <= m.branchIdx <= length(net.branchVec) || return 0
+    br = net.branchVec[m.branchIdx]
+    st = _branch_terminal_state(br)
+    measured = m.direction === :to ? Int(br.toBus) : Int(br.fromBus)
+    ends = st === :open_to ? (Int(br.fromBus), measured) : st === :open_from ? (Int(br.toBus), measured) : (Int(br.fromBus), Int(br.toBus))
+    for b in ends
+      b in energized || return b
+    end
+    return 0
+  elseif m.busIdx !== nothing
+    b = Int(m.busIdx)
+    return b in energized ? 0 : b
+  end
+  return 0
+end
 
-## The range check, the step before every WLS of the library. Per active
-## VmMeas outside _SE_VM_RANGE_PU (0 kV and non-finite values included):
+# A network island without a source counts as dead only while none of its
+# voltage measurements says otherwise: a value above this bound (pu) is a
+# reading of a live bus, so the topology (a neighbour outside the model, a
+# wrong switch state) contradicts the measurement. The bound only separates
+# "near zero" from "under voltage"; its exact value is not critical.
+const _SE_DEAD_VM_MAX_PU = 0.1
+
+const _SE_RANGE_ROW = NamedTuple{(:measurement_index, :id, :bus, :value, :reason, :substitute, :source, :sigma, :sigma_substitute, :deactivated, :vm_above),Tuple{Int,String,Int,Float64,Symbol,Float64,Symbol,Float64,Float64,Vector{Int},Vector{Int}}}
+
+## The parts of `net` without a source that carry active rows of
+## `measurements`: one entry per network island of `islandRows` (`id` its
+## number) and per isolated bus outside every island (`id` "0"), with its
+## first bus, the rows located in it (`_se_dead_row_bus`) and the voltage
+## rows among them above _SE_DEAD_VM_MAX_PU (`vm_above`, by value
+## descending). Empty when no bus is energized (a bare estimation net).
+function _se_dead_parts(net::Net, measurements::Vector{Measurement}, islandRows, energized::Set{Int})
+  parts = NamedTuple{(:id, :bus, :rows, :vm_above),Tuple{String,Int,Vector{Int},Vector{Int}}}[]
+  isempty(energized) && return parts
+  islandOf = Dict{Int,Int}(b => k for (k, r) in enumerate(islandRows) for b in r.buses)
+  # an isolated bus is a part of its own (key -bus), an island its number
+  byKey = Dict{Int,Vector{Int}}()
+  for (k, m) in enumerate(measurements)
+    m.active || continue
+    b = _se_dead_row_bus(net, m, energized)
+    b == 0 && continue
+    push!(get!(byKey, get(islandOf, b, -b), Int[]), k)
+  end
+  for key in sort!(collect(keys(byKey)); by = k -> (k < 0, abs(k)))
+    ks = byKey[key]
+    above = Int[k for k in ks if measurements[k].typ == VmMeas && isfinite(measurements[k].value) && measurements[k].value > _SE_DEAD_VM_MAX_PU]
+    sort!(above; by = k -> -measurements[k].value)
+    push!(parts, (id = key < 0 ? "0" : string(key), bus = key < 0 ? -key : first(islandRows[key].buses), rows = ks, vm_above = above))
+  end
+  return parts
+end
+
+## The range check, the step before every WLS of the library.
+## 0. topology first, for every row (1.1.0): a network island the switching
+##    state does not energize sends no readings. Every active row located
+##    in such an island is set inactive, one row per island with reason
+##    :deenergized_island (`id` its number as `_se_island_partition`
+##    counts it, "0" for an isolated bus, `bus` its first bus,
+##    `deactivated` the rows). A row is located at its bus, at both ends of
+##    its link, at the closed and the measured ends of its branch
+##    (`_se_dead_row_bus`). A part with a voltage row above
+##    _SE_DEAD_VM_MAX_PU is not dead by the measurements: its rows stay and
+##    are estimated as on a net without a source model, one row with reason
+##    :topology_contradiction (`value` the largest such voltage,
+##    `vm_above` those rows) reports the contradiction. A net without any
+##    energized bus is left alone: it has no source model at all (a bare
+##    estimation net), not a dead part.
+## Then per active VmMeas outside _SE_VM_RANGE_PU (0 kV and non-finite
+## values included):
 ## 1. topology first: on a bus the switching state does not energize
 ##    (`_se_energized_buses`) 0 kV is right; the row and every other active
 ##    row at the bus, its branches and its links are set inactive, so the
@@ -7713,10 +7901,23 @@ const _SE_RANGE_ROW = NamedTuple{(:measurement_index, :id, :bus, :value, :reason
 ## service writes the same lines into run.log.
 function _se_range_check(net::Net, measurements::Vector{Measurement})::Tuple{Vector{Measurement},Vector{_SE_RANGE_ROW}}
   rows = _SE_RANGE_ROW[]
-  hits = [k for (k, m) in enumerate(measurements) if m.active && m.typ == VmMeas && m.busIdx !== nothing && _se_vm_out_of_range(m.value)]
-  isempty(hits) && return measurements, rows
-  out = copy(measurements)
-  energized = _se_energized_buses(net)
+  islandRows = detect_ac_islands(net; promote_generators = true).rows
+  energized = _se_energized_buses(net, islandRows)
+  out = measurements
+  for part in _se_dead_parts(net, measurements, islandRows, energized)
+    if !isempty(part.vm_above)
+      push!(rows, _SE_RANGE_ROW((0, part.id, part.bus, measurements[first(part.vm_above)].value, :topology_contradiction, NaN, :none, NaN, NaN, Int[], part.vm_above)))
+      continue
+    end
+    out === measurements && (out = copy(measurements))
+    for k in part.rows
+      out[k] = _set_measurement_active(out[k], false)
+    end
+    push!(rows, _SE_RANGE_ROW((0, part.id, part.bus, NaN, :deenergized_island, NaN, :none, NaN, NaN, part.rows, Int[])))
+  end
+  hits = [k for (k, m) in enumerate(out) if m.active && m.typ == VmMeas && m.busIdx !== nothing && _se_vm_out_of_range(m.value)]
+  isempty(hits) && return out, rows
+  out === measurements && (out = copy(measurements))
   factor = state_estimation_config().bad_data.substitute_sigma_factor
   for k in hits
     # a row a dead bus found earlier already took out
@@ -7726,7 +7927,7 @@ function _se_range_check(net::Net, measurements::Vector{Measurement})::Tuple{Vec
     if b in energized
       v, src = _se_range_substitute(net, b)
       out[k] = Measurement(typ = m.typ, value = v, sigma = m.sigma * factor, active = true, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = :range_check)
-      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :range_check_substituted, v, src, m.sigma, m.sigma * factor, Int[])))
+      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :range_check_substituted, v, src, m.sigma, m.sigma * factor, Int[], Int[])))
     else
       off = Int[]
       for j in eachindex(out)
@@ -7734,7 +7935,7 @@ function _se_range_check(net::Net, measurements::Vector{Measurement})::Tuple{Vec
         out[j] = _set_measurement_active(out[j], false)
         push!(off, j)
       end
-      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :deenergized, NaN, :none, m.sigma, NaN, off)))
+      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :deenergized, NaN, :none, m.sigma, NaN, off, Int[])))
     end
   end
   return out, rows
@@ -7747,6 +7948,15 @@ function _se_range_check_lines(net::Net, rows::AbstractVector)::Vector{String}
   lines = String[]
   for r in rows
     bus = get(names, r.bus, string(r.bus))
+    if r.reason in (:deenergized_island, :topology_contradiction)
+      where = r.id == "0" ? string("isolated bus ", bus) : string("network island ", r.id, " (bus ", bus, ")")
+      if r.reason === :deenergized_island
+        push!(lines, string("topology check: ", where, " is not energized by the switching state: ", length(r.deactivated), " measurement(s) inactive (deenergized_island)"))
+      else
+        push!(lines, string("topology check: measurement contradicts the topology: ", where, " has no source in the model, but ", length(r.vm_above), " voltage measurement(s) above ", _SE_DEAD_VM_MAX_PU, " pu (largest ", round(r.value; sigdigits = 6), " pu); its measurements stay in the estimation (topology_contradiction)"))
+      end
+      continue
+    end
     head = string("range check: voltage measurement ", r.id, " at bus ", bus, " is ", round(r.value; sigdigits = 6), " pu, outside ", _SE_VM_RANGE_PU[1], " to ", _SE_VM_RANGE_PU[2], " pu")
     if r.reason === :range_check_substituted
       src = r.source === :imported_state ? "imported state" : "nominal voltage"
@@ -7759,17 +7969,18 @@ function _se_range_check_lines(net::Net, rows::AbstractVector)::Vector{String}
 end
 
 ## the log of the range check of one public call: a warning per substituted
-## row (a gross error), an info line per dead bus (0 kV is right there)
+## row (a gross error) and per contradiction of measurement and topology,
+## an info line per dead bus or part (0 kV is right there)
 function _se_log_range_check(net::Net, rows::AbstractVector, caller::AbstractString)
   isempty(rows) && return nothing
   for (r, line) in zip(rows, _se_range_check_lines(net, rows))
-    r.reason === :range_check_substituted ? (@warn string(caller, ": ", line)) : (@info string(caller, ": ", line))
+    r.reason in (:range_check_substituted, :topology_contradiction) ? (@warn string(caller, ": ", line)) : (@info string(caller, ": ", line))
   end
   return nothing
 end
 
 ## the counter of the range check, as the diagnostics results carry it
-_se_range_check_summary(rows::AbstractVector) = (substituted = count(r -> r.reason === :range_check_substituted, rows), deenergized = count(r -> r.reason === :deenergized, rows), rows = rows)
+_se_range_check_summary(rows::AbstractVector) = (substituted = count(r -> r.reason === :range_check_substituted, rows), deenergized = count(r -> r.reason === :deenergized, rows), deenergized_islands = count(r -> r.reason === :deenergized_island, rows), topology_contradictions = count(r -> r.reason === :topology_contradiction, rows), rows = rows)
 
 ## a diagnostics report of `_validate_measurements` with the range check of
 ## its call: the counter as field `range_check`, and every ranking row
@@ -7922,22 +8133,9 @@ function runse!(net::Net, measurements::Vector{Measurement})
   res = if onUnobs === :abort
     _runse_configured!(net, checked, cfg)
   else
-    restored = nothing
-    if onUnobs === :scheduled
-      # replacement values from the schedule first; what they do not close
-      # is estimated per observable island below
-      rest = restore_observability(net, checked)
-      restored = rest.restored
-      isempty(rest.rows) || (checked = vcat(checked, rest.rows))
-      nP = count(r -> r.quantity === :P, rest.restored)
-      nQ = count(r -> r.quantity === :Q, rest.restored)
-      nU = count(r -> r.quantity === :U, rest.restored)
-      (rest.rank_deficit_before > 0 || !isempty(rest.restored)) && @info string("runse!: restore: ", length(rest.restored), " row(s) taken (P ", nP, ", Q ", nQ, ", U ", nU, "), ", length(rest.skipped), " skipped as redundant, rank deficit ", rest.rank_deficit_before, " before, ", rest.rank_deficit_after, " after")
-      isempty(rest.passive_not_inserted) || @info string("runse!: restore: zero injections at ", length(rest.passive_not_inserted), " passive bus(es) would close part of the deficit; not inserted, state_estimation.zero_injection is off")
-      rest.verdict === :weakly_observable && @info string("runse!: restore: weakly observable after restoring, ", rest.weak.n_branches, " branch(es) above the flow bound, ", rest.weak.n_buses, " affected bus(es); the estimate cuts them out")
-    end
-    r = _runse_weak_gaps!(net, checked, cfg)
-    restored === nothing ? r : _se_result_with(r; restoredRows = restored)
+    # one cache of the decoupled null spaces for the restoration and all
+    # rounds (`_SEDecoupledNullCache`)
+    Base.ScopedValues.with(() -> _runse_unobservable!(net, checked, cfg), _SE_DECOUPLED_NULL_CACHE => _SEDecoupledNullCache())
   end
   # one warning per regulator whose estimate left its band. Within 2 sigma_s
   # of the band end step the fixation sets it to that step and the status
@@ -7961,16 +8159,40 @@ function runse!(net::Net, measurements::Vector{Measurement})
   return res
 end
 
+## runse! under on_unobservable = scheduled or observable_islands: the
+## restoration (scheduled), then the estimate per observable island with
+## the weak-gap rounds (`_runse_weak_gaps!`).
+function _runse_unobservable!(net::Net, checked::Vector{Measurement}, cfg::StateEstimationConfig)
+  onUnobs = cfg.observability.on_unobservable
+  restored = nothing
+  if onUnobs === :scheduled
+    # replacement values from the schedule first; what they do not close
+    # is estimated per observable island below
+    rest = restore_observability(net, checked)
+    restored = rest.restored
+    isempty(rest.rows) || (checked = vcat(checked, rest.rows))
+    nP = count(r -> r.quantity === :P, rest.restored)
+    nQ = count(r -> r.quantity === :Q, rest.restored)
+    nU = count(r -> r.quantity === :U, rest.restored)
+    (rest.rank_deficit_before > 0 || !isempty(rest.restored)) && @info string("runse!: restore: ", length(rest.restored), " row(s) taken (P ", nP, ", Q ", nQ, ", U ", nU, "), ", length(rest.skipped), " skipped as redundant, rank deficit ", rest.rank_deficit_before, " before, ", rest.rank_deficit_after, " after")
+    isempty(rest.passive_not_inserted) || @info string("runse!: restore: zero injections at ", length(rest.passive_not_inserted), " passive bus(es) would close part of the deficit; not inserted, state_estimation.zero_injection is off")
+    rest.verdict === :weakly_observable && @info string("runse!: restore: weakly observable after restoring, ", rest.weak.n_branches, " branch(es) above the flow bound, ", rest.weak.n_buses, " affected bus(es); the estimate cuts them out")
+  end
+  r = _runse_weak_gaps!(net, checked, cfg)
+  return restored === nothing ? r : _se_result_with(r; restoredRows = restored)
+end
+
 ## Whether a partition of `_se_observable_island_partition` has a row that
 ## `_runse_islands!` estimates: a row without a skip reason whose remapped
 ## measurements pass the rank check of the decoupled models (the same
 ## steps as the preparation there).
 function _se_partition_estimable(net::Net, measurements::Vector{Measurement}, part, cfg::StateEstimationConfig)::Bool
   hasproperty(part, :observable) || return true
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
     row.skip === :none || continue
     isempty(part.perIsland[iid]) && continue
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[iid])
     isempty(meas_i) && continue
     d = _se_decoupled_deficits(sub.inet, meas_i, cfg)
@@ -8010,12 +8232,14 @@ function _runse_weak_gaps!(net::Net, measurements::Vector{Measurement}, cfg::Sta
   part = _se_run_partition(net, measurements, true; removed = removed)
   # the topology precheck runs once; the later rounds attach its findings
   findings = nothing
+  # the island subnets of each round, reused by its weak check
+  islandSubnets = _SEIslandSubnets()
   # the last converged round with its partition and weak report: a later
   # round that does not converge falls back to it
   good = nothing
   local res
   for k = 1:(length(net.nodeVec)+1)
-    res = _runse_configured!(net, measurements, cfg; part = part, precheck = k == 1, findings = findings)
+    res = _runse_configured!(net, measurements, cfg; part = part, precheck = k == 1, findings = findings, island_subnets = islandSubnets)
     k == 1 && (findings = res.topologyFindings)
     if !res.converged
       good === nothing && break
@@ -8028,7 +8252,7 @@ function _runse_weak_gaps!(net::Net, measurements::Vector{Measurement}, cfg::Sta
       res = _se_result_with(_runse_configured!(net, measurements, cfg; part = good.part, precheck = false, findings = findings); weakObservability = good.w)
       break
     end
-    w = _se_weak_at_result(net, measurements, res, part)
+    w = _se_weak_at_result(net, measurements, res, part; island_subnets = islandSubnets)
     res = _se_result_with(res; weakObservability = w)
     w.n_buses == 0 && break
     new = Int[b for b in w.buses if !haskey(removed, b)]
@@ -8743,7 +8967,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "- **Interpretation:** $(summary.reason)")
     println(io, "- **Suspicious measurements:** $(summary.suspicious_count) / $(summary.total_measurements)")
     rcs = _se_diag_range_check(diag)
-    (rcs !== nothing && !isempty(rcs.rows)) && println(io, "- **Range check of the voltage measurements:** $(rcs.substituted) replaced by a pseudo measurement (`range_check_substituted`), $(rcs.deenergized) at a bus that is not energized (`deenergized`): ", join(("`$(r.id)` ($(r.reason))" for r in rcs.rows), ", "))
+    (rcs !== nothing && !isempty(rcs.rows)) && println(io, "- **Range check of the voltage measurements:** $(rcs.substituted) replaced by a pseudo measurement (`range_check_substituted`), $(rcs.deenergized) at a bus that is not energized (`deenergized`), $(rcs.deenergized_islands) network island(s) without a source (`deenergized_island`): ", join(("`$(r.id)` ($(r.reason))" for r in rcs.rows), ", "))
     # island-wise runs: per-island J/dof plus Wilson-Hilferty, so a single
     # bad island cannot hide inside the summed chi-square
     if hasproperty(base, :islands) && base.islands !== nothing
@@ -8807,7 +9031,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     @printf(io, "Suspicious measurements: %d / %d\n", summary.suspicious_count, summary.total_measurements)
     rcs = _se_diag_range_check(diag)
     if rcs !== nothing && !isempty(rcs.rows)
-      @printf(io, "Range check of the voltage measurements: %d substituted, %d deenergized\n", rcs.substituted, rcs.deenergized)
+      @printf(io, "Range check of the voltage measurements: %d substituted, %d deenergized, %d network island(s) not energized\n", rcs.substituted, rcs.deenergized, rcs.deenergized_islands)
       for r in rcs.rows
         println(io, "  ", r.id, " (", r.reason, ")")
       end

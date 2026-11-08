@@ -596,7 +596,25 @@ Defaults and ranges of every key:
 ### [Range check of the voltage measurements](@id se-range-check)
 
 Before every WLS (`runse!`, `validate_measurements`, `runse_diagnostics`,
-hence also the SE service and the Web UI) each active voltage measurement
+the observability check, hence also the SE service and the Web UI) the
+topology comes first: a network island the switching state does not
+energize (no source, or an isolated bus) sends no readings. Every active
+row at its buses, at a link with an end in it or at a branch whose closed
+or measured end lies in it, is inactive for
+the run, reason `deenergized_island`; the log and `run.log` name the
+island and the number of rows (`topology check: network island 3 (bus
+Erlbach_20) is not energized ...: 31 measurement(s) inactive`). Such a
+part counts as dead only while none of its voltage measurements lies
+above 0.1 pu. A reading above that says the part is live: a neighbour
+outside the model feeds it, or a switch state is wrong. Then the rows
+stay, the part is estimated like a net without a source model, and a
+warning, `run.log` and the topology pre-check
+(`:measurement_contradicts_topology`) report the contradiction with the
+number of such voltages and the largest one (reason
+`topology_contradiction`). A network without any source (a bare
+estimation net) is left alone.
+
+Then each active voltage measurement
 outside 0.5 to 1.5 pu, 0 kV and non-finite values included, is checked
 against the switching state. On a bus that is not energized (an isolated
 bus, or an island without a source) 0 kV is right: the bus and its branches
@@ -608,10 +626,12 @@ import, otherwise 1.0 pu) with its sigma times
 `state_estimation.bad_data.substitute_sigma_factor` (default 3), reason
 `range_check_substituted`. Each finding gets one line in the log and in
 `run.log`; the diagnostics carry the counter `range_check` (`substituted`,
-`deenergized`) and mark the row in the ranking (field
+`deenergized`, `deenergized_islands`, `topology_contradictions`) and mark the row in the ranking (field
 `range_check = :range_check_substituted`), the SE service writes the reason
 into `measurements_verdict.csv` and the counts into the metadata
-(`se_range_check_substituted`, `se_range_check_deenergized`). Only then run
+(`se_range_check_substituted`, `se_range_check_deenergized`,
+`se_range_check_deenergized_islands`,
+`se_range_check_topology_contradictions`). Only then run
 the WLS, the residual analysis and the elimination.
 
 ### [Localizability: the residual sensitivity `wii`](@id se-localizability)

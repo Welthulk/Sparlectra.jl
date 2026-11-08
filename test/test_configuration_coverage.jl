@@ -1160,6 +1160,13 @@ function test_configuration_unknown_keys()
     clean = test_scratch_path(".yaml")
     write(clean, "diagnostics:\n  log_effective_config: true\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("diagnostics" => Dict{String,Any}("no_such_key" => 1)))
+    # a key removed in a minor version (observability.enabled, 1.1.0) warns
+    # with the reason in a stored file and in an override, never fails
+    old_obs = test_scratch_path(".yaml")
+    write(old_obs, "state_estimation:\n  observability:\n    enabled: true\n    weak_flow_sigma_mw: 25.0\n")
+    obs_cfg = @test_logs (:warn, r"state_estimation\.observability\.enabled is ignored: removed in 1\.1\.0") match_mode = :any Sparlectra.load_sparlectra_config(old_obs; reload = true)
+    @test obs_cfg.state_estimation.observability.weak_flow_sigma_mw == 25.0
+    @test_logs (:warn, r"observability\.enabled is ignored") match_mode = :any Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("enabled" => false))))
     # a case configuration follows the same rule (the Settings page wrote
     # keys into case files that a later release removed): the unknown key is
     # dropped with a warning, a known key outside the case scope is refused

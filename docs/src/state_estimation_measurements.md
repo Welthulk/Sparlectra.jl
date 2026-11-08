@@ -60,7 +60,7 @@ CSV format follows `output.csv_format`.
 | `eliminated` | removed by the bad-data elimination; residual and normalized residual are those of the solve before its removal |
 | `constraint` | zero-injection row solved as a constraint (`state_estimation.zero_injection: constraint`) |
 | `origin` | origin of the measurement: `measured`, `pseudo`, `derived`, `pseudo_restore`, `last_value` |
-| `reason` | tokens separated by `;`: `inactive` (valid=false), `deenergized` (the row sits at a bus that is not energized, or at one of its branches, and left the run), `range_check_substituted` (a voltage reading outside the range, replaced by a pseudo measurement; residual and normalized residual are those of the substitute, see [Range check of the voltage measurements](@ref se-range-check)), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical`, `not_used` (an estimate per observable island used no row of it: it holds the flow of an unobservable branch) |
+| `reason` | tokens separated by `;`: `inactive` (valid=false), `deenergized` (the row sits at a bus that is not energized, or at one of its branches, or in a network island without a source, and left the run), `range_check_substituted` (a voltage reading outside the range, replaced by a pseudo measurement; residual and normalized residual are those of the substitute, see [Range check of the voltage measurements](@ref se-range-check)), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical`, `not_used` (an estimate per observable island used no row of it: it holds the flow of an unobservable branch) |
 
 Every other active row carries the residuals of the final diagnostics
 (after every elimination). The suspicious count in `run.log`, on the

@@ -1004,8 +1004,10 @@ function test_state_estimation_sequential_elimination()::Bool
       push!(dmeas, Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = 0.5, busIdx = 13, id = "Pinj_bus_13"))
       push!(dmeas, Measurement(typ = Sparlectra.PflowMeas, value = 0.0, sigma = 0.5, branchIdx = kbr, direction = :from, id = "Pflow_open_branch"))
       n0 = length(dmeas)
-      ddiag = @test_logs (:info, r"Vm_bus_13 at bus Torfloh_20 is 0\.0 pu.*not energized.*3 measurement\(s\) inactive \(deenergized\)") match_mode = :any quiet_diag(dead, dmeas)
-      @test (ddiag.range_check.substituted, ddiag.range_check.deenergized) == (0, 1)
+      # topology first: bus 13 is a network island without a source, so its
+      # rows leave before the voltage check looks at the 0 kV value
+      ddiag = @test_logs (:info, r"topology check: isolated bus Torfloh_20 is not energized.*3 measurement\(s\) inactive \(deenergized_island\)") match_mode = :any quiet_diag(dead, dmeas)
+      @test (ddiag.range_check.substituted, ddiag.range_check.deenergized, ddiag.range_check.deenergized_islands) == (0, 0, 1)
       @test only(ddiag.range_check.rows).deactivated == [n0 - 2, n0 - 1, n0]
       @test ddiag.final_diagnostics.converged
       @test !any(r -> r.measurement_index > n0 - 3, ddiag.final_diagnostics.measurement_ranking)

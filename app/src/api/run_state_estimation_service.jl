@@ -636,7 +636,7 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
   suppressed = Set{String}(String(r.id) for r in robust if r.stage == 3)
   downweighted = Set{String}(String(r.id) for r in robust if r.stage in (1, 2))
   range_sub = Set{Int}(r.measurement_index for r in range_rows if r.reason === :range_check_substituted)
-  range_dead = Set{Int}(j for r in range_rows if r.reason === :deenergized for j in r.deactivated)
+  range_dead = Set{Int}(j for r in range_rows if r.reason in (:deenergized, :deenergized_island) for j in r.deactivated)
   flagged = 0
   # the table rows, then the replacement values (no table line)
   in_table = Set{Int}(art.measurement)
@@ -1905,6 +1905,8 @@ function _run_state_estimation_service_body(
   end
   base_metadata["se_range_check_substituted"] = count(r -> r.reason === :range_check_substituted, range_rows)
   base_metadata["se_range_check_deenergized"] = count(r -> r.reason === :deenergized, range_rows)
+  base_metadata["se_range_check_deenergized_islands"] = count(r -> r.reason === :deenergized_island, range_rows)
+  base_metadata["se_range_check_topology_contradictions"] = count(r -> r.reason === :topology_contradiction, range_rows)
   # a non-finite measured value goes into the JSON as text
   base_metadata["se_range_check"] = [Dict{String,Any}("id" => r.id, "bus" => r.bus, "value" => isfinite(r.value) ? r.value : string(r.value), "reason" => String(r.reason),
                                                       "substitute" => isfinite(r.substitute) ? r.substitute : nothing, "source" => String(r.source), "sigma_substitute" => isfinite(r.sigma_substitute) ? r.sigma_substitute : nothing,

@@ -371,13 +371,32 @@ function test_observability_fd_rank_tolerance(fx)::Bool
     # open link: a real separation; both islands are measured, each is
     # observable on its own subnet with its own reference, the merged
     # verdict reports the partition
+    # The island B1a-B2 has no source, but its voltage rows read about
+    # 1.0 pu (taken with the link closed): the measurements contradict the
+    # topology, so its rows stay (one contradiction row, no row inactive)
+    # and validate_topology reports it. With 0 kV at both buses instead
+    # the island is dead and its rows leave (topology first, 1.1.0).
     netO = deepcopy(fx.net_link_open)
-    obsO = evaluate_global_observability(netO, [m for m in meas if m.linkIdx === nothing])
+    measO = [m for m in meas if m.linkIdx === nothing]
+    vmO = [k for (k, m) in enumerate(measO) if m.typ == Sparlectra.VmMeas && m.busIdx in (3, 4)]
+    @test length(vmO) == 2 && all(k -> measO[k].value > 0.9, vmO)
+    chkO, rcO = Sparlectra._se_range_check(netO, measO)
+    @test [(r.reason, r.id, r.bus, length(r.vm_above), r.value) for r in rcO] == [(:topology_contradiction, "2", 3, 2, maximum(measO[k].value for k in vmO))]
+    @test all(m -> m.active, chkO)
+    @test occursin("measurement contradicts the topology: network island 2 (bus B1a) has no source in the model, but 2 voltage measurement(s) above 0.1 pu", only(Sparlectra._se_range_check_lines(netO, rcO)))
+    # (the KCL findings at B1 and B1a come from the closed-link readings)
+    @test [f.location for f in validate_topology(netO, measO).findings if f.kind === :measurement_contradicts_topology] == ["network island 2 (bus B1a)"]
+    obsO = evaluate_global_observability(netO, measO)
     @test obsO.quality == :good
     @test :island_partition in obsO.notes
     @test obsO.n_measured_islands == 2
     @test obsO.numerical_rank == obsO.n_states
     @test all(i.result.quality == :good for i in obsO.islands if i.measured)
+    deadO = [k in vmO ? Measurement(typ = Sparlectra.VmMeas, value = 0.0, sigma = m.sigma, busIdx = m.busIdx, id = m.id) : m for (k, m) in enumerate(measO)]
+    chkD, rcD = Sparlectra._se_range_check(netO, deadO)
+    @test [(r.reason, r.id) for r in rcD] == [(:deenergized_island, "2")]
+    @test only(rcD).deactivated == [k for (k, m) in enumerate(chkD) if !m.active] && !isempty(only(rcD).deactivated)
+    @test !any(f -> f.kind === :measurement_contradicts_topology, validate_topology(netO, deadO).findings)
 
     # an explicit tol still wins over the FD-aware default
     obsT = evaluate_global_observability(netC, meas; tol = 1e-14)
@@ -1207,6 +1226,16 @@ function test_observability_islands(fx)::Bool
       @test [(r.network_island, r.measured, r.n_islands, r.angle_rank_deficit, r.magnitude_rank_deficit) for r in isl.network_islands] == [(1, true, 2, 1, 1), (2, true, 1, 0, 0), (3, false, 0, 0, 0)]
       @test isl.unobservable_branches == [1, 2] && isl.region_buses == [2] && isl.dark_magnitude_buses == [2]
       @test _obs_islands_consistent(net, isl)
+    end
+    # the imported bus voltages follow the numbering of the island net (the
+    # restore reads them per bus of a network island; with net-wide keys
+    # it read the stored voltage of another bus), with and without the base
+    sv = deepcopy(net)
+    for b in eachindex(sv.nodeVec)
+      sv._sv_vm_pu[b] = 0.9 + 0.01 * b
+    end
+    for row in Sparlectra.detect_ac_islands(sv; promote_generators = true).rows, base in (nothing, Sparlectra._se_island_base(sv))
+      @test Sparlectra._prepare_island_net(sv, row; base = base)._sv_vm_pu == Dict(k => 0.9 + 0.01 * b for (k, b) in enumerate(row.buses))
     end
     @test reports[1].observable_islands.network_islands == reports[2].observable_islands.network_islands
     io = IOBuffer()

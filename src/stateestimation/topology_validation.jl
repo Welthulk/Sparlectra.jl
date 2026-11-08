@@ -219,6 +219,11 @@ Checks (thresholds as sigma multiples, keywords mirror the
   only when every member is measured, as in the estimator. Structural, no
   threshold; one finding per group of such meshes, naming its branches
   (all of them in the extra field `branches`).
+- `:measurement_contradicts_topology` (severity `:warning`): a network
+  island without a source (or an isolated bus) with a voltage measurement
+  above 0.1 pu. The estimator keeps its rows instead of dropping them as a
+  dead part (see the range check in the state estimation docs); a
+  neighbour outside the model or a wrong switch state is the usual cause.
 """
 function validate_topology(net::Net, measurements::Vector{Measurement} = Measurement[m for m in net.measurements])
   # thresholds from the registry (state_estimation.topology_*, #381)
@@ -430,6 +435,15 @@ function validate_topology(net::Net, measurements::Vector{Measurement} = Measure
 
   # 5) meshes without an active power row (uniqueness, not plausibility)
   append!(findings, _topology_mesh_without_p(net, active, reps, members, busname))
+
+  # 6) a part without a source whose voltage readings say it is live: the
+  # same parts and bound the range check of the estimator uses
+  islandRows = detect_ac_islands(net; promote_generators = true).rows
+  for part in _se_dead_parts(net, active, islandRows, _se_energized_buses(net, islandRows))
+    isempty(part.vm_above) && continue
+    where = part.id == "0" ? string("isolated bus ", busname(part.bus)) : string("network island ", part.id, " (bus ", busname(part.bus), ")")
+    push!(findings, (stage = :precheck, kind = :measurement_contradicts_topology, location = where, evidence = string("no source in the model, but ", length(part.vm_above), " voltage measurement(s) above ", _SE_DEAD_VM_MAX_PU, " pu, largest ", round(active[first(part.vm_above)].value; sigdigits = 6), " pu"), severity = :warning))
+  end
 
   notes = String[]
   flat_state && push!(notes, string("rule 2 (closed branch without flow) skipped: flat start, no expected state (", n_unjudged, " closed branch(es) with dead readings not judged)"))

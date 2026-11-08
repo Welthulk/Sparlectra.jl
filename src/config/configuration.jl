@@ -3084,6 +3084,15 @@ const _TABLE_VALUED_CONFIG_KEYS = ("state_estimation.sigma_by_voltage_level",)
 # saved configuration and case sidecar of 0.19.0.
 const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", "powsybl_import.python_exe")
 
+# Removed keys that are ignored WITH a warning naming the reason, in a
+# stored file as well as in an editor or override call (strict): a minor
+# version must not refuse a file of the previous one.
+# state_estimation.observability.enabled, 1.1.0: the key was never read, the
+# observability check always runs.
+const _REMOVED_WARN_CONFIG_KEYS = Dict(
+  "state_estimation.observability.enabled" => "removed in 1.1.0, the observability check always runs",
+)
+
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
   "diagnostics.console_auto_profile" => "output.console_auto_profile",
@@ -3313,6 +3322,11 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       continue
     end
     current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
+    if haskey(_REMOVED_WARN_CONFIG_KEYS, current_path)
+      @warn "Configuration key $(current_path) is ignored: $(_REMOVED_WARN_CONFIG_KEYS[current_path])." maxlog = 1 _id = Symbol("removed_config_key_", current_path)
+      push!(drop, key)
+      continue
+    end
     if !haskey(defaults, skey)
       strict && throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
       @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)." maxlog = 1 _id = Symbol("unknown_config_key_", current_path)
@@ -3431,6 +3445,8 @@ function _remove_superfluous_config_keys!(user::AbstractDict, defaults::Abstract
       "deprecated and ignored; use $(_DEPRECATED_CONFIG_KEYS[current_path])"
     elseif current_path in _REMOVED_SILENT_CONFIG_KEYS
       "no longer a configuration key"
+    elseif haskey(_REMOVED_WARN_CONFIG_KEYS, current_path)
+      _REMOVED_WARN_CONFIG_KEYS[current_path]
     elseif !haskey(defaults, skey)
       "not a key of this Sparlectra version"
     else

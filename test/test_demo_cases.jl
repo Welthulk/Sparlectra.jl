@@ -145,19 +145,29 @@ function run_demo_case_tests()
         @test [(r.measured, r.n_islands, r.rank_deficit) for r in isl1.network_islands] == [(true, 1, 0), (true, 1, 0)]
         @test isempty(isl1.unobservable_branches)
 
-        # both ties open: three network islands. C has no source then; a
-        # dead network sends no readings and the open tie no flow, so the
-        # rows located in C and on its tie are taken out. The report names
-        # C as not measured, and C adds no deficit.
+        # both ties open: three network islands. C has no source then, but
+        # the unchanged table was taken with both ties closed: its five U
+        # rows in C read about 0.94 pu (largest Wiesbach_20, 18.906 kV). The
+        # measurements contradict the topology, so the estimator keeps the
+        # rows of C, reports the contradiction (network island 3, five
+        # voltages above 0.1 pu) and estimates C like a net without a
+        # source model; nothing is dropped silently (the
+        # 0 kV counterpart is in the observability tests). The four rows of
+        # the open tie never enter, the reader drops rows of an
+        # out-of-service branch.
         three = Sparlectra.import_case(path, cfg).net
         Sparlectra.apply!(three, scen["ties_out_three_islands"].ops, index)
         readMeasurementTable!(three; file = table)
-        tieC = findfirst(b -> b.comp.cName == "Lindenau_Erlbach", three.branchVec)
         netC = Set(findall(n -> split(n.comp.cName, "_")[1] in ("Erlbach", "Kranzbach", "Moosried", "Wiesbach", "Ulmenau"), three.nodeVec))
-        filter!(m -> !((m.busIdx !== nothing && m.busIdx in netC) || (m.branchIdx !== nothing && (m.branchIdx == tieC || three.branchVec[m.branchIdx].fromBus in netC))), three.measurements)
+        vmC = [m for m in three.measurements if m.typ == Sparlectra.VmMeas && m.busIdx in netC]
+        _, rc3 = Sparlectra._se_range_check(three, Measurement[m for m in three.measurements])
+        @test [(r.reason, r.id, length(r.vm_above), r.value) for r in rc3] == [(:topology_contradiction, "3", 5, maximum(m.value for m in vmC))]
+        @test only(Sparlectra._se_range_check_lines(three, rc3)) == "topology check: measurement contradicts the topology: network island 3 (bus Erlbach_20) has no source in the model, but 5 voltage measurement(s) above 0.1 pu (largest 0.945303 pu); its measurements stay in the estimation (topology_contradiction)"
         isl3 = identify_observable_islands(three)
-        @test [(r.n_bus, r.measured, r.n_islands, r.rank_deficit) for r in isl3.network_islands] == [(6, true, 1, 0), (5, true, 1, 0), (5, false, 0, 0)]
-        @test isl3.unmeasured_network_islands == [3] && isl3.rank_deficit == 0
+        @test [(r.n_bus, r.measured, r.n_islands, r.rank_deficit) for r in isl3.network_islands] == [(6, true, 1, 0), (5, true, 1, 0), (5, true, 1, 0)]
+        @test isempty(isl3.unmeasured_network_islands) && isl3.rank_deficit == 0
+        res3 = @test_logs (:warn, r"runse!: topology check: measurement contradicts the topology: network island 3") match_mode = :any runse!(three)
+        @test res3.converged && all(i -> i.estimated, res3.islands)
         @test Set(b for b in eachindex(three.nodeVec) if isl3.network_island_of_bus[b] == 3) == netC
       end
     end)() end

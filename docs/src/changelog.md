@@ -8,13 +8,15 @@ Observability: observable islands, closing gaps, weak results.
 - **Weakly observable results.** After every estimate the spread of the branch flows and voltages is checked. A result whose flows the measurements do not pin down is marked unusable instead of returned as valid (`state_estimation.observability.weak_flow_sigma_mw`, default 20 MW).
 - **Measurement placement.** `suggest_measurement_placement` proposes where a new injection, flow or PMU measurement closes a gap; the Web UI shows the proposal on its own page.
 
-## Changed
+## Added
 
-- **Not observable is decided on the decoupled P-θ and Q-V models**, so the verdict no longer depends on a rank tolerance. Angle and magnitude deficits are reported separately.
+- **Last valid value.** A measurement missing at one timestamp of a table takes its last valid value from up to 60 minutes earlier, with three times its sigma (`state_estimation.last_value.enabled`, default off). The SE service and the Web UI can pick the timestamp of a table.
+- **Workshops run locally.** One installer command sets up all workshop notebooks with their own kernel; Colab is no longer needed.
 
 ## Fixed
 
 - **Observability above 2000 states.** The verdict could call an unobservable set observable, and the list of unobservable states contained forward-difference noise.
+- **SE service with several network islands.** It crashed since 1.0.0.
 
 # Version 1.0.0 - 2026-10-25
 

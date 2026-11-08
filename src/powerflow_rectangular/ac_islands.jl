@@ -447,16 +447,37 @@ end
 # participation table.
 _island_prosumer_indices(net::Net, busset) = [k for (k, ps) in enumerate(net.prosumpsVec) if Int(ps.comp.cFrom_bus) in busset]
 
+# The copy of `net` that _prepare_island_net starts from when it cuts many
+# islands of one unchanged net: every container it replaces wholesale is
+# left empty, the rest is a deep copy, so `deepcopy(base)` per island gives
+# the same island net as `deepcopy(net)` at a fraction of the cost. The base
+# is valid only while `net` is not changed; build it again after a change.
+# `unread`: further fields the caller's island runs never read, left empty
+# as well (the state estimation passes its rows explicitly and never reads
+# the line catalogue, see _se_island_base).
+function _island_net_base(net::Net; unread::Tuple = ())::Net
+  replaced = (unread..., :_sv_vm_pu, :slackVec, :nodeVec, :branchVec, :prosumpsVec, :shuntVec, :busDict, :busOrigIdxDict, :busOriginalNameDict, :shuntDict, :isoNodes, :qLimitLog, :qmin_pu, :qmax_pu, :qLimitInitialPVRows, :qLimitEvents, :hvdcLinks, :_marked_iso)
+  shell = Net(name = net.name, baseMVA = net.baseMVA)
+  for f in fieldnames(Net)
+    v = getfield(net, f)
+    setfield!(shell, f, f in replaced ? empty(v) : v)
+  end
+  return deepcopy(shell)
+end
+
 """
 Cut one island out of `net` as a standalone `Net` that the solver can run on
 unchanged. Every bus index is renumbered to 1..n_island, so all index-carrying
 containers have to be rebuilt consistently -- missing one of them yields a net
 that looks fine and solves the wrong topology.
 """
-function _prepare_island_net(net::Net, row)
+function _prepare_island_net(net::Net, row; base::Union{Nothing,Net} = nothing)
   # Start from a full copy to inherit scalar settings (baseMVA, tolerances,
   # flags); every index-bearing vector below is then replaced wholesale.
-  inet = deepcopy(net)
+  # A caller that cuts many islands of one unchanged net passes `base`
+  # (_island_net_base): the same copy without the replaced containers, so
+  # each island copies its own part only, not the whole net again.
+  inet = base === nothing ? deepcopy(net) : deepcopy(base)
   # old (net-wide) bus index -> new (island-local) bus index
   busmap = Dict(old => new for (new, old) in enumerate(row.buses))
   busset = Set(row.buses)
@@ -532,6 +553,10 @@ function _prepare_island_net(net::Net, row)
   # empty vectors: the rectangular solver read the limits of buses 1..n of
   # the WHOLE net, the APSLF model dropped them for the length mismatch.
   inet.qmin_pu, inet.qmax_pu = _island_q_limits(net, row.buses)
+  # the imported bus voltages are keyed by bus index as well: in the
+  # island's numbering, or the restore of the state estimation read the
+  # stored voltage of another bus for a bus of a second network island
+  inet._sv_vm_pu = Dict{Int,Float64}(busmap[b] => v for (b, v) in net._sv_vm_pu if b in busset)
   # The Q-limit records (event log, events by bus, pre-solve PV rows) carry
   # net-wide bus numbers: an island starts with empty ones, its own solve
   # fills them, and _sync_island_solution! maps the events back.

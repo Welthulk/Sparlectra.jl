@@ -249,13 +249,14 @@ function suggest_measurement_placement(net::Net, measurements::Vector{Measuremen
   unobsBefore = Int[]
   unobsAfter = Int[]
   stop = :reached
+  base = length(part.rows) == 1 ? nothing : _se_island_base(net)
   for (k, nrow) in enumerate(part.rows)
     isempty(part.perIsland[k]) && continue
     # the network island on its own net, as in restore_observability
     inet, meas_k, toCallerBus, toCallerBranch = if length(part.rows) == 1
       (net, measurements, collect(1:length(net.nodeVec)), collect(1:length(net.branchVec)))
     else
-      sub = _se_island_subnet(net, nrow)
+      sub = _se_island_subnet(net, nrow; base = base)
       m_k, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[k])
       (sub.inet, m_k, collect(nrow.buses), collect(nrow.branches))
     end
