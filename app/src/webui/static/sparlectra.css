@@ -907,8 +907,10 @@ main.artifact-page {
   visibility: visible;
 }
 
-/* the column list and the row controls above the table */
-.csv-toolbar {
+/* the column list and the row controls above the table; the bar above a
+   long table on the result page shares the look */
+.csv-toolbar,
+.long-table-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -927,7 +929,8 @@ main.artifact-page {
   width: 14rem;
 }
 
-.csv-toolbar label {
+.csv-toolbar label,
+.long-table-bar label {
   display: inline-flex;
   flex-direction: row;
   align-items: center;
@@ -970,7 +973,8 @@ main.artifact-page {
   padding: 0;
 }
 
-.csv-row-count {
+.csv-row-count,
+.long-table-count {
   color: #5b6b82;
 }
 
@@ -1611,3 +1615,69 @@ nav {
 }
 
 
+
+/* Observability section of the SE result page (1.1.0): the traffic light,
+   the bus table of an estimate per observable island and the repeat
+   buttons */
+.se-light {
+  border-radius: 4px;
+  margin: .4rem 0;
+  padding: .45rem .7rem;
+}
+
+.se-light-red {
+  background: #fde2e0;
+  color: #8a1c12;
+}
+
+.se-light-yellow {
+  background: #fff0c2;
+  color: #7a4b00;
+}
+
+.se-bus-table tr.se-bus-not-estimated td {
+  background: #f1f1f1;
+  color: #8a8a8a;
+}
+
+.se-relative-mark {
+  color: #7a4b00;
+  font-size: .85em;
+  margin-left: .25rem;
+}
+
+.se-gap-actions {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+}
+
+.se-gap-action {
+  margin: 0;
+}
+
+/* long tables on the result page: count, slider and CSV link above the
+   table. The slider label is a flex item, so the hidden attribute needs
+   its own rule (the script shows it, without JavaScript it stays hidden). */
+.long-table-slider[hidden] {
+  display: none;
+}
+
+/* the timestamp select of the SE run form: a flex label as well, shown
+   only for a measurement table with more than one timestamp */
+#se-timestamp-field[hidden] {
+  display: none;
+}
+
+.long-table-slider input[type="range"] {
+  width: 14rem;
+  padding: 0;
+}
+
+.long-table .table-scroll {
+  overflow-x: auto;
+}
+
+.long-table-cap {
+  margin-top: .3rem;
+}

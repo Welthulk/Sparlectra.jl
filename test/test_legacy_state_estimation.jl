@@ -1113,7 +1113,7 @@ function test_state_estimation_tap_determinability()::Bool
       mg = meas[i]
       e = 10.0 * mg.sigma
       measg = copy(meas)
-      measg[i] = Measurement(typ = mg.typ, value = mg.value + e, sigma = mg.sigma, branchIdx = mg.branchIdx, direction = mg.direction, id = mg.id)
+      measg[i] = Measurement(typ = mg.typ, value = mg.value + e, sigma = mg.sigma, branchIdx = mg.branchIdx, direction = mg.direction, id = mg.id, origin = mg.origin)
       resg, dg = S.with_sparlectra_config(m60.config) do
         with_state_estimation_config(max_iter = 50, tol = 1e-6, update_net = false) do
           (runse!(deepcopy(net), measg), validate_measurements(deepcopy(net), measg))
@@ -1175,7 +1175,7 @@ function test_state_estimation_tap_determinability()::Bool
     m3 = meas[i3]
     e3 = 10.0 * m3.sigma
     measg = copy(meas)
-    measg[i3] = Measurement(typ = m3.typ, value = m3.value + e3, sigma = m3.sigma, branchIdx = m3.branchIdx, direction = m3.direction, id = m3.id)
+    measg[i3] = Measurement(typ = m3.typ, value = m3.value + e3, sigma = m3.sigma, branchIdx = m3.branchIdx, direction = m3.direction, id = m3.id, origin = m3.origin)
     resg, dg = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false) do
       (runse!(deepcopy(net), measg), validate_measurements(deepcopy(net), measg))
     end

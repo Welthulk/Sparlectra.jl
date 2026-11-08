@@ -6,8 +6,6 @@ EditURL = "../../lit/workshop_apslf.jl"
 
 > **Level: Intermediate**, after the [basic tour](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/). The theory of the analytic power-series load flow (APSLF) and the raw solver have their own workshop in [AnalyticLoadFlow.jl](https://github.com/Welthulk/AnalyticLoadFlow.jl); this chapter is the complement from the network side: the same solver used on a Sparlectra model, through the configuration, with the diagnostics a run reports.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_apslf.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -33,8 +31,7 @@ and this chapter shows each of them on a network you can inspect:
 Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 dependency of Sparlectra, and `power_flow.solver = apslf` in the
 configuration switches a run over to it. Sparlectra 0.31 needs
-AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one,
-so the version below is the one this workshop was written against:
+AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one.
 
 ## Warm-up and shared helpers
 
@@ -46,8 +43,7 @@ in a comment. Its last line, `warmup()`, runs every path the parts
 exercise once with the output discarded (both solvers, the series order
 and radius options, the hybrid start, the case import), so nothing
 stalls mid-workshop; its code is in `docs/lit/warmup/workshop_apslf.jl`
-of the package. How long the warm-up takes depends on the machine: a
-Colab session is several times slower than a desktop; every later cell
+of the package. How long the warm-up takes depends on the machine; every later cell
 then runs without compile pauses.
 
 ````@example workshop_apslf

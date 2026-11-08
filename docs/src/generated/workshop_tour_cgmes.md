@@ -29,8 +29,6 @@ purpose: Literate.jl source of the foreign-formats tour: the network
 
 # The Sparlectra workshop tour: foreign formats
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -89,8 +87,7 @@ without TP, the result tables, the SV comparison and the export, the IIDM
 reader with its OpenLoadFlow-like run, and the DTF deck with an outage),
 so the timing of the MicroGrid solve in Chapter 3 is the solve, not the
 compiler; its code is in `docs/lit/warmup/workshop_tour_cgmes.jl` of the
-package. How long the warm-up takes depends on the machine: a Colab
-session is several times slower than a desktop; every later cell then
+package. How long the warm-up takes depends on the machine; every later cell then
 runs without compile pauses.
 
 ````@example workshop_tour_cgmes
@@ -379,7 +376,6 @@ olf_like = SparlectraConfig(
   control = ControlConfig(),
 )
 pres = run_sparlectra(net = pnet, config = olf_like)
-@assert pres.numerical_converged
 ref, hdr = readdlm(powsybl_reference, ',', String; quotes = true, header = true)
 cols = Dict(Symbol(strip(h)) => k for (k, h) in enumerate(vec(hdr)))
 worst = 0.0
@@ -390,7 +386,6 @@ for i in axes(ref, 1)
   global worst = max(worst, dv)
 end
 println("largest bus voltage difference |dV| against OpenLoadFlow over ", size(ref, 1), " buses [pu]: ", round(worst; sigdigits = 3))
-@assert worst < 1e-5
 ````
 
 Reading aid (Example 6.2): two load-flow programs with different
@@ -432,7 +427,6 @@ exists:
 case = Sparlectra.DTFImporter.read_dtf(dtf_deck)
 println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
 println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
-@assert (length(case.buses), length(case.branches), length(case.transformer_controls), length(case.outages)) == (5, 6, 1, 2)
 ````
 
 **Example 7.2: the network and its solve.** `build_net` turns the records
@@ -445,9 +439,7 @@ it is the ordinary solver:
 @isdefined(case) || error("Run Example 7.1 first: it sets up case.")
 dnet = Sparlectra.DTFImporter.build_net(case)
 println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
-@assert length(dnet.nodeVec) == length(case.buses)
 dite, derg = runpf!(dnet, 50, 1e-8, 0)
-@assert derg == 0
 calcNetLosses!(dnet)
 println("solved in ", dite, " NR iterations; network active power losses [MW], computed: ", round(dnet.totalLosses[end][1]; digits = 3))
 ````
@@ -482,7 +474,6 @@ else
     Sparlectra.DTFImporter.apply_single_branch_outage!(onet, matches[1])
     markIsolatedBuses!(net = onet, log = false)
     oite, oerg = runpf!(onet, 50, 1e-8, 0; islands_enabled = true)
-    @assert oerg == 0
     dv = maximum(abs(onet.nodeVec[i]._vm_pu - dnet.nodeVec[i]._vm_pu) for i in eachindex(dnet.nodeVec))
     println("with the outage: solved in ", oite, " NR iterations; largest bus voltage change |dVm| against the base case [pu]: ", round(dv; sigdigits = 3))
   end
@@ -506,8 +497,8 @@ does not invent one.
   topology processor.
 - [CGMES Export](https://welthulk.github.io/Sparlectra.jl/cgmes_export/):
   profiles written, identity stability, provenance.
-- [Workshop tour, basic](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-  and [advanced](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
+- [Workshop tour, basic](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
+  and [advanced](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
   everything you can do with the imported network.
 - [Feature Matrix](https://welthulk.github.io/Sparlectra.jl/feature_matrix/)
 

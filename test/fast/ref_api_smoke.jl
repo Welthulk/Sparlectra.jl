@@ -61,7 +61,7 @@ function run_ref_api_smoke_tests()
         @test length(readMeasurementTable(art)) == n_rows
         @test isempty(readMeasurementTable!(probe; file = art, zero_injection = false).problems)
         verdict = readlines(joinpath(se_de["output_dir"], "measurements_verdict.csv"))
-        @test verdict[1] == "line;key;type;measurement_id;residual;normalized_residual;wii;localizable;eliminated;constraint;reason"
+        @test verdict[1] == "line;key;type;measurement_id;residual;normalized_residual;wii;localizable;eliminated;constraint;origin;reason"
         @test length(verdict) == n_rows + 1
         @test any(l -> occursin(r";-?\d+,\d+;", l), verdict)
         # a gross error (the one row of the shipped bad-data set whose value
@@ -80,7 +80,7 @@ function run_ref_api_smoke_tests()
         @test length(gross) == 1
         @test Int(vcsv.number(elim[1][1])) == findfirst(l -> startswith(l, "timestamp"), art_bad) + only(gross)
         @test abs(vcsv.number(elim[1][6])) >= se_bad["metadata"]["se_k_eliminate"]
-        @test elim[1][11] == "eliminated"
+        @test elim[1][11] == "measured" && elim[1][12] == "eliminated"
         @test occursin(elim[1][4], read(joinpath(se_bad["output_dir"], "se_diagnostics.md"), String))
       end
     end)() end

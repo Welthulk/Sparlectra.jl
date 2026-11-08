@@ -2878,9 +2878,17 @@ function _webui_se_form_state(query::AbstractDict; output_root::AbstractString, 
   # form of its own and steers the generator); the levels need the
   # imported case, which _webui_case_voltage_levels caches.
   sigma_levels = isempty(selected) ? (rows = NamedTuple[], error = "", editable = true, stored = false) : _webui_sigma_level_table(selected, directory, config_file)
+  # the timestamps of every offered table with more than one set: the run
+  # form offers the set to estimate for these, also after another set is
+  # picked in the list
+  meas_timestamps = Dict{String,Vector{String}}()
+  for name in measurements
+    ts = _webui_measurement_table_timestamps(joinpath(directory, name))
+    length(ts) > 1 && (meas_timestamps[name] = ts)
+  end
   # a case file brings its measurements along; the section then offers the
   # run without any CSV in the cache
-  return (sigma_levels = sigma_levels, cases = cases, measurements = measurements, case_measurement_rows = case_measurement_rows, case_measurement_noise = case_measurement_noise, selected_case = selected, selected_measurement = selected_meas, config_file = config_file, message = message, set_info = set_info, set_provenance = set_provenance, set_counts = set_counts, set_v1 = set_v1, meas_case = meas_case, meas_name_matched = meas_name_matched, meas_model_matched = meas_model_matched, starred = starred, set_case = set_case, set_model = set_model, set_text = set_text, set_rows = set_rows, gen_values = gen_values, truth_runs = truth_runs)
+  return (sigma_levels = sigma_levels, meas_timestamps = meas_timestamps, cases = cases, measurements = measurements, case_measurement_rows = case_measurement_rows, case_measurement_noise = case_measurement_noise, selected_case = selected, selected_measurement = selected_meas, config_file = config_file, message = message, set_info = set_info, set_provenance = set_provenance, set_counts = set_counts, set_v1 = set_v1, meas_case = meas_case, meas_name_matched = meas_name_matched, meas_model_matched = meas_model_matched, starred = starred, set_case = set_case, set_model = set_model, set_text = set_text, set_rows = set_rows, gen_values = gen_values, truth_runs = truth_runs)
 end
 
 """
@@ -3071,6 +3079,27 @@ function _se_verdict_eliminated_lines(file::AbstractString)::Set{Int}
     f[ielim] == "true" && push!(out, parse(Int, f[iline]))
   end
   return out
+end
+
+"""
+    handle_se_placement_page(query) -> SparlectraWebUIResponse
+
+GET /stateestimation/placement?run_id=...: the placement page of a state
+estimation or placement run (the "Suggest measurement places" button of
+the Observability section, the "Another kind or target" link of a
+placement result): kind and target, posted to `/powerflow/run` with the
+run's case, measurement set and settings. 404 for an unknown run, 400 for
+a run of another kind.
+"""
+function handle_se_placement_page(query::AbstractDict)
+  run_id = basename(String(get(query, "run_id", "")))
+  isempty(run_id) && return _webui_html(render_webui_error(400, "Missing run id."); status = 400)
+  result = get_webui_powerflow_job(run_id)
+  get(result, "reason", "") in ("run_not_found", "unsafe_run_id") && return _webui_html(render_webui_error(404, "Run not found."); status = 404)
+  metadata = get(result, "metadata", Dict{String,Any}())
+  mode = metadata isa AbstractDict ? String(get(metadata, "run_mode", "")) : ""
+  mode in ("se", "se_placement") || return _webui_html(render_webui_error(400, "The measurement placement starts from a state-estimation run."); status = 400)
+  return _webui_html(render_se_placement_page(result))
 end
 
 """

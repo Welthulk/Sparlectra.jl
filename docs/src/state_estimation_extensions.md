@@ -571,7 +571,8 @@ mutation of a status, a measurement or the model.
 Stage-1 findings: a measured flow over an open element
 (`:open_element_with_flow`), a closed branch reading dead at both measured
 ends while the model expects a clear flow (`:closed_element_without_flow`,
-low severity), voltage measurements disagreeing across a closed link
+low severity; at a flat start, all bus angles equal, there is no expected
+flow, the check is skipped and the summary says so), voltage measurements disagreeing across a closed link
 (`:closed_link_voltage_mismatch`), and the node balance at completely
 measured nodes (`:kcl_violation`; shunt term from the measured voltage,
 partially measured nodes skipped). Out-of-service elements enter only the

@@ -24,8 +24,6 @@ purpose: Literate.jl source of the ADVANCED workshop tour (Expert and
 
 # The Sparlectra workshop tour, advanced
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -48,10 +46,6 @@ After the warm-up the chapters climb two tiers:
 **Beyond**
 6. Using your cores: parallel sweeps on Julia threads
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia ≥ 1.12.
-
 ## Warm-up and shared helpers
 
 Julia compiles each function on first use. This cell defines what the
@@ -65,8 +59,7 @@ the WLS state estimator, the FACTS controllers, the contingency batch
 with its report, and the IEC 60909 short circuit, serial and under
 threads), so nothing stalls mid-tour; its code is in
 `docs/lit/warmup/workshop_tour_advanced.jl` of the package. How long the
-warm-up takes depends on the machine: a Colab session is several times
-slower than a desktop; every later cell then runs without compile pauses.
+warm-up takes depends on the machine; every later cell then runs without compile pauses.
 
 ````@example workshop_tour_advanced
 using Sparlectra
@@ -683,7 +676,7 @@ reference power flow on the 7-bus ring of the basic tour's Example 1.1
 (`build_ring7`, see the warm-up; diagram in the basic tour), derive a
 noisy synthetic measurement set from it, check observability, and let
 the WLS estimator reconstruct the state. The full narrative is the
-[state-estimation notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
+[state-estimation notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb).
 
 ````@example workshop_tour_advanced
 # uses: build_ring7 (warm-up cell)
@@ -1006,7 +999,7 @@ page. The full taxonomy (both UPFC models and their limitations) is on the
 [FACTS Devices](https://welthulk.github.io/Sparlectra.jl/facts/) page;
 `examples/others/exp_facts_limit_modes.jl` runs these contrasts as a
 script, and the TCSC has its own
-[notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb).
+[notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb).
 
 ## Chapter 5: N-1 contingency analysis
 
@@ -1142,9 +1135,9 @@ println("  speed-up serial / parallel [-]:   ", round(t_ser / t_par; digits = 2)
 println("result rows identical: ", isequal(sc_ser.rows, sc_par.rows))
 ````
 
-Reading aid (Example 6.1): on Colab's free tier you usually get 1-2
-vCPUs, so the
-factor here stays modest. With one thread the parallel call falls back
+Reading aid (Example 6.1): a notebook kernel starts with one Julia
+thread unless `JULIA_NUM_THREADS` is set, so the factor here stays
+modest. With one thread the parallel call falls back
 to the very same serial function, so the two times differ only by
 measurement noise (garbage collection, caches), in either direction. The
 real effect wants your local
@@ -1160,12 +1153,12 @@ case it is the prime customer of these threads.
 
 The basic tour (Newcomer to Advanced) and the focused notebooks:
 
-- [Workshop tour, basic](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-- [Slack types and short circuit](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
-- [Distributed slack](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
-- [Transformer taps](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
-- [TCSC flow steering](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
-- [State estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
+- [Workshop tour, basic](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
+- [Slack types and short circuit](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
+- [Distributed slack](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
+- [Transformer taps](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb)
+- [TCSC flow steering](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb)
+- [State estimation](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 
 And the documentation for going further:
 

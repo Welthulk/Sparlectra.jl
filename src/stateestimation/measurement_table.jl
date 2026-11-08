@@ -781,7 +781,7 @@ function _apply_sigma_levels_to_generated(net::Net, meas::Vector{Measurement}, t
     s === nothing && continue
     σ = typ == "U" ? s / vn : s
     z = t.value + (m.value - t.value) * (σ / m.sigma)
-    out[k] = Measurement(typ = m.typ, value = z, sigma = σ, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
+    out[k] = Measurement(typ = m.typ, value = z, sigma = σ, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = m.origin)
     push!(changed, k)
   end
   return (out, changed)
@@ -1123,11 +1123,18 @@ end
 Result of `importMeasurementTable`: one `MeasurementSet` per timestamp in
 file order of first appearance (an empty timestamp is a set of its own), plus
 `rejected` for rows that cannot be assigned to any set (wrong field count,
-malformed timestamp).
+malformed timestamp). `last_value` holds one entry per set that got last
+values (`state_estimation.last_value`): its timestamp, the number of filled
+values, the oldest timestamp they came from and the filled rows (source
+`last_value;<timestamp of the original>`, for `writeMeasurementTable`).
+`last_value_note` is empty, or says why the fill-in was skipped for the
+whole table.
 """
 struct MeasurementTableImport
   sets::Vector{MeasurementSet}
   rejected::Vector{NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}}
+  last_value::Vector{NamedTuple{(:timestamp, :filled, :oldest, :rows),Tuple{String,Int,String,Vector{MeasurementRow}}}}
+  last_value_note::String
 end
 
 # measurement type of one resolved quantity at a branch end
@@ -1149,6 +1156,18 @@ _measurement_table_group_type(kind::Symbol, typ::AbstractString) = kind === :shu
 # `zero_injection` (among `;`-separated tokens) on a bus balance row
 _measurement_table_zero_injection(source::AbstractString)::Bool = any(t -> strip(t) == "zero_injection", split(source, ';'))
 
+# the token `pseudo` in `source` marks a substitute value (the rows of
+# generatePseudoMeasurementTable carry `pseudo;ssh`), the token `last_value`
+# the last valid value of a meter (the rows of the fill-in carry
+# `last_value;<timestamp>`): Measurement.origin. `pseudo` wins when a row
+# carries both.
+function _measurement_table_origin(source::AbstractString)::Symbol
+  toks = strip.(split(source, ';'))
+  "pseudo" in toks && return :pseudo
+  "last_value" in toks && return :last_value
+  return :measured
+end
+
 # one pending value of a group sum (injection or shunt bay at a bus)
 struct _GroupPart
   terminal::String
@@ -1160,7 +1179,7 @@ struct _GroupPart
 end
 
 """
-    importMeasurementTable(rows, index; default_sigmas = measurementStdDevs(), sigma_by_voltage_level = <state_estimation.sigma_by_voltage_level>, zero_injection_sigma = <state_estimation.zero_injection_sigma_mva>) -> MeasurementTableImport
+    importMeasurementTable(rows, index; default_sigmas = measurementStdDevs(), sigma_by_voltage_level = <state_estimation.sigma_by_voltage_level>, zero_injection_sigma = <state_estimation.zero_injection_sigma_mva>, last_value = <state_estimation.last_value>) -> MeasurementTableImport
 
 Turn the rows of a measurement table into one `MeasurementSet` per
 timestamp, resolving every key through `index` (`MeasurementKeyIndex`).
@@ -1203,6 +1222,12 @@ Several keys at one location (two Analogs on one terminal, U at every
 busbar section of one node) are redundant measurements and all enter the
 set; only the same key with the same type twice is a `:duplicate`.
 
+A row whose `source` carries the token `pseudo` (`;`-separated, as
+`generatePseudoMeasurementTable` writes `pseudo;ssh`) becomes a measurement
+with origin `:pseudo`, every other row one with origin `:measured` (see
+[`Measurement`](@ref)). A group sum is `:pseudo` when one of the rows it
+uses is.
+
 The sigma of a row, in this order: the `sigma` cell of the row; else the
 row of `sigma_by_voltage_level` (default: the active
 `state_estimation.sigma_by_voltage_level`) for the nominal voltage of the
@@ -1221,9 +1246,26 @@ also in an inactive sum. Every other row
 that does not become a measurement is counted by reason: `:unknown_key`,
 `:not_modelled`, `:unsupported`, `:partial_injection`, `:duplicate`, plus
 the format problems of `readMeasurementTable`. Nothing is dropped silently.
+
+Last valid value (`last_value`, a `LastValueConfig`, default the active
+`state_estimation.last_value`, off by default): with `enabled` and more
+than one set, the sets are filled in time order. When a key with its type
+has no valid measured row at a timestamp (no row, only `valid=false` rows
+or only `pseudo` rows), the latest valid measured row of that key and type
+from an earlier timestamp stands in, if it is at most `max_age_min` minutes
+older. The filled row carries the value of the original, its sigma (the
+sigma the import gave it, in the unit of the table) times `sigma_factor`,
+`valid=true`, the source `last_value;<timestamp of the original>` (origin
+`:last_value`) and the line of the original; it takes the place of the
+rows it replaces, which are counted `:last_value_replaced`. A filled value
+and a zero-injection row are never the original of another one, so an age
+counts from the reading. The count per set is `:last_value` in
+`counts`, the oldest timestamp used in `last_value` of the result. When a
+set has no timestamp that reads as a time, nothing is filled, with one
+warning and the reason in `last_value_note`.
 """
-function importMeasurementTable(rows::Vector{MeasurementRow}, index::MeasurementKeyIndex; default_sigmas::Dict = measurementStdDevs(), sigma_by_voltage_level = state_estimation_config().sigma_by_voltage_level, zero_injection_sigma::Real = state_estimation_config().zero_injection_sigma_mva)::MeasurementTableImport
-  return _import_measurement_table(rows, index; default_sigmas = default_sigmas, sigma_by_voltage_level = sigma_by_voltage_level, zero_injection_sigma = zero_injection_sigma)
+function importMeasurementTable(rows::Vector{MeasurementRow}, index::MeasurementKeyIndex; default_sigmas::Dict = measurementStdDevs(), sigma_by_voltage_level = state_estimation_config().sigma_by_voltage_level, zero_injection_sigma::Real = state_estimation_config().zero_injection_sigma_mva, last_value::LastValueConfig = state_estimation_config().last_value)::MeasurementTableImport
+  return _import_measurement_table(rows, index; default_sigmas = default_sigmas, sigma_by_voltage_level = sigma_by_voltage_level, zero_injection_sigma = zero_injection_sigma, last_value = last_value)
 end
 
 # importMeasurementTable with one addition for the run artifact of the SE
@@ -1233,7 +1275,7 @@ end
 # A row written with that text imports to the same sigma, so the artifact
 # carries the sigma of every row and reads back the same under any
 # configuration.
-function _import_measurement_table(rows::Vector{MeasurementRow}, index::MeasurementKeyIndex; default_sigmas::Dict = measurementStdDevs(), sigma_by_voltage_level = state_estimation_config().sigma_by_voltage_level, zero_injection_sigma::Real = state_estimation_config().zero_injection_sigma_mva, filled_sigmas::Union{Nothing,Dict{Int,Tuple{String,Symbol}}} = nothing)::MeasurementTableImport
+function _import_measurement_table(rows::Vector{MeasurementRow}, index::MeasurementKeyIndex; default_sigmas::Dict = measurementStdDevs(), sigma_by_voltage_level = state_estimation_config().sigma_by_voltage_level, zero_injection_sigma::Real = state_estimation_config().zero_injection_sigma_mva, filled_sigmas::Union{Nothing,Dict{Int,Tuple{String,Symbol}}} = nothing, last_value::LastValueConfig = state_estimation_config().last_value)::MeasurementTableImport
   levels = _sigma_levels(sigma_by_voltage_level)
   Problem = NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}
   rejected = Problem[]
@@ -1254,11 +1296,117 @@ function _import_measurement_table(rows::Vector{MeasurementRow}, index::Measurem
   energized = Set{Int}(b for b in values(index.nodes) if b > 0)
   # the sigma floor of every row (see _measurement_set)
   sigma_floor = min(ZERO_INJECTION_SIGMA, Float64(zero_injection_sigma))
+  filled_report = NamedTuple{(:timestamp, :filled, :oldest, :rows),Tuple{String,Int,String,Vector{MeasurementRow}}}[]
+  note = ""
+  if last_value.enabled && length(order) > 1
+    times = [_measurement_table_time(ts) for ts in order]
+    k_bad = findfirst(isnothing, times)
+    if k_bad === nothing
+      built = _measurement_sets_with_last_values(order, Vector{DateTime}(times), by_ts, index, default_sigmas, energized, levels, sigma_floor, filled_sigmas, last_value, filled_report)
+      sets = MeasurementSet[built[ts] for ts in order]
+      return MeasurementTableImport(sets, rejected, filled_report, note)
+    end
+    note = string("last values not filled: set ", _measurement_set_label(order[k_bad]), " has no timestamp that reads as a time")
+    @warn note
+  end
   sets = MeasurementSet[_measurement_set(ts, by_ts[ts], index, default_sigmas, energized, levels, sigma_floor; filled_sigmas = filled_sigmas) for ts in order]
-  return MeasurementTableImport(sets, rejected)
+  return MeasurementTableImport(sets, rejected, filled_report, note)
 end
 
-function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::MeasurementKeyIndex, default_sigmas::Dict, energized::Set{Int}, levels::Vector{SESigmaLevel}, sigma_floor::Float64; filled_sigmas::Union{Nothing,Dict{Int,Tuple{String,Symbol}}} = nothing)::MeasurementSet
+# The instant of a canonical timestamp (to the millisecond), `nothing` for
+# an empty one or one that is not ISO 8601 UTC (a row built in code)
+function _measurement_table_time(ts::AbstractString)::Union{Nothing,DateTime}
+  canon = _measurement_table_timestamp(ts)
+  canon === nothing && return nothing
+  m = match(_MEASUREMENT_TABLE_TIMESTAMP, canon)
+  y, mo, d, h, mi = (parse(Int, c) for c in m.captures[1:5])
+  sec = m.captures[6] === nothing ? 0 : parse(Int, m.captures[6])
+  ms = m.captures[7] === nothing ? 0 : parse(Int, rpad(first(m.captures[7], 3), 3, '0'))
+  return DateTime(y, mo, d, h, mi, sec, ms)
+end
+
+# The sets of a table with the last valid values filled in (see
+# importMeasurementTable), built in time order. `last` holds per key and type the latest valid measured row
+# that the import resolved, with its instant and the sigma the import gave
+# it as cell text in the unit of the table; it is taken when the row is
+# imported, so a filled row with the same line cannot change it.
+function _measurement_sets_with_last_values(order::Vector{String}, times::Vector{DateTime}, by_ts::Dict{String,Vector{MeasurementRow}}, index::MeasurementKeyIndex, default_sigmas::Dict, energized::Set{Int}, levels::Vector{SESigmaLevel}, sigma_floor::Float64, filled_sigmas, cfg::LastValueConfig, report)::Dict{String,MeasurementSet}
+  Key = NTuple{4,String}
+  rowkey(r::MeasurementRow)::Key = (r.measurement_mrid, r.terminal_mrid, r.node_mrid, r.type)
+  last = Dict{Key,Tuple{MeasurementRow,DateTime,String}}()
+  # keys in the order they first had a value, so filled rows that have no
+  # row to replace are appended in a fixed order
+  key_order = Key[]
+  resolved = Dict{Int,String}()
+  built = Dict{String,MeasurementSet}()
+  for k in sortperm(times)
+    ts = order[k]
+    t = times[k]
+    own = by_ts[ts]
+    # a key is served at this timestamp when a well-formed valid row that is
+    # no pseudo row carries it (a file row marked last_value counts)
+    served = Set{Key}(rowkey(r) for r in own if r.problem === :none && r.valid && _measurement_table_origin(r.source) !== :pseudo)
+    fills = Dict{Key,MeasurementRow}()
+    # the rows of this timestamp a filled row takes the place of
+    replaced = NamedTuple{(:line, :problem, :detail),Tuple{Int,Symbol,String}}[]
+    oldest = nothing
+    oldest_ts = ""
+    for key in key_order
+      key in served && continue
+      r0, t0, sigma_text = last[key]
+      Dates.value(t - t0) <= cfg.max_age_min * 60_000.0 || continue
+      sigma = cfg.sigma_factor * parse(Float64, sigma_text)
+      fills[key] = MeasurementRow(r0.line, ts, r0.measurement_mrid, r0.terminal_mrid, r0.node_mrid, r0.type, r0.value, sigma, string("last_value;", r0.timestamp), true, :none, "", r0.value_text, "")
+      if oldest === nothing || t0 < oldest
+        oldest = t0
+        oldest_ts = r0.timestamp
+      end
+    end
+    rows = own
+    if !isempty(fills)
+      # a filled row takes the place of the first well-formed row of its key
+      # (valid=false or pseudo); the other rows of that key leave the set
+      rows = MeasurementRow[]
+      placed = Set{Key}()
+      for r in own
+        key = rowkey(r)
+        if r.problem === :none && haskey(fills, key)
+          key in placed || (push!(rows, fills[key]); push!(placed, key))
+          push!(replaced, (line = r.line, problem = :last_value_replaced, detail = string("replaced by the last value of line ", fills[key].line)))
+          continue
+        end
+        push!(rows, r)
+      end
+      for key in key_order
+        (haskey(fills, key) && !(key in placed)) && push!(rows, fills[key])
+      end
+      push!(report, (timestamp = ts, filled = length(fills), oldest = oldest_ts, rows = MeasurementRow[fills[key] for key in key_order if haskey(fills, key)]))
+    end
+    set = _measurement_set(ts, rows, index, default_sigmas, energized, levels, sigma_floor; filled_sigmas = filled_sigmas, resolved = resolved)
+    isempty(fills) || (set.counts[:last_value] = length(fills))
+    if !isempty(replaced)
+      set.counts[:last_value_replaced] = length(replaced)
+      append!(set.problems, replaced)
+    end
+    built[ts] = set
+    # the rows of this timestamp that are originals for later ones: valid,
+    # measured, and resolved by the import (an unknown key or a duplicate
+    # is not). A zero-injection row states a property of the bus, not a
+    # reading with an age, and is no original.
+    for r in own
+      (r.problem === :none && r.valid && _measurement_table_origin(r.source) === :measured && !_measurement_table_zero_injection(r.source) && haskey(resolved, r.line)) || continue
+      key = rowkey(r)
+      haskey(last, key) || push!(key_order, key)
+      last[key] = (r, t, resolved[r.line])
+    end
+  end
+  return built
+end
+
+# `resolved`, when given, receives for every row the import resolved the
+# sigma as cell text in the unit of the table (its own cell, or the text
+# `filled_sigmas` would get): the originals of the last-value fill-in.
+function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::MeasurementKeyIndex, default_sigmas::Dict, energized::Set{Int}, levels::Vector{SESigmaLevel}, sigma_floor::Float64; filled_sigmas::Union{Nothing,Dict{Int,Tuple{String,Symbol}}} = nothing, resolved::Union{Nothing,Dict{Int,String}} = nothing)::MeasurementSet
   meas = Measurement[]
   sources = Dict{String,Vector{Int}}()
   origins = Dict{String,Symbol}()
@@ -1273,8 +1421,10 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
   # (kind, bus, type) -> the member rows of a group sum with their terminal
   group_rows = Dict{Tuple{Symbol,Int,String},Vector{Tuple{MeasurementRow,String,Float64,Symbol}}}()
 
+  # `origin` here is where the sigma came from; where the value came from
+  # (Measurement.origin) is read from the source cell of the row
   function add!(r::MeasurementRow, typ::MeasurementType, value::Float64, sigma::Float64, origin::Symbol; busIdx = nothing, branchIdx = nothing, linkIdx = nothing, direction = :none, id::String, zero_injection::Bool = false)
-    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, linkIdx = linkIdx, direction = direction, id = id, zero_injection = zero_injection))
+    push!(meas, Measurement(typ = typ, value = value, sigma = sigma, active = r.valid, busIdx = busIdx, branchIdx = branchIdx, linkIdx = linkIdx, direction = direction, id = id, zero_injection = zero_injection, origin = _measurement_table_origin(r.source)))
     sources[id] = [r.line]
     origins[id] = origin
     bump!(r.valid ? :active : :inactive)
@@ -1300,7 +1450,12 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
   end
   # the sigma a row without a sigma cell got, as cell text (see
   # _import_measurement_table); a row with its own sigma is not recorded
-  filled!(r::MeasurementRow, text::String, origin::Symbol) = (filled_sigmas === nothing || r.sigma !== nothing) || (filled_sigmas[r.line] = (text, origin))
+  # there. `resolved` records every row, with its own cell text
+  function filled!(r::MeasurementRow, text::String, origin::Symbol)
+    resolved === nothing || (resolved[r.line] = r.sigma === nothing ? text : _measurement_table_number(r, :sigma))
+    (filled_sigmas === nothing || r.sigma !== nothing) || (filled_sigmas[r.line] = (text, origin))
+    return nothing
+  end
 
   for r in rows
     if r.problem !== :none
@@ -1507,8 +1662,12 @@ function _measurement_set(ts::String, rows::Vector{MeasurementRow}, index::Measu
     value = kind === :shunt ? total : -total
     sigma = sqrt(sum(p.sigma^2 for p in got))
     id = string(mt, "@bus", bus)
-    push!(meas, Measurement(typ = mt, value = value, sigma = sigma, active = active, busIdx = bus, id = id))
-    sources[id] = sort!([r.line for (r, loc, _, _) in entries if r.valid || !haskey(valid_by_member, loc)])
+    # the rows the sum uses (as in `sources`) decide its origin: one pseudo
+    # row among them makes the sum a substitute value
+    used = [r for (r, loc, _, _) in entries if r.valid || !haskey(valid_by_member, loc)]
+    sum_origin = _combined_measurement_origin(_measurement_table_origin(r.source) for r in used)
+    push!(meas, Measurement(typ = mt, value = value, sigma = sigma, active = active, busIdx = bus, id = id, origin = sum_origin))
+    sources[id] = sort!([r.line for r in used])
     origins[id] = _weakest_sigma_origin(p.origin for p in got)
     bump!(active ? :active : :inactive)
   end
@@ -1547,27 +1706,45 @@ function applyMeasurementSet!(net::Net, set::MeasurementSet; replace::Bool = tru
   return net
 end
 
+# Label of a set without a timestamp, in messages, logs and the Web UI
+# timestamp field (the SE service accepts it as se_timestamp).
+const MEASUREMENT_SET_NO_TIMESTAMP = "(no timestamp)"
+_measurement_set_label(ts::AbstractString) = isempty(ts) ? MEASUREMENT_SET_NO_TIMESTAMP : String(ts)
+
+# The set of `imp` that `timestamp` selects, read like the table reader
+# (12:00Z and 12:00:00Z are one set); "" and MEASUREMENT_SET_NO_TIMESTAMP
+# select the set without a timestamp. Returns the set index and "", or
+# nothing and the message naming the sets the table has. The one selection
+# for readMeasurementTable! and the SE service.
+function _select_measurement_set(imp::MeasurementTableImport, timestamp::AbstractString)::Tuple{Union{Nothing,Int},String}
+  ts = (isempty(timestamp) || timestamp == MEASUREMENT_SET_NO_TIMESTAMP) ? "" : something(_measurement_table_timestamp(timestamp), String(timestamp))
+  k = findfirst(s -> s.timestamp == ts, imp.sets)
+  k === nothing || return k, ""
+  return nothing, "no measurement set with timestamp $(timestamp); the table has $(join((_measurement_set_label(s.timestamp) for s in imp.sets), ", "))"
+end
+
 """
-    readMeasurementTable!(net; file, index = nameMeasurementKeys(net), timestamp = nothing, replace = true, zero_injection = <state_estimation.zero_injection is not off>, zero_injection_sigma = <state_estimation.zero_injection_sigma_mva>) -> MeasurementSet
+    readMeasurementTable!(net; file, index = nameMeasurementKeys(net), timestamp = nothing, replace = true, zero_injection = <state_estimation.zero_injection is not off>, zero_injection_sigma = <state_estimation.zero_injection_sigma_mva>, last_value = <state_estimation.last_value>) -> MeasurementSet
 
 Read a measurement table into `net.measurements`: `readMeasurementTable`, then
 `importMeasurementTable` with `index` (element names by default; for a
 CGMES case `cgmesMeasurementKeys(result)`), then `applyMeasurementSet!` of
-the set with `timestamp` (the first set when `nothing`). Returns that set;
+the set with `timestamp` (the first set when `nothing`). `last_value` is
+passed to the import (last valid values for missing ones, see
+`importMeasurementTable`). Returns that set;
 rows that did not become a measurement are in its `problems` and in
 `measurementImportReport`. Throws `ArgumentError` when the file is no
 table the reader accepts, when no row can be assigned to a set, or when the
 table has no set with `timestamp`.
 """
-function readMeasurementTable!(net::Net; file::AbstractString, index::MeasurementKeyIndex = nameMeasurementKeys(net), timestamp::Union{Nothing,AbstractString} = nothing, replace::Bool = true, zero_injection::Bool = state_estimation_config().zero_injection !== :off, zero_injection_sigma::Real = state_estimation_config().zero_injection_sigma_mva)::MeasurementSet
-  imp = importMeasurementTable(readMeasurementTable(file), index; zero_injection_sigma = zero_injection_sigma)
+function readMeasurementTable!(net::Net; file::AbstractString, index::MeasurementKeyIndex = nameMeasurementKeys(net), timestamp::Union{Nothing,AbstractString} = nothing, replace::Bool = true, zero_injection::Bool = state_estimation_config().zero_injection !== :off, zero_injection_sigma::Real = state_estimation_config().zero_injection_sigma_mva, last_value::LastValueConfig = state_estimation_config().last_value)::MeasurementSet
+  imp = importMeasurementTable(readMeasurementTable(file), index; zero_injection_sigma = zero_injection_sigma, last_value = last_value)
   isempty(imp.sets) && throw(ArgumentError("$(file): no row of the table can be assigned to a measurement set\n$(measurementImportReport(imp))"))
   set = if timestamp === nothing
     first(imp.sets)
   else
-    ts = something(_measurement_table_timestamp(timestamp), String(timestamp))
-    k = findfirst(s -> s.timestamp == ts, imp.sets)
-    k === nothing && throw(ArgumentError("$(file): no measurement set with timestamp $(timestamp); the table has $(join((isempty(s.timestamp) ? "(none)" : s.timestamp for s in imp.sets), ", "))"))
+    k, why = _select_measurement_set(imp, timestamp)
+    k === nothing && throw(ArgumentError("$(file): $(why)"))
     imp.sets[k]
   end
   applyMeasurementSet!(net, set; replace = replace, zero_injection = zero_injection, zero_injection_sigma = zero_injection_sigma)
@@ -1579,8 +1756,10 @@ end
 
 Plain-text report of a `MeasurementTableImport`: per set the row count, the
 active and inactive measurements, the zero-injection rows added by
-`applyMeasurementSet!` (for a set that was applied) and the count per
-problem, followed by the rejected rows. Every problem row is listed with its line.
+`applyMeasurementSet!` (for a set that was applied), the count per
+problem and the last values with the oldest timestamp they came from,
+followed by the rejected rows and the reason a fill-in of last values was
+skipped. Every problem row is listed with its line.
 """
 function measurementImportReport(imp::MeasurementTableImport)::String
   io = IOBuffer()
@@ -1589,7 +1768,9 @@ function measurementImportReport(imp::MeasurementTableImport)::String
     probs = sort!([(k, v) for (k, v) in s.counts if !(k in (:rows, :active, :inactive, :zero_injection)) && v > 0]; by = first)
     # the zero-injection count exists once the set was applied to a net
     zi = haskey(s.counts, :zero_injection) ? string(", zero-injection rows ", s.counts[:zero_injection]) : ""
-    println(io, "set ", isempty(s.timestamp) ? "(no timestamp)" : s.timestamp, ": rows ", s.counts[:rows], ", measurements ", length(s.measurements), " (active ", s.counts[:active], ", inactive ", s.counts[:inactive], ")", zi, isempty(probs) ? "" : string(", ", join(("$(k) $(v)" for (k, v) in probs), ", ")))
+    lv = findfirst(e -> e.timestamp == s.timestamp, imp.last_value)
+    lv_text = lv === nothing ? "" : string(", oldest last value from ", imp.last_value[lv].oldest)
+    println(io, "set ", _measurement_set_label(s.timestamp), ": rows ", s.counts[:rows], ", measurements ", length(s.measurements), " (active ", s.counts[:active], ", inactive ", s.counts[:inactive], ")", zi, isempty(probs) ? "" : string(", ", join(("$(k) $(v)" for (k, v) in probs), ", ")), lv_text)
     for p in s.problems
       println(io, "  line ", p.line, ": ", p.problem, ": ", p.detail)
     end
@@ -1597,5 +1778,6 @@ function measurementImportReport(imp::MeasurementTableImport)::String
   for p in imp.rejected
     println(io, "rejected line ", p.line, ": ", p.problem, ": ", p.detail)
   end
+  isempty(imp.last_value_note) || println(io, imp.last_value_note)
   return String(take!(io))
 end

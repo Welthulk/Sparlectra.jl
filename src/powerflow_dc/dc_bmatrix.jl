@@ -79,9 +79,7 @@ function assemble_dc_bbus(net::Net)
     br.status == 1 || continue
     f = br.fromBus
     t = br.toBus
-    is_transformer = br.ratio != 0.0
-    tap = is_transformer && br.tap_ratio != 0.0 ? br.tap_ratio : 1.0
-    shift_rad = is_transformer ? deg2rad(br.phase_shift_deg) : 0.0
+    tap, shift_rad = _dc_branch_tap_shift(br)
     x = br.x_pu
     x == 0.0 && throw(ArgumentError("DC power flow requires a nonzero series reactance; branch $(br.branchIdx) ($(hasproperty(br.comp, :cName) ? br.comp.cName : "unnamed")) has x_pu == 0."))
     b = 1.0 / (x * tap)
@@ -96,4 +94,16 @@ function assemble_dc_bbus(net::Net)
   end
   Bbus = sparse(I, J, V, n, n)
   return Bbus, Pbusinj, terms
+end
+
+## The live tap magnitude and phase shift (radians) of a branch in the DC
+## model: a transformer (`ratio != 0`) takes its stamped `tap_ratio` (1 when
+## unset) and `phase_shift_deg`, a line 1 and 0. `assemble_dc_bbus` divides
+## the series susceptance by the tap; the P-theta model of the observability
+## check (state estimation) uses the same rule.
+@inline function _dc_branch_tap_shift(br::Branch)::Tuple{Float64,Float64}
+  is_transformer = br.ratio != 0.0
+  tap = is_transformer && br.tap_ratio != 0.0 ? Float64(br.tap_ratio) : 1.0
+  shift_rad = is_transformer ? deg2rad(br.phase_shift_deg) : 0.0
+  return tap, shift_rad
 end

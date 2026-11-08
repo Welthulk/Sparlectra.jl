@@ -382,10 +382,12 @@ end
 # file. Gated by state_estimation.measurement_table. The format of the case
 # picks the key index: a CGMES delivery resolves mRIDs through its model
 # (cgmesMeasurementKeys), every other format resolves element names
-# (nameMeasurementKeys). The run estimates the FIRST set of the file; the
-# import report (every set, every row that did not become a measurement) is
-# written to measurement_import.txt and summarized in the log. Returns
-# `(summary, nothing)` or `(nothing, reason)`.
+# (nameMeasurementKeys). The run estimates the set with `timestamp`, the
+# FIRST set of the file when `nothing`; the import fills last values over
+# all sets in time order, so the earlier timestamps are the history of the
+# chosen one. The import report (every set, every row that did not become a
+# measurement) is written to measurement_import.txt and summarized in the
+# log. Returns `(summary, nothing)` or `(nothing, reason)`.
 # The key index a measurement table of this case is read with, and the one
 # the converter and the Web UI generator write with: mRIDs for a CGMES case,
 # element names for every other format. `nothing` when a CGMES import kept
@@ -416,7 +418,12 @@ function _se_convert_measurements_v1(case_path::AbstractString, v1_path::Abstrac
   return convertMeasurementsV1(v1_path, imported.net; out = out, index = index)
 end
 
-function _se_load_measurement_table!(net, imported, format::Symbol, measurement_file::String, config, logfile, output_dir::String)
+## The request value se_timestamp = MEASUREMENT_SET_NO_TIMESTAMP (library)
+## names the set of a table without a timestamp; a table reader refuses it as
+## a timestamp, so it names no other set. Web UI: the label of that set in
+## the Timestamp select.
+
+function _se_load_measurement_table!(net, imported, format::Symbol, measurement_file::String, config, logfile, output_dir::String; timestamp::Union{Nothing,String} = nothing)
   name = basename(measurement_file)
   # read first: a table the reader refuses (no version line, another
   # version) gets the reader's message whether the switch is on or off.
@@ -436,23 +443,50 @@ function _se_load_measurement_table!(net, imported, format::Symbol, measurement_
   # import and the sigma of the rows applyMeasurementSet! adds)
   # the sigma every row without a sigma cell gets, for the run artifact
   filled = Dict{Int,Tuple{String,Symbol}}()
-  imp = _import_measurement_table(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level, zero_injection_sigma = config.state_estimation.zero_injection_sigma_mva, filled_sigmas = filled)
+  imp = _import_measurement_table(rows, index; sigma_by_voltage_level = config.state_estimation.sigma_by_voltage_level, zero_injection_sigma = config.state_estimation.zero_injection_sigma_mva, filled_sigmas = filled, last_value = config.state_estimation.last_value)
   if isempty(imp.sets)
     write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
     return nothing, "$(name) holds no measurement row that can be assigned to a set; see measurement_import.txt."
   end
-  set = imp.sets[1]
+  k_set = 1
+  if timestamp !== nothing
+    # the selection of readMeasurementTable! (12:00Z and 12:00:00Z are one set)
+    k, why = _select_measurement_set(imp, timestamp)
+    if k === nothing
+      write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
+      return nothing, "$(name): $(why)."
+    end
+    k_set = k
+  end
+  set = imp.sets[k_set]
   # applied before the report is written, so the report carries the
   # zero-injection rows of state_estimation.zero_injection for this set
   applyMeasurementSet!(net, set; zero_injection = config.state_estimation.zero_injection !== :off, zero_injection_sigma = config.state_estimation.zero_injection_sigma_mva)
   write(joinpath(output_dir, "measurement_import.txt"), measurementImportReport(imp))
   zi = set.counts[:zero_injection]
   open(logfile, "a") do io
-    println(io, "measurements: measurement table ", name, ", ", length(imp.sets), " set(s); estimating set ", isempty(set.timestamp) ? "(no timestamp)" : set.timestamp, ": ", set.counts[:rows], " rows, ", length(set.measurements), " measurements (active ", set.counts[:active], ", inactive ", set.counts[:inactive], "), ", length(set.problems), " row(s) not used, see measurement_import.txt")
+    println(io, "measurements: measurement table ", name, ", ", length(imp.sets), " set(s); estimating set ", _measurement_set_label(set.timestamp), ": ", set.counts[:rows], " rows, ", length(set.measurements), " measurements (active ", set.counts[:active], ", inactive ", set.counts[:inactive], "), ", length(set.problems), " row(s) not used, see measurement_import.txt")
     _se_log_zero_injection(io, config, zi)
-    length(imp.sets) > 1 && println(io, "note: the other sets of the table are not estimated in this run: ", join((s.timestamp for s in imp.sets[2:end]), ", "))
+    # state_estimation.last_value: per timestamp the values filled from an
+    # earlier one and the oldest timestamp used
+    for e in imp.last_value
+      println(io, "measurements: last values at ", e.timestamp, ": ", e.filled, " value(s) filled, oldest from ", e.oldest)
+    end
+    isempty(imp.last_value_note) || println(io, "note: ", imp.last_value_note)
+    length(imp.sets) > 1 && println(io, "note: the other sets of the table are not estimated in this run: ", join((s.timestamp for (k, s) in enumerate(imp.sets) if k != k_set), ", "))
   end
-  return (total = length(set.measurements), zero_injection = zi, sigma_origin = set.sigma_origin, table = (rows = rows, set = set, filled = filled), index = index), nothing
+  # The rows of the artifact: a last value carries the file line of its
+  # original at an earlier timestamp, so that original row and its sigma
+  # entry make way for the filled row (timestamp and source of the set)
+  table_rows, table_filled = rows, filled
+  k_lv = findfirst(e -> e.timestamp == set.timestamp, imp.last_value)
+  if k_lv !== nothing
+    fill_rows = imp.last_value[k_lv].rows
+    fill_lines = Set{Int}(r.line for r in fill_rows)
+    table_rows = vcat(MeasurementRow[r for r in rows if !(r.line in fill_lines)], fill_rows)
+    table_filled = Dict{Int,Tuple{String,Symbol}}(l => v for (l, v) in filled if !(l in fill_lines))
+  end
+  return (total = length(set.measurements), zero_injection = zi, sigma_origin = set.sigma_origin, table = (rows = table_rows, set = set, filled = table_filled), index = index), nothing
 end
 
 # The measurements.csv artifact of an SE run is the measurement set the run
@@ -583,10 +617,16 @@ end
 # from the range check of the voltage measurements (`range_rows`)
 # range_check_substituted (the row entered the run as a pseudo measurement,
 # its residual is that of the substitute) and deenergized (the row sits at
-# a bus that is not energized, or at its branches, and left the run).
-const _SE_VERDICT_HEADER = ["line", "key", "type", "measurement_id", "residual", "normalized_residual", "wii", "localizable", "eliminated", "constraint", "reason"]
+# a bus that is not energized, or at its branches, and left the run), and
+# not_used (an estimate per observable island used no row of this kind:
+# it holds the flow of an unobservable branch, `not_used` the ids).
+# `origin` is the origin of the measurement (measured, pseudo, derived,
+# pseudo_restore, last_value). The replacement values of on_unobservable = scheduled
+# are no table rows: they follow the table rows with an empty line and
+# their restore id as key.
+const _SE_VERDICT_HEADER = ["line", "key", "type", "measurement_id", "residual", "normalized_residual", "wii", "localizable", "eliminated", "constraint", "origin", "reason"]
 
-function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag, eliminations, res, critical::Set{Int}, zi_constraint::Bool, fmt; range_rows = NamedTuple[])
+function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag, eliminations, res, critical::Set{Int}, zi_constraint::Bool, fmt; range_rows = NamedTuple[], not_used::AbstractSet = Set{String}())
   delim = string(fmt.delimiter)
   cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
   num(x) = x === nothing || isnan(x) ? "" : _format_csv_number(Float64(x), fmt)
@@ -596,12 +636,16 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
   suppressed = Set{String}(String(r.id) for r in robust if r.stage == 3)
   downweighted = Set{String}(String(r.id) for r in robust if r.stage in (1, 2))
   range_sub = Set{Int}(r.measurement_index for r in range_rows if r.reason === :range_check_substituted)
-  range_dead = Set{Int}(j for r in range_rows if r.reason === :deenergized for j in r.deactivated)
+  range_dead = Set{Int}(j for r in range_rows if r.reason in (:deenergized, :deenergized_island) for j in r.deactivated)
   flagged = 0
+  # the table rows, then the replacement values (no table line)
+  in_table = Set{Int}(art.measurement)
+  restored = [mi for (mi, m) in enumerate(net.measurements) if m.origin === :pseudo_restore && !(mi in in_table)]
+  entries = vcat([(string(art.lines[k]), art.keys[k], art.types[k], art.measurement[k]) for k in eachindex(art.lines)],
+                 [("", net.measurements[mi].id, _se_table_type(net.measurements[mi].typ), mi) for mi in restored])
   open(file, "w") do io
     println(io, join(_SE_VERDICT_HEADER, delim))
-    for k in eachindex(art.lines)
-      mi = art.measurement[k]
+    for (line, key, typ, mi) in entries
       m = net.measurements[mi]
       # U rows are in kV in the table, VmMeas residuals in pu of the bus
       scale = m.typ == VmMeas ? art.index.bus_kV[m.busIdx] : 1.0
@@ -639,12 +683,17 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
       m.id in downweighted && push!(tokens, "downweighted")
       suspicious && push!(tokens, "suspicious")
       mi in critical && push!(tokens, "critical")
+      m.id in not_used && push!(tokens, "not_used")
       any(t -> t in ("eliminated", "suppressed", "downweighted", "suspicious", "range_check_substituted"), tokens) && (flagged += 1)
-      println(io, join((art.lines[k], cf(art.keys[k]), cf(art.types[k]), cf(m.id), num(residual), num(rn), num(wii), localizable, eliminated, constraint, cf(join(tokens, ";"))), delim))
+      println(io, join((line, cf(key), cf(typ), cf(m.id), num(residual), num(rn), num(wii), localizable, eliminated, constraint, m.origin, cf(join(tokens, ";"))), delim))
     end
   end
   return flagged
 end
+
+## the table type of a replacement value (P, Q, U), as the table rows of
+## the verdict carry it
+_se_table_type(typ::MeasurementType) = typ == PinjMeas ? "P" : typ == QinjMeas ? "Q" : typ == VmMeas ? "U" : string(typ)
 
 # state_estimation.sigma_by_voltage_level of one run: per nominal voltage the
 # number of measurements and where their sigma came from (row, level,
@@ -711,8 +760,8 @@ function _se_log_zero_injection(io::IO, config, added::Int)
 end
 
 # the run.log summary line of the numerics of the reported run: the matrix
-# of the last Gauss-Newton step with its condition number (1-norm
-# estimate), J and dof, and under zero_injection = constraint where the
+# of the last Gauss-Newton step with its condition number (Jacobi-scaled,
+# 1-norm estimate), J and dof, and under zero_injection = constraint where the
 # multipliers are
 function _se_conditioning_line(res)::String
   c = res.conditioning
@@ -720,7 +769,7 @@ function _se_conditioning_line(res)::String
   what = c.matrix === :kkt ? "KKT matrix" : "gain matrix"
   kappa = isfinite(c.condition_number) ? string(round(c.condition_number; sigdigits = 3)) : "Inf (singular)"
   zi = res.zeroInjectionMultipliers === nothing ? "" : string(", multipliers of ", length(res.zeroInjectionMultipliers), " bus(es) in se_zero_injection_multipliers.csv")
-  return string("numerics: zero_injection ", c.zero_injection, ", condition number of the ", what, " ", kappa, " (1-norm estimate), J = ", round(res.objectiveJ; sigdigits = 6), ", dof = ", res.dof, zi)
+  return string("numerics: zero_injection ", c.zero_injection, ", condition number of the ", what, " ", kappa, " (Jacobi-scaled, 1-norm estimate), J = ", round(res.objectiveJ; sigdigits = 6), ", dof = ", res.dof, zi)
 end
 
 ## headline mapping for the state-estimation timing file
@@ -741,7 +790,7 @@ infer criticality from a wii column), and the nearly critical rows with
 their wii. Written to the run log and to `se_diagnostics.md`.
 """
 function _se_criticality_lines(net::Net, obs)::Vector{String}
-  method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  method = String(obs.criticality_method)
   lines = String[]
   if obs.criticality_skipped
     push!(lines, string("critical measurements: classification skipped (method ", method, ", per-row budget exceeded)"))
@@ -750,14 +799,16 @@ function _se_criticality_lines(net::Net, obs)::Vector{String}
   ids(idx) = [1 <= i <= length(net.measurements) ? String(net.measurements[i].id) : string("#", i) for i in idx]
   num = collect(obs.numerical_critical_measurement_indices)
   str = collect(obs.structural_critical_measurement_indices)
-  push!(lines, string("critical measurements (", method, "): ", length(num), " numerical, ", length(str), " structural", hasproperty(obs, :structural_criticality_skipped) && obs.structural_criticality_skipped ? " (structural test skipped above the per-row budget)" : ""))
+  push!(lines, string("critical measurements (", method, "): ", length(num), " numerical, ", length(str), " structural", obs.structural_criticality_skipped ? " (structural test skipped above the per-row budget)" : ""))
   # the names are the statement; a count alone sends the reader to the wii
   # column, which cannot tell critical from merely weak
   push!(lines, isempty(num) ? "  critical rows: none (a gross error on any row is detectable)" : string("  critical rows: ", join(first(ids(num), 20), ", "), length(num) > 20 ? string(", ... ", length(num) - 20, " more") : "", " (a gross error there stays invisible)"))
-  if hasproperty(obs, :criticality_wii) && !isempty(obs.criticality_wii) && hasproperty(obs, :active_measurement_indices)
+  if !isempty(obs.criticality_wii)
     wii = obs.criticality_wii
     act = collect(obs.active_measurement_indices)
-    near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && wii[k] > 1e-8 && wii[k] < 0.3]
+    # index 0 in active_measurement_indices is a LINKAGG aggregate of a link
+    # cluster, which has no row of the set to name; it is left out here
+    near = [(act[k], wii[k]) for k in eachindex(wii) if 1 <= k <= length(act) && act[k] != 0 && wii[k] > 1e-8 && wii[k] < 0.3]
     if !isempty(near)
       sort!(near; by = x -> x[2])
       push!(lines, string("  nearly critical rows (wii below 0.3, not critical): ", length(near), ": ", join((string(first(ids([i])), " (", round(w; digits = 3), ")") for (i, w) in first(near, 10)), ", "), length(near) > 10 ? ", ..." : ""))
@@ -1022,6 +1073,203 @@ function _se_bad_data_rounds!(net::Net, run_cfg, tap_cfg::TapEstimationConfig, t
   return (res = res, diag = diag, eliminations = eliminations, staged = staged, staged_start_from = staged_start_from, tap_fallback_used = tap_fallback_used, tap_run1 = tap_run1, rounds = rounds, tap_rounds = tap_rounds, run_cfg = run_cfg)
 end
 
+## one line on a weak report: the branches above the flow bound, the
+## largest standard deviations against their bounds and the first affected
+## buses by name
+function _se_weak_summary(net::Net, wk, obsCfg)::String
+  names = _bus_name_by_idx(net)
+  shown = first(wk.buses, 10)
+  busTxt = join((get(names, b, string(b)) for b in shown), ", ") * (length(wk.buses) > length(shown) ? string(", ... (", length(wk.buses), " buses)") : "")
+  return string(length(wk.branches), " branch(es) above the flow bound, largest branch-flow standard deviation ", round(wk.max_flow_sigma_mw; digits = 1), " MW (bound ", obsCfg.weak_flow_sigma_mw, " MW), largest voltage standard deviation ", round(wk.max_vm_sigma_pu; sigdigits = 3), " pu (bound ", obsCfg.weak_vm_sigma_pu, " pu), affected buses: ", isempty(busTxt) ? "none" : busTxt)
+end
+
+## What the weak class at the estimated state does to the result (concept
+## G2). This is the decision point for `on_unobservable`: under the one
+## behaviour that exists, abort, a weakly observable estimate is marked
+## unusable and the flows of the affected branches are left out of the
+## result files. Returns `(usable, reason, line, blank_branches)`, `line`
+## the run.log text, `blank_branches` the caller's branch indices whose
+## estimated flows are not written.
+function _se_weak_outcome(net::Net, wk, obsCfg)
+  isempty(wk.buses) && return (usable = true, reason = nothing, line = "", blank_branches = Set{Int}())
+  line = string("result unusable: weakly observable at the estimated state, ", _se_weak_summary(net, wk, obsCfg), "; the flows of ", length(unique(wk.branches)), " branch(es) are not written. Add measurements there (flows or injections).")
+  return (usable = false, reason = "weakly_observable", line = line, blank_branches = Set{Int}(wk.branches))
+end
+
+# --- observability gaps (concept 1.1.0, sections 4.3 to 4.5) -----------------
+#
+# A set that is not observable stops the run under on_unobservable = abort
+# with the observable islands named; under observable_islands or scheduled
+# the run goes on and runse! estimates per observable island. Both ways
+# write the islands and the unobservable branches as CSV, one run.log line
+# for the verdict and one per estimated island.
+
+## the "what is missing" line of a not-observable verdict (run.log and the
+## failure message): deficits, observable islands by size (single-bus
+## islands as a count) and the first ten unobservable branches by name
+function _se_unobservable_line(net::Net, isl)::String
+  sizes = sort!([length(b) for b in isl.island_buses]; rev = true)
+  multi = [string(n, " buses") for n in sizes if n > 1]
+  nsingle = count(==(1), sizes)
+  nsingle > 0 && push!(multi, string(nsingle, nsingle == 1 ? " single-bus island" : " single-bus islands"))
+  br = isl.unobservable_branches
+  shown = [getCompName(net.branchVec[k].comp) for k in first(br, 10)]
+  brtxt = isempty(br) ? "no unobservable branch" :
+          string(length(br), length(br) == 1 ? " unobservable branch: " : " unobservable branches: ", join(shown, ", "), length(br) > 10 ? string(", ... (all in se_unobservable_branches.csv)") : "")
+  return string("observability: not_observable, rank deficit ", isl.rank_deficit, " (angles ", isl.angle_rank_deficit, ", magnitudes ", isl.magnitude_rank_deficit, "), ",
+                isl.n_islands, " observable island(s) (", join(multi, ", "), "), ", brtxt)
+end
+
+## se_observable_islands.csv: one row per bus, the network island, the
+## observable island label, whether the bus was estimated and whether its
+## angle is relative to the reference of its observable island. `isl` is
+## the report of the verdict (nothing estimated, under abort) or `oi` the
+## field `observableIslands` of the estimate (it carries its report).
+function _se_write_observable_islands_csv(file::AbstractString, net::Net, isl, oi, fmt)
+  delim = string(fmt.delimiter)
+  cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
+  names = _bus_name_by_idx(net)
+  rep = oi === nothing ? isl : oi.report
+  open(file, "w") do io
+    println(io, join(("bus", "name", "network_island", "observable_island", "estimated", "relative_angle"), delim))
+    for b in eachindex(net.nodeVec)
+      label = if oi === nothing
+        k = rep.island_of_bus[b]
+        k == 0 ? "" : rep.island_labels[k]
+      else
+        oi.label_of_bus[b]
+      end
+      estimated = oi === nothing ? false : oi.estimated[b]
+      relative = oi === nothing ? "" : string(estimated && oi.relative_angle[b])
+      println(io, join((b, cf(get(names, b, string(b))), rep.network_island_of_bus[b], cf(label), estimated, relative), delim))
+    end
+  end
+  return file
+end
+
+## se_unobservable_branches.csv: the branches whose flow follows from no
+## measurement, with the reason: between two observable islands, or at a
+## bus removed from its island (dark_magnitude, weak)
+function _se_write_unobservable_branches_csv(file::AbstractString, net::Net, branches::AbstractVector, removed, fmt)
+  delim = string(fmt.delimiter)
+  cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
+  names = _bus_name_by_idx(net)
+  why = Dict{Int,Symbol}(r.bus => r.reason for r in removed)
+  open(file, "w") do io
+    println(io, join(("branch", "name", "from", "to", "reason"), delim))
+    for k in branches
+      br = net.branchVec[k]
+      f = Int(br.fromBus)
+      t = Int(br.toBus)
+      reason = haskey(why, f) ? why[f] : haskey(why, t) ? why[t] : :between_observable_islands
+      println(io, join((k, cf(getCompName(br.comp)), cf(get(names, f, string(f))), cf(get(names, t, string(t))), reason), delim))
+    end
+  end
+  return file
+end
+
+## se_restored_rows.csv: the replacement values the schedule gave
+## (restore_observability), one row each
+function _se_write_restored_rows_csv(file::AbstractString, rows::AbstractVector, fmt)
+  delim = string(fmt.delimiter)
+  cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
+  num(x) = _format_csv_number(round(Float64(x); sigdigits = 8), fmt)
+  open(file, "w") do io
+    println(io, join(("id", "bus", "name", "quantity", "value", "sigma", "source"), delim))
+    for r in rows
+      println(io, join((cf(r.id), r.bus, cf(r.bus_name), r.quantity, num(r.value), num(r.sigma), r.source), delim))
+    end
+  end
+  return file
+end
+
+## se_topology.csv: the findings of the topology pre-check
+## (validate_topology), one row each, the rows of the Web UI table
+function _se_write_topology_csv(file::AbstractString, findings::AbstractVector, fmt)
+  delim = string(fmt.delimiter)
+  cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
+  open(file, "w") do io
+    println(io, join(("stage", "kind", "severity", "location", "evidence"), delim))
+    for f in findings
+      println(io, join((cf(f.stage), cf(f.kind), cf(f.severity), cf(f.location), cf(f.evidence)), delim))
+    end
+  end
+  return file
+end
+
+## one run.log line per replacement value (concept 4.5)
+function _se_restore_line(r)::String
+  what = r.quantity === :U ? "U" : string(r.quantity, " injection")
+  from = r.source === :passive ? "as zero injection of a passive bus" :
+         r.source === :schedule ? "from the schedule" :
+         r.source === :stored_state ? "from the stored state" :
+         r.source === :unit_setpoint ? "from the unit set point" :
+         r.source === :level_median ? "from the median of the measured U of its voltage level" : "at nominal voltage"
+  return string("restore: ", what, " at ", r.bus_name, " ", from, ", value ", round(r.value; sigdigits = 6), ", sigma ", round(r.sigma; sigdigits = 4))
+end
+
+## run.log lines of an estimate per observable island (concept I6): one
+## line per island with more than one bus (buses, reference, J, dof, or
+## why it was not estimated), the single-bus islands as a count
+function _se_observable_island_lines(net::Net, res)::Vector{String}
+  names = _bus_name_by_idx(net)
+  lines = String[]
+  single = 0
+  single_not = 0
+  for r in something(res.islands, NamedTuple[])
+    hasproperty(r, :label) || continue
+    if length(r.buses) == 1
+      single += 1
+      r.estimated || (single_not += 1)
+      continue
+    end
+    if r.estimated
+      ref = get(names, r.reference_bus, string(r.reference_bus))
+      push!(lines, string("observable island ", r.label, ": ", length(r.buses), " buses, reference ", ref, r.relative_angles ? " (angles relative to it)" : "", ", J = ", round(r.objectiveJ; sigdigits = 6), ", dof ", r.dof))
+    else
+      push!(lines, string("observable island ", r.label, ": ", length(r.buses), " buses, not estimated (", r.reason, r.reason === :not_observable ? string(", rank deficit ", r.rank_deficit) : "", ")"))
+    end
+  end
+  single > 0 && push!(lines, string(single, " single-bus observable island(s), ", single - single_not, " estimated (each listed in se_observable_islands.csv)"))
+  return lines
+end
+
+## The case-binding gate of a measurement set (measurement table and CSV v1
+## alike), shared by the SE run and the placement run: the refusal text for
+## a set bound to another case, `nothing` otherwise; a set without a
+## binding, or bound by CGMES model id only, gets a run.log note.
+function _se_set_binding_check(case_path::String, measurement_file::String, format::Symbol, logfile::AbstractString)::Union{Nothing,String}
+  # case-binding gate (measurement table and CSV v1 alike): a set recorded
+  # for a different case would fail rows
+  # deep in the reader ("bus X not found"); refuse it up front with the
+  # actual cause. Sets without a binding (older files) pass with a log note.
+  set_binding = _webui_measurement_set_binding(String(measurement_file))
+  bound_case = set_binding.case
+  # A case exported to SCF keeps the model of its source case, and it records
+  # WHICH source it came from. A set bound to that source therefore fits this
+  # run; without this the export silently invalidates every set the user
+  # already generated.
+  source_of_case = format === :scf ? _scf_source_reference(case_path) : ""
+  if !isempty(bound_case) && bound_case != basename(String(case_path)) && bound_case != source_of_case
+    return "Measurement set $(basename(String(measurement_file))) is bound to case $(bound_case) (recorded in the file), but this run uses $(basename(String(case_path))). Pick the set generated for this case, or regenerate one."
+  end
+  # A table bound by the CGMES model id only (the converter writes it) is
+  # not refused on a mismatch: the import report counts the rows the case
+  # cannot resolve, and that count is the actual test of the binding.
+  if isempty(bound_case) && !isempty(set_binding.models)
+    case_models = format === :cgmes ? _webui_case_cgmes_model_ids(String(case_path)) : String[]
+    matched = any(in(case_models), set_binding.models)
+    open(logfile, "a") do io
+      println(io, "note: the measurement set is bound by CGMES model ", join(set_binding.models, ", "), matched ? "; this is the EQ model of the case" : string("; the EQ model of the case is ", isempty(case_models) ? "unknown" : join(case_models, ", "), ", rows the case cannot resolve are counted in the import report"))
+    end
+  elseif isempty(bound_case)
+    open(logfile, "a") do io
+      println(io, "note: the measurement set carries no case binding (# case: comment); older set, association checked by name only")
+    end
+  end
+  return nothing
+end
+
 """
     _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
 
@@ -1040,6 +1288,9 @@ chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
 
 Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
 `update_shunts`, `report_correlation` mirror the estimator keywords.
+`timestamp` (request key `se_timestamp`) picks the set of a measurement
+table with several timestamps; `nothing` estimates the first set. The
+earlier timestamps are the history for `state_estimation.last_value`.
 With `state_estimation.tap_estimation.enabled` (default `true`, the Web UI
 "estimate taps" box) every declared tap changer of every in-service
 transformer is released (`setTapEstimation!` with the mode its changers
@@ -1074,6 +1325,47 @@ Failure reasons: `se_unsupported_format`, `import_error`,
 `invalid_measurements` (missing/unreadable/rejected file),
 `se_not_observable` (observability quality `:not_observable`),
 `se_not_converged`, plus the shared config failure.
+
+The weak class (`state_estimation.observability`) does not stop the run
+before the estimation: there it is provisional, at the stored state of the
+case (metadata `se_weak_basis_before_estimation`). After the converged run
+it is determined at the estimated state from the covariance of the
+estimate (`evaluate_weak_observability`, the report of `runse!`).
+A weakly observable estimate is marked unusable (`se_result_usable =
+false`, `se_result_unusable_reason = "weakly_observable"`, a run.log line
+and the message), and the estimated flows of the affected branches are
+left empty in `se_deltas.csv`.
+
+`state_estimation.observability.on_unobservable` (configuration or
+override, the Web UI "On gaps" choice) decides what a set that is not
+observable does. Every mode writes `se_observable_islands.csv` (bus, name,
+network island, observable island label, estimated, relative angle) and
+`se_unobservable_branches.csv` (branch, name, from, to, reason) and one
+run.log line with the deficits, the observable islands and the first ten
+unobservable branches. `abort` (default) then fails with
+`se_not_observable` and a message that names the same. `observable_islands`
+goes on, and `runse!` estimates each observable island with its own
+reference; the bad-data diagnostics run per observable island as well,
+run.log has one line per island with more than one bus (buses, reference,
+J, dof), the single-bus islands as a count, and both CSV files describe the
+estimate. `scheduled` first takes replacement values from the schedule
+(`restore_observability`, one run.log line per value and a summary,
+`se_restored_rows.csv`); they join the set with origin `pseudo_restore`,
+are never eliminated and follow the table rows in `measurements_verdict.csv`
+(column `origin`), and the rest runs as under `observable_islands`. When
+the restored rows close every gap, the estimate has no split: the two CSV
+files of the verdict are removed and `se_observable_islands_before_restore`
+keeps the count.
+Metadata: `se_on_unobservable`, `se_rank_deficit`,
+`se_angle_rank_deficit`, `se_magnitude_rank_deficit` (of the verdict),
+`se_observable_islands` and `se_unobservable_branches` (counts; of the
+estimate when it was made per observable island, 0 for an observable set
+estimated as a whole), `se_restored_rows`, `se_restore_verdict` (the
+verdict of `restore_observability`: `observable`, `weakly_observable` for
+"weakly observable after restoring", `not_observable`, `not_judged`),
+`se_restore_weak_branches`, `se_restore_passive_not_inserted`,
+`se_measurement_file`, `se_measurement_timestamp` (the timestamp of the
+estimated set of a table).
 """
 function _run_state_estimation_service(
   case_path::AbstractString,
@@ -1114,12 +1406,15 @@ function _run_state_estimation_service(
   # regression fixtures that pin what the diagnostics do on a cold tap run
   # (a reverted elimination is reachable only there) and for comparisons.
   tap_staged_start::Bool = true,
+  # the set of a measurement table with several timestamps to estimate
+  # (request key se_timestamp); `nothing` estimates the first set
+  timestamp::Union{Nothing,String} = nothing,
 )::SparlectraApiResult
   # the callback and the overrides arrive in a different type from every call
   # site; behind `_SeRunOptions` the 700-line body below has one
   # specialization (the same arrangement as `_run_sparlectra_api`)
   options = _SeRunOptions(max_iter, tol, flatstart, robust, max_eliminations, report_correlation, k_eliminate, robust_mode, robust_k1,
-    robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides, tap_staged_start)
+    robust_k2, k_suppress, suppression_sigma, phase_callback, config_overrides, tap_staged_start, timestamp)
   return _run_state_estimation_service_body(String(case_path), String(config_file), String(output_dir), run_id, String(measurement_file),
     update_shunts, case_format, options)
 end
@@ -1143,6 +1438,7 @@ struct _SeRunOptions
   phase_callback::Any
   config_overrides::Any
   tap_staged_start::Bool
+  timestamp::Union{Nothing,String}
 end
 
 function _run_state_estimation_service_body(
@@ -1192,7 +1488,7 @@ function _run_state_estimation_service_body(
     catch err
       # a reporting problem must never take the run down
       err isa PowerFlowAborted && rethrow()
-      @debug "state estimation: phase callback failed" phase = name exception = err
+      @warn "state estimation: phase callback failed" phase = name exception = err
     end
     return nothing
   end
@@ -1261,6 +1557,9 @@ function _run_state_estimation_service_body(
   # every SE run stays reproducible from its own output.
   from_case_file = format === :scf && !isfile(measurement_file) && !isempty(net.measurements)
   from_table = false
+  if from_case_file && options.timestamp !== nothing
+    return _api_failure("invalid_measurements", "se_timestamp $(options.timestamp) names a set of a measurement table, but this run takes the measurements of the case file.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  end
   # rows state_estimation.zero_injection added to the set (all paths)
   zi_rows = 0
   summary = if from_case_file
@@ -1277,40 +1576,16 @@ function _run_state_estimation_service_body(
       hint = format === :scf ? " The case file carries no measurements either: generate a set, or export the case with its measurements." : ""
       return _api_failure("invalid_measurements", "Measurement file not found: $(measurement_file)." * hint, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     end
-    # case-binding gate (measurement table and CSV v1 alike): a set recorded
-    # for a different case would fail rows
-    # deep in the reader ("bus X not found"); refuse it up front with the
-    # actual cause. Sets without a binding (older files) pass with a log note.
-    set_binding = _webui_measurement_set_binding(String(measurement_file))
-    bound_case = set_binding.case
-    # A case exported to SCF keeps the model of its source case, and it records
-    # WHICH source it came from. A set bound to that source therefore fits this
-    # run; without this the export silently invalidates every set the user
-    # already generated.
-    source_of_case = format === :scf ? _scf_source_reference(case_path) : ""
-    if !isempty(bound_case) && bound_case != basename(String(case_path)) && bound_case != source_of_case
-      return _api_failure("invalid_measurements", "Measurement set $(basename(String(measurement_file))) is bound to case $(bound_case) (recorded in the file), but this run uses $(basename(String(case_path))). Pick the set generated for this case, or regenerate one.", run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
-    end
-    # A table bound by the CGMES model id only (the converter writes it) is
-    # not refused on a mismatch: the import report counts the rows the case
-    # cannot resolve, and that count is the actual test of the binding.
-    if isempty(bound_case) && !isempty(set_binding.models)
-      case_models = format === :cgmes ? _webui_case_cgmes_model_ids(String(case_path)) : String[]
-      matched = any(in(case_models), set_binding.models)
-      open(logfile, "a") do io
-        println(io, "note: the measurement set is bound by CGMES model ", join(set_binding.models, ", "), matched ? "; this is the EQ model of the case" : string("; the EQ model of the case is ", isempty(case_models) ? "unknown" : join(case_models, ", "), ", rows the case cannot resolve are counted in the import report"))
-      end
-    elseif isempty(bound_case)
-      open(logfile, "a") do io
-        println(io, "note: the measurement set carries no case binding (# case: comment); older set, association checked by name only")
-      end
-    end
+    # case-binding gate (measurement table and CSV v1 alike), see
+    # _se_set_binding_check
+    binding_error = _se_set_binding_check(String(case_path), String(measurement_file), format, logfile)
+    binding_error === nothing || return _api_failure("invalid_measurements", binding_error, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
     # a table that lost its version line goes the table way too, so the
     # reader names the missing line (the CSV v1 reader would complain about
     # an unknown CSV version instead)
     if isMeasurementTable(String(measurement_file)) || _measurement_table_without_version(String(measurement_file))
       from_table = true
-      table_summary, table_error = _se_load_measurement_table!(net, imported, format, String(measurement_file), config, logfile, String(output_dir))
+      table_summary, table_error = _se_load_measurement_table!(net, imported, format, String(measurement_file), config, logfile, String(output_dir); timestamp = options.timestamp)
       table_error === nothing || return _api_failure("invalid_measurements", table_error; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
       zi_rows = table_summary.zero_injection
       # the comment lines of the table (case binding, generator provenance,
@@ -1320,7 +1595,7 @@ function _run_state_estimation_service_body(
       # not stacked
       filter!(c -> !startswith(c, "measurement set of state-estimation run ") && !startswith(c, "not in the table: "), table_comments)
       tset = table_summary.table.set
-      push!(table_comments, string("measurement set of state-estimation run ", run_id, ": set ", isempty(tset.timestamp) ? "(no timestamp)" : tset.timestamp, " of ", basename(String(measurement_file)), ", ", sum(length, values(tset.sources); init = 0), " of ", tset.counts[:rows], " row(s) used (the others: measurement_import.txt); verdict per row in measurements_verdict.csv"))
+      push!(table_comments, string("measurement set of state-estimation run ", run_id, ": set ", _measurement_set_label(tset.timestamp), " of ", basename(String(measurement_file)), ", ", sum(length, values(tset.sources); init = 0), " of ", tset.counts[:rows], " row(s) used (the others: measurement_import.txt); verdict per row in measurements_verdict.csv"))
       artifact = _se_write_measurement_artifact!(net, table_summary.index, joinpath(output_dir, "measurements.csv"), table_comments, logfile, config.state_estimation.zero_injection_sigma_mva; table = table_summary.table)
       table_summary
     else
@@ -1334,6 +1609,12 @@ function _run_state_estimation_service_body(
 
   # where the sigma of every measurement came from, per voltage level; only
   # a table row can be without its own sigma
+  # the set this run read, for a repeat from the result page (empty: the
+  # set the case file carries)
+  base_metadata["se_measurement_file"] = from_case_file ? "" : String(measurement_file)
+  # the timestamp of the estimated set of a table (se_timestamp, else the
+  # first set), for the result page and a repeat
+  from_table && (base_metadata["se_measurement_timestamp"] = summary.table.set.timestamp)
   sigma_level_report = _se_sigma_level_report(net, config, from_table ? summary.sigma_origin : Dict{String,Symbol}())
   base_metadata["se_sigma_by_voltage_level"] = sigma_level_report.rows
   isempty(sigma_level_report.unused) || (base_metadata["se_sigma_levels_not_in_case"] = sigma_level_report.unused)
@@ -1364,21 +1645,25 @@ function _run_state_estimation_service_body(
   end
 
   # observability first (phase 4 two-stage verdict); a not-observable set is
-  # a clean rejection, not a solver crash
+  # a clean rejection, not a solver crash. Under the effective configuration,
+  # so the bounds of the weak class from a case configuration reach the
+  # check that the abort message below quotes them from.
+  # its own phase: the observable islands of a set that is not observable
+  # are decomposed here, and performance.log shows what that cost
+  se_phase("observability_check")
   obs = try
-    evaluate_global_observability(net)
+    with_sparlectra_config(() -> evaluate_global_observability(net), config)
   catch err
-    # an abort is no rejected measurement set
-    err isa PowerFlowAborted && rethrow()
+    # the one rejection of the check: no active power or voltage row
+    err isa SENoActiveMeasurementsError || rethrow()
     return _api_failure("invalid_measurements", sprint(showerror, err); run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   base_metadata["se_observability_quality"] = String(obs.quality)
-  base_metadata["se_structural_islands"] = :structural_islands in obs.notes
   # critical measurements (issue #394): the classification method, the
   # counts and the rows themselves reach the metadata and the run log
   crit_num = collect(obs.numerical_critical_measurement_indices)
   crit_str = collect(obs.structural_critical_measurement_indices)
-  crit_method = hasproperty(obs, :criticality_method) ? String(obs.criticality_method) : "rank"
+  crit_method = String(obs.criticality_method)
   base_metadata["se_criticality_method"] = crit_method
   base_metadata["se_critical_measurements"] = length(crit_num)
   base_metadata["se_structural_critical_measurements"] = length(crit_str)
@@ -1388,14 +1673,88 @@ function _run_state_estimation_service_body(
     base_metadata["se_islands_measured"] = obs.n_measured_islands
     base_metadata["se_islands_unmeasured"] = obs.n_unmeasured_islands
   end
-  if obs.quality == :not_observable
-    msg = if hasproperty(obs, :islands)
-      bad = [string("island ", i.island, " (", i.n_bus, " buses): ", String(i.result.quality)) for i in obs.islands if i.measured && i.result.quality == :not_observable]
-      "The measurement set does not observe every measured island ($(join(bad, "; "))). Each island is estimated with its own reference; add measurements to the failing island or deactivate its rows."
-    else
-      "The measurement set does not observe the system (quality :not_observable)."
+  # what the run does with a set that is not observable
+  # (state_estimation.observability.on_unobservable, the Web UI "On gaps"
+  # choice): abort stops here, observable_islands and scheduled go on and
+  # runse! estimates per observable island
+  obs_cfg = config.state_estimation.observability
+  on_unobs = obs_cfg.on_unobservable
+  not_obs = obs.quality == :not_observable
+  isl_pre = obs.observable_islands
+  # one CSV format for every artifact of the run (issue #376)
+  se_csv_format = _resolve_detailed_csv_format(String(config.output.csv_format))
+  se_csv_delim = se_csv_format.delimiter
+  base_metadata["se_on_unobservable"] = String(on_unobs)
+  base_metadata["se_rank_deficit"] = obs.rank_deficit
+  base_metadata["se_angle_rank_deficit"] = obs.angle_rank_deficit
+  base_metadata["se_magnitude_rank_deficit"] = obs.magnitude_rank_deficit
+  # counts of the verdict; an estimate per observable island replaces them
+  # with its own below (0 for an observable set: no split)
+  base_metadata["se_observable_islands"] = not_obs ? isl_pre.n_islands : 0
+  base_metadata["se_unobservable_branches"] = not_obs ? length(isl_pre.unobservable_branches) : 0
+  base_metadata["se_restored_rows"] = 0
+  if not_obs
+    _se_write_observable_islands_csv(joinpath(output_dir, "se_observable_islands.csv"), net, isl_pre, nothing, se_csv_format)
+    _se_write_unobservable_branches_csv(joinpath(output_dir, "se_unobservable_branches.csv"), net, isl_pre.unobservable_branches, NamedTuple[], se_csv_format)
+    open(logfile, "a") do io
+      println(io, _se_unobservable_line(net, isl_pre))
+      isempty(isl_pre.removed_boundary_injections) || println(io, "observability: boundary injections not used for the islands (they hold the flow of an unobservable branch): ", join(first(isl_pre.removed_boundary_injections, 10), ", "), length(isl_pre.removed_boundary_injections) > 10 ? string(", ... (", length(isl_pre.removed_boundary_injections), ")") : "")
+      isempty(isl_pre.unmeasured_network_islands) || println(io, "observability: network island(s) ", join(isl_pre.unmeasured_network_islands, ", "), " not measured (no gap, not estimated)")
+      println(io, "observability: on_unobservable = ", on_unobs, on_unobs === :abort ? ", the run stops" : ", the run estimates per observable island")
     end
+  end
+  if not_obs && on_unobs === :abort
+    nb = length(isl_pre.unobservable_branches)
+    brnames = [getCompName(net.branchVec[k].comp) for k in first(isl_pre.unobservable_branches, 10)]
+    netisl = if hasproperty(obs, :islands)
+      bad = [string("network island ", i.island, " (", i.n_bus, " buses)") for i in obs.islands if i.measured && i.result.quality == :not_observable]
+      string(" Not observable: ", join(bad, "; "), ".")
+    else
+      ""
+    end
+    msg = string("The measurement set does not observe the system: ", isl_pre.n_islands, " observable island(s), rank deficit ", obs.rank_deficit,
+                 " (angles ", obs.angle_rank_deficit, ", magnitudes ", obs.magnitude_rank_deficit, "), ", nb, " unobservable branch(es)",
+                 nb == 0 ? "" : string(": ", join(brnames, ", "), nb > 10 ? string(" and ", nb - 10, " more") : ""), ".", netisl,
+                 " Estimate the observable islands one by one or close the gaps with scheduled values (On gaps), or add measurements.")
+    _write_service_performance_log!(output_dir, phase_recorder, se_total_start; headline = _SE_PERF_HEADLINE, status = "failed", label = "state-estimation")
     return _api_failure("se_not_observable", msg, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  end
+  # scheduled: the replacement values from the schedule first
+  # (restore_observability, the same call runse! makes under scheduled),
+  # appended to the set after measurements.csv was written, so the table
+  # stays the input; the rows carry origin pseudo_restore and are never
+  # eliminated. The runs below then take observable_islands, so runse! does
+  # not restore a second time and the bad-data diagnostics see the same set.
+  restored_rows = NamedTuple[]
+  if on_unobs === :scheduled && not_obs
+    se_phase("observability_restoration")
+    rest = with_sparlectra_config(() -> restore_observability(net), config)
+    append!(net.measurements, rest.rows)
+    restored_rows = rest.restored
+    base_metadata["se_restored_rows"] = length(restored_rows)
+    _se_write_restored_rows_csv(joinpath(output_dir, "se_restored_rows.csv"), restored_rows, se_csv_format)
+    open(logfile, "a") do io
+      for r in restored_rows
+        println(io, _se_restore_line(r))
+      end
+      println(io, "restore: ", length(restored_rows), " row(s) taken (P ", count(r -> r.quantity === :P, restored_rows), ", Q ", count(r -> r.quantity === :Q, restored_rows), ", U ", count(r -> r.quantity === :U, restored_rows), "), ",
+              length(rest.skipped), " skipped as redundant, rank deficit ", rest.rank_deficit_before, " -> ", rest.rank_deficit_after,
+              rest.rank_deficit_after > 0 ? "; the rest is estimated per observable island" : "")
+      isempty(rest.passive_not_inserted) || println(io, "restore: zero injections at ", length(rest.passive_not_inserted), " passive bus(es) would close part of the deficit (", join(unique(r.bus_name for r in first(rest.passive_not_inserted, 10)), ", "), length(rest.passive_not_inserted) > 10 ? ", ..." : "", "); not inserted, zero_injection is off")
+      rest.verdict === :weakly_observable && println(io, "restore: weakly observable after restoring, ", _se_weak_summary(net, rest.weak, config.state_estimation.observability), " (at the stored state)")
+    end
+    base_metadata["se_restore_verdict"] = String(rest.verdict)
+    base_metadata["se_restore_weak_branches"] = collect(rest.weak.branches)
+    base_metadata["se_restore_passive_not_inserted"] = length(rest.passive_not_inserted)
+  end
+  # the weak class before the estimation is provisional (concept G2): taken
+  # at the stored state, or not determined without one. It stops nothing;
+  # the class at the estimated state decides after the run.
+  wk_pre = obs.weak_observability
+  base_metadata["se_weak_basis_before_estimation"] = String(wk_pre.basis)
+  base_metadata["se_weak_buses_before_estimation"] = length(wk_pre.buses)
+  open(logfile, "a") do io
+    println(io, "weak class before the estimation: ", wk_pre.basis === :not_determined ? "not determined (the case stores no state)" : _se_weak_summary(net, wk_pre, config.state_estimation.observability), " (provisional)")
   end
 
   # released transformer taps: every declared tap changer of an in-service
@@ -1438,7 +1797,8 @@ function _run_state_estimation_service_body(
   # the configuration of THIS run (#381): the resolved configuration of the
   # case with the caller's overrides folded in, installed for every
   # estimator call below; the registry is untouched afterwards
-  run_cfg = _sparlectra_config_with(config; state_estimation = _se_config_with(config.state_estimation; max_iter = max_iter, tol = tol, flatstart = flatstart, robust = robust, k_eliminate = k_eliminate, robust_mode = robust_mode, robust_k1 = robust_k1, robust_k2 = robust_k2, k_suppress = k_suppress, suppression_sigma = suppression_sigma, max_eliminations = max_eliminations, report_residual_correlation = report_correlation, update_shunts = update_shunts, update_net = true))
+  run_cfg = _sparlectra_config_with(config; state_estimation = _se_config_with(config.state_estimation; max_iter = max_iter, tol = tol, flatstart = flatstart, robust = robust, k_eliminate = k_eliminate, robust_mode = robust_mode, robust_k1 = robust_k1, robust_k2 = robust_k2, k_suppress = k_suppress, suppression_sigma = suppression_sigma, max_eliminations = max_eliminations, report_residual_correlation = report_correlation, update_shunts = update_shunts, update_net = true,
+    observability = on_unobs === :scheduled ? _struct_with(obs_cfg; on_unobservable = :observable_islands) : nothing))
   se_phase("topology_precheck")
   topo_pre = with_sparlectra_config(() -> validate_topology(net), run_cfg)
   # The findings are advisory and a large synthetic network produces many of
@@ -1461,6 +1821,7 @@ function _run_state_estimation_service_body(
       length(fs) > 5 && println(io, "    ... ", length(fs) - 5, " more (full list in se_topology.csv)")
     end
   end
+  isempty(topo_pre.findings) || _se_write_topology_csv(joinpath(output_dir, "se_topology.csv"), topo_pre.findings, se_csv_format)
   base_metadata["se_topology_findings"] = [Dict{String,Any}("stage" => String(f.stage), "kind" => String(f.kind), "location" => f.location, "evidence" => f.evidence, "severity" => String(f.severity)) for f in topo_pre.findings]
   base_metadata["se_topology_precheck_summary"] = topo_pre.summary
 
@@ -1544,6 +1905,8 @@ function _run_state_estimation_service_body(
   end
   base_metadata["se_range_check_substituted"] = count(r -> r.reason === :range_check_substituted, range_rows)
   base_metadata["se_range_check_deenergized"] = count(r -> r.reason === :deenergized, range_rows)
+  base_metadata["se_range_check_deenergized_islands"] = count(r -> r.reason === :deenergized_island, range_rows)
+  base_metadata["se_range_check_topology_contradictions"] = count(r -> r.reason === :topology_contradiction, range_rows)
   # a non-finite measured value goes into the JSON as text
   base_metadata["se_range_check"] = [Dict{String,Any}("id" => r.id, "bus" => r.bus, "value" => isfinite(r.value) ? r.value : string(r.value), "reason" => String(r.reason),
                                                       "substitute" => isfinite(r.substitute) ? r.substitute : nothing, "source" => String(r.source), "sigma_substitute" => isfinite(r.sigma_substitute) ? r.sigma_substitute : nothing,
@@ -1552,7 +1915,18 @@ function _run_state_estimation_service_body(
   # diagnostics (report) plus the final state-writing run (chain anchor),
   # with released taps in rounds on the end steps (_se_bad_data_rounds!)
   se_phase("estimation_diagnostics")
-  bd = _se_bad_data_rounds!(net, run_cfg, tap_cfg, tap_released_idxs, tap_estimable, tap_staged_start, logfile, se_phase)
+  bd = try
+    _se_bad_data_rounds!(net, run_cfg, tap_cfg, tap_released_idxs, tap_estimable, tap_staged_start, logfile, se_phase)
+  catch err
+    # observable_islands, scheduled: no observable island of the set can be
+    # estimated; a rejection like abort, not a crash
+    err isa SENotObservableError || rethrow()
+    _write_service_performance_log!(output_dir, phase_recorder, se_total_start; headline = _SE_PERF_HEADLINE, status = "failed", label = "state-estimation")
+    open(logfile, "a") do io
+      println(io, sprint(showerror, err))
+    end
+    return _api_failure("se_not_observable", sprint(showerror, err), run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
+  end
   res, diag, eliminations, staged, tap_fallback_used, tap_run1, tap_rounds, run_cfg = bd.res, bd.diag, bd.eliminations, bd.staged, bd.tap_fallback_used, bd.tap_run1, bd.tap_rounds, bd.run_cfg
   base_metadata["se_bad_data_rounds"] = bd.rounds
   base_metadata["se_tap_staged_start"] = staged
@@ -1574,6 +1948,67 @@ function _run_state_estimation_service_body(
     return _api_failure("se_not_converged", failure_text, run_id = run_id, casefile = case_path, config_file = config_file, output_dir = String(output_dir), logfile = logfile, result_file = result_file, metadata = base_metadata)
   end
   se_phase("postprocessing_result")
+  # the weak class at the estimated state (concept G2): the final run wrote
+  # its estimate into the net (update_net) and deactivated the eliminated
+  # rows, so the check reads the set and the state of the reported result
+  # Under observable_islands and scheduled runse! determined the class per
+  # estimated island and cut the weak buses out (concept M2); its report is
+  # the result. A whole-net check on an estimate with unestimated (NaN) buses
+  # would judge voltages that do not exist.
+  oi = res.observableIslands
+  # Under abort runse! determined it as well (weak_check_after_estimation,
+  # default on) at the same estimate and set; its report is taken as is.
+  weak_final = if res.weakObservability !== nothing
+    w = _weak_at_estimate(res.weakObservability)
+    hasproperty(w, :weakly_observable) ? w : merge(w, (weakly_observable = !isempty(w.buses),))
+  elseif oi === nothing && run_cfg.state_estimation.observability.weak_check_after_estimation
+    _weak_at_estimate(with_sparlectra_config(() -> evaluate_weak_observability(net), run_cfg))
+  else
+    (basis = :not_determined, weakly_observable = false, n_branches = 0, n_buses = 0, buses = Int[], branches = Int[], max_flow_sigma_mw = 0.0, max_vm_sigma_pu = 0.0)
+  end
+  weak_outcome = _se_weak_outcome(net, weak_final, run_cfg.state_estimation.observability)
+  base_metadata["se_weak_basis"] = String(weak_final.basis)
+  base_metadata["se_weakly_observable"] = weak_final.weakly_observable
+  base_metadata["se_weak_buses"] = length(weak_final.buses)
+  base_metadata["se_weak_branches"] = collect(weak_final.branches)
+  # a null direction of the AC Jacobian has an infinite standard deviation;
+  # JSON has no Inf, the text carries it
+  base_metadata["se_weak_max_flow_sigma_mw"] = isfinite(weak_final.max_flow_sigma_mw) ? weak_final.max_flow_sigma_mw : string(weak_final.max_flow_sigma_mw)
+  base_metadata["se_weak_max_vm_sigma_pu"] = isfinite(weak_final.max_vm_sigma_pu) ? weak_final.max_vm_sigma_pu : string(weak_final.max_vm_sigma_pu)
+  base_metadata["se_result_usable"] = weak_outcome.usable
+  base_metadata["se_result_unusable_reason"] = weak_outcome.reason
+  weak_outcome.usable || open(logfile, "a") do io
+    println(io, weak_outcome.line)
+  end
+  # an estimate per observable island (observable_islands, scheduled; also
+  # an observable set whose weak buses runse! cut out): the islands and the
+  # unobservable branches of the ESTIMATE replace those of the verdict, and
+  # run.log has one line per island
+  island_lines = String[]
+  not_used = Set{String}()
+  if oi !== nothing
+    est_rows = [r for r in something(res.islands, NamedTuple[]) if hasproperty(r, :label)]
+    base_metadata["se_observable_islands"] = length(est_rows)
+    base_metadata["se_observable_islands_estimated"] = count(r -> r.estimated, est_rows)
+    base_metadata["se_unobservable_branches"] = length(oi.unobservable_branches)
+    base_metadata["se_buses_not_estimated"] = count(!, oi.estimated)
+    base_metadata["se_relative_angle_buses"] = count(oi.relative_angle)
+    base_metadata["se_removed_buses"] = length(oi.removed_buses)
+    base_metadata["se_measurements_not_used"] = length(oi.dropped_measurements)
+    union!(not_used, oi.dropped_measurements)
+    _se_write_observable_islands_csv(joinpath(output_dir, "se_observable_islands.csv"), net, nothing, oi, se_csv_format)
+    _se_write_unobservable_branches_csv(joinpath(output_dir, "se_unobservable_branches.csv"), net, oi.unobservable_branches, oi.removed_buses, se_csv_format)
+    island_lines = _se_observable_island_lines(net, res)
+  elseif not_obs
+    # scheduled closed every gap: the estimate is one piece, and the two
+    # files of the verdict would describe a split this estimate does not
+    # have; run.log and se_restored_rows.csv keep what was closed
+    base_metadata["se_observable_islands_before_restore"] = isl_pre.n_islands
+    base_metadata["se_observable_islands"] = 0
+    base_metadata["se_unobservable_branches"] = 0
+    rm(joinpath(output_dir, "se_observable_islands.csv"); force = true)
+    rm(joinpath(output_dir, "se_unobservable_branches.csv"); force = true)
+  end
 
   # artifacts
   open(joinpath(output_dir, "se_diagnostics.md"), "w") do io
@@ -1648,10 +2083,6 @@ function _run_state_estimation_service_body(
   open(joinpath(output_dir, "se_view.md"), "w") do io
     print_se_view(io, view; format = :markdown)
   end
-  # One format for every diagnostic CSV this SE run writes (issue #376),
-  # same config key the PowerFlow API uses for its own artifacts.
-  se_csv_format = _resolve_detailed_csv_format(String(config.output.csv_format))
-  se_csv_delim = se_csv_format.delimiter
   n_link_measured = 0
   if link_rows !== nothing
     nbyL = _bus_name_by_idx(net)
@@ -1743,7 +2174,9 @@ function _run_state_estimation_service_body(
     open(joinpath(output_dir, "se_deltas.csv"), "w") do io
       println(io, "# sparlectra-se-deltas v1")
       println(io, join(("kind", "id", "type", "bus", "from_bus", "to_bus", "measured", "truth", "estimated", "delta_meas_truth", "delta_est_truth", "delta_est_meas", "sigma", "t_est", "eliminated"), se_csv_delim))
-      fmt(v) = _format_csv_number(round(v; sigdigits = 8), se_csv_format)
+      # a non-finite reading (a U row of 0 kV is NaN in pu) stays empty, as
+      # in measurements_verdict.csv
+      fmt(v) = isfinite(v) ? _format_csv_number(round(v; sigdigits = 8), se_csv_format) : ""
       cfD(s) = _csv_field(string(s), se_csv_delim, se_csv_format)
       # ZI rows solved as equality constraints are listed as constraints
       zi_constraint = config.state_estimation.zero_injection === :constraint
@@ -1767,11 +2200,14 @@ function _run_state_estimation_service_body(
         rsub = get(rangeSubD, mi, nothing)
         zD = rsub === nothing ? m.value : rsub.substitute
         sigD = rsub === nothing ? m.sigma : rsub.sigma_substitute
-        estv = rres === nothing ? nothing : zD - rres
+        # the flow of a branch the weak class leaves undetermined is not
+        # written: empty, not zero (_se_weak_outcome)
+        unknownFlow = m.branchIdx !== nothing && m.branchIdx in weak_outcome.blank_branches && m.typ in (PflowMeas, QflowMeas, ImagMeas)
+        estv = (rres === nothing || unknownFlow) ? nothing : zD - rres
         println(
           io,
           join(
-            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), rres === nothing ? "" : fmt(abs(rres) / sigD), m.id in elimD),
+            (zi_constraint && _zero_injection_constraint(m) ? "constraint" : "meas", cfD(m.id), cfD(m.typ), cfD(busD), cfD(fbD), cfD(tbD), fmt(m.value), fmt(tv), estv === nothing ? "" : fmt(estv), fmt(m.value - tv), estv === nothing ? "" : fmt(estv - tv), estv === nothing ? "" : fmt(estv - m.value), fmt(m.sigma), estv === nothing ? "" : fmt(abs(rres) / sigD), m.id in elimD),
             se_csv_delim,
           ),
         )
@@ -1803,7 +2239,7 @@ function _run_state_estimation_service_body(
   # residual, eliminated, constraint and the reason tokens per table row
   crit_idx = Set{Int}(crit_num)
   union!(crit_idx, crit_str)
-  verdict_flagged = _se_write_measurement_verdict(joinpath(output_dir, "measurements_verdict.csv"), net, artifact, diag, eliminations, res, crit_idx, config.state_estimation.zero_injection === :constraint, se_csv_format; range_rows = range_rows)
+  verdict_flagged = _se_write_measurement_verdict(joinpath(output_dir, "measurements_verdict.csv"), net, artifact, diag, eliminations, res, crit_idx, config.state_estimation.zero_injection === :constraint, se_csv_format; range_rows = range_rows, not_used = not_used)
   se_phase("writing_artifacts")
   writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"), format = String(config.output.csv_format))
 
@@ -1814,7 +2250,19 @@ function _run_state_estimation_service_body(
   open(logfile, "a") do io
     println(io, "State estimation on ", basename(case_path))
     println(io, "measurements: ", summary.total, " rows from ", from_case_file ? "the case file" : basename(String(measurement_file)), zi_rows > 0 ? string(", plus ", zi_rows, " zero-injection row(s)") : "")
-    println(io, "observability: ", obs.quality, :structural_islands in obs.notes ? " (structural islands)" : "")
+    println(io, "observability: ", obs.quality, obs.quality === :weakly_observable ? " (provisional, at the stored state)" : "",
+            (not_obs && !isempty(restored_rows)) ? string(" before the restoration, ", oi === nothing ? "closed by the restored rows, estimated as a whole" : "estimated per observable island after it") : "")
+    println(io, "weak class at the estimated state: ", weak_final.weakly_observable ? _se_weak_summary(net, weak_final, run_cfg.state_estimation.observability) : "none", weak_outcome.usable ? "" : " (result unusable)")
+    if oi !== nothing
+      println(io, "estimated per observable island (on_unobservable = ", on_unobs, "): ", base_metadata["se_observable_islands_estimated"], " of ", base_metadata["se_observable_islands"], " island(s), ",
+              base_metadata["se_buses_not_estimated"], " bus(es) not estimated, ", base_metadata["se_unobservable_branches"], " unobservable branch(es) without flow, ", base_metadata["se_measurements_not_used"], " measurement(s) not used")
+      for line in island_lines
+        println(io, line)
+      end
+      for r in oi.removed_buses
+        println(io, "observable islands: bus ", get(_bus_name_by_idx(net), r.bus, string(r.bus)), " removed (", r.reason, ")")
+      end
+    end
     _se_log_criticality(io, net, obs)
     println(io, "converged in ", res.iterations, " iteration(s); J = ", round(res.objectiveJ; digits = 6), ", dof = ", res.dof, ", band reason = ", verdict.reason, res.activeObjective === nothing ? "" : string("; J_active = ", round(res.activeObjective.j; digits = 6), " (dof ", res.activeObjective.dof, ", without ", res.activeObjective.suppressed, " suppressed row(s); band verdict stays on J)"))
     println(io, _se_conditioning_line(res))
@@ -1868,7 +2316,7 @@ function _run_state_estimation_service_body(
     (!isempty(suspicious) || !isempty(eliminations) || !isempty(suppressedIds)) && println(io, "bad data: measurements_verdict.csv (", length(suspicious), " suspicious, ", length(eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted; ", verdict_flagged, " table row(s) flagged)")
     deltas_written && println(io, "deltas: se_deltas.csv (measured vs generator truth vs estimated, per row and per released tap)")
     link_rows !== nothing && println(io, "link flows: se_link_flows.csv (", length(link_rows), " closed link(s), ", n_link_measured, " with link flow measurements or an estimated circulation)")
-    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.zeroInjectionMultipliers !== nothing ? ", se_zero_injection_multipliers.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "", link_rows !== nothing ? ", se_link_flows.csv" : "")
+    println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", isfile(joinpath(output_dir, "se_observable_islands.csv")) ? ", se_observable_islands.csv, se_unobservable_branches.csv" : "", isfile(joinpath(output_dir, "se_restored_rows.csv")) ? ", se_restored_rows.csv" : "", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.zeroInjectionMultipliers !== nothing ? ", se_zero_injection_multipliers.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "", link_rows !== nothing ? ", se_link_flows.csv" : "", isempty(topo_pre.findings) ? "" : ", se_topology.csv")
   end
 
   metadata = merge(
@@ -1883,6 +2331,7 @@ function _run_state_estimation_service_body(
       "se_condition_matrix" => res.conditioning === nothing ? nothing : String(res.conditioning.matrix),
       "se_condition_number" => (res.conditioning === nothing || !isfinite(res.conditioning.condition_number)) ? nothing : res.conditioning.condition_number,
       "se_condition_method" => res.conditioning === nothing ? nothing : String(res.conditioning.method),
+      "se_condition_scaling" => res.conditioning === nothing ? nothing : String(res.conditioning.scaling),
       "se_zero_injection_multipliers" => res.zeroInjectionMultipliers === nothing ? 0 : length(res.zeroInjectionMultipliers),
       "se_converged" => res.converged,
       # the maximum over the solves of the run, see _se_reported_iterations
@@ -1961,6 +2410,9 @@ function _run_state_estimation_service_body(
     res.tapFixation === nothing ? "" : string(" Tap fixation (", _se_tap_transformer_count(res.tapEstimates), " transformer(s)): J ", round(res.tapFixation.j_before; sigdigits = 3), " -> ", round(res.tapFixation.j_after; sigdigits = 3), res.tapFixation.offgrid_residual ? "; off-grid tap residual, not bad data" : "", "."),
     (get(base_metadata, "se_set_tap_deviation", false) == true && !tap_enabled) ? " Hint: the set documents a tap deviation, but tap estimation is switched off; enable 'estimate taps'." : "",
     duplicate_rows > 0 ? string(" Warning: ", duplicate_rows, " measurement(s) repeat an already measured quantity - that alone inflates J; regenerate the set.") : "",
+    weak_outcome.usable ? "" : string(" Result unusable: weakly observable at the estimated state (", length(weak_final.branches), " branch(es) above the flow bound, ", length(weak_final.buses), " affected bus(es)); the flows of ", length(weak_outcome.blank_branches), " branch(es) are not written."),
+    isempty(restored_rows) ? "" : get(base_metadata, "se_restore_verdict", "") == "weakly_observable" ? string(" Weakly observable after restoring with ", length(restored_rows), " row(s) from the schedule: ", length(base_metadata["se_restore_weak_branches"]), " branch(es) above the flow bound.") : string(" Observable through ", length(restored_rows), " restored row(s) from the schedule."),
+    oi === nothing ? "" : string(" Estimated per observable island: ", base_metadata["se_observable_islands_estimated"], " of ", base_metadata["se_observable_islands"], " island(s), ", base_metadata["se_buses_not_estimated"], " bus(es) not estimated, ", base_metadata["se_unobservable_branches"], " branch flow(s) left empty."),
   )
   # timing file plus the raw phase sequence in result.json, same as the
   # power-flow path, so the Web UI run page can show where the time went
@@ -1979,6 +2431,160 @@ function _run_state_estimation_service_body(
     result_file = result_file,
     metadata = metadata,
   )
+  return _finalize_api_result(result)
+end
+
+const _SE_PLACEMENT_CSV_COLUMNS = ["step", "network_island", "phase", "kind", "quantity", "location", "bus", "branch", "side", "angle_rank_deficit_before", "angle_rank_deficit_after", "magnitude_rank_deficit_before", "magnitude_rank_deficit_after", "unobservable_branches_before", "unobservable_branches_after", "critical_before", "critical_after", "seconds"]
+
+"""
+    _run_se_placement_service(case_path, config_file, output_dir, run_id, measurement_file; kind, target, config_overrides, case_format, phase_callback, timestamp) -> SparlectraApiResult
+
+Service backend of the measurement placement (Web UI placement page,
+concept 1.3): builds the net and reads the measurement set like the SE run
+(`_run_state_estimation_service`, the same case-binding gate and the same
+`timestamp` for a table with several sets), then runs
+`suggest_measurement_placement` with `kind` (`:injection`, `:flow`, `:pmu`)
+and `target` (`:observable`, `:no_critical`), at most
+`state_estimation.observability.placement_max_steps` steps. Writes
+`se_placement.csv` (one row per step: network island, phase, quantity and
+place, the angle and magnitude deficits, the unobservable branches and the
+critical rows before and after, the run time of the step), run.log (the
+printout of `print_measurement_placement`, one line per step) and
+performance.log (the phases plus one line per step). Nothing is estimated
+and the set is not changed: the steps name places, not readings.
+
+Metadata: `run_mode = "se_placement"`, `se_placement_kind`,
+`se_placement_target`, `se_placement_reached`, `se_placement_stop_reason`,
+`se_placement_steps` (the rows of the CSV), the deficits before and after,
+`se_measurement_file`. Failure reasons: `invalid_request` (kind or target),
+`invalid_measurements`, `import_error`, the shared config failure.
+"""
+function _run_se_placement_service(case_path::AbstractString, config_file::AbstractString, output_dir::AbstractString, run_id::String, measurement_file::AbstractString;
+                                   kind::Symbol, target::Symbol = :observable, config_overrides::AbstractDict = Dict{String,Any}(), case_format::Symbol = :auto, phase_callback = phase -> nothing,
+                                   timestamp::Union{Nothing,String} = nothing)::SparlectraApiResult
+  output_dir = String(output_dir)
+  case_path = String(case_path)
+  measurement_file = String(measurement_file)
+  mkpath(output_dir)
+  logfile = joinpath(output_dir, "run.log")
+  result_file = joinpath(output_dir, "result.json")
+  base_metadata = Dict{String,Any}("run_mode" => "se_placement", "se_placement_kind" => String(kind), "se_placement_target" => String(target))
+  fail(reason, msg) = _api_failure(reason, msg; run_id = run_id, casefile = case_path, config_file = config_file, output_dir = output_dir, logfile = logfile, result_file = result_file, metadata = base_metadata)
+  kind in (:injection, :flow, :pmu) || return fail("invalid_request", "se_placement_kind must be injection, flow or pmu (got $(kind)).")
+  target in (:observable, :no_critical) || return fail("invalid_request", "se_placement_target must be observable or no_critical (got $(target)).")
+  recorder = PowerFlowPhaseTimingRecorder()
+  phase = function (name::AbstractString)
+    _start_service_phase!(recorder, name)
+    try
+      phase_callback(String(name))
+    catch err
+      # a reporting problem must never take the run down
+      err isa PowerFlowAborted && rethrow()
+      @warn "measurement placement: phase callback failed" phase = name exception = err
+    end
+    return nothing
+  end
+  t0 = time_ns()
+  phase("preparing_configuration")
+  config = try
+    resolve_config(config_file, case_path, config_overrides).config
+  catch err
+    return fail(_config_resolve_reason(err), sprint(showerror, err))
+  end
+  phase("importing_case")
+  imported, format, failure = _se_service_import(case_path, config, run_id, config_file, output_dir, logfile, result_file, base_metadata; requested_format = case_format)
+  failure !== nothing && return failure
+  net = imported.net
+  config = imported.config
+  from_case_file = format === :scf && !isfile(measurement_file) && !isempty(net.measurements)
+  base_metadata["se_measurement_file"] = from_case_file ? "" : measurement_file
+  # same rejection as the SE service: a timestamp only selects a set of a
+  # measurement table, the case file carries one set without a choice
+  if from_case_file && timestamp !== nothing
+    return fail("invalid_measurements", "se_timestamp $(timestamp) names a set of a measurement table, but this run takes the measurements of the case file.")
+  end
+  if from_case_file
+    open(logfile, "a") do io
+      println(io, "measurements: ", length(net.measurements), " row(s) taken from the case file itself")
+    end
+    _se_apply_zero_injection!(net, config, logfile)
+  elseif !isfile(measurement_file)
+    return fail("invalid_measurements", "Measurement file not found: $(measurement_file).")
+  else
+    binding_error = _se_set_binding_check(case_path, measurement_file, format, logfile)
+    binding_error === nothing || return fail("invalid_measurements", binding_error)
+    (isMeasurementTable(measurement_file) || _measurement_table_without_version(measurement_file)) ||
+      return fail("invalid_measurements", _is_measurement_csv_v1(measurement_file) ? "$(basename(measurement_file)): $(MEASUREMENT_CSV_V1_REMOVED)" : "$(basename(measurement_file)) is no measurement table (the first line must be $(MEASUREMENT_TABLE_VERSION_LINE)).")
+    table_summary, table_error = _se_load_measurement_table!(net, imported, format, measurement_file, config, logfile, output_dir; timestamp = timestamp)
+    table_error === nothing || return fail("invalid_measurements", table_error)
+    # the set the placement worked on, for "another kind or target"
+    base_metadata["se_measurement_timestamp"] = table_summary.table.set.timestamp
+  end
+  phase("measurement_placement")
+  r = try
+    with_sparlectra_config(() -> suggest_measurement_placement(net; kind = kind, target = target), config)
+  catch err
+    # the one documented failure: no active measurement left to start from
+    # (suggest_measurement_placement throws it like evaluate_global_observability)
+    err isa SENoActiveMeasurementsError || rethrow()
+    return fail("invalid_measurements", sprint(showerror, err))
+  end
+  fmt = _resolve_detailed_csv_format(String(config.output.csv_format))
+  delim = string(fmt.delimiter)
+  cf(s) = _csv_field(string(s), fmt.delimiter, fmt)
+  step_rows = Dict{String,Any}[]
+  for st in r.steps
+    push!(step_rows, Dict{String,Any}("step" => st.step, "network_island" => st.network_island, "phase" => String(st.phase), "kind" => String(st.kind), "quantity" => String(st.quantity),
+                                      "location" => st.location, "bus" => st.bus, "branch" => st.branch, "side" => String(st.side),
+                                      "angle_rank_deficit_before" => st.angle_rank_deficit_before, "angle_rank_deficit_after" => st.angle_rank_deficit_after,
+                                      "magnitude_rank_deficit_before" => st.magnitude_rank_deficit_before, "magnitude_rank_deficit_after" => st.magnitude_rank_deficit_after,
+                                      "unobservable_branches_before" => st.unobservable_branches_before, "unobservable_branches_after" => st.unobservable_branches_after,
+                                      "critical_before" => st.critical_before, "critical_after" => st.critical_after, "seconds" => st.seconds))
+  end
+  phase("writing_artifacts")
+  open(joinpath(output_dir, "se_placement.csv"), "w") do io
+    println(io, join(_SE_PLACEMENT_CSV_COLUMNS, delim))
+    for row in step_rows
+      println(io, join((row[c] === nothing ? "" : c == "seconds" ? _format_csv_number(round(Float64(row[c]); sigdigits = 4), fmt) : cf(row[c]) for c in _SE_PLACEMENT_CSV_COLUMNS), delim))
+    end
+  end
+  open(logfile, "a") do io
+    print_measurement_placement(io, r)
+    println(io, "Artifacts: se_placement.csv")
+  end
+  merge!(base_metadata, Dict{String,Any}(
+    "se_placement_reached" => r.reached,
+    "se_placement_stop_reason" => String(r.stop_reason),
+    "se_placement_max_steps" => r.max_steps,
+    "se_placement_steps" => step_rows,
+    "se_placement_seconds" => r.seconds,
+    "se_angle_rank_deficit" => r.angle_rank_deficit_before,
+    "se_magnitude_rank_deficit" => r.magnitude_rank_deficit_before,
+    "se_rank_deficit" => r.angle_rank_deficit_before + r.magnitude_rank_deficit_before,
+    "se_placement_angle_rank_deficit_after" => r.angle_rank_deficit_after,
+    "se_placement_magnitude_rank_deficit_after" => r.magnitude_rank_deficit_after,
+    "se_unobservable_branches" => length(r.unobservable_branches_before),
+    "se_placement_unobservable_branches_after" => length(r.unobservable_branches_after),
+    "artifact_status" => "completed",
+    "solver_status" => "completed",
+    "service_status" => "completed",
+    "run_status" => "completed",
+  ))
+  base_metadata["service_phase_timings"] = _write_service_performance_log!(output_dir, recorder, t0; label = "measurement-placement")
+  # the step times of the placement itself (concept 4.5): one line each
+  open(joinpath(output_dir, "performance.log"), "a") do io
+    println(io)
+    println(io, "measurement placement steps (", r.kind, ", target ", r.target, ")")
+    for st in r.steps
+      println(io, rpad(string("step ", st.step, ":"), 31), round(st.seconds; digits = 6), " s")
+    end
+    println(io, rpad("placement total:", 31), round(r.seconds; digits = 6), " s")
+  end
+  status = r.reached ? "target reached" : (r.stop_reason === :max_steps ? "stopped at max_steps = $(r.max_steps)" : "stopped, no candidate of this kind lowers the gap")
+  message = string("Measurement placement (", kind, ", target ", target, "): ", length(r.steps), " step(s), ", status, "; deficit angles ", r.angle_rank_deficit_before, " -> ", r.angle_rank_deficit_after,
+                   ", magnitudes ", r.magnitude_rank_deficit_before, " -> ", r.magnitude_rank_deficit_after, ".")
+  result = _api_result(run_id = run_id, status = :succeeded, success = true, solution_available = false, reason = nothing, message = message, casefile = case_path, config_file = String(config_file),
+                       output_dir = output_dir, logfile = logfile, result_file = result_file, metadata = base_metadata)
   return _finalize_api_result(result)
 end
 

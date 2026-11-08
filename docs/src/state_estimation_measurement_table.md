@@ -53,7 +53,7 @@ The format is new and may change before 1.0.
 | `type` | see above | `P`, `Q`, `I`, `Ia` (current angle), `U`, `Va` (voltage angle) |
 | `value` | yes | the reading in the unit of the type (see Units) |
 | `sigma` | no | standard deviation in the same unit, positive. Empty: the sigma of the voltage level of the measuring bus when `state_estimation.sigma_by_voltage_level` has one (see [Measurement sigma by voltage level](@ref se-sigma-by-level)), else the default of the measurement type (`measurementStdDevs`). Below the floor, the smaller of 1e-3 (the default of `state_estimation.zero_injection_sigma_mva`, in the unit of the estimator, pu for `U`) and the value of that key, it is read at the floor and counted as `sigma_lifted`, as in the measurement CSV v1. |
-| `source` | no | free text. The generators write `synthetic` or `synthetic;bad_data`, the pseudo generator `pseudo;ssh`, the converter `converted;v1`; the `measurements.csv` artifact of an SE run adds `se_run`, `case_file`, `sigma_level` and `sigma_default` (see [run artifacts](@ref se-measurement-files)). One token is evaluated: `zero_injection` (tokens separated by `;`) on a bus balance row marks a zero-injection constraint (see Signs and mapping). |
+| `source` | no | free text. The generators write `synthetic` or `synthetic;bad_data`, the pseudo generator `pseudo;ssh`, the converter `converted;v1`; the `measurements.csv` artifact of an SE run adds `se_run`, `case_file`, `sigma_level` and `sigma_default` (see [run artifacts](@ref se-measurement-files)). Three tokens are evaluated (tokens separated by `;`): `zero_injection` on a bus balance row marks a zero-injection constraint (see Signs and mapping), `pseudo` gives the measurement the origin `:pseudo` (a substitute value, also a bus sum that uses such a row), and `last_value` the origin `:last_value` (see [Incomplete measurement sets](@ref se_table_incomplete)); writing a set back as a table keeps the token. |
 | `valid` | yes | `true` or `false`. A row with `false` becomes an inactive measurement (in a bus sum see Group sums). |
 
 Exactly one of the three key columns is set per row.
@@ -321,7 +321,7 @@ On the SmallGrid fixture the second set observes every injection and gets
 no pseudo rows; the first set has no injection rows and gets `P` and `Q`
 for all 125 members.
 
-## Incomplete measurement sets
+## [Incomplete measurement sets](@id se_table_incomplete)
 
 A real delivery is never complete. Two kinds of rows close the gaps:
 
@@ -338,6 +338,19 @@ network model, so it adds no information. It counts those measurements a
 second time, and its error is correlated with theirs, while WLS treats
 every row as independent. Observability does not improve; only the
 residuals look better.
+
+In a table with several timestamps the last valid value of a meter can
+stand in for one that is missing or `valid = false`
+(`state_estimation.last_value`, off by default): the latest valid measured
+row of the same key and type from an earlier timestamp, at most
+`max_age_min` (60) minutes old, with its sigma times `sigma_factor` (3),
+origin `:last_value` and the source `last_value;<timestamp of the
+original>`. It comes before the pseudo row of the schedule, which it
+replaces (counted `last_value_replaced`). A zero-injection row is never an
+original. Last values are not protected from bad-data elimination. A table
+with a set without a timestamp gets none (one warning). The import report
+and `run.log` give per timestamp the number of filled values and the oldest
+timestamp used.
 
 ## SmallGrid fixture
 
@@ -359,13 +372,17 @@ one healthy branch row with `valid=false` that becomes an inactive
 measurement. These numbers depend on the network model; a change of the
 CGMES mapping that moves them is a change of the model, not of the table.
 
-## Use in the SE service and the Web UI
+## [Use in the SE service and the Web UI](@id se_table_service)
 
 The SE service reads a table while `state_estimation.measurement_table` is
 `true` (the default); with the switch off a table is refused and the key
 is named. The format of the case picks the index: mRIDs for a CGMES case,
 names for every other format. The run estimates the first set of the file
 and writes the import report of all sets to `measurement_import.txt`.
+The request key `se_timestamp` (the Web UI select **Timestamp**) picks
+another set; the earlier timestamps are then the history for the last valid
+value, and `run.log` and the metadata key `se_measurement_timestamp` name
+the estimated set.
 The run adds the zero-injection rows of
 [Zero injections and coupler balances](@ref se_zero_injection) to the set;
 `measurement_import.txt` and the run log give the count

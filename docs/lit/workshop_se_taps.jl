@@ -27,8 +27,6 @@
 # > [basics notebook](https://welthulk.github.io/Sparlectra.jl/generated/workshop_state_estimation/)
 # > and [bad data and parameter estimation](https://welthulk.github.io/Sparlectra.jl/generated/workshop_se_diagnostics/).
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_taps.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -58,30 +56,14 @@
 # 8. island-wise estimation with one reference per island
 # 9. $J$ versus $J_\mathrm{active}$ when rows are suppressed
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. The isolation matters on Colab: the shared
-#nb # default environment ships many preinstalled packages, and installing
-#nb # anything there triggers precompilation of that whole stack. Run this
-#nb # cell first, once per session; it takes a minute or two.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.10.0".
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
-#nb ## Switching versions in a running session? A "[loaded: ...]" note means
-#nb ## the old version is still active; restart the runtime, then rerun
-#nb ## this cell.
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and shared helpers
 #
@@ -98,8 +80,7 @@
 # check, the topology precheck, island-wise estimation and the robust
 # replacement mode), so the real study runs at full speed; its code is in
 # `docs/lit/warmup/workshop_se_taps.jl` of the package. How long the
-# warm-up takes depends on the machine: a Colab session is several times
-# slower than a desktop; every later cell then runs without compile
+# warm-up takes depends on the machine; every later cell then runs without compile
 # pauses.
 
 using Sparlectra
@@ -784,7 +765,7 @@ println("replacement mode:")
 #   how sets travel as CSV files:
 #   [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).
 # - Bad-data localization, robust estimation and shunt estimation in
-#   depth: the [diagnostics notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb).
+#   depth: the [diagnostics notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb).
 # - New to the estimator? The
-#   [basics notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
+#   [basics notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
 #   walks from network build to estimated state.

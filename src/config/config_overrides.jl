@@ -228,6 +228,9 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   # Case page writes both into the case configuration
   "state_estimation.tap_estimation.exclude",
   "state_estimation.tap_estimation.include_machine_transformers",
+  # what an SE run does with a set that is not observable (the Web UI "On
+  # gaps" choice and the buttons of the Observability section)
+  "state_estimation.observability.on_unobservable",
 ])
 
 function _flatten_config_keys!(keys_out::Set{String}, raw::AbstractDict, prefix::String = "")
@@ -401,6 +404,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_ROBUST_MODE_VALUES)
   elseif key == "state_estimation.zero_injection"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), STATE_ESTIMATION_ZERO_INJECTION_VALUES)
+  elseif key == "state_estimation.observability.on_unobservable"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), SE_ON_UNOBSERVABLE_VALUES)
   elseif key == "state_estimation.sigma_by_voltage_level"
     # the same parser the configuration uses: a bad row fails here, with its
     # name and reason, before the run starts

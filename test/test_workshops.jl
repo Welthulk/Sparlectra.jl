@@ -87,9 +87,10 @@ function run_workshop_tests()
   @testset "Workshop notebooks run cell by cell" begin (function ()
     # what a participant runs is the notebook, not the Literate script:
     # every code cell of every committed notebook, in order, in a fresh
-    # module, like one kernel per notebook. The install cell is skipped (the
-    # package under test is already loaded); a failing cell names the
-    # notebook and the cell number of the Colab view (1-based)
+    # module, like one kernel per notebook. The setup cell is skipped (it
+    # checks the workshop environment, and the package under test is
+    # already loaded); a failing cell names the notebook and the cell
+    # number of the notebook view (1-based)
     nb_dir = abspath(joinpath(dirname(@__DIR__), "notebooks"))
     notebooks = sort!(filter(f -> startswith(f, "workshop_") && endswith(f, ".ipynb"), readdir(nb_dir)))
     @test !isempty(notebooks)
@@ -101,11 +102,7 @@ function run_workshop_tests()
       for (k, cell) in enumerate(nb["cells"])
         cell["cell_type"] == "code" || continue
         code = join(cell["source"])
-        # the install cell: only its `using` lines run (a notebook may load
-        # its packages there, the APSLF workshop did)
-        if occursin("Pkg.add(", code)
-          code = join(filter(l -> startswith(l, "using ") && !startswith(l, "using Pkg"), split(code, '\n')), "\n")
-        end
+        occursin("Base.find_package(\"Sparlectra\")", code) && continue
         ok = try
           with_logger(NullLogger()) do
             redirect_stdout(devnull) do

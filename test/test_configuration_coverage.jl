@@ -774,7 +774,15 @@ function test_configuration_every_key_arrives()
         ("power_flow.start_mode.blend_lambdas", [0.11, 0.22], cfg -> cfg.powerflow.start_mode.blend_lambdas),
         # the public Q-limit start modes besides the default iteration_or_auto
         ("power_flow.qlimits.start_mode", "iteration", cfg -> cfg.powerflow.qlimits.start_mode),
-        ("power_flow.qlimits.start_mode", "auto", cfg -> cfg.powerflow.qlimits.start_mode))
+        ("power_flow.qlimits.start_mode", "auto", cfg -> cfg.powerflow.qlimits.start_mode),
+        # what runse! does with a set that is not observable (default abort)
+        ("state_estimation.observability.on_unobservable", "observable_islands", cfg -> cfg.state_estimation.observability.on_unobservable),
+        ("state_estimation.observability.on_unobservable", "scheduled", cfg -> cfg.state_estimation.observability.on_unobservable),
+        # the sigmas of the replacement values of scheduled
+        ("state_estimation.observability.restore_sigma_rel", 0.5, cfg -> cfg.state_estimation.observability.restore_sigma_rel),
+        ("state_estimation.observability.restore_vm_sigma_nominal_pu", 0.02, cfg -> cfg.state_estimation.observability.restore_vm_sigma_nominal_pu),
+        # the default cap of the placement steps
+        ("state_estimation.observability.placement_max_steps", 7, cfg -> cfg.state_estimation.observability.placement_max_steps))
       cfg = load_with(path, differing)
       got = reader(cfg)
       @test (got isa Symbol ? String(got) : got) == differing
@@ -791,6 +799,13 @@ function test_configuration_every_key_arrives()
     @test load_with("state_estimation.zero_injection", false).state_estimation.zero_injection === :off
     @test load_with("state_estimation.zero_injection", "on").state_estimation.zero_injection === :on
     @test_throws "state_estimation.zero_injection" load_with("state_estimation.zero_injection", "maybe")
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.observability.on_unobservable === :abort
+    @test_throws "state_estimation.observability.on_unobservable" load_with("state_estimation.observability.on_unobservable", "islands")
+    obs_default = Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.observability
+    @test (obs_default.restore_sigma_rel, obs_default.restore_vm_sigma_nominal_pu, obs_default.placement_max_steps) == (0.30, 0.05, 20)
+    @test_throws "state_estimation.observability.placement_max_steps" load_with("state_estimation.observability.placement_max_steps", 0)
+    @test_throws "state_estimation.observability.restore_sigma_rel" load_with("state_estimation.observability.restore_sigma_rel", 0.0)
+    @test_throws "state_estimation.observability.restore_vm_sigma_nominal_pu" load_with("state_estimation.observability.restore_vm_sigma_nominal_pu", -0.05)
     # the sigma of a zero-injection row: default ZERO_INJECTION_SIGMA, a
     # value that is not finite and positive is refused with the key named,
     # in a file and as a Web UI override
@@ -1145,6 +1160,13 @@ function test_configuration_unknown_keys()
     clean = test_scratch_path(".yaml")
     write(clean, "diagnostics:\n  log_effective_config: true\n")
     @test_throws ArgumentError Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("diagnostics" => Dict{String,Any}("no_such_key" => 1)))
+    # a key removed in a minor version (observability.enabled, 1.1.0) warns
+    # with the reason in a stored file and in an override, never fails
+    old_obs = test_scratch_path(".yaml")
+    write(old_obs, "state_estimation:\n  observability:\n    enabled: true\n    weak_flow_sigma_mw: 25.0\n")
+    obs_cfg = @test_logs (:warn, r"state_estimation\.observability\.enabled is ignored: removed in 1\.1\.0") match_mode = :any Sparlectra.load_sparlectra_config(old_obs; reload = true)
+    @test obs_cfg.state_estimation.observability.weak_flow_sigma_mw == 25.0
+    @test_logs (:warn, r"observability\.enabled is ignored") match_mode = :any Sparlectra.load_sparlectra_config(clean; reload = true, overrides = Dict{String,Any}("state_estimation" => Dict{String,Any}("observability" => Dict{String,Any}("enabled" => false))))
     # a case configuration follows the same rule (the Settings page wrote
     # keys into case files that a later release removed): the unknown key is
     # dropped with a warning, a known key outside the case scope is refused
@@ -1306,6 +1328,18 @@ function test_configuration_value_domain_validation()
     factor_bad = test_scratch_path(".yaml")
     write(factor_bad, "state_estimation:\n  bad_data:\n    substitute_sigma_factor: 0.5\n")
     @test_throws "state_estimation.bad_data.substitute_sigma_factor" Sparlectra.load_sparlectra_config(factor_bad; reload = true)
+    # the last value of a meter (state_estimation.last_value): off by
+    # default, 60 minutes, factor 3; a factor below 1 (an old value more
+    # trusted than the reading), an age that is not positive and a scalar
+    # for the block are refused with the key named
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.last_value == Sparlectra.LastValueConfig(enabled = false, max_age_min = 60.0, sigma_factor = 3.0)
+    for (body, key) in (("  last_value:\n    sigma_factor: 0.5\n", "state_estimation.last_value.sigma_factor"),
+                        ("  last_value:\n    max_age_min: 0\n", "state_estimation.last_value.max_age_min"),
+                        ("  last_value: true\n", "state_estimation.last_value must be a block"))
+      lv_bad = test_scratch_path(".yaml")
+      write(lv_bad, "state_estimation:\n" * body)
+      @test_throws key Sparlectra.load_sparlectra_config(lv_bad; reload = true)
+    end
 
     bool_ok_true = test_scratch_path(".yaml")
     write(bool_ok_true, "power_flow:\n  autodamp: true\n")

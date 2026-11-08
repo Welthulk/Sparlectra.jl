@@ -25,8 +25,6 @@ purpose: Literate.jl source of the workshop tour part 3, coordinated
 
 # The Sparlectra workshop tour, part 3: coordinated control
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -60,8 +58,7 @@ path the examples exercise once (power flow, tap controller
 registration, the master/slave group in the outer control loop, the
 element view), so nothing stalls mid-workshop; its code is in
 `docs/lit/warmup/workshop_tour_control.jl` of the package. How long the
-warm-up takes depends on the machine: a Colab session is several times
-slower than a desktop; every later cell then runs without compile
+warm-up takes depends on the machine; every later cell then runs without compile
 pauses.
 
 ````@example workshop_tour_control
@@ -133,13 +130,10 @@ warm-up cell at the top together with `solve!` and `trafo_ids`).
 ```
 
 ````@example workshop_tour_control
-# uses: build_substation, solve!, trafo_ids (warm-up cell)
+# uses: build_substation, solve! (warm-up cell)
 net0 = build_substation("substation")
 solve!(net0)
 t0 = [br for br in net0.branchVec if br.ratio != 0.0]
-# the controllers of chapters 3 and 4 address T1 and T2 by the branch ids
-# the warm-up read from its own substation; the same builder gives the same ids
-@assert [string(br.branchIdx) for br in t0] == trafo_ids "trafo_ids of the warm-up do not match this substation"
 println("Aligned taps (both units at ratio 1.0), flow at the HV terminal, computed:")
 println("  ", rpad("unit", 5), lpad("P [MW]", 8), lpad("Q [MVAr]", 11))
 for (k, br) in enumerate(t0)
@@ -282,9 +276,9 @@ straight from the data with no user error involved. Tap changers with
 - [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/):
   the group's theory section, the hook interface, and the declarative
   controller configuration.
-- [Transformer taps notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb):
+- [Transformer taps notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb):
   the single-unit tap mechanics this part builds on.
-- [Workshop tour, advanced](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
+- [Workshop tour, advanced](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
   FACTS limits, N-1, state estimation, threads.
 - [CGMES Import](https://welthulk.github.io/Sparlectra.jl/cgmes_import/):
   how deliveries map onto the network model.

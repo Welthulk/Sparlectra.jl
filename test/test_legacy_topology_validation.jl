@@ -54,7 +54,7 @@ function _topo_measurements(net)
   return generateMeasurementsFromPF(net; includeImag = true, noise = false)
 end
 
-_meas_with(m::Measurement; value = m.value, active = m.active) = Measurement(typ = m.typ, value = value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
+_meas_with(m::Measurement; value = m.value, active = m.active) = Measurement(typ = m.typ, value = value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, origin = m.origin)
 
 function test_topology_stage1()::Bool
   @testset "Topology stage 1 precheck matrix" begin (function ()

@@ -1570,6 +1570,37 @@ mpc.branch = [
     strict_eni_file = @test_logs (:warn,) match_mode = :any exportSCF(eni; file = joinpath(d, "eni.pgm.json"), strict_pgm = true)
     strict_eni = Sparlectra.scf_json_parse(read(strict_eni_file, String))
     @test length(strict_eni["data"]["source"]) == 1
+
+    # a regulated external network injection without the reference next to
+    # a slack generator in the same island (the CGMES pattern): the reader
+    # takes every source of a strict file as a reference, so the injection
+    # goes out as a regulated sym_gen and the slack generator as the one
+    # source, with its own setpoint and angle. 1.1.0 wrote two sources (the
+    # file failed with two angle references in one island) and gave the
+    # converted slack u_ref = 1.0 instead of its 1.02.
+    two = Net(name = "scf_eni_and_slack_gen", baseMVA = 100.0)
+    for b in ("A", "B", "C")
+      addBus!(net = two, busName = b, vn_kV = 110.0)
+    end
+    addPIModelACLine!(net = two, fromBus = "A", toBus = "B", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+    addPIModelACLine!(net = two, fromBus = "B", toBus = "C", r_pu = 0.01, x_pu = 0.1, b_pu = 0.0, status = 1)
+    addProsumer!(net = two, busName = "A", type = "SYNCHRONOUSMACHINE", p = 10.0, vm_pu = 1.02, va_deg = 0.0, referencePri = "A")
+    addProsumer!(net = two, busName = "C", type = "EXTERNALNETWORKINJECTION", p = 15.0, q = 0.0, vm_pu = 1.01, isRegulated = true)
+    two.prosumpsVec[end].comp.cTyp = Sparlectra.ExternalNetworkInjection
+    addProsumer!(net = two, busName = "B", type = "ENERGYCONSUMER", p = 30.0, q = 8.0)
+    _, erg_two = runpf!(two, 30, 1e-10, 0)
+    @test erg_two == 0
+    strict_two_file = @test_logs (:warn, r"1 external network injection\(s\) without the reference written as regulated PGM generators") match_mode = :any exportSCF(two; file = joinpath(d, "two.pgm.json"), strict_pgm = true)
+    strict_two = Sparlectra.scf_json_parse(read(strict_two_file, String))
+    src_two = only(strict_two["data"]["source"])
+    @test (src_two["u_ref"], src_two["u_ref_angle"]) == (1.02, 0.0)
+    @test only(strict_two["data"]["voltage_regulator"])["u_ref"] == 1.01
+    @test Int(only(strict_two["data"]["sym_gen"])["node"]) != Int(src_two["node"])
+    back_two = importSCF(strict_two_file)
+    _, erg_back = runpf!(back_two, 30, 1e-10, 0)
+    @test erg_back == 0
+    @test maximum(abs(getNodeVm(two.nodeVec[i]) - getNodeVm(back_two.nodeVec[i])) for i in eachindex(two.nodeVec)) < 1e-12
+    @test maximum(abs(two.nodeVec[i]._va_deg - back_two.nodeVec[i]._va_deg) for i in eachindex(two.nodeVec)) < 1e-10
   end)() end
 
   @testset "three-winding transformer from a nameplate" begin (function ()
@@ -1930,8 +1961,8 @@ mpc.branch = [
     se_path = joinpath(d, "se_state_de.csv")
     with_sparlectra_config(() -> writeSEStateCSV(se_net; file = se_path), cfg_obj_de)
     se_lines = readlines(se_path)
-    @test se_lines[1] == "# sparlectra-se-state v1"
-    @test se_lines[2] == "bus;vm_pu;va_deg;pinj_MW;qinj_MVar"
+    @test se_lines[1] == "# sparlectra-se-state v2"
+    @test se_lines[2] == "bus;vm_pu;va_deg;pinj_MW;qinj_MVar;estimated;observable_island"
     @test occursin(',', split(se_lines[3], ';')[2])
     se_back = Sparlectra.importSCF(joinpath(scf_dir, "sp_case5.scf.json"))
     readSEStateCSV!(se_back; file = se_path)

@@ -604,13 +604,69 @@ const DEFAULT_NEWTON_UPDATE = PowerFlowConfig().newton_update
 # (single definition further below, next to the other island constants; a
 # duplicate Vector-typed definition used to live here)
 
-"""
-    ObservabilityConfig
+# the values of state_estimation.observability.on_unobservable
+const SE_ON_UNOBSERVABLE_VALUES = (:abort, :observable_islands, :scheduled)
 
-State-estimation observability diagnostic configuration.
+"""
+    ObservabilityConfig(; weak_flow_sigma_mw = 20.0, weak_vm_sigma_pu = 0.01, weak_check_after_estimation = true, on_unobservable = :abort, restore_sigma_rel = 0.30, restore_vm_sigma_nominal_pu = 0.05, placement_max_steps = 20)
+
+State-estimation observability diagnostic configuration
+(`state_estimation.observability`).
+
+`weak_flow_sigma_mw` (MW, positive) and `weak_vm_sigma_pu` (pu, positive)
+are the bounds of the weak class of [`evaluate_weak_observability`](@ref):
+a branch whose active flow has a standard deviation above
+`weak_flow_sigma_mw` in the covariance of the estimate, or a bus whose
+voltage magnitude has one above `weak_vm_sigma_pu`, makes the set
+`:weakly_observable`. The magnitude bound is twice the default sigma of a
+Vm measurement.
+
+`weak_check_after_estimation` (default `true`) lets [`runse!`](@ref)
+determine the weak class at the estimated state after a converged run
+with `update_net` (field `weakObservability` of the result) under
+`on_unobservable = abort`. It only reports; `false` switches it off for
+mass runs. Under `observable_islands` and `scheduled` runse! always
+determines the class at the estimate and estimates again without the
+affected buses while one is above the bounds.
+
+`on_unobservable` decides what [`runse!`](@ref) does with a set that is not
+observable (a null direction of the decoupled P-theta or Q-V model):
+- `:abort` (default): the estimation runs as without this setting, with no
+  observability check before it.
+- `:observable_islands`: the network islands are refined by the observable
+  islands of [`evaluate_global_observability`](@ref), and each observable
+  island is estimated on its own with its own reference; see `runse!`.
+- `:scheduled`: replacement values from the schedule close the deficit
+  first ([`restore_observability`](@ref)), the rest is estimated like
+  `:observable_islands`.
+
+`restore_sigma_rel` (positive, default 0.30) is the sigma of a P or Q
+replacement value as a share of its scheduled value; the floor is the
+default sigma of a P or Q measurement (`measurementStdDevs`), so a
+replacement value is never more accurate than a meter.
+`restore_vm_sigma_nominal_pu` (pu, positive, default 0.05, half of a
++-10 % band) is the sigma of a U replacement value at the nominal voltage,
+the last rule of the U order.
+
+`placement_max_steps` (positive integer, default 20) is the default cap on
+the steps of [`suggest_measurement_placement`](@ref).
 """
 Base.@kwdef struct ObservabilityConfig
-  enabled::Bool = true
+  weak_flow_sigma_mw::Float64 = 20.0
+  weak_vm_sigma_pu::Float64 = 0.01
+  weak_check_after_estimation::Bool = true
+  on_unobservable::Symbol = :abort
+  restore_sigma_rel::Float64 = 0.30
+  restore_vm_sigma_nominal_pu::Float64 = 0.05
+  placement_max_steps::Int = 20
+  # the keyword constructor checks what the file loader checks
+  function ObservabilityConfig(weak_flow_sigma_mw, weak_vm_sigma_pu, weak_check_after_estimation, on_unobservable, restore_sigma_rel, restore_vm_sigma_nominal_pu, placement_max_steps)
+    for (k, v) in (("weak_flow_sigma_mw", weak_flow_sigma_mw), ("weak_vm_sigma_pu", weak_vm_sigma_pu), ("restore_sigma_rel", restore_sigma_rel), ("restore_vm_sigma_nominal_pu", restore_vm_sigma_nominal_pu), ("placement_max_steps", placement_max_steps))
+      v > 0 || throw(ArgumentError("state_estimation.observability.$(k) must be positive; got $(v)."))
+    end
+    on_unobservable in SE_ON_UNOBSERVABLE_VALUES || throw(ArgumentError("state_estimation.observability.on_unobservable must be one of $(join(SE_ON_UNOBSERVABLE_VALUES, ", ")); got $(on_unobservable)."))
+    return new(weak_flow_sigma_mw, weak_vm_sigma_pu, weak_check_after_estimation, on_unobservable, restore_sigma_rel, restore_vm_sigma_nominal_pu, placement_max_steps)
+  end
 end
 
 """
@@ -633,6 +689,35 @@ Base.@kwdef struct BadDataConfig
   # of the meter keeps it from pulling the bus harder than the meter would
   # have, and leaves it well inside the WLS (default 3)
   substitute_sigma_factor::Float64 = 3.0
+end
+
+"""
+    LastValueConfig(; enabled = false, max_age_min = 60.0, sigma_factor = 3.0)
+
+Settings of the `state_estimation.last_value` block: the last valid value of
+a measurement stands in for a missing or invalid one in a measurement table
+with several timestamps (see [`importMeasurementTable`](@ref)).
+
+`enabled` (default `false`) switches the fill-in on. `max_age_min` (minutes,
+default 60, finite and positive): a value older than this at the timestamp
+it would fill is not used, the gap stays. `sigma_factor` (default 3, finite,
+at least 1): the sigma of the filled value is the sigma of the original
+times this fixed factor, independent of the age. Both values are a proposal
+without a standard behind them.
+
+Library callers set it for one call with
+`with_state_estimation_config(last_value = Sparlectra.LastValueConfig(enabled = true)) do ... end`.
+"""
+Base.@kwdef struct LastValueConfig
+  enabled::Bool = false
+  max_age_min::Float64 = 60.0
+  sigma_factor::Float64 = 3.0
+  # the keyword constructor checks what the file loader checks
+  function LastValueConfig(enabled, max_age_min, sigma_factor)
+    (isfinite(max_age_min) && max_age_min > 0) || throw(ArgumentError("state_estimation.last_value.max_age_min must be finite and positive; got $(max_age_min)."))
+    (isfinite(sigma_factor) && sigma_factor >= 1.0) || throw(ArgumentError("state_estimation.last_value.sigma_factor must be a finite number >= 1; got $(sigma_factor)."))
+    return new(enabled, max_age_min, sigma_factor)
+  end
 end
 
 """
@@ -936,6 +1021,7 @@ Base.@kwdef struct StateEstimationConfig
   observability::ObservabilityConfig = ObservabilityConfig()
   tap_estimation::TapEstimationConfig = TapEstimationConfig()
   bad_data::BadDataConfig = BadDataConfig()
+  last_value::LastValueConfig = LastValueConfig()
 end
 
 """
@@ -2435,7 +2521,28 @@ end
 
 function ObservabilityConfig(raw::AbstractDict)
   merged = _merged_section(raw, "observability")
-  return ObservabilityConfig(enabled = _as_bool_cfg(_raw_get(merged, "enabled", true)))
+  return ObservabilityConfig(
+    weak_flow_sigma_mw = Float64(_validate_positive("state_estimation.observability.weak_flow_sigma_mw", _as_float_cfg(_raw_get(merged, "weak_flow_sigma_mw", 20.0)))),
+    weak_vm_sigma_pu = Float64(_validate_positive("state_estimation.observability.weak_vm_sigma_pu", _as_float_cfg(_raw_get(merged, "weak_vm_sigma_pu", 0.01)))),
+    weak_check_after_estimation = _as_bool_cfg(_raw_get(merged, "weak_check_after_estimation", true)),
+    on_unobservable = _validate_allowed_symbol("state_estimation.observability.on_unobservable", _as_symbol_cfg(_raw_get(merged, "on_unobservable", :abort)), SE_ON_UNOBSERVABLE_VALUES),
+    restore_sigma_rel = Float64(_validate_positive("state_estimation.observability.restore_sigma_rel", _as_float_cfg(_raw_get(merged, "restore_sigma_rel", 0.30)))),
+    restore_vm_sigma_nominal_pu = Float64(_validate_positive("state_estimation.observability.restore_vm_sigma_nominal_pu", _as_float_cfg(_raw_get(merged, "restore_vm_sigma_nominal_pu", 0.05)))),
+    placement_max_steps = Int(_validate_positive("state_estimation.observability.placement_max_steps", _as_int_cfg(_raw_get(merged, "placement_max_steps", 20)))),
+  )
+end
+
+# `raw` is the merged state_estimation section. A factor below 1 would make
+# an old value more trusted than the reading it replaces.
+function LastValueConfig(raw::AbstractDict)
+  section = _raw_get(raw, "last_value", nothing)
+  section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.last_value must be a block with the keys enabled, max_age_min and sigma_factor; got $(repr(section))."))
+  merged = _merged_section(raw, "last_value")
+  age = Float64(_validate_finite_positive("state_estimation.last_value.max_age_min", _as_float_cfg(_raw_get(merged, "max_age_min", 60.0))))
+  key = "state_estimation.last_value.sigma_factor"
+  f = Float64(_validate_positive(key, _as_float_cfg(_raw_get(merged, "sigma_factor", 3.0))))
+  (isfinite(f) && f >= 1.0) || throw(ArgumentError("$(key) must be a finite number >= 1; got $(f)."))
+  return LastValueConfig(enabled = _as_bool_cfg(_raw_get(merged, "enabled", false)), max_age_min = age, sigma_factor = f)
 end
 
 # `raw` is the merged state_estimation section. A factor below 1 would make
@@ -2533,6 +2640,7 @@ function StateEstimationConfig(raw::AbstractDict)
     observability = ObservabilityConfig(merged),
     tap_estimation = TapEstimationConfig(merged),
     bad_data = BadDataConfig(merged),
+    last_value = LastValueConfig(merged),
   )
 end
 
@@ -2976,6 +3084,15 @@ const _TABLE_VALUED_CONFIG_KEYS = ("state_estimation.sigma_by_voltage_level",)
 # saved configuration and case sidecar of 0.19.0.
 const _REMOVED_SILENT_CONFIG_KEYS = ("output.condition_number", "webui.warmup", "powsybl_import.python_exe")
 
+# Removed keys that are ignored WITH a warning naming the reason, in a
+# stored file as well as in an editor or override call (strict): a minor
+# version must not refuse a file of the previous one.
+# state_estimation.observability.enabled, 1.1.0: the key was never read, the
+# observability check always runs.
+const _REMOVED_WARN_CONFIG_KEYS = Dict(
+  "state_estimation.observability.enabled" => "removed in 1.1.0, the observability check always runs",
+)
+
 const _DEPRECATED_CONFIG_KEYS = Dict(
   "diagnostics.console_summary" => "output.console_summary",
   "diagnostics.console_auto_profile" => "output.console_auto_profile",
@@ -3205,6 +3322,11 @@ function _validate_known_config_keys(user::AbstractDict, defaults::AbstractDict;
       continue
     end
     current_path in _REMOVED_SILENT_CONFIG_KEYS && continue
+    if haskey(_REMOVED_WARN_CONFIG_KEYS, current_path)
+      @warn "Configuration key $(current_path) is ignored: $(_REMOVED_WARN_CONFIG_KEYS[current_path])." maxlog = 1 _id = Symbol("removed_config_key_", current_path)
+      push!(drop, key)
+      continue
+    end
     if !haskey(defaults, skey)
       strict && throw(ArgumentError("Unknown Sparlectra configuration key: $(current_path)"))
       @warn "Unknown Sparlectra configuration key $(current_path) is ignored (not a key of this Sparlectra version; check the spelling or remove it from the file)." maxlog = 1 _id = Symbol("unknown_config_key_", current_path)
@@ -3323,6 +3445,8 @@ function _remove_superfluous_config_keys!(user::AbstractDict, defaults::Abstract
       "deprecated and ignored; use $(_DEPRECATED_CONFIG_KEYS[current_path])"
     elseif current_path in _REMOVED_SILENT_CONFIG_KEYS
       "no longer a configuration key"
+    elseif haskey(_REMOVED_WARN_CONFIG_KEYS, current_path)
+      _REMOVED_WARN_CONFIG_KEYS[current_path]
     elseif !haskey(defaults, skey)
       "not a key of this Sparlectra version"
     else
@@ -3615,7 +3739,7 @@ function _print_config_section(io::IO, name::AbstractString, value; indent::Abst
   child_indent = string(indent, "  ")
   for field in fieldnames(typeof(value))
     field_value = getfield(value, field)
-    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig || field_value isa BadDataConfig
+    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig || field_value isa BadDataConfig || field_value isa LastValueConfig
       _print_config_section(io, String(field), field_value; indent = child_indent)
     else
       println(io, child_indent, field, ": ", field_value)

@@ -387,7 +387,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   end
   for (gi2, m) in enumerate(meas)
     newid = row_id(m)
-    meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
+    meas[gi2] = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = newid, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = m.origin)
   end
   # the level sigma per row id: the thinning and the passive rows below can
   # drop or replace such a row, so the set's count is taken at the end
@@ -444,7 +444,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       for (mi, m) in enumerate(meas)
         (m.busIdx !== nothing && m.busIdx in passiveSet && m.typ in (PinjMeas, QinjMeas)) || continue
         z = 0.0 + (noise ? randn(Random.MersenneTwister(seed * 1009 + 7 * m.busIdx + (m.typ == PinjMeas ? 0 : 1))) * passive_sigma : 0.0)
-        meas[mi] = Measurement(typ = m.typ, value = z, sigma = passive_sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
+        meas[mi] = Measurement(typ = m.typ, value = z, sigma = passive_sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, origin = m.origin)
       end
       passive_note = ", $(length(passiveBuses)) passive node(s) at balance sigma $(passive_sigma)"
       passive_comment = "passive: balance rows Pinj/Qinj = 0 with sigma $(passive_sigma) at $(pnames)"
@@ -585,7 +585,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       gross_ids = String[]
       for gi in picks
         m0 = meas[gi]
-        meas[gi] = Measurement(typ = m0.typ, value = m0.value + gross_k * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx, zero_injection = m0.zero_injection)
+        meas[gi] = Measurement(typ = m0.typ, value = m0.value + gross_k * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx, zero_injection = m0.zero_injection, origin = m0.origin)
         push!(gross_ids, m0.id)
       end
       gross_note = ", bad data +$(gross_k) sigma on $(length(gross_ids)) row(s): $(join(gross_ids, " "))"

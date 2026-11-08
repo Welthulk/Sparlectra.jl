@@ -25,8 +25,6 @@
 
 # # The Sparlectra workshop tour: foreign formats
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -64,24 +62,14 @@
 #    with OpenLoadFlow
 # 7. DTF: a legacy input deck, its cards, and an outage from its records
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. Run it first, once per session; it takes a few
-#nb # minutes.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and the test data
 #
@@ -104,8 +92,7 @@
 # reader with its OpenLoadFlow-like run, and the DTF deck with an outage),
 # so the timing of the MicroGrid solve in Chapter 3 is the solve, not the
 # compiler; its code is in `docs/lit/warmup/workshop_tour_cgmes.jl` of the
-# package. How long the warm-up takes depends on the machine: a Colab
-# session is several times slower than a desktop; every later cell then
+# package. How long the warm-up takes depends on the machine; every later cell then
 # runs without compile pauses.
 
 using Sparlectra
@@ -371,7 +358,7 @@ olf_like = SparlectraConfig(
   control = ControlConfig(),
 )
 pres = run_sparlectra(net = pnet, config = olf_like)
-@assert pres.numerical_converged
+@assert pres.numerical_converged                                            #src
 ref, hdr = readdlm(powsybl_reference, ',', String; quotes = true, header = true)
 cols = Dict(Symbol(strip(h)) => k for (k, h) in enumerate(vec(hdr)))
 worst = 0.0
@@ -382,7 +369,7 @@ for i in axes(ref, 1)
   global worst = max(worst, dv)
 end
 println("largest bus voltage difference |dV| against OpenLoadFlow over ", size(ref, 1), " buses [pu]: ", round(worst; sigdigits = 3))
-@assert worst < 1e-5
+@assert worst < 1e-5                                                        #src
 
 # Reading aid (Example 6.2): two load-flow programs with different
 # conventions (ratio at the from side against `rho` at side 1, the
@@ -422,7 +409,7 @@ println("largest bus voltage difference |dV| against OpenLoadFlow over ", size(r
 case = Sparlectra.DTFImporter.read_dtf(dtf_deck)
 println("deck: base ", case.baseMVA, " MVA, ", length(case.buses), " buses, ", length(case.branches), " branches (", count(b -> b.kind == 'T', case.branches), " transformers), ", length(case.transformer_controls), " transformer control(s), ", length(case.outages), " outage record(s)")
 println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slack bus of the size card: ", case.size.slack)
-@assert (length(case.buses), length(case.branches), length(case.transformer_controls), length(case.outages)) == (5, 6, 1, 2)
+@assert (length(case.buses), length(case.branches), length(case.transformer_controls), length(case.outages)) == (5, 6, 1, 2)  #src
 
 # **Example 7.2: the network and its solve.** `build_net` turns the records
 # into a `Net` (transformer transverse admittance on the branch, the named
@@ -433,9 +420,9 @@ println("nominal voltages (kV): ", join(case.nominal_voltages_kv, ", "), "; slac
 @isdefined(case) || error("Run Example 7.1 first: it sets up case.")
 dnet = Sparlectra.DTFImporter.build_net(case)
 println("network: ", length(dnet.nodeVec), " buses, ", length(dnet.branchVec), " branches")
-@assert length(dnet.nodeVec) == length(case.buses)
+@assert length(dnet.nodeVec) == length(case.buses)                          #src
 dite, derg = runpf!(dnet, 50, 1e-8, 0)
-@assert derg == 0
+@assert derg == 0                                                           #src
 calcNetLosses!(dnet)
 println("solved in ", dite, " NR iterations; network active power losses [MW], computed: ", round(dnet.totalLosses[end][1]; digits = 3))
 
@@ -468,7 +455,7 @@ else
     Sparlectra.DTFImporter.apply_single_branch_outage!(onet, matches[1])
     markIsolatedBuses!(net = onet, log = false)
     oite, oerg = runpf!(onet, 50, 1e-8, 0; islands_enabled = true)
-    @assert oerg == 0
+    @assert oerg == 0                                                       #src
     dv = maximum(abs(onet.nodeVec[i]._vm_pu - dnet.nodeVec[i]._vm_pu) for i in eachindex(dnet.nodeVec))
     println("with the outage: solved in ", oite, " NR iterations; largest bus voltage change |dVm| against the base case [pu]: ", round(dv; sigdigits = 3))
   end
@@ -491,7 +478,7 @@ end
 #   topology processor.
 # - [CGMES Export](https://welthulk.github.io/Sparlectra.jl/cgmes_export/):
 #   profiles written, identity stability, provenance.
-# - [Workshop tour, basic](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-#   and [advanced](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
+# - [Workshop tour, basic](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
+#   and [advanced](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
 #   everything you can do with the imported network.
 # - [Feature Matrix](https://welthulk.github.io/Sparlectra.jl/feature_matrix/)

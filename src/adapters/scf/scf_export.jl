@@ -510,6 +510,27 @@ function _scf_feeder_for_bus(net::Net, busIdx::Int)
   return nothing
 end
 
+# The sym_gen row of a generator (PGM type 0, set points in W and var) and the
+# voltage_regulator row of its voltage control. One builder for the regular
+# generators and for the external network injections the strict export
+# demotes from source to generator.
+function _scf_sym_gen_row(ps::ProSumer, id, node)::Dict{String,Any}
+  p_w = (ps.pVal === nothing ? 0.0 : ps.pVal) * 1.0e6
+  q_var = (ps.qVal === nothing ? 0.0 : ps.qVal) * 1.0e6
+  return Dict{String,Any}("id" => id, "node" => node, "status" => 1, "type" => 0, "p_specified" => p_w, "q_specified" => q_var)
+end
+
+function _scf_regulator_row(ps::ProSumer, rid, regulated_id)::Dict{String,Any}
+  row = Dict{String,Any}("id" => rid, "regulated_object" => regulated_id, "status" => 1, "u_ref" => ps.vm_pu === nothing ? 1.0 : ps.vm_pu)
+  # An unlimited Q band is normal (a generator without Q limits, common in
+  # the pegase cases) and arrives as +-Inf. JSON cannot carry that, and the
+  # dataset says "no limit" by ABSENCE, which is exactly how the reader takes
+  # a missing key. Writing it would abort the export.
+  (ps.minQ === nothing || !isfinite(ps.minQ)) || (row["q_min"] = ps.minQ * 1.0e6)
+  (ps.maxQ === nothing || !isfinite(ps.maxQ)) || (row["q_max"] = ps.maxQ * 1.0e6)
+  return row
+end
+
 function _scf_appliances(net::Net, ids::ScfIdMap)
   sources = Vector{Any}()
   loads = Vector{Any}()
@@ -543,18 +564,9 @@ function _scf_appliances(net::Net, ids::ScfIdMap)
       end
       push!(sources, row)
     elseif isGenerator(ps)
-      push!(gens, Dict{String,Any}("id" => id, "node" => node, "status" => 1, "type" => 0, "p_specified" => p_w, "q_specified" => q_var))
+      push!(gens, _scf_sym_gen_row(ps, id, node))
       rid = get(ids.regulator, i, nothing)
-      if rid !== nothing
-        row = Dict{String,Any}("id" => rid, "regulated_object" => id, "status" => 1, "u_ref" => ps.vm_pu === nothing ? 1.0 : ps.vm_pu)
-        # An unlimited Q band is normal (a generator without Q limits, common
-        # in the pegase cases) and arrives as +-Inf. JSON cannot carry that,
-        # and the dataset says "no limit" by ABSENCE, which is exactly how the
-        # reader takes a missing key. Writing it would abort the export.
-        (ps.minQ === nothing || !isfinite(ps.minQ)) || (row["q_min"] = ps.minQ * 1.0e6)
-        (ps.maxQ === nothing || !isfinite(ps.maxQ)) || (row["q_max"] = ps.maxQ * 1.0e6)
-        push!(regs, row)
-      end
+      rid === nothing || push!(regs, _scf_regulator_row(ps, rid, id))
     else
       push!(loads, Dict{String,Any}("id" => id, "node" => node, "status" => 1, "type" => 0, "p_specified" => p_w, "q_specified" => q_var))
     end
@@ -936,6 +948,26 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
   nokey = [m for m in left if m.linkIdx === nothing]
   isempty(nokey) || @warn "SCF export: $(length(nokey)) measurement row(s) have no key in the case file and are not written" types = sort!(unique(string.(getfield.(nokey, :typ)))) ids = first(String[m.id for m in nokey], 5)
   return volt, power, current, rows
+end
+
+## The islands of a written PGM data section: node id -> island number, over
+## the line, generic_branch and link rows closed at both ends (the rows the
+## reader connects). Used by the strict export to keep one source per island.
+function _scf_data_islands(data::AbstractDict)::Dict{Int,Int}
+  parent = Dict{Int,Int}(Int(r["id"]) => Int(r["id"]) for r in get(data, "node", Any[]))
+  function root(n::Int)
+    while parent[n] != n
+      parent[n] = parent[parent[n]]
+      n = parent[n]
+    end
+    return n
+  end
+  for kind in ("line", "generic_branch", "link"), r in get(data, kind, Any[])
+    (Int(get(r, "from_status", 1)) == 1 && Int(get(r, "to_status", 1)) == 1) || continue
+    a, b = root(Int(r["from_node"])), root(Int(r["to_node"]))
+    a == b || (parent[a] = b)
+  end
+  return Dict{Int,Int}(n => root(n) for n in keys(parent))
 end
 
 ## --- sparlectra section ----------------------------------------------------
@@ -1604,6 +1636,38 @@ function net_to_scf(
       gens_rows = get(data, "sym_gen", Any[])
       regs_rows = get(data, "voltage_regulator", Any[])
       srcs = get(data, "source", Any[])
+      # The reader takes every source of a file without the sparlectra block
+      # as a reference, so an island with a slack node may carry no source
+      # elsewhere. A regulated external network injection that is not the
+      # reference (a CGMES ExternalNetworkInjection next to the slack
+      # generator) is a PV unit: it goes out as a sym_gen with its voltage
+      # regulator. 1.1.0 wrote it as a second source, and the strict file
+      # failed with two angle references in one island.
+      island_of = _scf_data_islands(data)
+      pos_of_id = Dict(id => pos for (pos, id) in ids.prosumer)
+      slack_islands = Set(island_of[n] for n in slack_nodes if haskey(island_of, n))
+      demoted = Any[]
+      for row in srcs
+        node = Int(row["node"])
+        (node in slack_nodes || !(get(island_of, node, 0) in slack_islands)) && continue
+        push!(demoted, row)
+      end
+      if !isempty(demoted)
+        for row in demoted
+          ps = net.prosumpsVec[pos_of_id[Int(row["id"])]]
+          push!(gens_rows, _scf_sym_gen_row(ps, row["id"], row["node"]))
+          next_id[] += 1
+          push!(regs_rows, _scf_regulator_row(ps, next_id[], row["id"]))
+        end
+        demoted_ids = Set(Int(r["id"]) for r in demoted)
+        filter!(r -> !(Int(r["id"]) in demoted_ids), srcs)
+        sort!(gens_rows; by = r -> r["id"])
+        sort!(regs_rows; by = r -> r["id"])
+        data["sym_gen"] = gens_rows
+        data["voltage_regulator"] = regs_rows
+        isempty(srcs) ? delete!(data, "source") : (data["source"] = srcs)
+        push!(dropped, "$(length(demoted)) external network injection(s) without the reference written as regulated PGM generators")
+      end
       converted = Any[]
       already = Set(Int(r["node"]) for r in srcs)
       for row in gens_rows
@@ -1612,9 +1676,15 @@ function net_to_scf(
         # Sparlectra's external network injection, and adding a second
         # reference there would double the infeed
         Int(row["node"]) in already && continue
+        # the setpoint and the angle of the slack: a slack generator has no
+        # regulator row (it is no PV unit), so they come from the prosumer;
+        # 1.1.0 wrote u_ref = 1.0 and no angle for it
+        ps = net.prosumpsVec[pos_of_id[Int(row["id"])]]
         reg = findfirst(r -> Int(r["regulated_object"]) == Int(row["id"]), regs_rows)
-        u_ref = reg === nothing ? 1.0 : Float64(get(regs_rows[reg], "u_ref", 1.0))
-        push!(converted, Dict{String,Any}("id" => row["id"], "node" => row["node"], "status" => row["status"], "u_ref" => u_ref))
+        u_ref = reg !== nothing ? Float64(get(regs_rows[reg], "u_ref", 1.0)) : (ps.vm_pu === nothing ? 1.0 : Float64(ps.vm_pu))
+        src = Dict{String,Any}("id" => row["id"], "node" => row["node"], "status" => row["status"], "u_ref" => u_ref)
+        ps.va_deg === nothing || (src["u_ref_angle"] = _scf_stable(ps.va_deg, deg2rad, rad2deg))
+        push!(converted, src)
       end
       if !isempty(converted)
         converted_ids = Set(Int(r["id"]) for r in converted)

@@ -53,13 +53,13 @@ jobs:
             Pkg.precompile()
           '
 
-      # Regenerate the Literate outputs (Documenter page + Colab notebook)
+      # Regenerate the Literate outputs (Documenter page + notebook)
       # BEFORE the docs build, so the deployed page is always fresh even if a
       # contributor edited docs/lit/*.jl without regenerating locally.
       - name: Regenerate Literate outputs
         run: julia --project=docs docs/generate_notebooks.jl
 
-      # Colab loads notebooks/*.ipynb from the repository itself, so stale
+      # The workshop installer copies notebooks/*.ipynb of the installed package, so stale
       # committed artifacts must be pushed back, not just rebuilt. Loop-safe:
       # pushes made with GITHUB_TOKEN do not retrigger workflows, and a rerun
       # would find no diff anyway.

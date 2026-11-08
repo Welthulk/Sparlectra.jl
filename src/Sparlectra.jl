@@ -739,6 +739,12 @@ export
   evaluate_observability_matrix,
   evaluate_local_observability_matrix,
   evaluate_global_observability,          # Evaluate global SE observability.
+  evaluate_weak_observability,            # Weak class of a measurement set at the stored (or estimated) state.
+  identify_observable_islands,            # Observable islands, unobservable branches and rank deficit of a measurement set.
+  print_observable_islands,               # REPL printout of the observable islands.
+  restore_observability,                  # Replacement values from the schedule that close the rank deficit of a not-observable set.
+  suggest_measurement_placement,          # Meter or PMU locations, step by step, until a set is observable or has no critical row.
+  print_measurement_placement,            # REPL printout of the placement steps.
   measurement_jacobian,                   # Labeled measurement Jacobian H (rows/cols described) for matrix reports.
   evaluate_local_observability,           # Evaluate local SE observability.
 
@@ -873,6 +879,7 @@ include("numerics/takahashi.jl")
 include("stateestimation/tap_changer_data.jl")
 include("stateestimation/tap_estimation.jl")
 include("stateestimation/state_estimation.jl")
+include("stateestimation/measurement_placement.jl")
 include("stateestimation/topology_validation.jl")
 # IEC 60909 balanced short-circuit evaluation (issue #277). Consumes
 # Net + the CGMES short-circuit harvest; reuses the equicircuit branch

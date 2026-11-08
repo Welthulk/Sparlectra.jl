@@ -20,6 +20,23 @@
 #          state
 
 using Printf
+
+## The failure of runse! under on_unobservable = observable_islands or
+## scheduled when none of the observable islands of the set can be
+## estimated; the SE service maps it to the reason se_not_observable.
+struct SENotObservableError <: Exception
+  msg::String
+end
+Base.showerror(io::IO, e::SENotObservableError) = print(io, e.msg)
+
+## Raised when a set has no active measurement to work on (every row is
+## inactive, or only current magnitudes are left, which the observability
+## checks exclude). The SE service and the placement service catch this type
+## and report the reason invalid_measurements.
+struct SENoActiveMeasurementsError <: Exception
+  msg::String
+end
+Base.showerror(io::IO, e::SENoActiveMeasurementsError) = print(io, e.msg)
 """
     SEResult
 
@@ -58,11 +75,16 @@ result does not carry them; `calcLinkFlowsSE!` adds them to the link
 flows).
 
 `conditioning` describes the linear system of the last Gauss-Newton step:
-`(zero_injection, matrix, condition_number, method)`. `zero_injection` is
-the mode of the run (`:on`, `:off`, `:constraint`), `matrix` is `:gain`
-(the gain matrix `H' W H` with the zero-injection rows weighted) or `:kkt`
-(the scaled KKT matrix of `zero_injection = constraint`). The condition
-number is the 1-norm estimate of `condestJacobian` on that sparse matrix
+`(zero_injection, matrix, scaling, condition_number, method)`.
+`zero_injection` is the mode of the run (`:on`, `:off`, `:constraint`),
+`matrix` is `:gain` (the gain matrix `G = H' W H` with the zero-injection
+rows weighted) or `:kkt` (the scaled KKT matrix of
+`zero_injection = constraint`). The condition number is taken of the
+Jacobi-scaled matrix `D^-1/2 M D^-1/2`, `D` its diagonal (`scaling =
+:jacobi`; a KKT constraint row, which has no diagonal, is scaled to a
+largest entry of 1), so the units of the states (rad, pu, and MW or Mvar
+for the circulation states of coupler rings) do not enter it. It is the
+1-norm estimate of `condestJacobian` on that sparse matrix
 (`method = :hager_1norm`, one extra sparse LU), `Inf` when the matrix is
 singular. On a net with several AC islands it is the largest island
 value. J and the degrees of freedom are `objectiveJ` and `dof`.
@@ -85,6 +107,40 @@ points at a measurement error near the bus. `nothing` under `on` and
 the start ladder (`state_estimation.start_ladder`, default on) solved
 once more from the stored voltages; `converged` says whether that second
 try converged.
+
+`weakObservability` is the weak class at the estimated state (see
+[`evaluate_weak_observability`](@ref)): under `on_unobservable = abort`
+after a converged run with `update_net` while
+`state_estimation.observability.weak_check_after_estimation` is on, under
+`observable_islands` and `scheduled` after every converged run; else
+`nothing`. A report with affected buses marks the estimate unusable (the
+SE service sets `se_result_usable = false` and leaves the flows of its
+`branches` empty).
+
+`observableIslands` is set when `runse!` estimated the observable islands
+one by one (`state_estimation.observability.on_unobservable =
+observable_islands` or `scheduled` on a set that is not observable, or
+whose weak buses at the estimate were cut out), else `nothing`. Then `islands` has one row per observable island instead of one
+per network island, with the fields of the network-island rows plus
+`label` ("k.j"), `network_island`, `buses`, `reference_bus`,
+`relative_angles` and `rank_deficit`, and `reason` `:estimated`,
+`:no_measurements` or `:not_observable` (not of full rank, see `runse!`).
+The labels of one network island k run k.1, k.2, ... over its estimation
+units ("k" for a network island that is one unit and lost no bus). The field
+itself holds per bus `label_of_bus` ("" for a bus in no estimated island),
+`estimated` and `relative_angle`, then `unobservable_branches` (the
+branches whose flows stay empty) with `unobservable_branch_names`
+("from - to"), `dropped_measurements` (ids of the rows
+no observable island uses), `removed_buses` (the buses taken out before the
+islands were cut, as `(bus, reason)`: `:dark_magnitude` for a dark
+magnitude, `:weak` for an affected bus of the weak class at the estimate)
+and `report`, the [`ObservableIslands`](@ref) the partition came from.
+
+`restoredRows` lists, under `on_unobservable = scheduled`, the replacement
+values `runse!` took from the schedule (see
+[`restore_observability`](@ref)): `(id, bus, bus_name, network_island,
+quantity, value, sigma, source)`; an empty vector when none was taken,
+`nothing` under the other values.
 """
 struct SEResult
   voltages::Vector{ComplexF64}
@@ -103,7 +159,9 @@ struct SEResult
   # the ORIGINAL bus numbering (unestimated islands keep their start
   # values), `objectiveJ`/`dof` are summed over the estimated islands, and
   # `vaRefOffsetDeg` is set only when exactly one island estimated it (the
-  # per-island values live in these rows).
+  # per-island values live in these rows). When runse! estimated the
+  # observable islands one by one there is one row per observable island
+  # (see `observableIslands`), and the voltages of unestimated buses are NaN.
   islands::Union{Nothing,Vector{NamedTuple}}
   # tap estimation: one row per released regulator (tap changer) with its
   # continuous step estimate s, the fixed physical step, the model step and
@@ -163,6 +221,20 @@ struct SEResult
   # start ladder: the run from the flat start did not converge, this result
   # starts from the stored voltages)
   start::Symbol
+  # the weak class at the estimated state (`evaluate_weak_observability`,
+  # basis :estimated_state) after a converged run with update_net when
+  # state_estimation.observability.weak_check_after_estimation is on;
+  # `nothing` otherwise
+  weakObservability::Union{Nothing,NamedTuple}
+  # the observable islands estimated one by one (on_unobservable =
+  # observable_islands or scheduled on a set that is not observable): per
+  # bus the island label, estimated and relative-angle flags, the
+  # unobservable branches, the unused measurement ids and the report;
+  # `nothing` otherwise
+  observableIslands::Union{Nothing,NamedTuple}
+  # the replacement values from the schedule (on_unobservable = scheduled,
+  # `restore_observability`): one row per value taken; `nothing` otherwise
+  restoredRows::Union{Nothing,Vector{NamedTuple}}
 end
 
 ## Two-stage robust weight modification (SE phase 4): per
@@ -193,10 +265,11 @@ end
 
 ## Stage of one measurement row: rows protected from bad-data elimination
 ## (`_elimination_protected`: zero-injection rows, also on a LINKAGG
-## aggregate of them, SHDERIV rows, sigma <= 1e-6) keep their weight, the
-## same test elimination and replacement use. A zero-injection row with
-## a real sigma (`zero_injection = on`) encodes network structure; widening
-## it would let the estimate leave the balance it stands for.
+## aggregate of them, origin :derived or :pseudo_restore, sigma <= 1e-6)
+## keep their weight, the same test elimination and replacement use. A
+## zero-injection row with a real sigma (`zero_injection = on`) encodes
+## network structure; widening it would let the estimate leave the balance
+## it stands for.
 @inline _robust_stage(m::Measurement, absr::Float64, k1::Float64, k2::Float64) = _elimination_protected(m) ? (0, m.sigma) : _robust_stage(absr, m.sigma, k1, k2)
 
 ## Effective robust mode of a config: the legacy Bool `robust` selects the
@@ -236,11 +309,15 @@ const _SE_FULL_OMEGA_MAX_M = 20_000
 const _SE_SUPPRESSION_MIN_WII = 0.3
 
 """
-    numeric_rank(A; tol=nothing) -> Int
+    numeric_rank(A; tol=nothing, dense_max_n=$(_SE_DENSE_LINALG_MAX_N)) -> Int
 
-Compute numerical matrix rank using singular values.
+Compute the numerical matrix rank: the number of singular values above
+`tol` for a dense matrix and for a sparse one up to `dense_max_n` rows or
+columns, the rank of the sparse QR factorization (SPQR, column tolerance
+`tol`) above. `dense_max_n` exists so tests can run the sparse path on
+small networks; the default is the measured crossover.
 """
-function numeric_rank(A::AbstractMatrix{<:Real}; tol = nothing)
+function numeric_rank(A::AbstractMatrix{<:Real}; tol = nothing, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
   s = svdvals(Matrix(A))
   isempty(s) && return 0
   if tol === nothing
@@ -255,7 +332,7 @@ end
 ## tolerance is fed from the SAME effective tolerance the callers derive
 ## (rank_tol_factor * jacEps * sigma_max, or the SVD default formula).
 """
-    numeric_rank_pivots(H; tol = nothing) -> Int
+    numeric_rank_pivots(H; tol = nothing, dense_max_n = $(_SE_DENSE_LINALG_MAX_N)) -> Tuple{Int,Symbol}
 
 Numerical rank of the Jacobian read from the LDLt factorization of the
 gain matrix `G = H' H` (unit weights, no column scaling: a column that
@@ -266,55 +343,215 @@ of `H' H` scale like squared singular values and `tol` is the
 singular-value bound of `numeric_rank`. The default `tol` is the same
 formula as there. The pivot count is exact for a full-rank Jacobian; on a
 deficit it can undercount (measured on sp_case1354 with eleven unmeasured
-buses: 2700 pivots against a rank of 2702 from the sparse QR, since the
+buses: 2700 pivots against a rank of 2702 from the SVD, since the
 pivots of an LDLt are not the eigenvalues of `G`), and a factorization
 CHOLMOD refuses (a singular `G`) states no size at all. So any deficit is
 handed to `numeric_rank`, and the method is reported as `:decomposition`;
 `:pivots` is reported only for the full-rank answer. Selected with
 `state_estimation.rank_method = pivots`; `decomposition` (SVD below
 $(_SE_DENSE_LINALG_MAX_N) states, sparse QR above) is the default, the
-exact answer at the same cost on every shipped case.
+exact answer at the same cost on every shipped case. `dense_max_n` is
+handed to `numeric_rank` for the deficit count. Returns the rank and the
+method that gave it (`:pivots` or `:decomposition`). Throws an
+`ArgumentError` naming the first entry when `H` has a NaN or Inf entry,
+with or without an explicit `tol`.
 """
-function numeric_rank_pivots(H::AbstractMatrix{<:Real}; tol = nothing)::Tuple{Int,Symbol}
+function numeric_rank_pivots(H::AbstractMatrix{<:Real}; tol = nothing, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)::Tuple{Int,Symbol}
   m, n = size(H)
   (m == 0 || n == 0) && return 0, :pivots
   Hs = H isa SparseMatrixCSC{Float64} ? H : sparse(Matrix{Float64}(H))
+  # checked here and not only in _sigma_max: with an explicit `tol` a NaN
+  # would otherwise reach CHOLMOD and then the SVD of numeric_rank
+  _se_require_finite(Hs)
   if tol === nothing
     tol = eps(Float64) * max(m, n) * _sigma_max(Hs)
   end
   G = Hs' * Hs
-  F = try
-    ldlt(Symmetric(G); check = false)
-  catch
-    nothing
-  end
-  if F === nothing || !issuccess(F)
+  F = ldlt(Symmetric(G); check = false)
+  if !issuccess(F)
     # singular G: the count of the deficit needs the decomposition
-    return numeric_rank(H; tol = tol), :decomposition
+    return numeric_rank(H; tol = tol, dense_max_n = dense_max_n), :decomposition
   end
   d = Vector{Float64}(diag(sparse(F.LD)))
-  all(isfinite, d) || return numeric_rank(H; tol = tol), :decomposition
+  all(isfinite, d) || return numeric_rank(H; tol = tol, dense_max_n = dense_max_n), :decomposition
   nrank = count(>(Float64(tol)^2), d)
   # a deficit is confirmed and sized by the decomposition: the pivot count
   # undercounts there (see the docstring), the full-rank verdict is exact
-  nrank < n && return numeric_rank(H; tol = tol), :decomposition
+  nrank < n && return numeric_rank(H; tol = tol, dense_max_n = dense_max_n), :decomposition
   return nrank, :pivots
 end
 
-function numeric_rank(A::SparseMatrixCSC{Float64}; tol = nothing)
+function numeric_rank(A::SparseMatrixCSC{Float64}; tol = nothing, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
   m, n = size(A)
   (m == 0 || n == 0) && return 0
-  max(m, n) <= _SE_DENSE_LINALG_MAX_N && return numeric_rank(Matrix(A); tol = tol)
-  effTol = tol === nothing ? eps(Float64) * max(m, n) * _sigma_max_estimate(A) : Float64(tol)
-  F = qr(A; tol = effTol)
+  max(m, n) <= dense_max_n && return numeric_rank(Matrix(A); tol = tol)
+  F = qr(A; tol = _sparse_rank_tolerance(A, tol))
   return rank(F)
+end
+
+## the rank tolerance of the sparse path: `tol`, or the SVD default formula
+## with the power-iteration estimate of sigma_max
+_sparse_rank_tolerance(A::SparseMatrixCSC{Float64}, tol)::Float64 = tol === nothing ? eps(Float64) * max(size(A)...) * _sigma_max_estimate(A) : Float64(tol)
+
+## The decomposition the rank decision of `numeric_rank` takes for `H`:
+## sparse QR for a sparse matrix above `dense_max_n`, the SVD otherwise.
+@inline _uses_sparse_rank(H::AbstractMatrix, dense_max_n::Integer)::Bool = H isa SparseMatrixCSC{Float64} && size(H, 1) > 0 && size(H, 2) > 0 && max(size(H)...) > dense_max_n
+
+## Null space of a sparse `H` above the dense threshold (concept P2):
+## subspace inverse iteration on the gain matrix G = H'H. The column test
+## of the sparse QR is not rank revealing (it keeps columns whose triangle
+## has a singular value below `tol`: thinned sp_case188 sets one rank too
+## many in 5 of 40 draws, sp_case1354 with eleven unmeasured buses 2705
+## against 2702 from the SVD), so the null space and the deficit come from
+## the smallest eigenpairs of G instead.
+##
+## One CHOLMOD factorization of G + s I, s = tol^2 / 100: a direction with
+## singular value below `tol` gains a factor of about 100 per step against
+## one above 10 tol. s is at least 100 eps |G|; below that G cannot tell
+## singular values apart, the Ritz values, taken from H X, still can.
+## k vectors, `k0` (a lower bound of the deficit) plus a reserve; per step
+## one solve, an orthonormalization and a Rayleigh-Ritz step on H X. A
+## Ritz vector v is a null vector when norm(H v) <= tol (the squared norm
+## is its Ritz value); the deficit is their number, confirmed by a reserve
+## vector above `tol`, else k doubles. The iteration stops when the
+## residuals |G v - theta v| of the null vectors and of the first one
+## above are below 1e-6 of the larger of theta and tol^2 plus the rounding
+## level 100 eps |G|, or after 300 steps (a spectrum without a gap at
+## `tol`, where the count follows the tolerance anyway). Returns
+## (deficit, N, s), N the n x deficit orthonormal null basis and s the
+## singular values norm(H v) of all k Ritz vectors, ascending (s[d + 1],
+## when present, is the smallest one above `tol`, the gap the caller may
+## report). The same iteration with `tol` set to any bound gives the
+## singular directions below that bound (the weak directions of the
+## observability check where its gain matrix is singular). `deflate` (n x p, orthonormal columns, empty by
+## default) keeps the iteration orthogonal to a known subspace: the
+## start and every step are projected out of it, so its directions are
+## neither counted nor returned. `own_scale = true` measures each residual
+## against its own Ritz value (1e-8 theta plus the rounding level) instead
+## of 1e-6 max(theta, tol^2): with `tol` a bound far above the smallest
+## singular values, the default test would accept their vectors at a few
+## percent. `extra_steps` runs that many steps more once the residual test
+## holds: the test has the rounding level of G as its floor, which is far
+## above the square of an exact rank tolerance (the P-theta model), so a
+## null vector can pass it while norm(H v) is still above `tol`; each
+## further step shrinks its component outside the null space by about
+## s / sigma^2 of the next singular value.
+function _gain_null_space(H::SparseMatrixCSC{Float64}, tol::Float64, k0::Int; deflate::Matrix{Float64} = zeros(Float64, 0, 0), own_scale::Bool = false, extra_steps::Int = 0)
+  m, n = size(H)
+  n == 0 && return 0, zeros(Float64, 0, 0), Float64[]
+  p = size(deflate, 2)
+  project!(X) = p == 0 ? X : (X .-= deflate * (deflate' * X))
+  # nothing left outside the deflated subspace
+  p >= n && return 0, zeros(Float64, n, 0), Float64[]
+  G = sparse(H' * H)
+  normG = opnorm(G, 1)
+  floorG = 100 * eps(Float64) * normG
+  s = max(tol^2 / 100, floorG)
+  C = cholesky(Symmetric(G); shift = s, check = false)
+  issuccess(C) || error("observability: no Cholesky factorization of H'H + $(s) I for the null space (non-finite Jacobian entries?)")
+  k = clamp(k0 + max(10, k0), 1, n - p)
+  while true
+    # deterministic start, orthonormalized
+    X = Matrix(qr(project!([cos(0.7548776662 * i * j + sqrt(Float64(j))) for i = 1:n, j = 1:k])).Q)
+    θ = zeros(Float64, k)
+    HX = zeros(Float64, m, k)
+    d = 0
+    left = -1
+    for _ = 1:300
+      sparlectra_check_abort()
+      X = Matrix(qr(project!(C \ X)).Q)
+      HX = H * X
+      E = eigen(Symmetric(HX' * HX))
+      X = X * E.vectors
+      HX = HX * E.vectors
+      θ = max.(E.values, 0.0)
+      d = count(j -> norm(view(HX, :, j)) <= tol, 1:k)
+      # Ritz values bound the eigenvalues from above: k of them at or below
+      # tol already mean at least k directions there, so k grows without
+      # converging this subspace first (the next try starts afresh)
+      d == k && k < n - p && break
+      top = min(k, d + 1)
+      R = H' * HX[:, 1:top] - X[:, 1:top] * Diagonal(θ[1:top])
+      if left < 0
+        all(j -> norm(view(R, :, j)) <= (own_scale ? 1.0e-8 * θ[j] : 1.0e-6 * max(θ[j], tol^2)) + floorG, 1:top) && (left = extra_steps)
+      else
+        left -= 1
+      end
+      left == 0 && break
+    end
+    (d < k || k == n - p) && return d, X[:, 1:d], sqrt.(θ)
+    k = min(n - p, 2k)
+  end
+end
+
+## The orthonormal null basis N of `A` and its rank (concept P2): the SVD
+## right singular vectors below `tol` up to `dense_max_n` rows or columns,
+## `_gain_null_space` above, the same rank tolerance either way. `k0` is a
+## lower bound of the deficit for the sparse path. Returns (N, rank,
+## kept, dropped): the smallest singular value above `tol` and the largest
+## one at or below it (0.0 when there is none; NaN for a kept value the
+## iteration did not reach), the gap at the rank cut. `extra_steps` is
+## handed to the iteration (`_gain_null_space`).
+function _null_basis(A::SparseMatrixCSC{Float64}, tol::Float64, dense_max_n::Integer, k0::Int; extra_steps::Int = 0)
+  m, n = size(A)
+  m == 0 && return Matrix{Float64}(I, n, n), 0, NaN, 0.0
+  max(m, n) <= dense_max_n && return _null_basis_svd(svd(Matrix(A); full = true), tol, n)
+  d, N, sv = _gain_null_space(A, tol, k0; extra_steps = extra_steps)
+  kept = d < length(sv) ? sv[d+1] : NaN
+  dropped = d > 0 ? sv[d] : 0.0
+  return N, n - d, kept, dropped
+end
+
+## The dense branch of `_null_basis` on the full SVD `S` of an m x n
+## matrix (m > 0), shared with `_decoupled_null`, which takes sigma_max
+## from the same factorization.
+function _null_basis_svd(S::SVD, tol::Float64, n::Int)
+  r = count(>(tol), S.S)
+  kept = r > 0 ? S.S[r] : NaN
+  # a wide matrix has n - m singular values zero beyond the computed ones
+  dropped = r < length(S.S) ? S.S[r+1] : 0.0
+  return S.V[:, (r+1):n], r, kept, dropped
+end
+
+## The probe tolerance, coupled to the rank tolerance: a state is dark
+## when its row of the orthonormal null basis has a norm above
+## `tol / sigma_max` (the relative rank tolerance, 1e-5 with the FD-aware
+## default of the estimator), floored at 1e-8. Forward differences leave
+## entries near 1e-7 in the null vector of a floating island; the relative
+## rank tolerance sits above them. `smax` is the largest singular value of
+## the matrix when known.
+function _null_probe_tolerance(H::AbstractMatrix{<:Real}, tol; smax::Float64 = NaN)::Float64
+  floor_tol = 1.0e-8
+  tol === nothing && return floor_tol
+  isnan(smax) && (smax = _sigma_max(H))
+  (isfinite(smax) && smax > 0.0) || return floor_tol
+  return max(floor_tol, Float64(tol) / smax)
+end
+
+## the states whose row of the orthonormal null basis `N` has a norm above
+## `tau`: the size of the state's share of the null space, the same for
+## every orthonormal basis of it (an SVD and the gain-matrix iteration
+## agree where their null spaces agree)
+function _null_basis_dark_columns(N::AbstractMatrix{Float64}, tau::Float64)::Vector{Int}
+  return Int[j for j in axes(N, 1) if norm(view(N, j, :)) > tau]
 end
 
 ## Largest singular value dispatcher: exact dense svdvals below the
 ## threshold (bit-identical to the historical behavior for every existing
 ## caller), power-iteration estimate above it.
-_sigma_max(H::AbstractMatrix{<:Real})::Float64 = maximum(svdvals(Matrix(H)))
-_sigma_max(H::SparseMatrixCSC{Float64})::Float64 = max(size(H)...) <= _SE_DENSE_LINALG_MAX_N ? maximum(svdvals(Matrix(H))) : _sigma_max_estimate(H)
+## A non-finite entry (a NaN start voltage, an Inf from a degenerate
+## branch) is named here instead of surfacing as a LAPACK argument error.
+_sigma_max(H::AbstractMatrix{<:Real})::Float64 = (_se_require_finite(H); maximum(svdvals(Matrix(H))))
+_sigma_max(H::SparseMatrixCSC{Float64})::Float64 = (_se_require_finite(H); max(size(H)...) <= _SE_DENSE_LINALG_MAX_N ? maximum(svdvals(Matrix(H))) : _sigma_max_estimate(H))
+
+## Internal helper: throws an ArgumentError when the measurement Jacobian
+## has a NaN or Inf entry; the message names the first such row and column.
+function _se_require_finite(H::AbstractMatrix{<:Real})
+  vals = H isa SparseMatrixCSC ? nonzeros(H) : H
+  all(isfinite, vals) && return nothing
+  idx = findfirst(v -> !isfinite(v), H)
+  throw(ArgumentError(string("state estimation: the measurement Jacobian has non-finite entries (first at row ", idx[1], ", column ", idx[2], "); a start voltage or a branch parameter of the net is NaN or Inf")))
+end
 
 ## Largest singular value of a sparse matrix without densifying: power
 ## iteration on AᵀA with a fixed deterministic start vector. 30 iterations
@@ -386,7 +623,14 @@ end
 ## result add it again, and the angle predictions (VaMeas, IaMeas) add it, so
 ## measurements, results and the net stay in the model reference
 ## (SE start value). A slack without a stored angle has 0.
-@inline _se_slack_ref_deg(net::Net, slackIdx::Int)::Float64 = Float64(something(net.nodeVec[slackIdx]._va_deg, 0.0))
+@inline _se_slack_ref_deg(net::Net, slackIdx::Int)::Float64 = _se_stored_value(net.nodeVec[slackIdx]._va_deg, 0.0)
+
+## Internal helper: a stored voltage value of the net, `default` when there
+## is none. NaN counts as none: an estimate per observable island writes NaN
+## for the buses it did not estimate (`runse!` with update_net), and a later
+## start from the stored state must not carry it into the Jacobian (1.1.0:
+## the second solve of the staged tap start failed with a LAPACK error).
+@inline _se_stored_value(v, default::Float64)::Float64 = (v === nothing || !isfinite(v)) ? default : Float64(v)
 
 ## Internal helper: map estimator state vector x -> complex bus voltages V.
 ## x = [θ(non-slack); Vm(all buses)] with θ_slack fixed to 0.
@@ -474,17 +718,17 @@ function _initial_state_vector(net::Net, slackIdx::Int; flatstart::Bool = true, 
   for i = 1:nbus
     if i != slackIdx
       p += 1
-      x[p] = flatstart ? (theta === nothing ? 0.0 : theta[i]) : deg2rad(something(net.nodeVec[i]._va_deg, 0.0) - vaSlackDeg)
+      x[p] = flatstart ? (theta === nothing ? 0.0 : theta[i]) : deg2rad(_se_stored_value(net.nodeVec[i]._va_deg, vaSlackDeg) - vaSlackDeg)
     end
   end
 
   for i = 1:nbus
-    vm0 = something(net.nodeVec[i]._vm_pu, 1.0)
+    vm0 = _se_stored_value(net.nodeVec[i]._vm_pu, 1.0)
     x[nθ+i] = flatstart ? 1.0 : vm0
   end
 
   if flatstart
-    x[nθ+slackIdx] = something(net.nodeVec[slackIdx]._vm_pu, 1.0)
+    x[nθ+slackIdx] = _se_stored_value(net.nodeVec[slackIdx]._vm_pu, 1.0)
   end
 
   for j = 1:k
@@ -541,7 +785,7 @@ function _active_measurements_with_indices(measurements::Vector{Measurement})
 end
 
 @inline function _set_measurement_active(m::Measurement, active::Bool)
-  return Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
+  return Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = m.origin)
 end
 
 ## SE working context after link contraction (SE phase 3).
@@ -565,6 +809,9 @@ struct SEWorkingNet
   shuntOrig::Vector{Int}
   has_merges::Bool
   notes::Vector{NamedTuple}
+  # per branch of snet its index in the caller's net (identity on the
+  # fast path); the observable-island report names branches by it
+  branches::Vector{Int}
 end
 
 ## Link measurement rows (0.60.0). A closed link has no Ybus entry, so its
@@ -847,7 +1094,7 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
   if !has_merges && isempty(net.isoNodes)
     n = length(net.nodeVec)
     busmap = Dict{Int,Int}(i => i for i = 1:n)
-    return SEWorkingNet(net, activeMeas, activeIdx, reps, collect(1:n), busmap, collect(eachindex(net.shuntVec)), false, notes)
+    return SEWorkingNet(net, activeMeas, activeIdx, reps, collect(1:n), busmap, collect(eachindex(net.shuntVec)), false, notes, collect(eachindex(net.branchVec)))
   end
   nested && error("SE link rows on a working net that needs a second contraction (this is a bug)")
 
@@ -921,7 +1168,7 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
         push!(collapsed_ids, String(m.id))
         continue
       end
-      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, branchIdx = newBr, direction = m.direction, id = m.id))
+      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, branchIdx = newBr, direction = m.direction, id = m.id, origin = m.origin))
       push!(origIdx, activeIdx[k])
       continue
     end
@@ -935,7 +1182,7 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
         continue
       end
       newBus = busmap[reps[m.busIdx]]
-      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, busIdx = newBus, branchIdx = m.branchIdx, direction = m.direction, id = m.id, zero_injection = m.zero_injection))
+      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, busIdx = newBus, branchIdx = m.branchIdx, direction = m.direction, id = m.id, zero_injection = m.zero_injection, origin = m.origin))
       push!(origIdx, activeIdx[k])
       continue
     end
@@ -957,8 +1204,11 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
       # unchanged), so it is protected like its members and
       # zero_injection = constraint solves it as a constraint as well
       allZI = all(k -> activeMeas[k].zero_injection, positions)
+      # the origin of the members carries over the same way (common origin,
+      # :pseudo for a mix with a substitute value)
+      aggOrigin = _combined_measurement_origin(activeMeas[k].origin for k in positions)
       aggId = "LINKAGG_$(typ == PinjMeas ? "Pinj" : "Qinj")_rep_$(rep)"
-      push!(remapped, Measurement(typ = typ, value = sum(vals), sigma = sqrt(sum(sigs .^ 2)), active = true, busIdx = busmap[rep], id = aggId, zero_injection = allZI))
+      push!(remapped, Measurement(typ = typ, value = sum(vals), sigma = sqrt(sum(sigs .^ 2)), active = true, busIdx = busmap[rep], id = aggId, zero_injection = allZI, origin = aggOrigin))
       push!(origIdx, 0)
       push!(notes, (reason = :aggregated_cluster_injection, id = aggId, detail = "members: " * join(ids, ", ")))
     else
@@ -974,7 +1224,7 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
     for (q, k) in enumerate(linkMeas)
       rowOf[q] == 0 && continue
       m = activeMeas[k]
-      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, direction = m.direction, id = m.id, linkIdx = rowOf[q]))
+      push!(remapped, Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = true, direction = m.direction, id = m.id, linkIdx = rowOf[q], origin = m.origin))
       push!(origIdx, activeIdx[k])
     end
     isempty(table.rows) || (snet._se_link_rows = table)
@@ -984,7 +1234,7 @@ function _se_prepare(net::Net, measurements::Vector{Measurement})
     shown = join(first(collapsed_ids, 5), ", ")
     @warn "SE: $(length(collapsed_ids)) measurement(s) excluded: their branch collapsed inside a closed-link cluster" rows = shown * (length(collapsed_ids) > 5 ? ", ..." : "")
   end
-  return SEWorkingNet(snet, remapped, origIdx, reps, buses, busmap, shuntOrig, true, notes)
+  return SEWorkingNet(snet, remapped, origIdx, reps, buses, busmap, shuntOrig, true, notes, branches)
 end
 
 ## Internal helper: assemble measurement value vector z from active measurements.
@@ -1110,6 +1360,43 @@ function _residual_diagnostics(H::AbstractMatrix{<:Real}, r::Vector{Float64}, w:
   return (rn = rn, wii = wii, omega = Ω, omega_path = :dense, state_variances = Float64[real(GI[j, j]) for j = 1:n])
 end
 
+## The (p, q, L, U, Rs) input of the Takahashi pattern pass from a CHOLMOD
+## LDLt factor `F` (A[p, p] = L D L', unit-lower L, no row scaling), and the
+## pivots D in factor order (pivot i belongs to the original index F.p[i]).
+## The pattern of L and U is the stored pattern of the factor, exact zeros
+## included: the pattern pass relies on the closure of the filled pattern,
+## and an entry that cancels to zero (sparse `+` or `*` drop those) would
+## break it. So L and U are built entry by entry, not by sparse arithmetic.
+function _takahashi_ldlt_factor_input(F)
+  LD = sparse(F.LD)
+  n = size(LD, 1)
+  rows = rowvals(LD)
+  vals = nonzeros(LD)
+  d = zeros(Float64, n)
+  Lc = Int[1]
+  Lr = Int[]
+  Lv = Float64[]
+  for j = 1:n
+    for q in nzrange(LD, j)
+      i = rows[q]
+      i < j && continue
+      i == j && (d[j] = vals[q])
+      push!(Lr, i)
+      push!(Lv, i == j ? 1.0 : vals[q])
+    end
+    push!(Lc, length(Lr) + 1)
+  end
+  L = SparseMatrixCSC(n, n, Lc, Lr, Lv)
+  # U = D L': the transpose keeps every stored entry, row i scaled by d[i]
+  U = SparseMatrixCSC(transpose(L))
+  Ur = rowvals(U)
+  Uv = nonzeros(U)
+  for q in eachindex(Uv)
+    Uv[q] *= d[Ur[q]]
+  end
+  return (p = F.p, q = F.p, L = L, U = U, Rs = ones(Float64, n)), d
+end
+
 ## LDLt-shaped input for the shared Takahashi pattern pass: CHOLMOD
 ## factorizes the symmetric G with one symmetric permutation, so the
 ## p == q guard that rejects UMFPACK's automatic unsymmetric pivoting
@@ -1122,13 +1409,9 @@ function _takahashi_ldlt_input(G::SparseMatrixCSC{Float64})
     return nothing
   end
   issuccess(F) || return nothing
-  LD = sparse(F.LD)
-  n = size(LD, 1)
-  d = Vector{Float64}(diag(LD))
+  inp, d = _takahashi_ldlt_factor_input(F)
   any(iszero, d) && return nothing
-  L = tril(LD, -1) + sparse(1.0I, n, n)
-  U = sparse(Diagonal(d) * SparseMatrixCSC(transpose(L)))
-  return (p = F.p, q = F.p, L = L, U = U, Rs = ones(Float64, n))
+  return inp
 end
 
 ## Sparse Ω_ii via the shared Takahashi selected inverse. Returns
@@ -2057,8 +2340,15 @@ rank test whatever its sigma or its electrical magnitude.
 A row or column of norm zero carries nothing and stays zero, so an
 unmeasured state keeps producing the rank deficit it should.
 """
-function _column_normalized(H::AbstractMatrix{<:Real})
+_column_normalized(H::AbstractMatrix{<:Real}) = first(_row_column_normalized(H))
+
+## `_column_normalized` plus the column norms it divided by (1.0 for an
+## empty column): a null vector v of the normalized matrix is the vector
+## v ./ colnorm of the original state coordinates, which the island
+## decomposition compares between buses.
+function _row_column_normalized(H::AbstractMatrix{<:Real})
   Hs = sparse(H)
+  colnorm = ones(Float64, size(Hs, 2))
   vals = nonzeros(Hs)
   # rows first: one pass over the stored entries for the row norms, a
   # second one to divide (CSC has no cheap row access)
@@ -2076,11 +2366,12 @@ function _column_normalized(H::AbstractMatrix{<:Real})
     isempty(r) && continue
     nrm = sqrt(sum(abs2, view(vals, r)))
     (isfinite(nrm) && nrm > 0.0) || continue
+    colnorm[j] = nrm
     for k in r
       vals[k] /= nrm
     end
   end
-  return Hs
+  return Hs, colnorm
 end
 
 ## Critical rows from the diagonal of the residual covariance (issue #394).
@@ -2116,7 +2407,11 @@ function _criticality_wii_tolerance(H::AbstractMatrix{<:Real}, tol)::Float64
   return max(floor_wii, (Float64(tol) / smax)^2)
 end
 
-function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; tol = nothing, criticality_method::Symbol = :omega, rank_method::Symbol = :decomposition)
+_evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; kwargs...) = _observability_core(H, activeOriginalIdx; kwargs...)
+
+## The observability verdict on a Jacobian: rank, matching, criticality and,
+## for a rank-deficient H, the dark state columns of its null space.
+function _observability_core(H::AbstractMatrix{<:Real}, activeOriginalIdx::Vector{Int}; tol = nothing, criticality_method::Symbol = :omega, rank_method::Symbol = :decomposition, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N, dark_states::Bool = true)
   m, n = size(H)
   ν = m - n
   ρ = n > 0 ? m / n : Inf
@@ -2124,11 +2419,11 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
   rank_method in (:decomposition, :pivots) || error("observability: rank_method must be :decomposition or :pivots (got $(rank_method))")
   rank_method_used = rank_method
   nrank = if rank_method == :pivots
-    r, used = numeric_rank_pivots(H; tol = tol)
+    r, used = numeric_rank_pivots(H; tol = tol, dense_max_n = dense_max_n)
     rank_method_used = used
     r
   else
-    numeric_rank(H; tol = tol)
+    numeric_rank(H; tol = tol, dense_max_n = dense_max_n)
   end
   adj, ncols = _adjacency_from_sparsity(H)
   mm = _hopcroft_karp(adj, ncols)
@@ -2206,25 +2501,40 @@ function _evaluate_observability_from_jacobian(H::AbstractMatrix{<:Real}, active
   # null space of H spans exactly the state directions no measurement sees;
   # a state column with a nonzero component in ANY basis vector cannot be
   # estimated (its value can drift inside the null space without changing
-  # a single measurement). SE phase 4: the basis is taken from the SVD right
-  # singular vectors of the singular values BELOW the effective rank
-  # tolerance, so an FD-aware `tol` (see the observability entry points)
-  # finds the same near-null directions the rank decision saw; a plain
-  # `nullspace` with LAPACK's eps-scale default would miss them on
-  # forward-difference Jacobians. Dense SVD cost: acceptable at workshop and
-  # distribution-network sizes, and it only runs on failures.
+  # a single measurement). Below the dense threshold the basis is taken from
+  # the SVD right singular vectors of the singular values BELOW the
+  # effective rank tolerance, so an FD-aware `tol` finds the same near-null
+  # directions the rank decision saw. Both paths use one dark rule
+  # (concept D1, `_null_basis_dark_columns`): 1.0.0 counted every SVD entry
+  # above 1e-8, which took forward-difference noise (1e-8 to 4e-8 on case14
+  # with bus 8 cut off) for dark magnitudes. Above it the null space and the
+  # deficit come from the gain-matrix iteration (concept P2,
+  # `_gain_null_space`): the column test of the sparse QR undercounts the
+  # deficit, so `numerical_rank` of a not-observable sparse set is the one
+  # of the iteration (the sparse QR rank only decided that the set is not
+  # observable). A state is dark there when its row of
+  # the orthonormal null basis is above the probe tolerance, coupled to the
+  # rank tolerance (`_null_probe_tolerance`).
+  # `dark_states = false` (evaluate_global_observability, which takes the
+  # dark states from the decoupled models) skips the dense SVD; the sparse
+  # path still runs the iteration, it sizes the deficit.
   dark = Int[]
   if !numObs && n > 0 && m > 0
-    if max(m, n) > _SE_DENSE_LINALG_MAX_N
-      @warn "observability: dark-state identification skipped above $(_SE_DENSE_LINALG_MAX_N) states/measurements (m=$(m), n=$(n)); the dense null-space SVD does not pay for itself at this size"
-    else
-      F = svd(Matrix(H); full = true)
-      for k = (nrank+1):n
-        for j = 1:n
-          abs(F.V[j, k]) > 1e-8 && push!(dark, j)
-        end
+    if _uses_sparse_rank(H, dense_max_n)
+      d, N = _gain_null_space(H, _sparse_rank_tolerance(H, tol), n - nrank)
+      if d == 0
+        # the sparse QR dropped a column the iteration finds no singular
+        # value below the tolerance for; the verdict stays with the sparse
+        # QR and its rank, without dark states
+        @warn "observability: the sparse QR finds a rank deficit of $(n - nrank) that the null-space iteration on H'H does not confirm; its dark states are left out"
+      else
+        nrank = n - d
+        dark_states && (dark = _null_basis_dark_columns(N, _null_probe_tolerance(H, tol)))
       end
-      unique!(sort!(dark))
+    elseif dark_states
+      F = svd(Matrix(H); full = true)
+      N = F.V[:, (nrank+1):n]
+      dark = _null_basis_dark_columns(N, _null_probe_tolerance(H, tol; smax = isempty(F.S) ? 0.0 : F.S[1]))
     end
   end
 
@@ -2294,23 +2604,34 @@ function structural_row_redundant(H::AbstractMatrix{<:Real}, i::Int)
 end
 
 """
-    evaluate_observability_matrix(H; tol=nothing, criticality_method=state_estimation_config().criticality_method, rank_method=state_estimation_config().rank_method) -> NamedTuple
+    evaluate_observability_matrix(H; tol=nothing, criticality_method=state_estimation_config().criticality_method, rank_method=state_estimation_config().rank_method, dense_max_n=$(_SE_DENSE_LINALG_MAX_N)) -> NamedTuple
 
 Evaluate global observability and single-row criticality directly on a matrix
 `H` (without building a network model).
 
 The result includes `unobservable_state_columns::Vector{Int}`: for a
 numerically NOT observable `H`, the state columns with a component above
-tolerance in any null-space basis vector, i.e. exactly the states no
-measurement pins down (their union partitions the network into observable
-islands). Empty for observable systems; computed only on the
-not-observable path (a dense null-space probe, fine at workshop and
-distribution-network sizes).
+tolerance in the null space, i.e. exactly the states no measurement pins
+down. Empty for observable systems; computed only on the not-observable
+path. Up to `dense_max_n` rows or columns (and for every dense `H`) the
+null space comes from the SVD. Above it, for a sparse `H`, the null space
+and the deficit come from a subspace inverse iteration on the gain matrix
+`H' H` (one Cholesky factorization, orthonormal null vectors), because the
+column test of the sparse QR is not rank revealing and undercounts the
+deficit. On both paths a state counts as dark when its row of the
+orthonormal null basis exceeds a tolerance coupled to the rank tolerance
+(`tol / sigma_max`, at least 1e-8). `numerical_rank` of a not-observable sparse `H` is then the
+rank of the iteration, which can be lower than [`numeric_rank`](@ref)
+and agrees with the SVD count. Whether `H` is observable is still the
+verdict of the sparse QR: an `H` it finds of full rank is not checked (an
+observable set costs nothing extra), so a hidden near-singular direction
+there stays undetected. `dense_max_n` exists so tests can take the
+sparse path on small matrices.
 """
-function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing, criticality_method::Symbol = state_estimation_config().criticality_method, rank_method::Symbol = state_estimation_config().rank_method)
+function evaluate_observability_matrix(H::AbstractMatrix{<:Real}; tol = nothing, criticality_method::Symbol = state_estimation_config().criticality_method, rank_method::Symbol = state_estimation_config().rank_method, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
   m, _ = size(H)
   idx = collect(1:m)
-  return _evaluate_observability_from_jacobian(H, idx; tol = tol, criticality_method = criticality_method, rank_method = rank_method)
+  return _evaluate_observability_from_jacobian(H, idx; tol = tol, criticality_method = criticality_method, rank_method = rank_method, dense_max_n = dense_max_n)
 end
 
 """
@@ -2353,7 +2674,996 @@ function evaluate_local_observability_matrix(H::AbstractMatrix{<:Real}, stateCol
 end
 
 """
-    evaluate_global_observability(net, measurements; kwargs...) -> NamedTuple
+    ObservableIslands
+
+Observable islands of a measurement set (numerical method after Monticelli
+and Wu, 1985, on the decoupled P-theta model), in the bus and branch
+numbering of the caller's net. Returned by
+[`identify_observable_islands`](@ref) and carried as `observable_islands`
+in the result of [`evaluate_global_observability`](@ref), where it is
+empty (`isempty` true) for an observable set.
+
+Two kinds of island are kept apart. A network island is a topologically
+separate part of the net with its own angle reference (the `islands` rows
+of `evaluate_global_observability`). An observable island lies inside one
+network island: the buses whose states the measurements fix once one of
+them is taken as the reference. Observable island j of network island k
+carries the label `"k.j"`, or `"k"` when network island k is one
+observable island. A network island is no gap: it adds nothing to a
+deficit, and one without measurements is listed in
+`unmeasured_network_islands`.
+
+Fields:
+- `island_of_bus`: observable island per bus of the net, an index into
+  `island_buses` and `island_labels`; 0 for a bus outside the estimated
+  state (isolated, or in a network island without measurements).
+- `network_island_of_bus`: network island per bus, 0 for an isolated bus.
+- `n_islands`: number of observable islands over all network islands.
+- `island_buses`: the buses of each observable island, ordered by network
+  island and inside it by first bus.
+- `island_labels`: `"k.j"` or `"k"` per observable island.
+- `network_islands`: one row per network island, `(network_island, n_bus,
+  measured, n_islands, rank_deficit, angle_rank_deficit,
+  magnitude_rank_deficit, region_buses, unobservable_branches)`; a network
+  island without measurements has `measured = false`, no observable island
+  and deficit 0.
+- `unmeasured_network_islands`: the network islands without measurements.
+- `unobservable_branches`: in-service branches whose ends lie in different
+  observable islands; their flow follows from no measurement.
+- `unobservable_branch_names`: `"from - to"` per unobservable branch.
+- `region_buses`: the buses with a dark angle, those whose row of the
+  orthonormal null basis of the P-theta model of the set (before the
+  iteration) is above the probe tolerance.
+- `rank_deficit`: `angle_rank_deficit + magnitude_rank_deficit`, the number
+  of replacement values a restoration needs (angle values for the first,
+  Q or U values for the second).
+- `angle_rank_deficit`: rank deficit of the P-theta model of the set.
+- `magnitude_rank_deficit`: rank deficit of the decoupled Q-V model of the
+  set (Q injections, Q flows and Vm rows against the magnitudes).
+- `angle_sv_kept_min`, `angle_sv_dropped_max`: the smallest singular value
+  of the column-normalized P-theta matrix above the rank tolerance and the
+  largest one at or below it (0.0 when there is none, NaN when not
+  computed), the gap at the rank cut.
+- `removed_boundary_injections`: ids of the rows the iteration dropped, as
+  the working net carries them (the injections of a closed-link cluster
+  as its `LINKAGG_...` row): P injections at an end bus of an unobservable
+  branch and P link-flow rows whose balance contains the flow of an
+  unobservable branch.
+- `dark_magnitude_buses`: buses whose magnitude has a share in the null
+  space of the Q-V model.
+- `passes`: number of decompositions of the P-theta model run (the most
+  over the network islands).
+- `bus_names`: bus names of the net, for the printout.
+
+Neither deficit is the rank deficit of the AC Jacobian (`n_states -
+numerical_rank` of the verdict). The Q rows carry angle information into
+the AC Jacobian, so a set of injections without flows can leave a P-theta
+deficit at full AC rank, and a bus seen through one Q flow only is one AC
+null direction where the decoupled models count its free angle once.
+"""
+struct ObservableIslands
+  island_of_bus::Vector{Int}
+  network_island_of_bus::Vector{Int}
+  n_islands::Int
+  island_buses::Vector{Vector{Int}}
+  island_labels::Vector{String}
+  network_islands::Vector{NamedTuple}
+  unmeasured_network_islands::Vector{Int}
+  unobservable_branches::Vector{Int}
+  unobservable_branch_names::Vector{String}
+  region_buses::Vector{Int}
+  rank_deficit::Int
+  angle_rank_deficit::Int
+  magnitude_rank_deficit::Int
+  angle_sv_kept_min::Float64
+  angle_sv_dropped_max::Float64
+  removed_boundary_injections::Vector{String}
+  dark_magnitude_buses::Vector{Int}
+  passes::Int
+  bus_names::Vector{String}
+end
+
+## the empty report of an observable set: nothing computed, nothing to show
+ObservableIslands() = ObservableIslands(Int[], Int[], 0, Vector{Int}[], String[], NamedTuple[], Int[], Int[], String[], Int[], 0, 0, 0, NaN, 0.0, String[], Int[], 0, String[])
+
+Base.isempty(r::ObservableIslands) = r.n_islands == 0 && isempty(r.network_islands)
+
+## One network island of the report, in the caller's bus and branch
+## numbering: `buses` its buses, `raw` an island label per bus of the
+## caller's net (any positive label, 0 outside), the unobservable branches,
+## the region, the removed rows, the dark magnitudes, the two deficits, the
+## gap at the P-theta rank cut and the passes. `measured = false` marks a
+## network island without measurements (every other field empty).
+_observable_islands_piece(buses::Vector{Int}, raw::Vector{Int}; measured::Bool = true, unobs::Vector{Int} = Int[], region::Vector{Int} = Int[], removed::Vector{String} = String[], darkV::Vector{Int} = Int[], angle_d::Int = 0, mag_d::Int = 0, kept::Float64 = NaN, dropped::Float64 = 0.0, passes::Int = 0) =
+  (buses = buses, raw = raw, measured = measured, unobs = unobs, region = region, removed = removed, darkV = darkV, angle_d = angle_d, mag_d = mag_d, kept = kept, dropped = dropped, passes = passes)
+
+## Builds the report from one piece per network island (network island k is
+## `pieces[k]`, see `_observable_islands_piece`): numbers the observable
+## islands of each network island in the order of their first bus, labels
+## them "k.j" ("k" for a network island that is one observable island),
+## names buses and branches and sums the deficits over the network islands.
+function _observable_islands_report(net::Net, pieces::Vector)::ObservableIslands
+  nCaller = length(net.nodeVec)
+  islandOf = zeros(Int, nCaller)
+  netOf = zeros(Int, nCaller)
+  buses = Vector{Int}[]
+  labels = String[]
+  rows = NamedTuple[]
+  unmeasured = Int[]
+  unobs = Int[]
+  region = Int[]
+  removed = String[]
+  darkV = Int[]
+  angleDeficit = 0
+  magDeficit = 0
+  kept = NaN
+  dropped = 0.0
+  passes = 0
+  for (k, pc) in enumerate(pieces)
+    for b in pc.buses
+      netOf[b] = k
+    end
+    if !pc.measured
+      push!(unmeasured, k)
+      push!(rows, (network_island = k, n_bus = length(pc.buses), measured = false, n_islands = 0, rank_deficit = 0, angle_rank_deficit = 0, magnitude_rank_deficit = 0, region_buses = Int[], unobservable_branches = Int[]))
+      continue
+    end
+    first0 = length(buses)
+    idOf = Dict{Int,Int}()
+    for b in sort(pc.buses)
+      raw = pc.raw[b]
+      raw == 0 && continue
+      id = get!(idOf, raw) do
+        push!(buses, Int[])
+        length(buses)
+      end
+      islandOf[b] = id
+      push!(buses[id], b)
+    end
+    nk = length(buses) - first0
+    for j = 1:nk
+      push!(labels, nk == 1 ? string(k) : string(k, ".", j))
+    end
+    append!(unobs, pc.unobs)
+    append!(region, pc.region)
+    append!(removed, pc.removed)
+    append!(darkV, pc.darkV)
+    angleDeficit += pc.angle_d
+    magDeficit += pc.mag_d
+    # the gap over the network islands: the smallest kept and the largest
+    # dropped singular value (NaN, none kept, does not win the minimum)
+    isnan(pc.kept) || (kept = isnan(kept) ? pc.kept : min(kept, pc.kept))
+    dropped = max(dropped, pc.dropped)
+    passes = max(passes, pc.passes)
+    push!(rows, (network_island = k, n_bus = length(pc.buses), measured = true, n_islands = nk, rank_deficit = pc.angle_d + pc.mag_d, angle_rank_deficit = pc.angle_d, magnitude_rank_deficit = pc.mag_d, region_buses = sort!(unique(pc.region)), unobservable_branches = sort!(unique(pc.unobs))))
+  end
+  name_by_idx = _bus_name_by_idx(net)
+  names = String[get(name_by_idx, b, string(b)) for b in eachindex(net.nodeVec)]
+  unobs = sort!(unique(unobs))
+  brNames = String[]
+  for k in unobs
+    br = net.branchVec[k]
+    push!(brNames, string(names[Int(br.fromBus)], " - ", names[Int(br.toBus)]))
+  end
+  return ObservableIslands(islandOf, netOf, length(buses), buses, labels, rows, unmeasured, unobs, brNames, sort!(unique(region)), angleDeficit + magDeficit, angleDeficit, magDeficit, kept, dropped, removed, sort!(unique(darkV)), passes, names)
+end
+
+## Union-find islands from the angle null space (concept H2). `W` holds
+## per working-net bus its row of the orthonormal null basis of one pass,
+## in the column-normalized coordinates of that pass, and `cn` the column
+## norms it divided by (the slack row zero, its `cn` Inf): the angle shift
+## of bus i in the null space is u_i = W[i, :] / cn[i]. The two ends f, t
+## of an in-service branch are joined when
+##
+##     |u_f - u_t| <= tol_eq * max(|u_f|, |u_t|) + tol_eq * (1/cn[f] + 1/cn[t]),
+##
+## a relative test plus a floor for the error each end brings: an entry
+## of the orthonormal basis carries an error of the order of the probe
+## tolerance, which the division by cn turns into 1/cn. Row norms do not
+## depend on which orthonormal basis of the null space is taken, so the
+## SVD and the gain-matrix iteration give the same islands where their
+## null spaces agree. There is no single bound over all buses: with the
+## largest shift as the bound, one weak column decided for the whole net
+## (a column holding a 1e-7 noise entry, normalized to unit norm, gave a
+## shift of 1e7 and every other difference counted as zero). Equal shifts
+## inside a connected group is the island definition (concept A2); joining
+## over branches does the grouping and the split into connected parts in
+## one step. Returns one label per bus. `tol_eq` is the probe tolerance of
+## the P-theta model (concept D1, 1e-8 for an exact model).
+function _angle_island_labels(W::Matrix{Float64}, cn::Vector{Float64}, edges::Vector{Tuple{Int,Int,Int}}, tol_eq::Float64)::Vector{Int}
+  nb = size(W, 1)
+  parent = collect(1:nb)
+  function findroot(i)
+    while parent[i] != i
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    end
+    return i
+  end
+  rownorm = [norm(view(W, i, :)) / cn[i] for i = 1:nb]
+  for (_, f, t) in edges
+    diff = sqrt(sum(k -> abs2(W[f, k] / cn[f] - W[t, k] / cn[t]), axes(W, 2); init = 0.0))
+    diff <= tol_eq * max(rownorm[f], rownorm[t]) + tol_eq * (1.0 / cn[f] + 1.0 / cn[t]) || continue
+    rf = findroot(f)
+    rt = findroot(t)
+    rf != rt && (parent[max(rf, rt)] = min(rf, rt))
+  end
+  return [findroot(i) for i = 1:nb]
+end
+
+## connected components of the buses 1..nb over `edges` (k, f, t): one
+## label per bus, the smallest bus of its component
+function _branch_components(nb::Int, edges::Vector{Tuple{Int,Int,Int}})::Vector{Int}
+  parent = collect(1:nb)
+  function findroot(i)
+    while parent[i] != i
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    end
+    return i
+  end
+  for (_, f, t) in edges
+    rf = findroot(f)
+    rt = findroot(t)
+    rf != rt && (parent[max(rf, rt)] = min(rf, rt))
+  end
+  return [findroot(i) for i = 1:nb]
+end
+
+## The decoupled linear models of the active rows `meas` on the working net
+## `snet`, linearized at the flat start with the losses and the shunt
+## terms dropped. `part = :ptheta` (concept K2, F1) takes the magnitudes as
+## known: rows are every active P injection on a bus (zero-injection rows
+## and LINKAGG aggregates of fused buses included), every P flow on a
+## branch, every P link-flow row and every PMU angle (`VaMeas`); columns
+## are the bus angles without the slack (the order of the AC state), the P
+## circulation states of coupler rings and the PMU offset when it is
+## carried. `part = :qv` (concept G4') takes the angles as known: rows are
+## every active Q injection (zero-injection rows and aggregates included),
+## every Q flow, every Q link-flow row and every Vm row; columns are the
+## magnitudes of all buses and the Q circulation states. The Q-V model has
+## no reference column: each observable island needs a magnitude anchor of
+## its own (a Vm row), since flows and injections see only differences.
+## Current and shunt rows carry no row in either model. `acCol[j]` is the
+## AC state column of model column j.
+##
+## Entries: a branch flow read at end i is b (y_i - y_o), y the angle or
+## the magnitude, with the DC series susceptance b = 1 / (x_pu * tap) of the
+## DC power flow (`_dc_branch_tap_shift`, the live tap of a transformer);
+## the phase shift is a constant and enters no column. A branch with
+## x_pu == 0 takes b = 1 / tap: only whether an entry is zero decides the
+## rank (the unit weight gives the same deficits on the shipped cases), and
+## the column normalization after removes the scale. An injection is the
+## sum of the flows leaving its bus over the closed branches, a link row the
+## combination its row model takes (`_link_row_prediction`, the flows of
+## its balance with the opposite sign, the circulation states with their
+## coefficient; shunts and branches inside the fused bus left out like the
+## other shunt terms), a PMU angle theta_i plus the offset and a Vm row
+## V_i, as in the AC model. Branches with an open end and branches inside a
+## fused bus give no entry.
+function _decoupled_model(snet::Net, meas::Vector{Measurement}, part::Symbol, withVaOffset::Bool)
+  part in (:ptheta, :qv) || error("decoupled model: part must be :ptheta or :qv (got $(part))")
+  angles = part === :ptheta
+  nb = length(snet.nodeVec)
+  nθ = nb - 1
+  slackIdx = _find_slack_idx(snet)
+  busCol(i) = angles ? (i == slackIdx ? 0 : (i < slackIdx ? i : i - 1)) : i
+  flowTyp = angles ? PflowMeas : QflowMeas
+  injTyp = angles ? PinjMeas : QinjMeas
+  unitTyp = angles ? VaMeas : VmMeas
+  linkTable = snet._se_link_rows
+  ncirc = _se_link_ncirc(snet)
+  circCol = zeros(Int, ncirc)
+  acCol = angles ? collect(1:nθ) : collect((nθ+1):(nθ+nb))
+  nc = length(acCol)
+  for j = 1:ncirc
+    linkTable.circ_typ[j] == flowTyp || continue
+    nc += 1
+    circCol[j] = nc
+    push!(acCol, nθ + nb + j)
+  end
+  alphaCol = 0
+  if angles && withVaOffset
+    nc += 1
+    alphaCol = nc
+    push!(acCol, nθ + nb + ncirc + 1)
+  end
+  bdc = zeros(Float64, length(snet.branchVec))
+  inc = [Int[] for _ = 1:nb]
+  for (k, br) in enumerate(snet.branchVec)
+    _branch_terminal_state(br) == :closed || continue
+    f = Int(br.fromBus)
+    t = Int(br.toBus)
+    f == t && continue
+    tap, _ = _dc_branch_tap_shift(br)
+    bdc[k] = br.x_pu != 0.0 ? 1.0 / (br.x_pu * tap) : 1.0 / tap
+    push!(inc[f], k)
+    push!(inc[t], k)
+  end
+  Ii = Int[]
+  Jj = Int[]
+  Vv = Float64[]
+  rows = Int[]
+  # a times the flow of branch k read at `side` (1 from end, 2 to end) into row r
+  function addflow!(r::Int, k::Int, side::Int, a::Float64)
+    b = bdc[k]
+    b == 0.0 && return nothing
+    br = snet.branchVec[k]
+    i, o = side == 1 ? (Int(br.fromBus), Int(br.toBus)) : (Int(br.toBus), Int(br.fromBus))
+    ci = busCol(i)
+    co = busCol(o)
+    ci == 0 || (push!(Ii, r); push!(Jj, ci); push!(Vv, a * b))
+    co == 0 || (push!(Ii, r); push!(Jj, co); push!(Vv, -a * b))
+    return nothing
+  end
+  for (q, m) in enumerate(meas)
+    if m.linkIdx !== nothing
+      linkTable isa _SELinkTable || continue
+      lr = linkTable.rows[m.linkIdx]
+      lr.typ == flowTyp || continue
+      push!(rows, q)
+      r = length(rows)
+      for (k, side, a) in lr.branches
+        addflow!(r, k, side, -lr.sign * a)
+      end
+      for (j, a) in lr.circ
+        circCol[j] == 0 && continue
+        push!(Ii, r)
+        push!(Jj, circCol[j])
+        push!(Vv, lr.sign * a)
+      end
+    elseif m.typ == injTyp && m.busIdx !== nothing
+      push!(rows, q)
+      r = length(rows)
+      for k in inc[m.busIdx]
+        addflow!(r, k, Int(snet.branchVec[k].fromBus) == m.busIdx ? 1 : 2, 1.0)
+      end
+    elseif m.typ == flowTyp && m.branchIdx !== nothing
+      push!(rows, q)
+      addflow!(length(rows), m.branchIdx, m.direction == :to ? 2 : 1, 1.0)
+    elseif m.typ == unitTyp && m.busIdx !== nothing
+      push!(rows, q)
+      r = length(rows)
+      c = busCol(m.busIdx)
+      c == 0 || (push!(Ii, r); push!(Jj, c); push!(Vv, 1.0))
+      alphaCol == 0 || (push!(Ii, r); push!(Jj, alphaCol); push!(Vv, 1.0))
+    end
+  end
+  A = sparse(Ii, Jj, Vv, length(rows), nc)
+  return (A = A, rows = rows, acCol = acCol, nθ = nθ, slackIdx = slackIdx)
+end
+
+_ptheta_model(snet::Net, meas::Vector{Measurement}, withVaOffset::Bool) = _decoupled_model(snet, meas, :ptheta, withVaOffset)
+_qv_model(snet::Net, meas::Vector{Measurement}) = _decoupled_model(snet, meas, :qv, false)
+
+## Rank and null space of a decoupled model matrix `A` (P-theta or Q-V,
+## concept K2, G4'): columns normalized to unit norm (a zero column stays
+## zero, its norm taken as 1), the exact rank tolerance
+## eps * max(m, n) * sigma_max (the model is linear and exact, no
+## forward-difference noise), the null basis from the SVD up to
+## `dense_max_n` rows or columns and from the gain-matrix iteration above
+## (`_null_basis`). Returns (N, cn, d, tau, kept, dropped): the orthonormal
+## null basis in the normalized coordinates, the column norms, the deficit,
+## the probe tolerance of the dark rule (concept D1,
+## `_null_probe_tolerance`) and the gap at the rank cut.
+function _decoupled_null(A::SparseMatrixCSC{Float64}, dense_max_n::Integer)
+  c = _SE_DECOUPLED_NULL_CACHE[]
+  c === nothing && return _decoupled_null_compute(A, dense_max_n)
+  key = hash((size(A), A.colptr, A.rowval, A.nzval, dense_max_n))
+  hit = lock(c.lock) do
+    for e in get(c.entries, key, ())
+      (e.dense_max_n == dense_max_n && _same_sparse(e.A, A)) && return e.res
+    end
+    return nothing
+  end
+  hit === nothing || return _decoupled_null_copy(hit)
+  res = _decoupled_null_compute(A, dense_max_n)
+  entry = (A = copy(A), dense_max_n = Int(dense_max_n), res = _decoupled_null_copy(res))
+  lock(c.lock) do
+    push!(get!(() -> Any[], c.entries, key), entry)
+  end
+  return res
+end
+
+## `_decoupled_null` without the cache of the runse! call. Up to
+## `dense_max_n` and `_SE_DENSE_LINALG_MAX_N` rows or columns sigma_max
+## and the null basis come from one full SVD: its singular values differ
+## from `svdvals` only in the last bits, the tolerance with them, and the
+## rank cut lies orders of magnitude away from the tolerance (measured
+## 1.1.0, a margin above 100 on sp_case14 and sp_case16_islands, above 1e7
+## on sp_case1354). Every other size takes `_sigma_max` and `_null_basis`.
+function _decoupled_null_compute(A::SparseMatrixCSC{Float64}, dense_max_n::Integer)
+  m, n = size(A)
+  As = copy(A)
+  cn = ones(Float64, n)
+  vals = nonzeros(As)
+  nzero = 0
+  for j = 1:n
+    r = nzrange(As, j)
+    nrm = isempty(r) ? 0.0 : sqrt(sum(abs2, view(vals, r)))
+    if nrm > 0.0
+      cn[j] = nrm
+      view(vals, r) ./= nrm
+    else
+      nzero += 1
+    end
+  end
+  dense = m > 0 && n > 0 && max(m, n) <= min(dense_max_n, _SE_DENSE_LINALG_MAX_N)
+  F = nothing
+  if dense
+    # the finiteness check of `_sigma_max`
+    _se_require_finite(As)
+    F = svd(Matrix(As); full = true)
+    smax = maximum(F.S)
+  else
+    smax = (m == 0 || n == 0) ? 0.0 : _sigma_max(As)
+  end
+  if smax == 0.0
+    # no row sees a state: every column is free
+    return (N = Matrix{Float64}(I, n, n), cn = cn, d = n, tau = 1.0e-8, kept = NaN, dropped = 0.0)
+  end
+  tol = eps(Float64) * max(m, n) * smax
+  # two steps past the residual test: the exact tolerance sits below what
+  # that test resolves (see `_gain_null_space`)
+  N, r, kept, dropped = F === nothing ? _null_basis(As, tol, dense_max_n, max(1, n - m, nzero); extra_steps = 2) : _null_basis_svd(F, tol, n)
+  return (N = N, cn = cn, d = n - r, tau = _null_probe_tolerance(As, tol; smax = smax), kept = kept, dropped = dropped)
+end
+
+## the same stored matrix, compared on its arrays (the generic `isequal`
+## of two sparse matrices reads them entry by entry, which cost more than
+## the cache saved on sp_case1354); a matrix with other stored zeros
+## counts as a different one
+_same_sparse(A::SparseMatrixCSC, B::SparseMatrixCSC)::Bool = size(A) == size(B) && isequal(A.colptr, B.colptr) && isequal(A.rowval, B.rowval) && isequal(A.nzval, B.nzval)
+
+## A result of `_decoupled_null` with its own arrays: a cache entry is
+## never handed out, a caller that changes N or cn changes its copy.
+_decoupled_null_copy(r) = (N = copy(r.N), cn = copy(r.cn), d = r.d, tau = r.tau, kept = r.kept, dropped = r.dropped)
+
+## The results of `_decoupled_null` within one runse! call under
+## on_unobservable = scheduled or observable_islands: the restoration, its
+## final check, the partition of every round and the rank check of a cut
+## decompose the same P-theta and Q-V matrices again (measured 1.1.0 on
+## sp_case1354: the 1353 x 1353 P-theta matrix three to four times per
+## call). Keyed by the hash of the matrix, a hit compares the stored copy
+## exactly. The lock covers the island tasks of `_se_solve_islands`, which
+## inherit the scope. Outside a runse! call there is no cache.
+struct _SEDecoupledNullCache
+  entries::Dict{UInt,Vector{Any}}
+  lock::ReentrantLock
+end
+_SEDecoupledNullCache() = _SEDecoupledNullCache(Dict{UInt,Vector{Any}}(), ReentrantLock())
+const _SE_DECOUPLED_NULL_CACHE = Base.ScopedValues.ScopedValue{Union{Nothing,_SEDecoupledNullCache}}(nothing)
+
+## The observable islands of one network island (its working net `prep`,
+## concept G1 after Monticelli and Wu). `pt` is the P-theta model of the
+## active non-current rows `activeMeas` and `pn` its null space, `qn` the
+## null space of the Q-V model (column j the magnitude of bus j).
+##
+## Each pass joins the buses whose rows of the P-theta null basis agree
+## over in-service branches (`_angle_island_labels`); a branch whose end
+## rows differ is unobservable. The P injections at the end buses of the
+## unobservable branches and the P link rows whose balance contains the
+## flow of one tie that flow to the flows inside the groups, so they are
+## dropped and the null space of the reduced set is computed again, until
+## a pass finds no new unobservable branch (or no row is left to drop, or
+## `max_passes`). Each pass normalizes the columns of its own rows. The
+## observable islands are the connected parts over the branches not found
+## unobservable: the iteration only removes rows and refines the groups,
+## and every null vector of the reduced set is constant on them.
+##
+## The region (the dark angles) comes from the P-theta null space of the
+## set before the iteration, the dark magnitudes from the Q-V null space.
+## Returns the piece of the report (`_observable_islands_piece`) in the
+## caller's numbering: every member of a fused cluster takes the island and
+## the dark flags of its representative.
+function _observable_islands_working(callerNet::Net, prep::SEWorkingNet, activeMeas::Vector{Measurement}, pt, pn, qn, dense_max_n::Integer, max_passes::Int)
+  snet = prep.snet
+  nb = length(snet.nodeVec)
+  slackIdx = pt.slackIdx
+  thetaCol(i) = i == slackIdx ? 0 : (i < slackIdx ? i : i - 1)
+  edges = Tuple{Int,Int,Int}[]
+  for (k, br) in enumerate(snet.branchVec)
+    _branch_terminal_state(br) == :closed || continue
+    f = Int(br.fromBus)
+    t = Int(br.toBus)
+    f == t && continue
+    push!(edges, (k, f, t))
+  end
+  # boundary row candidates: P injection rows by bus (a LINKAGG aggregate is
+  # the injection of its fused bus) and P link rows by the branches of their
+  # balance; the other rows never leave
+  injRows = Tuple{Int,Int}[]
+  linkRows = Tuple{Int,Vector{Int}}[]
+  for (r, q) in enumerate(pt.rows)
+    mq = activeMeas[q]
+    if mq.linkIdx === nothing
+      (mq.typ == PinjMeas && mq.busIdx !== nothing) && push!(injRows, (r, mq.busIdx))
+    else
+      push!(linkRows, (r, Int[k for (k, _, a) in snet._se_link_rows.rows[mq.linkIdx].branches if a != 0.0]))
+    end
+  end
+  keep = trues(size(pt.A, 1))
+  removed = String[]
+  unobsSet = Set{Int}()
+  passes = 0
+  W, cn, tau = pn.N, pn.cn, pn.tau
+  while true
+    passes += 1
+    if passes > 1
+      q = _decoupled_null(pt.A[keep, :], dense_max_n)
+      W, cn, tau = q.N, q.cn, q.tau
+    end
+    Wb = zeros(Float64, nb, size(W, 2))
+    cnb = fill(Inf, nb)
+    for i = 1:nb
+      p = thetaCol(i)
+      p == 0 && continue
+      Wb[i, :] = view(W, p, :)
+      cnb[i] = cn[p]
+    end
+    # a branch found unobservable leaves the network for the later passes
+    # (Monticelli and Wu): the union never crosses it again
+    open = [e for e in edges if !(e[1] in unobsSet)]
+    labels = _angle_island_labels(Wb, cnb, open, tau)
+    found = Int[k for (k, f, t) in open if labels[f] != labels[t]]
+    union!(unobsSet, found)
+    (isempty(found) || passes >= max_passes) && break
+    boundary = Set{Int}()
+    for k in unobsSet
+      br = snet.branchVec[k]
+      push!(boundary, Int(br.fromBus))
+      push!(boundary, Int(br.toBus))
+    end
+    dropped = false
+    for (r, b) in injRows
+      (keep[r] && b in boundary) || continue
+      keep[r] = false
+      push!(removed, activeMeas[pt.rows[r]].id)
+      dropped = true
+    end
+    for (r, brs) in linkRows
+      (keep[r] && any(in(unobsSet), brs)) || continue
+      keep[r] = false
+      push!(removed, activeMeas[pt.rows[r]].id)
+      dropped = true
+    end
+    dropped || break
+  end
+  comp = _branch_components(nb, [e for e in edges if !(e[1] in unobsSet)])
+  ptDark = Set{Int}(pn.d > 0 ? _null_basis_dark_columns(pn.N, pn.tau) : Int[])
+  qvDark = Set{Int}(qn.d > 0 ? _null_basis_dark_columns(qn.N, qn.tau) : Int[])
+  nCaller = length(callerNet.nodeVec)
+  raw = zeros(Int, nCaller)
+  buses = Int[]
+  region = Int[]
+  darkV = Int[]
+  for b = 1:nCaller
+    s = get(prep.busmap, prep.reps[b], 0)
+    s == 0 && continue
+    push!(buses, b)
+    raw[b] = comp[s]
+    p = thetaCol(s)
+    (p != 0 && p in ptDark) && push!(region, b)
+    # Q-V column s is the magnitude of working-net bus s
+    s in qvDark && push!(darkV, b)
+  end
+  unobs = Int[prep.branches[k] for k in unobsSet]
+  return _observable_islands_piece(buses, raw; unobs = unobs, region = region, removed = removed, darkV = darkV, angle_d = pn.d, mag_d = qn.d, kept = pn.kept, dropped = pn.dropped, passes = passes)
+end
+
+## The factor of the covariance of the estimate for the weak check
+## (concept U4): a selected inverse of the covariance on the pattern of its
+## factor, plus the factor itself for entries outside that pattern.
+##
+## Without constraint rows (`C` has no row) the covariance is G^-1, G =
+## H' W H, from one LDLt of G (CHOLMOD, one symmetric permutation, the input
+## of `takahashi_selected_inverse`). G is positive semidefinite, so every
+## pivot of a nonsingular G is positive; a pivot <= 0 means G is singular at
+## the rounding level.
+##
+## With constraint rows (zero_injection = constraint: rows C, weight 0 in W)
+## the estimate solves min (z - h(x))' W (z - h(x)) subject to c(x) = 0.
+## Linearized, the step is restricted to null(C); with P a basis of null(C)
+## it is dx = P (P' G P)^-1 P' H' W dz, and with Cov(dz) = W^-1 on the
+## measured rows
+##
+##   Cov(x) = E G E = E,   E = P (P' G P)^-1 P'.
+##
+## E is the upper-left n x n block of the inverse of the KKT matrix
+## [G C'; C 0] that the constrained WLS step solves. G alone may be
+## singular (a state seen only through the constraints), so the block is
+## taken from
+##
+##   K = [G_rho  a C'; a C  0],   G_rho = G + rho C' C,
+##
+## whose inverse has the same upper-left block for every rho >= 0 and a > 0:
+## on null(C) G_rho equals G, and scaling the constraint rows and columns by
+## a scales only the other blocks. With rho > 0 G_rho is positive definite
+## whenever the KKT matrix is nonsingular (G is positive semidefinite and
+## definite on null(C)). a and rho bring C to the size of G (a as in
+## `_se_kkt_matrix`, rho = a / max |C|). K is indefinite and CHOLMOD
+## factorizes it without pivoting, so the order is set here: the states in
+## the fill-reducing order of an LDLt of G_rho, each constraint right after
+## the last state it touches. Every leading block is then [G_rho,AA a C_B';
+## a C_B 0] with all columns of C_B in A, nonsingular when C has full row
+## rank, and by Sylvester's law of inertia the pivot of a state is positive
+## and the one of a constraint negative (the postordering of CHOLMOD keeps a
+## constraint after its states, they are its descendants in the elimination
+## tree). A pivot of the other sign means a singular KKT matrix.
+##
+## Returns `(S, F)` with `S[i, j]` the covariance entry (i, j <= n) inside
+## the pattern and `nothing` outside, `F` the LDLt factor (of G or K), or
+## `nothing` when the matrix is singular.
+function _weak_covariance_factor(G::SparseMatrixCSC{Float64}, C::SparseMatrixCSC{Float64})
+  n = size(G, 1)
+  p = size(C, 1)
+  if p == 0
+    F = ldlt(Symmetric(G); check = false)
+    issuccess(F) || return nothing
+    inp, d = _takahashi_ldlt_factor_input(F)
+    all(>(0.0), d) || return nothing
+  else
+    gmax = maximum(abs, diag(G); init = 0.0)
+    cmax = maximum(abs, nonzeros(C); init = 0.0)
+    (gmax > 0.0 && cmax > 0.0) || return nothing
+    a = gmax / cmax
+    ρ = a / cmax
+    Gρ = G + ρ * sparse(C' * C)
+    # the fill-reducing order of the states only
+    Fg = ldlt(Symmetric(Gρ); check = false)
+    issuccess(Fg) || return nothing
+    pos = invperm(Fg.p)
+    Ct = SparseMatrixCSC(transpose(C))
+    after = [Int[] for _ = 1:n]
+    for r = 1:p
+      rng = nzrange(Ct, r)
+      # a constraint that touches no state makes the KKT matrix singular
+      isempty(rng) && return nothing
+      push!(after[maximum(pos[rowvals(Ct)[q]] for q in rng)], n + r)
+    end
+    perm = Int[]
+    for t = 1:n
+      push!(perm, Fg.p[t])
+      append!(perm, after[t])
+    end
+    K = [Gρ a*C'; a*C spzeros(Float64, p, p)]
+    F = ldlt(Symmetric(K); check = false, perm = perm)
+    issuccess(F) || return nothing
+    inp, d = _takahashi_ldlt_factor_input(F)
+    all(i -> d[i] != 0.0 && (F.p[i] <= n) == (d[i] > 0.0), eachindex(d)) || return nothing
+  end
+  S, ok, info = takahashi_selected_inverse(inp)
+  # the guards of the pattern pass (symmetric order, nonzero pivots, unit
+  # L) hold by construction; a pattern-closure miss is a bug
+  ok || error("weak check: the selected inverse of the covariance failed ($(info))")
+  return (S = S, F = F)
+end
+
+## g' Cov g for a sparse row `g` (columns `cols`, values `vals`) from the
+## covariance factor of `_weak_covariance_factor`: from the selected
+## inverse when every pair of columns lies inside its pattern, else by one
+## solve with the factor (zero right-hand side on the constraint rows).
+## Returns the value and whether it needed the solve.
+function _weak_quadratic(fac, cols::AbstractVector{Int}, vals::AbstractVector{Float64})::Tuple{Float64,Bool}
+  v = 0.0
+  for a in eachindex(cols), b in eachindex(cols)
+    z = fac.S[cols[a], cols[b]]
+    if z === nothing
+      rhs = zeros(Float64, size(fac.F, 1))
+      rhs[cols] .= vals
+      y = fac.F \ rhs
+      return sum(vals[k] * y[cols[k]] for k in eachindex(cols)), true
+    end
+    v += vals[a] * z * vals[b]
+  end
+  return v, false
+end
+
+## The weak class from the covariance of the estimate (concept U4, U5) on
+## the AC Jacobian `H` of the active non-current rows `activeMeas` at the
+## state `x`, in physical column units (rad, pu), with the weights of the
+## WLS (W = 1/sigma^2, constraint rows `conIdx` with weight 0, see
+## `_weak_covariance_factor`). Per closed branch k the standard deviation
+## of the active power flow at its from end is sqrt(g_k Cov g_k') in MW,
+## g_k its gradient from the same forward differences as the WLS (one
+## PflowMeas row per branch). g_k touches only the states of its two end
+## buses, and every pair of them is in the pattern of G when a row couples
+## them (a flow or an injection at either end); a pair outside the filled
+## pattern takes one solve (`_weak_quadratic`, counted in
+## `pattern_misses`). Per bus the magnitude standard deviation is the root
+## of the diagonal entry of its Vm column in pu. Weak: a branch above `wf`
+## (MW) or a bus above `wv` (pu). The affected buses are the ends of the
+## branches above `wf` and the buses above `wv` (concept G3, U5). Returns
+## `nothing` when the gain matrix (or the KKT matrix) is singular: no
+## covariance exists, and the caller takes the singular directions
+## (`_weak_directions`).
+function _weak_covariance(H::SparseMatrixCSC{Float64}, activeMeas::Vector{Measurement}, snet::Net, x::Vector{Float64}, slackIdx::Int, Ybus::AbstractMatrix{ComplexF64}, jacEps::Float64, withVaOffset::Bool, wf::Float64, wv::Float64, conIdx::Vector{Int})
+  n = size(H, 2)
+  nb = length(snet.nodeVec)
+  nθ = nb - 1
+  w = _weight_vector(activeMeas)
+  w[conIdx] .= 0.0
+  G = sparse(H' * (Diagonal(w) * H))
+  C = isempty(conIdx) ? spzeros(Float64, 0, n) : sparse(H[conIdx, :])
+  fac = _weak_covariance_factor(G, C)
+  fac === nothing && return nothing
+  brs = Int[k for (k, br) in enumerate(snet.branchVec) if _branch_terminal_state(br) == :closed && br.fromBus != br.toBus]
+  misses = 0
+  flowStd = zeros(Float64, length(brs))
+  if !isempty(brs)
+    fm = Measurement[Measurement(typ = PflowMeas, value = 0.0, sigma = 1.0, branchIdx = k, direction = :from, id = string("weak_flow_", k)) for k in brs]
+    Gt = SparseMatrixCSC(transpose(sparse(first(_measurement_jacobian_fd(fm, snet, x, slackIdx, nb, Ybus; eps = jacEps, withVaOffset = withVaOffset)))))
+    for k in eachindex(brs)
+      rng = nzrange(Gt, k)
+      isempty(rng) && continue
+      v, solved = _weak_quadratic(fac, rowvals(Gt)[rng], nonzeros(Gt)[rng])
+      misses += solved
+      # rounding can leave a tiny negative value on a flow the rows fix
+      flowStd[k] = sqrt(max(v, 0.0))
+    end
+  end
+  vmStd = zeros(Float64, nb)
+  for b = 1:nb
+    v, solved = _weak_quadratic(fac, [nθ + b], [1.0])
+    misses += solved
+    vmStd[b] = sqrt(max(v, 0.0))
+  end
+  hit = Int[k for k in eachindex(brs) if flowStd[k] > wf]
+  buses = Set{Int}(b for b = 1:nb if vmStd[b] > wv)
+  for k in hit
+    br = snet.branchVec[brs[k]]
+    push!(buses, Int(br.fromBus))
+    push!(buses, Int(br.toBus))
+  end
+  return (method = :covariance, n_branches = length(hit), buses = sort!(collect(buses)), branches = brs[hit], branch_flow_sigma_mw = flowStd[hit], max_flow_sigma_mw = maximum(flowStd; init = 0.0), max_vm_sigma_pu = maximum(vmStd; init = 0.0), pattern_misses = misses)
+end
+
+## Weak directions of a measurement set (concept K3, F2, F3, G3) on the
+## weighted AC Jacobian W^(1/2) H in physical column units (rad, pu): the
+## weak check where the gain matrix is singular (`_weak_covariance` returns
+## nothing, no covariance exists). `H` the forward-difference Jacobian of
+## the active non-current rows `activeMeas` at `x`, W = 1/sigma^2 per row.
+## Along a right singular direction v_i with singular value sigma_i the
+## estimate has the standard deviation 1/sigma_i, so the active power flow
+## at the from end of branch k has s_ik = |g_k . v_i| / sigma_i (MW, g_k its
+## gradient from the same forward differences on one PflowMeas row per
+## closed branch) and the magnitudes t_i = max_j |v_ji| / sigma_i (pu, j
+## over the Vm columns). A direction is weak when max_k s_ik > `wf` (MW) or
+## t_i > `wv` (pu). A null direction of the AC Jacobian (sigma_i = 0) is
+## weak as soon as it moves a flow or a magnitude.
+##
+## Only directions with sigma_i < max(max_k |g_k| / wf, 1 / wv) can be weak,
+## so only those are computed: up to `dense_max_n` rows or columns from the
+## SVD, above as the Ritz pairs of the gain-matrix iteration below that
+## bound (`_gain_null_space`, k grows until a Ritz value lies above it).
+## Over the weak directions the flow standard deviation of branch k is the
+## root of the sum of s_ik^2 and the one of the magnitude of bus j the root
+## of the sum of (v_ji / sigma_i)^2. Returns the report of
+## `_weak_covariance` (method :directions): the branches whose flow
+## standard deviation exceeds `wf` (with that value), the affected buses
+## (the ends of those branches and the buses whose magnitude standard
+## deviation exceeds `wv`), and the largest branch-flow and magnitude
+## standard deviation over the weak directions, per branch and per bus as
+## on the covariance path.
+function _weak_directions(H::SparseMatrixCSC{Float64}, activeMeas::Vector{Measurement}, snet::Net, x::Vector{Float64}, slackIdx::Int, Ybus::AbstractMatrix{ComplexF64}, jacEps::Float64, withVaOffset::Bool, wf::Float64, wv::Float64, dense_max_n::Integer)
+  m, n = size(H)
+  nb = length(snet.nodeVec)
+  nθ = nb - 1
+  A = Diagonal(sqrt.(_weight_vector(activeMeas))) * H
+  brs = Int[k for (k, br) in enumerate(snet.branchVec) if _branch_terminal_state(br) == :closed && br.fromBus != br.toBus]
+  Gk = if isempty(brs)
+    spzeros(Float64, 0, n)
+  else
+    fm = Measurement[Measurement(typ = PflowMeas, value = 0.0, sigma = 1.0, branchIdx = k, direction = :from, id = string("weak_flow_", k)) for k in brs]
+    sparse(first(_measurement_jacobian_fd(fm, snet, x, slackIdx, nb, Ybus; eps = jacEps, withVaOffset = withVaOffset)))
+  end
+  gmax = isempty(brs) ? 0.0 : maximum(norm(view(Gk, k, :)) for k in axes(Gk, 1))
+  bound = max(gmax / wf, 1.0 / wv)
+  if max(m, n) <= dense_max_n
+    F = svd(Matrix(A); full = true)
+    # a wide matrix has n - m singular values zero beyond the computed ones
+    S = vcat(F.S, zeros(Float64, n - length(F.S)))
+    cand = Int[i for i in eachindex(S) if S[i] < bound]
+    V = F.V[:, cand]
+    σ = S[cand]
+  else
+    d, V, sv = _gain_null_space(sparse(A), bound, 10; own_scale = true)
+    σ = sv[1:d]
+  end
+  # a value over sigma_i, Inf along a null direction that moves the value
+  over(a, s) = s > 0.0 ? a / s : (a > 0.0 ? Inf : 0.0)
+  GV = Matrix(Gk * V)
+  s = [isempty(brs) ? 0.0 : maximum(k -> over(abs(GV[k, i]), σ[i]), axes(GV, 1)) for i in eachindex(σ)]
+  t = [maximum(j -> over(abs(V[j, i]), σ[i]), (nθ+1):(nθ+nb)) for i in eachindex(σ)]
+  weak = Int[i for i in eachindex(σ) if s[i] > wf || t[i] > wv]
+  flowStd = [sqrt(sum(i -> over(abs(GV[k, i]), σ[i])^2, weak; init = 0.0)) for k in eachindex(brs)]
+  vmStd = [sqrt(sum(i -> over(abs(V[nθ+b, i]), σ[i])^2, weak; init = 0.0)) for b = 1:nb]
+  hit = Int[k for k in eachindex(brs) if flowStd[k] > wf]
+  buses = Set{Int}(b for b = 1:nb if vmStd[b] > wv)
+  for k in hit
+    br = snet.branchVec[brs[k]]
+    push!(buses, Int(br.fromBus))
+    push!(buses, Int(br.toBus))
+  end
+  return (method = :directions, n_branches = length(hit), buses = sort!(collect(buses)), branches = brs[hit], branch_flow_sigma_mw = flowStd[hit], max_flow_sigma_mw = maximum(flowStd; init = 0.0), max_vm_sigma_pu = maximum(vmStd; init = 0.0), pattern_misses = 0)
+end
+
+## The weak report of one network island in the caller's numbering: every
+## member of a fused cluster takes the flag of its representative, branches
+## through `prep.branches`. `basis` says at which state the class was taken
+## (:stored_state, :estimated_state).
+function _weak_report_caller(callerNet::Net, prep::SEWorkingNet, w, basis::Symbol)
+  inW = Set(w.buses)
+  buses = Int[b for b in eachindex(callerNet.nodeVec) if get(prep.busmap, prep.reps[b], 0) in inW]
+  return (basis = basis, method = w.method, n_branches = w.n_branches, n_buses = length(buses), buses = buses, branches = Int[prep.branches[k] for k in w.branches], branch_flow_sigma_mw = copy(w.branch_flow_sigma_mw), max_flow_sigma_mw = w.max_flow_sigma_mw, max_vm_sigma_pu = w.max_vm_sigma_pu, pattern_misses = w.pattern_misses)
+end
+
+## the weak report of a network island where the class was not determined
+## (no stored state, or the set is not observable)
+_weak_report_empty() = (basis = :not_determined, method = :none, n_branches = 0, n_buses = 0, buses = Int[], branches = Int[], branch_flow_sigma_mw = Float64[], max_flow_sigma_mw = 0.0, max_vm_sigma_pu = 0.0, pattern_misses = 0)
+
+## the weak report `w` of a subnet (network island or estimated island
+## `row` of a partition) in the caller's numbering, one part for
+## `_weak_report_merge`; the method of the merged row is the one of `w`'s
+## first row
+function _weak_part_in_caller(w, row)
+  method = isempty(w.network_islands) ? :none : first(w.network_islands).method
+  return (basis = w.basis, method = method, n_branches = w.n_branches, buses = Int[row.buses[b] for b in w.buses], branches = Int[row.branches[k] for k in w.branches], branch_flow_sigma_mw = w.branch_flow_sigma_mw, max_flow_sigma_mw = w.max_flow_sigma_mw, max_vm_sigma_pu = w.max_vm_sigma_pu, pattern_misses = w.pattern_misses)
+end
+
+## The weak report of the whole net from one report per network island
+## (`parts[k]` for network island k, `nothing` for one without
+## measurements; buses and branches already in the caller's numbering):
+## the per-network-island rows, the union of buses and branches, their
+## counts and the largest standard deviations. `basis` is the one of the
+## network islands where the class was determined, `:not_determined` when
+## it was determined in none (the rows say which, and by which method).
+function _weak_report_merge(parts::Vector)
+  rows = NamedTuple[]
+  buses = Int[]
+  branches = Int[]
+  flow = Float64[]
+  maxF = 0.0
+  maxV = 0.0
+  misses = 0
+  basis = :not_determined
+  for (k, w) in enumerate(parts)
+    w === nothing && continue
+    push!(rows, (network_island = k, basis = w.basis, method = w.method, n_branches = w.n_branches, n_buses = length(w.buses), buses = w.buses, branches = w.branches))
+    w.basis === :not_determined || (basis = w.basis)
+    append!(buses, w.buses)
+    append!(branches, w.branches)
+    append!(flow, w.branch_flow_sigma_mw)
+    maxF = max(maxF, w.max_flow_sigma_mw)
+    maxV = max(maxV, w.max_vm_sigma_pu)
+    misses += w.pattern_misses
+  end
+  sort!(unique!(buses))
+  return (basis = basis, n_branches = length(branches), n_buses = length(buses), buses = buses, branches = branches, branch_flow_sigma_mw = flow, max_flow_sigma_mw = maxF, max_vm_sigma_pu = maxV, pattern_misses = misses, network_islands = rows)
+end
+
+## a weak report taken at voltages that are an estimate: every basis
+## :stored_state becomes :estimated_state (a network island where the class
+## was not determined keeps :not_determined)
+function _weak_at_estimate(w)
+  relabel(b) = b === :stored_state ? :estimated_state : b
+  return merge(w, (basis = relabel(w.basis), network_islands = NamedTuple[merge(r, (basis = relabel(r.basis),)) for r in w.network_islands]))
+end
+
+## The weak class of one network island at the voltages stored in `net`
+## (concept G2, U4): the Jacobian of the active non-current rows at the
+## stored state, the flow and magnitude standard deviations from the
+## covariance (`_weak_covariance`, with the constraint rows of
+## `state_estimation.zero_injection = constraint`), in the caller's
+## numbering. Where the gain matrix is singular the singular directions
+## decide (`_weak_directions`). The class is not determined on a net that
+## stores the flat profile. `H` may hand in the Jacobian when the caller
+## built it at the stored state already.
+function _weak_network_island(net::Net, prep::SEWorkingNet, activeMeas::Vector{Measurement}, withVaOffset::Bool, cfg::StateEstimationConfig, dense_max_n::Integer; H = nothing)
+  _se_has_stored_state(net) || return _weak_report_empty()
+  snet = prep.snet
+  slackIdx = _find_slack_idx(snet)
+  Ybus = createYBUS(net = snet)
+  x = _initial_state_vector(snet, slackIdx; flatstart = false, withVaOffset = withVaOffset)
+  Hw = sparse(H === nothing ? first(_measurement_jacobian_fd(activeMeas, snet, x, slackIdx, length(snet.nodeVec), Ybus; eps = cfg.jac_eps, withVaOffset = withVaOffset)) : H)
+  wf = cfg.observability.weak_flow_sigma_mw
+  wv = cfg.observability.weak_vm_sigma_pu
+  w = _weak_covariance(Hw, activeMeas, snet, x, slackIdx, Ybus, cfg.jac_eps, withVaOffset, wf, wv, _zero_injection_constraint_rows(activeMeas, cfg.zero_injection))
+  w === nothing && (w = _weak_directions(Hw, activeMeas, snet, x, slackIdx, Ybus, cfg.jac_eps, withVaOffset, wf, wv, dense_max_n))
+  return _weak_report_caller(net, prep, w, :stored_state)
+end
+
+## the working net and the active rows the observability checks use: the
+## contracted net of `_se_prepare`, current rows (ImagMeas, IaMeas) dropped
+function _observability_rows(net::Net, measurements::Vector{Measurement}, caller::AbstractString)
+  prep = _se_prepare(net, measurements)
+  keep = [k for k in eachindex(prep.meas) if !(prep.meas[k].typ in (ImagMeas, IaMeas))]
+  isempty(keep) && throw(SENoActiveMeasurementsError("$(caller): no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+  return prep, prep.meas[keep], prep.origIdx[keep]
+end
+
+"""
+    evaluate_weak_observability(net, measurements; dense_max_n=$(_SE_DENSE_LINALG_MAX_N)) -> NamedTuple
+    evaluate_weak_observability(net; kwargs...) -> NamedTuple
+
+The weak class of the active measurements (concept K3, G2) at the voltages
+stored in `net`. After [`runse!`](@ref) with `state_estimation.update_net`
+these are the estimated voltages, and the result is the final weak class of
+the estimate (what `runse!` reports in `weakObservability`); before an
+estimation it is the provisional class at the stored state (what
+[`evaluate_global_observability`](@ref) reports).
+
+The class comes from the covariance of the estimate at that state: G =
+H' W H of the active rows (physical units, W = 1/sigma^2, the weights of
+the WLS), its inverse as a sparse selected inverse (Takahashi). Per
+in-service branch the standard deviation of the active power flow at its
+from end is sqrt(g G^-1 g') in MW, g the gradient of that flow; per bus
+the one of the voltage magnitude is the root of the diagonal entry in pu.
+With `state_estimation.zero_injection = constraint` the covariance is the
+one of the constrained estimate, from the KKT matrix of the constraint
+rows. The set is weakly observable when a branch flow exceeds
+`state_estimation.observability.weak_flow_sigma_mw` (MW) or a magnitude
+exceeds `weak_vm_sigma_pu` (pu). Where the gain matrix is singular there is
+no covariance; then the singular directions of W^(1/2) H decide, a null
+direction counting as weak as soon as it moves a flow or a magnitude
+(`method = :directions` in the rows). Each network island is judged on its
+own subnet, as the estimator solves it; current rows carry no
+observability, and the range check of `runse!` applies to the voltage
+rows.
+
+Returns `(weakly_observable, basis, n_branches, n_buses, buses, branches,
+branch_flow_sigma_mw, max_flow_sigma_mw, max_vm_sigma_pu, pattern_misses,
+network_islands)`: `basis` is `:stored_state`, or `:not_determined` when
+the net stores the flat profile (every |V| 1 pu, every angle at the slack
+angle), where nothing is computed. `branches` are the branches whose flow
+standard deviation exceeds the bound (with that value in MW in
+`branch_flow_sigma_mw`), `buses` the affected buses: the ends of those
+branches and the buses whose magnitude standard deviation exceeds its
+bound. `max_flow_sigma_mw` and `max_vm_sigma_pu` are the largest values
+over all branches and buses. `pattern_misses` counts the flows whose
+covariance entries were outside the pattern of the selected inverse and
+took a direct solve. `network_islands` has one row per measured network
+island `(network_island, basis, method, n_branches, n_buses, buses,
+branches)`. Errors like `evaluate_global_observability` when no active
+measurement is left.
+"""
+evaluate_weak_observability(net::Net, measurements::Vector{Measurement}; dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N) = _evaluate_weak_observability(net, measurements; dense_max_n = dense_max_n)
+
+## `evaluate_weak_observability` without the docstring wrapper: runse! and
+## `_se_weak_at_result` call it on the net that holds the estimate.
+function _evaluate_weak_observability(net::Net, measurements::Vector{Measurement}; dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
+  cfg = state_estimation_config()
+  # the rows the estimator reads: the range check of runse! (a substitute
+  # carries its widened sigma, a row on a de-energized bus is inactive)
+  measurements = first(_se_range_check(net, measurements))
+  part = _se_island_partition(net, measurements)
+  parts = Any[nothing for _ in part.rows]
+  function single(inet::Net, meas::Vector{Measurement})
+    prep, activeMeas, _ = _observability_rows(inet, meas, "evaluate_weak_observability")
+    return _weak_network_island(inet, prep, activeMeas, _va_offset_active(activeMeas, cfg.pmu_ref_offset), cfg, dense_max_n)
+  end
+  if length(part.rows) <= 1
+    parts = Any[single(net, measurements)]
+  else
+    base = _se_island_base(net)
+    for (k, row) in enumerate(part.rows)
+      isempty(part.perIsland[k]) && continue
+      sub = _se_island_subnet(net, row; base = base)
+      meas_k, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[k])
+      isempty(meas_k) && continue
+      w = single(sub.inet, meas_k)
+      parts[k] = merge(w, (buses = Int[row.buses[b] for b in w.buses], branches = Int[row.branches[j] for j in w.branches]))
+    end
+    all(isnothing, parts) && throw(SENoActiveMeasurementsError("evaluate_weak_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+  end
+  w = _weak_report_merge(parts)
+  return merge((weakly_observable = w.n_buses > 0,), w)
+end
+
+evaluate_weak_observability(net::Net; kwargs...) = evaluate_weak_observability(net, Measurement[m for m in net.measurements]; kwargs...)
+
+"""
+    evaluate_global_observability(net, measurements; tol=nothing, observable_islands=true, dense_max_n=$(_SE_DENSE_LINALG_MAX_N)) -> NamedTuple
 
 Evaluate global observability on active measurements using the finite-difference
 measurement Jacobian.
@@ -2368,34 +3678,84 @@ Includes global redundancy metrics
 Quality classes:
 - `:good`: observable and no critical single measurement
 - `:critical`: observable, but at least one single critical measurement (or ν <= 0)
-- `:not_observable`: not observable
+- `:weakly_observable`: no null direction in the decoupled models, but a
+  branch flow or magnitude above the weak bounds (below), provisional
+  before the estimation
+- `:not_observable`: a null direction in the decoupled P-theta or Q-V
+  model
+
+Not observable (concept K2, G4'): the active rows form two decoupled
+linear models. The P-theta model takes the P injections, P flows and PMU
+angles against the bus angles (without the slack), the P circulation
+states of coupler rings and the PMU offset; the Q-V model the Q
+injections, Q flows and Vm rows against the bus magnitudes and the Q
+circulation states. Entries are 1/x of the DC power flow, columns
+normalized, the rank tolerance exact (eps * max(m, n) * sigma_max).
+`angle_rank_deficit` and `magnitude_rank_deficit` are their deficits,
+`rank_deficit` their sum, `angle_sv_kept_min` and `angle_sv_dropped_max`
+the gap at the P-theta rank cut. `numerical_observable` is true when
+neither model has a null direction. `numerical_rank` stays the rank of the
+AC Jacobian; the AC model decides the weak class only.
+
+Weakly observable (concept K3, G2, U4): in the covariance of the estimate
+(G = H' W H of the weighted AC Jacobian, physical units, W = 1/sigma^2)
+the standard deviation of an active branch flow exceeds
+`state_estimation.observability.weak_flow_sigma_mw` (MW) or the one of a
+voltage magnitude exceeds `weak_vm_sigma_pu` (pu), see
+[`evaluate_weak_observability`](@ref). Before the estimation the class is
+provisional, taken at the voltages stored in the net with the same
+covariance as after it; on a net that stores the flat profile, and for a
+not-observable set, it is not determined. `weakly_observable` is true for
+this class only; `weak_observability` carries the basis (`:stored_state`
+or `:not_determined`), the branches above the flow bound (with their flow
+standard deviation in MW) and their count, the affected buses and their
+count, the largest flow and magnitude standard deviation and one row per
+network island.
 
 For a not-observable set the result additionally names the dark states in
-`unobservable_state_columns` (state columns touched by the null space of
-`H`); empty when observable. This is the rigorous per-state answer that
-the column-restricted local check cannot give (see
-[`evaluate_local_observability`](@ref)).
+`unobservable_state_columns`: the angle columns touched by the null space
+of the P-theta model and the magnitude columns touched by the null space
+of the Q-V model; empty when observable. This is the rigorous per-state
+answer that the column-restricted local check cannot give (see
+[`evaluate_local_observability`](@ref)). Up to `dense_max_n` rows or
+columns the null spaces come from the SVD, above from the gain-matrix
+iteration (see [`evaluate_observability_matrix`](@ref));
+both paths give the same classification.
 
-Current-magnitude measurements (`ImagMeas`) are excluded before the Jacobian
-is built: currents are auxiliary measurements that must never carry
-observability, so the verdict states whether the system is
-observable from the power and voltage measurements alone.
+`observable_islands` holds the [`ObservableIslands`](@ref) of a
+not-observable set (see [`identify_observable_islands`](@ref)); it is the
+empty report for an observable set and for `observable_islands = false`.
 
-The verdict is a two-stage check (SE phase 4):
+Network islands (topologically separate parts with their own reference,
+closed links joined) are judged one by one on their own subnet, the way the
+estimator solves them; `islands` holds one row per network island. A
+network island is no gap: it adds nothing to a deficit, and one without
+measurements is reported as not measured (`n_unmeasured_islands`) and does
+not enter the verdict.
 
-1. **Structural**: `detect_ac_islands` on the contracted SE net. More than
-   one synchronous island containing measured buses yields
-   `quality = :not_observable` with `:structural_islands` in `notes`,
-   regardless of numeric rank (no measurement ties the islands' angle
-   references together).
-2. **FD-aware numeric rank**: the Jacobian is built by forward differences,
-   so its error floor is O(`jacEps`), not machine epsilon; an eps-scale SVD
-   tolerance would count FD noise as rank. With `tol = nothing` the rank
-   tolerance therefore defaults to
-   `state_estimation.rank_tol_factor * jacEps * sigma_max` (factor default
-   10.0). An explicitly passed `tol` wins.
+Current measurements (`ImagMeas`, `IaMeas`) are excluded before the
+Jacobian is built: they must never carry observability, so the verdict
+states whether the system is observable from the power and voltage
+measurements alone. The voltage range check of `runse!` applies (a row on a
+de-energized bus is inactive, an out-of-range row on an energized bus is
+replaced).
+
+The AC Jacobian is built by forward differences, so its error floor is
+O(`jacEps`), not machine epsilon. With `tol = nothing` the rank tolerance of
+`numerical_rank` is `state_estimation.rank_tol_factor * jacEps * sigma_max`
+(factor default 10.0); an explicitly passed `tol` wins.
 """
-function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; tol = nothing)
+function evaluate_global_observability(net::Net, measurements::Vector{Measurement}; tol = nothing, observable_islands::Bool = true, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
+  return _evaluate_global_observability(net, measurements; tol = tol, islands_mode = observable_islands ? :unobservable : :off, dense_max_n = dense_max_n)
+end
+
+## `islands_mode`: :unobservable decomposes a not-observable set only (the
+## result field), :always every set (identify_observable_islands), :off
+## never. `max_passes` caps the boundary-injection iteration. `weak_class =
+## false` skips the provisional weak class (reported as not determined):
+## runse! needs only the verdict and the observable islands before it
+## estimates the observable islands one by one.
+function _evaluate_global_observability(net::Net, measurements::Vector{Measurement}; tol = nothing, islands_mode::Symbol = :unobservable, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N, max_passes::Int = typemax(Int), weak_class::Bool = true)
   # settings from the registry (#381); `tol` is the numerical rank
   # tolerance of the SVD, not a configuration key
   base = state_estimation_config()
@@ -2404,25 +3764,24 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
   pmuRefOffset = base.pmu_ref_offset
   rankTolFactor = base.rank_tol_factor
   base_cfg_criticality_method = base.criticality_method
-  # island-wise nets: judge every measured island on its own subnet with its
+  cfg = base
+  # the rows the estimator reads: the range check of runse! (a substitute
+  # carries its widened sigma, a row on a de-energized bus is inactive)
+  measurements = first(_se_range_check(net, measurements))
+  # network islands: judge every measured one on its own subnet with its
   # own reference (the estimator solves them the same way) and aggregate;
-  # unmeasured islands are excluded from the estimation and reported
+  # unmeasured network islands are excluded from the estimation and reported
   part = _se_island_partition(net, measurements)
   if length(part.rows) > 1
-    return _evaluate_global_observability_islands(net, measurements, part; tol = tol)
+    return _evaluate_global_observability_islands(net, measurements, part; tol = tol, islands_mode = islands_mode, dense_max_n = dense_max_n, max_passes = max_passes, weak_class = weak_class)
   end
 
   # SE phase 3: observability is judged on the contracted net (links fused),
-  # with the same measurement remapping the estimator uses
-  prep = _se_prepare(net, measurements)
+  # with the same measurement remapping the estimator uses; currents must
+  # not carry observability, their rows are dropped up front
+  callerNet = net
+  prep, activeMeas, activeIdx = _observability_rows(net, measurements, "evaluate_global_observability")
   net = prep.snet
-  activeMeas = prep.meas
-  activeIdx = prep.origIdx
-  # currents must not carry observability: drop ImagMeas rows up front
-  keep = [k for k in eachindex(activeMeas) if !(activeMeas[k].typ in (ImagMeas, IaMeas))]
-  activeMeas = activeMeas[keep]
-  activeIdx = activeIdx[keep]
-  isempty(activeMeas) && error("evaluate_global_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)")
 
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
@@ -2433,48 +3792,60 @@ function evaluate_global_observability(net::Net, measurements::Vector{Measuremen
 
   # Normalize rows, then columns, before the rank test: one tolerance then means the
   # same thing at 14 buses and at 25000 (see _column_normalized).
-  Hs = _column_normalized(H)
+  Hs, _ = _row_column_normalized(H)
   effTol = tol
   if effTol === nothing && !isempty(Hs)
     effTol = rankTolFactor * jacEps * _sigma_max(Hs)
   end
-  base = _evaluate_observability_from_jacobian(Hs, activeIdx; tol = effTol, criticality_method = base_cfg_criticality_method, rank_method = base.rank_method)
-  cond_notes = Symbol[]
+  base = _observability_core(Hs, activeIdx; tol = effTol, criticality_method = base_cfg_criticality_method, rank_method = base.rank_method, dense_max_n = dense_max_n, dark_states = false)
 
-  # stage 1: structural island check on the contracted net. More than one
-  # synchronous island with measured buses means no measurement chain ties
-  # the angle references together; the set is not observable no matter what
-  # the FD rank says.
-  notes = copy(cond_notes)
-  islands = detect_ac_islands(net)
-  if length(islands.rows) > 1
-    measuredBuses = Set{Int}()
-    for m in activeMeas
-      m.busIdx !== nothing && push!(measuredBuses, m.busIdx)
-      if m.branchIdx !== nothing && 1 <= m.branchIdx <= length(net.branchVec)
-        br = net.branchVec[m.branchIdx]
-        push!(measuredBuses, Int(br.fromBus))
-        push!(measuredBuses, Int(br.toBus))
-      end
-    end
-    nMeasuredIslands = count(row -> any(b -> b in measuredBuses, row.buses), islands.rows)
-    if nMeasuredIslands > 1
-      push!(notes, :structural_islands)
-      return merge(base, (quality = :not_observable, numerical_observable = false, notes = notes))
-    end
+  # not observable is a null direction of the decoupled P-theta or Q-V
+  # model (concept K2, G4'): the verdict and the dark states come from
+  # them, the AC rank stays a field. A set observable in the decoupled
+  # models and in the AC Jacobian keeps every field as it was.
+  pt = _ptheta_model(net, activeMeas, withVaOffset)
+  pn = _decoupled_null(pt.A, dense_max_n)
+  qt = _qv_model(net, activeMeas)
+  qn = _decoupled_null(qt.A, dense_max_n)
+  decoupledObs = pn.d == 0 && qn.d == 0
+  if !decoupledObs || !base.numerical_observable
+    dark = Int[]
+    pn.d > 0 && append!(dark, Int[pt.acCol[j] for j in _null_basis_dark_columns(pn.N, pn.tau)])
+    qn.d > 0 && append!(dark, Int[qt.acCol[j] for j in _null_basis_dark_columns(qn.N, qn.tau)])
+    hasCritical = !isempty(base.numerical_critical_measurement_indices) || !isempty(base.structural_critical_measurement_indices)
+    base = merge(base, (numerical_observable = decoupledObs, quality = _redundancy_quality(decoupledObs && base.structural_observable, base.dof, hasCritical), unobservable_state_columns = sort!(unique(dark))))
   end
 
-  return merge(base, (notes = notes,))
+  result = merge(base, (notes = Symbol[],))
+
+  # the weak class (concept K3, G2), provisional before the estimation: at
+  # the stored state of the net, not determined without one or for a
+  # not-observable set. The Jacobian above is reused when it was built at
+  # the stored state already.
+  weak = if result.quality === :not_observable || !weak_class
+    _weak_report_empty()
+  else
+    _weak_network_island(callerNet, prep, activeMeas, withVaOffset, cfg, dense_max_n; H = flatstart ? nothing : H)
+  end
+  # the weak class sits between not observable and the observable qualities
+  (result.quality !== :not_observable && weak.n_buses > 0) && (result = merge(result, (quality = :weakly_observable,)))
+
+  want = islands_mode === :always || (islands_mode === :unobservable && result.quality === :not_observable)
+  isl = want ? _observable_islands_report(callerNet, [_observable_islands_working(callerNet, prep, activeMeas, pt, pn, qn, dense_max_n, max_passes)]) : ObservableIslands()
+  return merge(result, (angle_rank_deficit = pn.d, magnitude_rank_deficit = qn.d, rank_deficit = pn.d + qn.d, angle_sv_kept_min = pn.kept, angle_sv_dropped_max = pn.dropped, weakly_observable = result.quality === :weakly_observable, weak_observability = _weak_report_merge(Any[weak]), observable_islands = isl))
 end
 
-## per-island observability merge (multi-island nets): quality is the WORST
-## verdict over the measured islands, counts are summed, critical-measurement
-## indices are remapped into the caller's measurement indexing. Unmeasured
-## islands do not enter the verdict (the estimator skips them); their count
-## is reported. `unobservable_state_columns` stays per island (inside the
-## `islands` rows), the merged field is left empty.
-function _evaluate_global_observability_islands(net::Net, measurements::Vector{Measurement}, part; kwargs...)
-  sev(q) = q == :not_observable ? 3 : (q == :critical ? 2 : 1)
+## per-network-island observability merge: quality is the WORST verdict
+## over the measured network islands, counts and deficits are summed,
+## critical-measurement indices are remapped into the caller's measurement
+## indexing. Network islands without measurements do not enter the verdict
+## (the estimator skips them) and add no deficit; their count is reported.
+## `unobservable_state_columns` stays per network island (inside the
+## `islands` rows), the merged field is left empty. The observable islands
+## are numbered per network island ("k.j"); a measured network island that
+## is observable is one observable island "k".
+function _evaluate_global_observability_islands(net::Net, measurements::Vector{Measurement}, part; islands_mode::Symbol = :unobservable, kwargs...)
+  sev(q) = q == :not_observable ? 4 : (q == :weakly_observable ? 3 : (q == :critical ? 2 : 1))
   islandsOut = NamedTuple[]
   worst = :good
   nMeas = 0
@@ -2485,6 +3856,22 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
   critStr = Int[]
   measured = 0
   unmeasured = 0
+  angleDef = 0
+  magDef = 0
+  svKept = NaN
+  svDropped = 0.0
+  weakParts = Any[nothing for _ in part.rows]
+  subResults = Any[nothing for _ in part.rows]
+  # the criticality fields of the single-island result, merged: skipped
+  # when one subnet skipped, the fallback method when one subnet fell back,
+  # the wii per active row with the rows in the caller's indexing
+  critSkipped = false
+  strSkipped = false
+  critMethod = state_estimation_config().criticality_method
+  rankMethod = state_estimation_config().rank_method
+  wiiAll = Float64[]
+  activeAll = Int[]
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
     idxs = part.perIsland[iid]
     if isempty(idxs)
@@ -2492,14 +3879,18 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
       push!(islandsOut, (island = iid, n_bus = row.n_bus, measured = false, result = nothing))
       continue
     end
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
     if isempty(meas_i)
       unmeasured += 1
       push!(islandsOut, (island = iid, n_bus = row.n_bus, measured = false, result = nothing))
       continue
     end
-    r = evaluate_global_observability(sub.inet, meas_i; kwargs...)
+    # the observable islands of every measured subnet are needed as soon as
+    # one of them is not observable, which is known only after the loop; an
+    # observable subnet computes nothing for them and counts as one
+    # observable island
+    r = _evaluate_global_observability(sub.inet, meas_i; islands_mode = islands_mode, kwargs...)
     measured += 1
     sev(r.quality) > sev(worst) && (worst = r.quality)
     nMeas += r.n_measurements
@@ -2508,13 +3899,66 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
     mm += r.structural_matching
     append!(critNum, Int[keptIdx[i] for i in r.numerical_critical_measurement_indices if 1 <= i <= length(keptIdx)])
     append!(critStr, Int[keptIdx[i] for i in r.structural_critical_measurement_indices if 1 <= i <= length(keptIdx)])
+    subResults[iid] = r
+    critSkipped |= r.criticality_skipped
+    strSkipped |= r.structural_criticality_skipped
+    r.criticality_method === :rank && (critMethod = :rank)
+    r.rank_method === :decomposition && (rankMethod = :decomposition)
+    if length(r.criticality_wii) == length(r.active_measurement_indices)
+      append!(wiiAll, r.criticality_wii)
+      # index 0 is a LINKAGG aggregate of a link cluster (no caller row); it
+      # stays 0 so the list keeps the length of criticality_wii, as in the
+      # single-island result
+      append!(activeAll, Int[i == 0 ? 0 : keptIdx[i] for i in r.active_measurement_indices])
+    end
+    angleDef += r.angle_rank_deficit
+    magDef += r.magnitude_rank_deficit
+    # the gap over the subnets: the smallest kept and the largest dropped
+    # singular value (NaN, none kept, does not win the minimum)
+    isnan(r.angle_sv_kept_min) || (svKept = isnan(svKept) ? r.angle_sv_kept_min : min(svKept, r.angle_sv_kept_min))
+    svDropped = max(svDropped, r.angle_sv_dropped_max)
+    # the weak report of the subnet in the caller's numbering
+    wk = r.weak_observability
+    weakParts[iid] = _weak_part_in_caller(wk, row)
     push!(islandsOut, (island = iid, n_bus = row.n_bus, measured = true, result = r))
   end
-  measured == 0 && error("evaluate_global_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)")
+  measured == 0 && throw(SENoActiveMeasurementsError("evaluate_global_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
   ν = nMeas - nStates
+  want = islands_mode === :always || (islands_mode === :unobservable && worst === :not_observable)
+  isl = ObservableIslands()
+  if want
+    nCaller = length(net.nodeVec)
+    pieces = Any[]
+    for (iid, row) in enumerate(part.rows)
+      r = subResults[iid]
+      if r === nothing
+        push!(pieces, _observable_islands_piece(collect(row.buses), zeros(Int, nCaller); measured = false))
+        continue
+      end
+      rep = r.observable_islands
+      raw = zeros(Int, nCaller)
+      if isempty(rep)
+        # an observable network island is one observable island
+        for b in row.buses
+          raw[b] = 1
+        end
+        push!(pieces, _observable_islands_piece(collect(row.buses), raw; kept = r.angle_sv_kept_min, dropped = r.angle_sv_dropped_max))
+        continue
+      end
+      # subnet bus sb is row.buses[sb], subnet branch k is row.branches[k]
+      for (sb, id) in enumerate(rep.island_of_bus)
+        id == 0 || (raw[row.buses[sb]] = id)
+      end
+      push!(pieces, _observable_islands_piece(Int[row.buses[sb] for sb in eachindex(rep.island_of_bus) if rep.network_island_of_bus[sb] != 0], raw;
+        unobs = Int[row.branches[k] for k in rep.unobservable_branches], region = Int[row.buses[b] for b in rep.region_buses], removed = copy(rep.removed_boundary_injections),
+        darkV = Int[row.buses[b] for b in rep.dark_magnitude_buses], angle_d = rep.angle_rank_deficit, mag_d = rep.magnitude_rank_deficit, kept = rep.angle_sv_kept_min, dropped = rep.angle_sv_dropped_max, passes = rep.passes))
+    end
+    isl = _observable_islands_report(net, pieces)
+  end
   return (
     numerical_observable = worst != :not_observable,
     structural_observable = worst != :not_observable,
+    weakly_observable = worst === :weakly_observable,
     numerical_rank = nrank,
     structural_matching = mm,
     n_states = nStates,
@@ -2524,18 +3968,190 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
     dof = ν,
     numerical_critical_measurement_indices = critNum,
     structural_critical_measurement_indices = critStr,
+    criticality_skipped = critSkipped,
+    structural_criticality_skipped = strSkipped,
+    criticality_method = critMethod,
+    rank_method = rankMethod,
+    criticality_wii = wiiAll,
+    active_measurement_indices = activeAll,
     unobservable_state_columns = Int[],
     quality = worst,
     notes = Symbol[:island_partition],
     islands = islandsOut,
     n_measured_islands = measured,
     n_unmeasured_islands = unmeasured,
+    angle_rank_deficit = angleDef,
+    magnitude_rank_deficit = magDef,
+    rank_deficit = angleDef + magDef,
+    angle_sv_kept_min = svKept,
+    angle_sv_dropped_max = svDropped,
+    weak_observability = _weak_report_merge(weakParts),
+    observable_islands = isl,
   )
 end
 
-function evaluate_global_observability(net::Net; tol = nothing)
-  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; tol = tol)
+function evaluate_global_observability(net::Net; kwargs...)
+  return evaluate_global_observability(net, Measurement[m for m in net.measurements]; kwargs...)
 end
+
+"""
+    identify_observable_islands(net, measurements; tol=nothing, dense_max_n=$(_SE_DENSE_LINALG_MAX_N), max_passes=typemax(Int)) -> ObservableIslands
+    identify_observable_islands(net; kwargs...) -> ObservableIslands
+
+Observable islands of the active measurements on `net`: per network island
+the maximal connected parts whose states are fixed once one of their buses
+is taken as the angle reference. Returns an [`ObservableIslands`](@ref)
+report (observable island per bus with its label "k.j", unobservable
+branches, deficits, removed boundary injections, region and dark
+magnitudes, one row per network island).
+
+Method (numerical, Monticelli and Wu 1985), on the measurement set of
+[`evaluate_global_observability`](@ref) (closed links fused, current rows
+excluded), on each network island:
+
+1. The decoupled linear P-theta model: P injections, P flows and PMU
+   angles against the bus angles, with the magnitudes taken as known (P
+   circulation states of coupler rings and the PMU offset stay unknowns),
+   entries 1/x, exact rank tolerance. The two ends of an in-service branch
+   belong to one group when their rows of the orthonormal null basis,
+   taken as angle shifts, agree; a branch between two groups is
+   unobservable.
+2. P injections at the end buses of an unobservable branch (boundary
+   injections) and P link-flow rows whose balance contains its flow tie
+   the undetermined flow to flows inside the groups, so they are dropped
+   and the model decomposed again, until no new unobservable branch
+   appears. The observable islands are the connected parts over the
+   branches not found unobservable.
+3. The region is the set of buses with a share in the null space of the
+   P-theta model of the set before step 2 (the dark angles); it is
+   reported next to the islands.
+4. Dark magnitudes and the magnitude deficit come from the decoupled Q-V
+   model (Q injections, Q flows and Vm rows against the magnitudes).
+
+The report gives the deficits `angle_rank_deficit` of the P-theta model,
+`magnitude_rank_deficit` of the Q-V model and `rank_deficit`, their sum
+(the number of replacement values a restoration needs), per network island
+and summed.
+
+Up to `dense_max_n` rows or columns the null spaces come from the SVD,
+above from the gain-matrix iteration (see
+[`evaluate_observability_matrix`](@ref)); `dense_max_n` exists so tests
+can take the sparse path on small networks. `max_passes = 1` stops after
+the first decomposition (the plain null-space pass, for diagnostics). An
+observable set gives one observable island per measured network island
+and removes nothing. Errors like `evaluate_global_observability` when no
+active measurement is left.
+"""
+function identify_observable_islands(net::Net, measurements::Vector{Measurement}; tol = nothing, dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N, max_passes::Int = typemax(Int))::ObservableIslands
+  max_passes >= 1 || error("identify_observable_islands: max_passes must be at least 1 (got $(max_passes))")
+  return _evaluate_global_observability(net, measurements; tol = tol, islands_mode = :always, dense_max_n = dense_max_n, max_passes = max_passes).observable_islands
+end
+
+identify_observable_islands(net::Net; kwargs...) = identify_observable_islands(net, Measurement[m for m in net.measurements]; kwargs...)
+
+"""
+    print_observable_islands([io,] result; max_names = 5)
+
+Print the observable islands of `result`, an [`ObservableIslands`](@ref) or
+the result of [`evaluate_global_observability`](@ref), per network island:
+its deficits (full, angles, magnitudes), each observable island with more
+than one bus with its label "k.j", bus count and first `max_names` bus
+names, the number of single-bus observable islands, the region, the
+unobservable branches (the first `max_names`) and the dark magnitudes. A
+network island without measurements prints as not measured. The removed
+boundary rows close the printout; the full lists stay in the report. An
+empty report prints one line.
+
+For an [`SEResult`](@ref) of `runse!` that estimated the observable islands
+one by one it prints one line per island: its buses, reference (marked when
+the angles are relative), J and dof, or why it was not estimated; then the
+unobservable branches and the measurements no island used.
+"""
+function print_observable_islands(io::IO, r::ObservableIslands; max_names::Int = 5)
+  if isempty(r)
+    println(io, "observable islands: none (observable set, or islands not computed)")
+    return nothing
+  end
+  listed(bs) = join((r.bus_names[b] for b in first(bs, max_names)), ", ") * (length(bs) > max_names ? ", ..." : "")
+  plural(n, one, many) = string(n, " ", n == 1 ? one : many)
+  deficits(d, a, v) = string("rank deficit ", d, " (angles ", a, ", magnitudes ", v, ")")
+  println(io, "observable islands: ", r.n_islands, " in ", plural(length(r.network_islands), "network island", "network islands"), ", ", deficits(r.rank_deficit, r.angle_rank_deficit, r.magnitude_rank_deficit), ", ", plural(r.passes, "pass", "passes"))
+  brName = Dict(zip(r.unobservable_branches, r.unobservable_branch_names))
+  for row in r.network_islands
+    k = row.network_island
+    if !row.measured
+      println(io, "network island ", k, " (", plural(row.n_bus, "bus", "buses"), "): not measured")
+      continue
+    end
+    println(io, "network island ", k, " (", plural(row.n_bus, "bus", "buses"), "): ", plural(row.n_islands, "observable island", "observable islands"), ", ", deficits(row.rank_deficit, row.angle_rank_deficit, row.magnitude_rank_deficit))
+    ids = [id for id in eachindex(r.island_buses) if r.network_island_of_bus[first(r.island_buses[id])] == k]
+    single = [first(r.island_buses[id]) for id in ids if length(r.island_buses[id]) == 1]
+    for id in ids
+      bs = r.island_buses[id]
+      length(bs) > 1 && println(io, "  observable island ", r.island_labels[id], ": ", length(bs), " buses (", listed(bs), ")")
+    end
+    isempty(single) || println(io, "  single-bus observable islands: ", length(single), " (", listed(single), ")")
+    isempty(row.region_buses) || println(io, "  region: ", plural(length(row.region_buses), "bus", "buses"), " (", listed(row.region_buses), ")")
+    if !isempty(row.unobservable_branches)
+      shown = first(row.unobservable_branches, max_names)
+      println(io, "  unobservable branches: ", length(row.unobservable_branches), " (", join((string(brName[k2], " (branch ", k2, ")") for k2 in shown), ", "), length(row.unobservable_branches) > max_names ? ", ..." : "", ")")
+    end
+  end
+  isempty(r.removed_boundary_injections) || println(io, "removed boundary rows: ", length(r.removed_boundary_injections), " (", join(first(r.removed_boundary_injections, max_names), ", "), length(r.removed_boundary_injections) > max_names ? ", ..." : "", ")")
+  println(io, "dark magnitudes: ", isempty(r.dark_magnitude_buses) ? "none" : listed(r.dark_magnitude_buses))
+  return nothing
+end
+
+print_observable_islands(io::IO, r::NamedTuple; kwargs...) = print_observable_islands(io, r.observable_islands; kwargs...)
+
+## The lines of an estimate of the observable islands one by one (the
+## `observableIslands` result of runse!, concept I6): one per island with
+## its buses (the first `max_names` names), reference, J and dof, or why it
+## was not estimated; then the removed buses per reason, the unobservable
+## branches and the measurements no island used. Empty for a result without
+## observable islands.
+function _se_observable_island_lines(res::SEResult; max_names::Int = 5)::Vector{String}
+  oi = res.observableIslands
+  oi === nothing && return String[]
+  names = oi.report.bus_names
+  listed(bs) = join((names[b] for b in first(bs, max_names)), ", ") * (length(bs) > max_names ? ", ..." : "")
+  buses(bs) = string(length(bs), length(bs) == 1 ? " bus" : " buses", isempty(bs) ? "" : string(" (", listed(bs), ")"))
+  why = Dict(:no_measurements => "no measurements", :not_observable => "not of full rank without the removed buses and the boundary rows")
+  lines = String[]
+  for row in res.islands
+    if !row.estimated && row.reason === :no_measurements && !occursin('.', row.label)
+      push!(lines, string("network island ", row.label, ": ", buses(row.buses), ", not measured"))
+    elseif !row.estimated
+      bs = row.buses
+      deficit = row.reason === :not_observable ? string(", rank deficit ", row.rank_deficit) : ""
+      push!(lines, string("observable island ", row.label, ": ", buses(bs), ", not estimated: ", get(why, row.reason, string(row.reason)), deficit))
+    else
+      ref = string("reference ", names[row.reference_bus], row.relative_angles ? " (relative angles)" : "")
+      push!(lines, string("observable island ", row.label, ": ", buses(row.buses), ", ", ref, ", J ", round(row.objectiveJ; sigdigits = 6), ", dof ", row.dof, row.converged ? "" : ", not converged"))
+    end
+  end
+  for (reason, text) in ((:dark_magnitude, "dark magnitude"), (:weak, "weakly observable at the estimate"))
+    bs = Int[r.bus for r in oi.removed_buses if r.reason === reason]
+    isempty(bs) || push!(lines, string("buses not estimated (", text, "): ", buses(bs)))
+  end
+  nb = length(oi.unobservable_branches)
+  nb == 0 || push!(lines, string("unobservable branches: ", nb, " (", join(first(oi.unobservable_branch_names, max_names), ", "), nb > max_names ? ", ..." : "", "), flows left empty"))
+  nd = length(oi.dropped_measurements)
+  nd == 0 || push!(lines, string("measurements not used: ", nd, " (", join(first(oi.dropped_measurements, max_names), ", "), nd > max_names ? ", ..." : "", ")"))
+  return lines
+end
+
+function print_observable_islands(io::IO, res::SEResult; max_names::Int = 5)
+  if res.observableIslands === nothing
+    println(io, "observable islands: not estimated one by one (observable set, or on_unobservable = abort)")
+    return nothing
+  end
+  for line in _se_observable_island_lines(res; max_names = max_names)
+    println(io, line)
+  end
+  return nothing
+end
+print_observable_islands(r; kwargs...) = print_observable_islands(stdout, r; kwargs...)
 
 """
     measurement_jacobian(net; flatstart=true, jacEps=1e-6, pmuRefOffset=...) -> NamedTuple
@@ -2573,7 +4189,7 @@ function measurement_jacobian(net::Net)
   net = prep.snet
   activeMeas = prep.meas
   activeIdx = prep.origIdx
-  isempty(activeMeas) && error("measurement_jacobian: no active measurements")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("measurement_jacobian: no active measurements"))
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
   Ybus = createYBUS(net = net)
@@ -2666,7 +4282,7 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   keep = [k for k in eachindex(activeMeas) if !(activeMeas[k].typ in (ImagMeas, IaMeas))]
   activeMeas = activeMeas[keep]
   activeIdx = activeIdx[keep]
-  isempty(activeMeas) && error("evaluate_local_observability: no active measurements (current magnitudes are excluded)")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("evaluate_local_observability: no active measurements (current magnitudes are excluded)"))
 
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
@@ -2821,10 +4437,217 @@ function _se_island_partition(net::Net, measurements::Vector{Measurement})
   return (rows = rows, perIsland = perIsland, unassigned = unassigned)
 end
 
+## The reference of an observable island that holds neither a Slack nor the
+## promoted reference of its network island (concept I4): the rule of
+## `detect_ac_islands` with `promote_generators`, the bus of the best
+## voltage-controlled unit, else the bus of the best generating unit (a
+## static var compensator never). 0 when the island has neither; the
+## caller then takes its lowest bus (the pin of `_se_island_subnet`).
+function _se_observable_island_reference(net::Net, buses::Vector{Int})::Int
+  busset = Set(buses)
+  gens = [ps for ps in net.prosumpsVec if Int(ps.comp.cFrom_bus) in busset && isGenerator(ps)]
+  pvset = Set(b for b in buses if getNodeType(net.nodeVec[b]) == PV)
+  chosen = 0
+  isempty(pvset) || (chosen = first(_island_reference_choice(ps -> Int(ps.comp.cFrom_bus) in pvset && isRegulating(ps), gens)))
+  chosen == 0 && (chosen = first(_island_reference_choice(ps -> ps.comp.cTyp != StaticVarCompensator, gens)))
+  return chosen
+end
+
+## The network-island partition `part` refined by the observable islands of
+## the report `isl` (concept 1.4, I1 to I4), for runse! with
+## on_unobservable = observable_islands or scheduled. Same shape as `part`
+## (rows, perIsland, unassigned), one row per estimation unit, so the
+## estimation takes the network-island path (`_runse_islands!`, I3); the
+## field `observable` carries what the merge needs.
+##
+## - Buses leave their observable island before it is cut into units: a bus
+##   with a dark magnitude (reason `:dark_magnitude`) and every bus of
+##   `removed` (bus => reason, `:weak` for the affected buses of the weak
+##   class at an estimate, see `runse!`). Every closed branch at such a bus
+##   counts as unobservable, next to the branches between observable
+##   islands (I2). The removed buses are listed in
+##   `observable.removed_buses` as `(bus, reason)`, they belong to no row.
+## - The rest of each observable island is split into its connected parts
+##   over the branches not unobservable and the closed links. Every part is
+##   an observable island of its own: the parts of one network island k are
+##   numbered k.1, k.2, ... in the order of their first bus; a network
+##   island that is one part and lost no bus keeps the label "k".
+## - Reference (I4): a part with a Slack keeps it, a part with the promoted
+##   reference of its network island keeps that; any other part takes
+##   `_se_observable_island_reference` or, without a unit, its lowest bus,
+##   and its angles are relative (`relative = true`).
+## - Rows: a bus row goes to the part of its bus, a branch row to the part
+##   whose branches hold it, a link row to the part of its link. Dropped are
+##   the rows on unobservable branches, the rows of removed buses, the P and
+##   Q injections at an end bus of an unobservable branch (a member of its
+##   fused cluster included: the injection holds the undetermined flow) and
+##   the link rows of such a cluster; their positions are in
+##   `observable.dropped`. Each part is rank checked before it is estimated
+##   (`rank_check`).
+## - A network island without measurements keeps its row (`skip =
+##   :no_measurements`).
+function _se_observable_island_partition(net::Net, measurements::Vector{Measurement}, part, isl::ObservableIslands; removed::AbstractDict{Int,Symbol} = Dict{Int,Symbol}())
+  nb = length(net.nodeVec)
+  reps = _active_link_representative_map(net)
+  reasonOf = Dict{Int,Symbol}()
+  for b in isl.dark_magnitude_buses
+    reasonOf[b] = :dark_magnitude
+  end
+  for (b, r) in removed
+    haskey(reasonOf, b) || (reasonOf[b] = r)
+  end
+  out = falses(nb)
+  for b in keys(reasonOf)
+    out[b] = true
+  end
+  unobs = Set{Int}(isl.unobservable_branches)
+  for (k, br) in enumerate(net.branchVec)
+    _branch_terminal_state(br) == :closed || continue
+    (out[Int(br.fromBus)] || out[Int(br.toBus)]) && push!(unobs, k)
+  end
+  boundaryRep = Set{Int}()
+  for k in unobs
+    br = net.branchVec[k]
+    push!(boundaryRep, reps[Int(br.fromBus)])
+    push!(boundaryRep, reps[Int(br.toBus)])
+  end
+  # the buses a measurement row sits on, for the assignment below
+  workingLinks = net._se_link_rows isa _SELinkTable
+  function rowBuses(m::Measurement)::Vector{Int}
+    if m.linkIdx !== nothing
+      workingLinks && return [net._se_link_rows.rows[m.linkIdx].bus]
+      (1 <= m.linkIdx <= length(net.linkVec)) || return Int[]
+      l = net.linkVec[m.linkIdx]
+      return [Int(l.fromBus), Int(l.toBus)]
+    end
+    m.branchIdx === nothing && return m.busIdx === nothing ? Int[] : [m.busIdx]
+    return Int[]
+  end
+  rows = NamedTuple[]
+  perIsland = Vector{Int}[]
+  dropped = Int[]
+  removedRows = NamedTuple{(:bus, :reason),Tuple{Int,Symbol}}[]
+  mkrow(k, buses, branches, n_ref, chosen, label, ref, relative, skip) = (buses = buses, branches = branches, n_bus = length(buses), n_ref = n_ref, chosen_ref_bus = chosen, label = label, network_island = k, reference_bus = ref, relative = relative, skip = skip, rank_check = skip === :none)
+  for (k, nrow) in enumerate(part.rows)
+    measuredK = k <= length(isl.network_islands) && isl.network_islands[k].measured
+    if isempty(part.perIsland[k]) || !measuredK
+      ref = nrow.n_ref > 0 ? minimum(b for b in nrow.buses if getNodeType(net.nodeVec[b]) == Slack) : (nrow.chosen_ref_bus > 0 ? nrow.chosen_ref_bus : first(nrow.buses))
+      push!(rows, mkrow(k, collect(nrow.buses), collect(nrow.branches), nrow.n_ref, nrow.chosen_ref_bus, string(k), ref, false, :no_measurements))
+      push!(perIsland, Int[])
+      append!(dropped, part.perIsland[k])
+      continue
+    end
+    ids = [id for id in eachindex(isl.island_buses) if isl.network_island_of_bus[first(isl.island_buses[id])] == k]
+    # the connected parts of every observable island without its removed
+    # buses, over the closed branches that are not unobservable and over
+    # the closed links (the fused clusters)
+    comps = Vector{Int}[]
+    lost = false
+    for id in ids
+      for b in isl.island_buses[id]
+        out[b] || continue
+        lost = true
+        push!(removedRows, (bus = b, reason = reasonOf[b]))
+      end
+      buses = [b for b in isl.island_buses[id] if !out[b]]
+      isempty(buses) && continue
+      pos = Dict{Int,Int}(b => i for (i, b) in enumerate(buses))
+      edges = Tuple{Int,Int,Int}[]
+      for j in nrow.branches
+        j in unobs && continue
+        br = net.branchVec[j]
+        _branch_terminal_state(br) == :closed || continue
+        f = get(pos, Int(br.fromBus), 0)
+        t = get(pos, Int(br.toBus), 0)
+        (f != 0 && t != 0) && push!(edges, (j, f, t))
+      end
+      firstOfRep = Dict{Int,Int}()
+      for (i, b) in enumerate(buses)
+        r = get!(firstOfRep, reps[b], i)
+        r != i && push!(edges, (0, r, i))
+      end
+      byRoot = Dict{Int,Vector{Int}}()
+      for (i, c) in enumerate(_branch_components(length(buses), edges))
+        push!(get!(byRoot, c, Int[]), buses[i])
+      end
+      append!(comps, sort!(c) for c in values(byRoot))
+    end
+    sort!(comps; by = first)
+    pieceOf = Dict{Int,Int}()   # bus => position in `rows` of its part
+    branchPiece = Dict{Int,Int}()   # branch => position in `rows`
+    for (jp, comp) in enumerate(comps)
+      label = (length(comps) == 1 && !lost) ? string(k) : string(k, ".", jp)
+      cset = Set(comp)
+      branches = Int[]
+      for j in nrow.branches
+        br = net.branchVec[j]
+        st = _branch_terminal_state(br)
+        keep = st == :closed ? (!(j in unobs) && Int(br.fromBus) in cset && Int(br.toBus) in cset) : st == :open_to ? Int(br.fromBus) in cset : st == :open_from ? Int(br.toBus) in cset : false
+        keep && push!(branches, j)
+      end
+      slacks = [b for b in comp if getNodeType(net.nodeVec[b]) == Slack]
+      n_ref, chosen, ref, relative = if !isempty(slacks)
+        (length(slacks), 0, minimum(slacks), false)
+      elseif nrow.n_ref == 0 && nrow.chosen_ref_bus > 0 && nrow.chosen_ref_bus in cset
+        (0, nrow.chosen_ref_bus, nrow.chosen_ref_bus, false)
+      else
+        c = _se_observable_island_reference(net, comp)
+        (0, c, c > 0 ? c : first(comp), true)
+      end
+      push!(rows, mkrow(k, comp, branches, n_ref, chosen, label, ref, relative, :none))
+      push!(perIsland, Int[])
+      for b in comp
+        pieceOf[b] = length(rows)
+      end
+      for j in branches
+        branchPiece[j] = length(rows)
+      end
+    end
+    for q in part.perIsland[k]
+      m = measurements[q]
+      target = 0
+      if m.linkIdx === nothing && m.branchIdx !== nothing
+        target = get(branchPiece, m.branchIdx, 0)
+      else
+        bs = rowBuses(m)
+        tg = isempty(bs) ? 0 : get(pieceOf, first(bs), 0)
+        boundary = any(b -> reps[b] in boundaryRep, bs)
+        sameRow = all(b -> get(pieceOf, b, 0) == tg, bs)
+        injection = m.linkIdx !== nothing || m.typ in (PinjMeas, QinjMeas)
+        target = (sameRow && !(injection && boundary)) ? tg : 0
+      end
+      target == 0 ? push!(dropped, q) : push!(perIsland[target], q)
+    end
+  end
+  sort!(removedRows; by = r -> r.bus)
+  observable = (report = isl, unobservable_branches = sort!(collect(unobs)), dropped = sort!(dropped), removed_buses = removedRows)
+  return (rows = rows, perIsland = perIsland, unassigned = part.unassigned, observable = observable)
+end
+
+## Rank check of one observable island before it is estimated (concept I2):
+## the deficits of the decoupled P-theta and Q-V models of the active
+## non-current rows `meas` on the subnet `inet`, the models that decide
+## "not observable". `nothing` when no such row is left.
+function _se_decoupled_deficits(inet::Net, meas::Vector{Measurement}, cfg::StateEstimationConfig)
+  prep = _se_prepare(inet, meas)
+  act = Measurement[m for m in prep.meas if !(m.typ in (ImagMeas, IaMeas))]
+  isempty(act) && return nothing
+  pn = _decoupled_null(_ptheta_model(prep.snet, act, _va_offset_active(act, cfg.pmu_ref_offset)).A, _SE_DENSE_LINALG_MAX_N)
+  qn = _decoupled_null(_qv_model(prep.snet, act).A, _SE_DENSE_LINALG_MAX_N)
+  return (angle = pn.d, magnitude = qn.d)
+end
+
 ## island subnet plus the index maps needed to remap measurements and to
 ## mirror shunt write-backs onto the parent net
-function _se_island_subnet(net::Net, row)
-  inet = _prepare_island_net(net, row)
+## the island-net base of the estimator: an island run gets its rows
+## explicitly (never `inet.measurements`) and reads no AC line catalogue, so
+## neither is copied per island
+_se_island_base(net::Net) = _island_net_base(net; unread = (:measurements, :linesAC))
+
+## `base`: the _se_island_base of `net` when the caller cuts several
+## islands of the unchanged net (one copy of the net per loop, not per island)
+function _se_island_subnet(net::Net, row; base::Union{Nothing,Net} = nothing)
+  inet = _prepare_island_net(net, row; base = base)
   # _prepare_island_net promotes a reference only when detect_ac_islands
   # found a regulating generator (the PF's slack must balance power). The
   # estimator only needs an ANGLE PIN, so an island without any candidate
@@ -2874,7 +4697,7 @@ function _se_remap_island_measurements(sub, measurements::Vector{Measurement}, i
         @warn "SE: measurement $(m.id) excluded (its link is not inside the island)"
         nothing
       else
-        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, direction = m.direction, id = m.id, linkIdx = nl, zero_injection = m.zero_injection)
+        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, direction = m.direction, id = m.id, linkIdx = nl, zero_injection = m.zero_injection, origin = m.origin)
       end
     elseif m.branchIdx !== nothing
       nb = get(sub.branchmap, m.branchIdx, 0)
@@ -2882,10 +4705,10 @@ function _se_remap_island_measurements(sub, measurements::Vector{Measurement}, i
         @warn "SE: measurement $(m.id) excluded (its branch is not inside the island)"
         nothing
       else
-        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, branchIdx = nb, direction = m.direction, id = m.id, zero_injection = m.zero_injection)
+        Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, branchIdx = nb, direction = m.direction, id = m.id, zero_injection = m.zero_injection, origin = m.origin)
       end
     elseif m.busIdx !== nothing
-      Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = sub.busmap[m.busIdx], direction = m.direction, id = m.id, zero_injection = m.zero_injection)
+      Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = sub.busmap[m.busIdx], direction = m.direction, id = m.id, zero_injection = m.zero_injection, origin = m.origin)
     else
       nothing
     end
@@ -2945,9 +4768,33 @@ function _se_solve_islands(part, prepared::Vector{Any}, icfg::StateEstimationCon
   return results
 end
 
-## island-wise estimation: per-island solve on the subnet, merged result
-function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig, part; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation))
+## The subnets of the estimated islands of the last `_runse_islands!` call
+## (island index => `_se_island_subnet` row) with the voltage vector of its
+## result. `_se_weak_at_result` judges the weak class on these subnets
+## instead of cutting each island out of the net again (one copy of the net
+## per island instead of two). The estimate has written into them (state,
+## and with update_shunts and update_taps the shunts and steps it also
+## mirrors into the parent); the weak check sets the voltages of the result
+## again. `voltages` ties the subnets to the result they belong to: a later
+## solve of the same call (tap fallback, start ladder) replaces both.
+mutable struct _SEIslandSubnets
+  voltages::Vector{ComplexF64}
+  subs::Dict{Int,Any}
+end
+_SEIslandSubnets() = _SEIslandSubnets(ComplexF64[], Dict{Int,Any}())
+
+## island-wise estimation: per-island solve on the subnet, merged result.
+## A partition with the field `observable` (`_se_observable_island_partition`)
+## has one row per observable island: rows with a `skip` reason and rows that
+## fail the rank check are not estimated, the island rows carry the label,
+## reference and relative-angle flag, and every bus outside an estimated row
+## and every closed branch outside one is left empty (NaN voltages and flows),
+## never at a start value or zero.
+## `island_subnets` receives the subnets of the estimated islands
+## (`_SEIslandSubnets`).
+function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig, part; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation), island_subnets::_SEIslandSubnets = _SEIslandSubnets())
   isempty(part.unassigned) || @warn "SE: $(length(part.unassigned)) measurement(s) reference isolated buses outside every island and are ignored"
+  obsMode = hasproperty(part, :observable)
   mergedV = buildVoltageVector(net)   # start values for unestimated islands
   nOrig = length(net.nodeVec)
   seVm = Float64[something(nd._vm_pu, 1.0) for nd in net.nodeVec]
@@ -3006,24 +4853,58 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
   # 1. every island prepared serially: its subnet and its remapped
   #    measurements (`nothing` when the island carries no usable one)
   prepared = Vector{Any}(nothing, length(part.rows))
+  # observable islands: why a row is not estimated, and the deficit of a
+  # row that failed the rank check
+  skipReason = Dict{Int,Symbol}()
+  rankDeficit = Dict{Int,Int}()
+  # the net is not changed before the estimations below, so one base
+  # serves every island
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
+    if obsMode && row.skip !== :none
+      skipReason[iid] = row.skip
+      continue
+    end
     idxs = part.perIsland[iid]
     isempty(idxs) && continue
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
-    isempty(meas_i) || (prepared[iid] = (sub = sub, meas = meas_i, keptIdx = keptIdx))
+    isempty(meas_i) && continue
+    if obsMode && row.rank_check
+      # concept I2: an observable island that is not of full rank once the
+      # dark magnitudes and the boundary rows are out is not estimated
+      d = _se_decoupled_deficits(sub.inet, meas_i, cfg)
+      if d === nothing
+        skipReason[iid] = :no_measurements
+        continue
+      elseif d.angle + d.magnitude > 0
+        skipReason[iid] = :not_observable
+        rankDeficit[iid] = d.angle + d.magnitude
+        continue
+      end
+    end
+    prepared[iid] = (sub = sub, meas = meas_i, keptIdx = keptIdx)
   end
+  # the fields an observable-island row adds to the network-island row
+  obsFields(iid, row, est::Bool) = (label = row.label, network_island = row.network_island, buses = row.buses, reference_bus = row.reference_bus, relative_angles = est && row.relative, rank_deficit = get(rankDeficit, iid, 0))
   # update_net on the subnet is the read-back channel for the merged
   # voltages (write-back into the parent happens below, gated by the
   # caller's update_net); shunt write-back is mirrored explicitly
   icfg = _copy_se_config_with(cfg; update_net = true)
   # 2. the estimations, large islands on their own tasks (0.30.2)
   island_results = _se_solve_islands(part, prepared, icfg; machine_rows = cfg.update_net, tap_excl = tap_excl)
+  # the subnets stay for the weak check at this estimate
+  empty!(island_subnets.subs)
+  for iid in eachindex(prepared)
+    prepared[iid] === nothing || (island_subnets.subs[iid] = prepared[iid].sub)
+  end
+  island_subnets.voltages = mergedV
   # 3. merged in island order, exactly as the serial loop did
   for (iid, row) in enumerate(part.rows)
     refBus = row.n_ref > 0 ? 0 : row.chosen_ref_bus
     if prepared[iid] === nothing
-      push!(islandsInfo, (island = iid, n_bus = row.n_bus, estimated = false, reason = :no_measurements, converged = false, iterations = 0, objectiveJ = 0.0, dof = 0, band_reason = :none, z_wh = NaN, promoted_ref_bus = refBus, va_ref_offset_deg = nothing))
+      info = (island = iid, n_bus = row.n_bus, estimated = false, reason = get(skipReason, iid, :no_measurements), converged = false, iterations = 0, objectiveJ = 0.0, dof = 0, band_reason = :none, z_wh = NaN, promoted_ref_bus = refBus, va_ref_offset_deg = nothing)
+      push!(islandsInfo, obsMode ? merge(info, obsFields(iid, row, false)) : info)
       continue
     end
     sub = prepared[iid].sub
@@ -3141,9 +5022,44 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
     # (independent chi-squares add), but a single bad island can hide in the
     # sum, so every island carries its own Wilson-Hilferty verdict here
     iv = _band_test_verdict(res.objectiveJ, res.dof)
-    push!(islandsInfo, (island = iid, n_bus = row.n_bus, estimated = true, reason = :estimated, converged = res.converged, iterations = res.iterations, objectiveJ = res.objectiveJ, dof = res.dof, band_reason = iv.reason, z_wh = iv.z_wh, promoted_ref_bus = refBus, va_ref_offset_deg = res.vaRefOffsetDeg))
+    info = (island = iid, n_bus = row.n_bus, estimated = true, reason = :estimated, converged = res.converged, iterations = res.iterations, objectiveJ = res.objectiveJ, dof = res.dof, band_reason = iv.reason, z_wh = iv.z_wh, promoted_ref_bus = refBus, va_ref_offset_deg = res.vaRefOffsetDeg)
+    push!(islandsInfo, obsMode ? merge(info, obsFields(iid, row, true)) : info)
   end
-  estimated == 0 && error("state estimation: no island carries any usable measurement")
+  if estimated == 0
+    obsMode && throw(SENotObservableError("runse!: the set is not observable and none of its observable islands can be estimated (" * (isempty(islandsInfo) ? "no bus is left in an observable island" : join((string(i.label, ": ", i.reason) for i in islandsInfo), ", ")) * ")"))
+    error("state estimation: no island carries any usable measurement")
+  end
+  # observable islands: a bus outside every estimated row has no estimate,
+  # its voltage is NaN in the result, the net and the chain start
+  est = fill(false, nOrig)
+  if obsMode
+    for info in islandsInfo
+      info.estimated || continue
+      for b in part.rows[info.island].buses
+        est[b] = true
+      end
+    end
+    for b in 1:nOrig
+      est[b] && continue
+      mergedV[b] = ComplexF64(NaN, NaN)
+      seVm[b] = NaN
+      seVa[b] = NaN
+      sePinj[b] = NaN
+      seQinj[b] = NaN
+    end
+  end
+  # the observable-island label and the relative-angle flag per bus; a
+  # removed bus (dark magnitude, weak) belongs to no row and keeps ""
+  labelOf = fill("", nOrig)
+  relOf = fill(false, nOrig)
+  if obsMode
+    for info in islandsInfo
+      for b in info.buses
+        labelOf[b] = info.label
+        relOf[b] = info.relative_angles
+      end
+    end
+  end
   if cfg.update_net
     for info in islandsInfo
       info.estimated || continue
@@ -3153,6 +5069,13 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
         nd._va_deg = rad2deg(angle(mergedV[b]))
       end
     end
+    if obsMode
+      for b in 1:nOrig
+        est[b] && continue
+        net.nodeVec[b]._vm_pu = NaN
+        net.nodeVec[b]._va_deg = NaN
+      end
+    end
     # the island runs compute flows and losses on their subnet copies only,
     # the parent net still holds the flows and shunt powers of its last
     # power flow. Recompute both on the merged voltages (and written-back
@@ -3160,42 +5083,87 @@ function _runse_islands!(net::Net, measurements::Vector{Measurement}, cfg::State
     # adds the estimated ring circulations. Unestimated islands keep their
     # start voltages in mergedV, so their flows follow those voltages.
     calcNetLosses!(net, mergedV)
+    if obsMode
+      # a closed branch outside every estimated row is unobservable (between
+      # two observable islands, at a dark bus, or at an unestimated bus):
+      # its flow follows from no measurement, and the angle difference of
+      # two islands with their own references means nothing
+      inEst = fill(false, length(net.branchVec))
+      for info in islandsInfo
+        info.estimated || continue
+        for j in part.rows[info.island].branches
+          inEst[j] = true
+        end
+      end
+      blank = false
+      for (j, br) in enumerate(net.branchVec)
+        (inEst[j] || _branch_terminal_state(br) != :closed) && continue
+        setBranchFlow!(br, BranchFlow(nothing, nothing, NaN, NaN), BranchFlow(nothing, nothing, NaN, NaN))
+        setBranchLosses!(br, NaN, NaN)
+        blank = true
+      end
+      # calcNetLosses! just pushed the total; its sum holds the blanked
+      # branches, so the total is unknown as well
+      blank && (net.totalLosses[end] = (NaN, NaN))
+    end
     updateShuntPowers!(net = net)
     # merged chain start registration (runpf_from_se!/writeSEStateCSV read
     # it from the parent net); unestimated islands keep their start voltages
-    # and a zero balance
-    _register_se_start!(net, seVm, seVa, sePinj, seQinj, conv; link_circulation = any(l -> l.status == 1, net.linkVec) ? linkCircMerged : nothing)
+    # and a zero balance, unestimated observable islands NaN, and such a
+    # partial estimate is marked so runpf_from_se! refuses it
+    _register_se_start!(net, seVm, seVa, sePinj, seQinj, conv; link_circulation = any(l -> l.status == 1, net.linkVec) ? linkCircMerged : nothing, partial = obsMode, island_label = obsMode ? labelOf : String[])
   end
-  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTapFix ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum, fallback_used = false, fallback_reason = :none, failure = tapFailure) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing, nothing, worstCond, anyZI ? ziRows : nothing, cfg.flatstart ? :flat : :stored)
+  obsResult = nothing
+  if obsMode
+    names = part.observable.report.bus_names
+    unobsNames = String[string(names[Int(net.branchVec[j].fromBus)], " - ", names[Int(net.branchVec[j].toBus)]) for j in part.observable.unobservable_branches]
+    obsResult = (label_of_bus = labelOf, estimated = est, relative_angle = relOf, unobservable_branches = part.observable.unobservable_branches, unobservable_branch_names = unobsNames, dropped_measurements = String[measurements[q].id for q in part.observable.dropped], removed_buses = part.observable.removed_buses, report = part.observable.report)
+  end
+  return SEResult(mergedV, conv, iters, norm(residuals), residuals, Jsum, νsum, _j_within_3sigma_band(Jsum, νsum), nα == 1 ? αdeg : nothing, anyShunt ? shuntRows : nothing, anyRobust ? robustRows : nothing, islandsInfo, anyTap ? tapRows : nothing, anyTapFix ? (fixed = tapAllFixed, j_before = tapJBefore, dof_before = tapDofBefore, j_after = tapJAfter, dof_after = tapDofAfter, iterations_estimation = tapIteEst, iterations_fixation = tapIteFix, offgrid_residual = tapAnyOffgrid, k_removed = tapK, delta_j_notice = join(tapNotices, "; "), j_rise_exceeds_quantile = tapAnyExceeds, sequential = tapAnySequential, j_simultaneous = tapJSimSum, fallback_used = false, fallback_reason = :none, failure = tapFailure) : nothing, nothing, anyActiveObj ? (j = activeJsum, dof = activeνsum, suppressed = suppressedSum) : nothing, nothing, worstCond, anyZI ? ziRows : nothing, cfg.flatstart ? :flat : :stored, nothing, obsResult, nothing)
+end
+
+## The stage-1 topology precheck of `_runse_configured!` (advisory): the
+## findings of `validate_topology`, `nothing` without any, one warning line
+## per kind of finding.
+function _se_topology_precheck(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
+  cfg.topology_precheck || return nothing
+  pre = validate_topology(net, measurements)
+  isempty(pre.findings) && return nothing
+  topo = pre.findings
+  # one line per RUN, not per finding: a weak measurement set produces a
+  # dozen findings, and the result object carries them all anyway. The
+  # meshes without P get their own line, a plausibility finding listed
+  # first must not hide them.
+  mesh = [f for f in topo if f.kind === :mesh_without_p_measurement]
+  other = [f for f in topo if f.kind !== :mesh_without_p_measurement]
+  isempty(mesh) || @warn "runse!: mesh without P measurement: solution may not be unique ($(length(mesh)) mesh group(s), the estimation proceeds)" meshes = join((f.location for f in first(mesh, 3)), "; ") * (length(mesh) > 3 ? "; ..." : "")
+  if !isempty(other)
+    shown = [string(f.kind, " at ", f.location, " (", f.evidence, ", ", f.severity, ")") for f in first(other, 3)]
+    @warn "runse!: topology precheck reported $(length(other)) finding(s) (advisory, the estimation proceeds)" findings = join(shown, "; ") * (length(other) > 3 ? "; ..." : "")
+  end
+  return topo
 end
 
 ## `tap_excl`: the transformers the tap estimation keeps out, resolved on
 ## the net of the caller (`_tap_exclusion_map`); the diagnostics pass the
 ## map of the uncontracted net into their solve on the contracted copy.
-function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation))
+## `observable_islands` (runse! under on_unobservable = observable_islands or
+## scheduled): a set that is not observable is estimated per observable
+## island (`_se_observable_island_partition`); the diagnostics and the
+## topology hypotheses keep the network-island partition. `part` hands in
+## a partition computed by the caller (`_se_run_partition`), which then
+## wins over `observable_islands`. `precheck = false` skips the topology
+## precheck and attaches `findings` instead (the later rounds of
+## `_runse_weak_gaps!` reuse the findings of the first).
+## `island_subnets` is handed to `_runse_islands!`.
+function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig; tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation), observable_islands::Bool = false, part = nothing, precheck::Bool = true, findings = nothing, island_subnets::_SEIslandSubnets = _SEIslandSubnets())
   # stage-1 topology precheck (advisory): run BEFORE the partition,
   # warn per finding, attach the findings to the result. The estimation
   # itself always proceeds; a finding is information, not a gate.
-  topo = nothing
-  if cfg.topology_precheck
-    pre = validate_topology(net, measurements)
-    if !isempty(pre.findings)
-      topo = pre.findings
-      # one line per RUN, not per finding: a weak measurement set produces a
-      # dozen findings, and the result object carries them all anyway. The
-      # meshes without P get their own line, a plausibility finding listed
-      # first must not hide them.
-      mesh = [f for f in topo if f.kind === :mesh_without_p_measurement]
-      other = [f for f in topo if f.kind !== :mesh_without_p_measurement]
-      isempty(mesh) || @warn "runse!: mesh without P measurement: solution may not be unique ($(length(mesh)) mesh group(s), the estimation proceeds)" meshes = join((f.location for f in first(mesh, 3)), "; ") * (length(mesh) > 3 ? "; ..." : "")
-      if !isempty(other)
-        shown = [string(f.kind, " at ", f.location, " (", f.evidence, ", ", f.severity, ")") for f in first(other, 3)]
-        @warn "runse!: topology precheck reported $(length(other)) finding(s) (advisory, the estimation proceeds)" findings = join(shown, "; ") * (length(other) > 3 ? "; ..." : "")
-      end
-    end
-  end
-  part = _se_island_partition(net, measurements)
-  solve(c::StateEstimationConfig) = length(part.rows) <= 1 ? _runse_with_config!(net, measurements, c; tap_excl = tap_excl) : _runse_islands!(net, measurements, c, part; tap_excl = tap_excl)
+  topo = precheck ? _se_topology_precheck(net, measurements, cfg) : findings
+  part === nothing && (part = _se_run_partition(net, measurements, observable_islands))
+  islandwise = length(part.rows) > 1 || hasproperty(part, :observable)
+  solve(c::StateEstimationConfig) = islandwise ? _runse_islands!(net, measurements, c, part; tap_excl = tap_excl, island_subnets = island_subnets) : _runse_with_config!(net, measurements, c; tap_excl = tap_excl)
   # the start voltages of the run: a run that does not converge still writes
   # its last iterate into the net (update_net), the fallback and the second
   # try of the start ladder start from these
@@ -3239,6 +5207,432 @@ function _runse_configured!(net::Net, measurements::Vector{Measurement}, cfg::St
   end
   topo === nothing && return res
   return _se_result_with(res; topologyFindings = topo, tapEstimates = _se_tap_rows_mesh_notice(res.tapEstimates, topo))
+end
+
+## The partition of one runse! call: the network islands, refined by the
+## observable islands when `observable_islands` is set and the decoupled
+## models find the set not observable, or when `removed` names buses that
+## leave their island (bus => reason, `:weak` for the affected buses of the
+## weak class at an earlier estimate, see `runse!`). The provisional weak
+## class before the estimation is no reason to refine; the check skips it.
+## `log = false` drops the info line (the bad-data diagnostics cut the same
+## partition once per elimination pass, the weak-gap loop logs a trial
+## partition when its round runs, `_se_log_run_partition`).
+function _se_run_partition(net::Net, measurements::Vector{Measurement}, observable_islands::Bool; removed::AbstractDict{Int,Symbol} = Dict{Int,Symbol}(), log::Bool = true)
+  part = _se_island_partition(net, measurements)
+  observable_islands || return part
+  obs = _evaluate_global_observability(net, measurements; islands_mode = isempty(removed) ? :unobservable : :always, weak_class = false)
+  (obs.quality === :not_observable || !isempty(removed)) || return part
+  isl = obs.observable_islands
+  refined = _se_observable_island_partition(net, measurements, part, isl; removed = removed)
+  nunits = count(r -> r.skip === :none, refined.rows)
+  why = obs.quality === :not_observable ? string("the set is not observable (rank deficit ", isl.rank_deficit, ")") : "the set is observable"
+  line = string("runse!: ", why, ", ", count(r -> r.reason === :weak, refined.observable.removed_buses), " bus(es) weak at the estimate; estimating ", nunits, " observable island(s) one by one, ", length(refined.observable.removed_buses), " bus(es) removed, ", length(refined.observable.unobservable_branches), " unobservable branch(es), ", length(refined.observable.dropped), " measurement(s) not used")
+  refined = merge(refined, (log_line = line,))
+  log && _se_log_run_partition(refined)
+  return refined
+end
+
+## The info line of a refined partition of `_se_run_partition` (none for
+## the network-island partition).
+_se_log_run_partition(part) = (hasproperty(part, :log_line) && @info(part.log_line); nothing)
+
+# --- observability restoration with scheduled values (concept 1.2, block B) ---
+
+## The scheduled network injection of bus `b` in MW and Mvar: minus the sum
+## of the scheduled power into the equipment (`_scheduled_into_equipment`)
+## of every prosumer at the bus, the sign of a PinjMeas / QinjMeas row.
+## `nothing` for a quantity when the bus has no prosumer (a passive bus has
+## no schedule; its balance is a zero injection, not a replacement value)
+## or one of them carries no value for it. `byBus[b]` lists the positions
+## of the prosumers at bus b in `net.prosumpsVec`.
+function _restore_scheduled_injection(net::Net, b::Int, byBus::Dict{Int,Vector{Int}})::NTuple{2,Union{Nothing,Float64}}
+  p = 0.0
+  q = 0.0
+  pOk = true
+  qOk = true
+  any = false
+  for i in get(byBus, b, Int[])
+    ps = net.prosumpsVec[i]
+    any = true
+    sp, sq = _scheduled_into_equipment(ps)
+    sp === nothing ? (pOk = false) : (p -= sp)
+    sq === nothing ? (qOk = false) : (q -= sq)
+  end
+  any || return (nothing, nothing)
+  return (pOk ? p : nothing, qOk ? q : nothing)
+end
+
+## The U replacement value of bus `b` by the order of concept R4: (1) the
+## stored state `net._sv_vm_pu` (the SvVoltage of a CGMES import), (2) the
+## set point of a voltage-controlled unit at the bus (a regulating prosumer
+## with `vm_pu` on a PV or Slack bus that controls its own bus, not a
+## remote one through a machine voltage controller), both with the default
+## Vm sigma; (3) the median of the measured Vm rows `levelVm[vn]` of the
+## network island at the nominal voltage `vn` of the bus, sigma their
+## standard deviation with the default Vm sigma as floor; (4) 1.0 pu, sigma
+## `sigmaNominal`. Returns (value, sigma, source, rank). `byBus` as in
+## `_restore_scheduled_injection`, `remote` the prosumers whose machine
+## voltage control holds a remote bus.
+function _restore_u_value(net::Net, b::Int, levelVm::Dict{Float64,Vector{Float64}}, sigmaVm::Float64, sigmaNominal::Float64, byBus::Dict{Int,Vector{Int}}, remote::Set{Int})
+  v = get(net._sv_vm_pu, b, NaN)
+  _se_vm_out_of_range(v) || return (v, sigmaVm, :stored_state, 1)
+  if getNodeType(net.nodeVec[b]) in (PV, Slack)
+    for i in get(byBus, b, Int[])
+      ps = net.prosumpsVec[i]
+      (isRegulating(ps) && ps.vm_pu !== nothing && !(i in remote)) || continue
+      vs = Float64(ps.vm_pu)
+      _se_vm_out_of_range(vs) && continue
+      return (vs, sigmaVm, :unit_setpoint, 2)
+    end
+  end
+  vals = get(levelVm, Float64(net.nodeVec[b].comp.cVN), Float64[])
+  if !isempty(vals)
+    s = sort(vals)
+    n = length(s)
+    med = isodd(n) ? s[(n+1)>>1] : 0.5 * (s[n>>1] + s[(n>>1)+1])
+    mu = sum(s) / n
+    spread = sqrt(sum(x -> (x - mu)^2, s) / n)
+    return (med, max(spread, sigmaVm), :level_median, 3)
+  end
+  return (1.0, sigmaNominal, :nominal, 4)
+end
+
+## The candidates of one network island (its net `inet`, the active rows
+## `meas` in its numbering): per passive bus (`findPassiveBuses`: no load,
+## generation or shunt, the slack excluded; an isolated bus only when a
+## closed link feeds it, the rule of the zero-injection rows) without an
+## active P (Q) injection row a zero injection P = 0 (Q = 0) with sigma
+## `ziSigma` (source :passive); per other bus without an active P (Q)
+## injection row the scheduled P (Q) (`_restore_scheduled_injection`, sigma
+## max(rel * |value|, floor) with the default P (Q) sigma as floor), per bus
+## without an active Vm row its U value (`_restore_u_value`). A bus inside a
+## closed-link cluster of more than one bus gets no candidate (its rows are
+## the cluster's). Returns the passive P and Q candidates by bus, the angle
+## candidates (scheduled P, by bus) and the magnitude candidates in the
+## order U of rank 1 and 2, Q, U of rank 3 and 4, each by bus: a
+## measurement-grade U first, then the schedule, the estimated U last.
+function _restore_candidates(inet::Net, meas::Vector{Measurement}, rel::Float64, sigmaNominal::Float64, ziSigma::Float64)
+  sd = measurementStdDevs()
+  nb = length(inet.nodeVec)
+  reps = _active_link_representative_map(inet)
+  clusterSize = Dict{Int,Int}()
+  for b = 1:nb
+    clusterSize[reps[b]] = get(clusterSize, reps[b], 0) + 1
+  end
+  hasRow = Set{Tuple{MeasurementType,Int}}()
+  levelVm = Dict{Float64,Vector{Float64}}()
+  for m in meas
+    (m.active && m.busIdx !== nothing && m.linkIdx === nothing) || continue
+    push!(hasRow, (m.typ, m.busIdx))
+    (m.typ == VmMeas && m.origin === :measured) && push!(get!(levelVm, Float64(inet.nodeVec[m.busIdx].comp.cVN), Float64[]), m.value)
+  end
+  fed = _linkFedIsolatedBuses(inet)
+  passive = Set{Int}(b for b in findPassiveBuses(inet) if getNodeType(inet.nodeVec[b]) != Isolated || haskey(fed, b))
+  # the prosumers by bus, once for every bus of the loop below
+  byBus = Dict{Int,Vector{Int}}()
+  for (i, ps) in enumerate(inet.prosumpsVec)
+    push!(get!(byBus, getPosumerBusIndex(ps), Int[]), i)
+  end
+  remote = Set{Int}(c.prosumer_idx for c in inet.machineControls if c isa MachineVoltageControl && c.target_bus != c.bus)
+  cand(b, q, typ, v, sg, src, rank) = (bus = b, quantity = q, typ = typ, value = v, sigma = sg, source = src, rank = rank)
+  passiveP = NamedTuple[]
+  passiveQ = NamedTuple[]
+  angle = NamedTuple[]
+  magHigh = NamedTuple[]
+  magQ = NamedTuple[]
+  magLow = NamedTuple[]
+  for b = 1:nb
+    clusterSize[reps[b]] > 1 && continue
+    if b in passive
+      ((PinjMeas, b) in hasRow) || push!(passiveP, cand(b, :P, PinjMeas, 0.0, ziSigma, :passive, 0))
+      ((QinjMeas, b) in hasRow) || push!(passiveQ, cand(b, :Q, QinjMeas, 0.0, ziSigma, :passive, 0))
+    else
+      p, q = _restore_scheduled_injection(inet, b, byBus)
+      (p !== nothing && !((PinjMeas, b) in hasRow)) && push!(angle, cand(b, :P, PinjMeas, p, max(rel * abs(p), sd[PinjMeas]), :schedule, 0))
+      (q !== nothing && !((QinjMeas, b) in hasRow)) && push!(magQ, cand(b, :Q, QinjMeas, q, max(rel * abs(q), sd[QinjMeas]), :schedule, 0))
+    end
+    if !((VmMeas, b) in hasRow)
+      v, sg, src, rank = _restore_u_value(inet, b, levelVm, sd[VmMeas], sigmaNominal, byBus, remote)
+      push!(rank <= 2 ? magHigh : magLow, cand(b, :U, VmMeas, v, sg, src, rank))
+    end
+  end
+  return (passive_p = passiveP, passive_q = passiveQ, angle = angle, magnitude = vcat(magHigh, magQ, magLow))
+end
+
+## Whether the row `a` (in the columns of a decoupled model) lowers the
+## deficit of the null space with the orthonormal basis `N`, the column
+## norms `cn` and the probe tolerance `tau` (`_decoupled_null`) by one: the
+## row scaled by the column norms has a share above `tau` (relative to its
+## norm) in that null space. Returns the decision and c = N' (a ./ cn), the
+## coefficients of the share; the null space with the row added is spanned
+## by N * nullspace(c'). A zero row lowers nothing. Shared by the
+## restoration (`_restore_select`) and the placement
+## (`suggest_measurement_placement`).
+function _null_row_share(N::Matrix{Float64}, cn::Vector{Float64}, tau::Float64, a::Vector{Float64})
+  s = a ./ cn
+  na = norm(s)
+  na == 0.0 && return false, Float64[]
+  c = N' * s
+  return norm(c) > tau * na, c
+end
+
+## Greedy selection on one decoupled model (concept S3, G4'): `A` the model
+## matrix of the active rows, `C` one row per candidate in the same
+## columns. A candidate is taken when it lowers the deficit by one: its row,
+## scaled by the column norms of the current null space, has a share above
+## the probe tolerance (relative to its norm) in that null space; the null
+## basis is then reduced by that direction. This is the rank test on the
+## reduced problem: a null vector is constant on an observable island, so
+## projecting a row on the null basis is the same as summing it over the
+## islands. A full null-space computation on `A` plus the taken rows
+## confirms the deficit after each round; where it is larger than the
+## incremental count, the next round tests the remaining candidates again
+## (at most three rounds). Returns the taken and the rejected (redundant)
+## candidate positions, the deficit before and after.
+function _restore_select(A::SparseMatrixCSC{Float64}, C::SparseMatrixCSC{Float64}, dense_max_n::Integer)
+  taken = Int[]
+  tested = Set{Int}()
+  # the null space of A plus the rows taken so far (first A itself)
+  nul = _decoupled_null(A, dense_max_n)
+  before = nul.d
+  for _ = 1:3
+    nul.d == 0 && break
+    N = nul.N
+    d = nul.d
+    progress = false
+    for i in axes(C, 1)
+      d == 0 && break
+      i in taken && continue
+      push!(tested, i)
+      lowers, c = _null_row_share(N, nul.cn, nul.tau, Vector(C[i, :]))
+      lowers || continue
+      push!(taken, i)
+      progress = true
+      d -= 1
+      N = d == 0 ? zeros(Float64, size(N, 1), 0) : N * nullspace(reshape(c, 1, :))
+    end
+    progress || break
+    # the confirmation: the full null space of A plus the taken rows
+    nul = _decoupled_null(vcat(A, C[taken, :]), dense_max_n)
+  end
+  rejected = sort!([i for i in tested if !(i in taken)])
+  return (taken = sort!(taken), rejected = rejected, before = before, after = nul.d)
+end
+
+## The candidate rows of one model on the working net `snet` (the measurement
+## rows in its numbering), in the columns of `_decoupled_model`
+function _restore_candidate_matrix(snet::Net, cands::Vector{Measurement}, part::Symbol, withVaOffset::Bool)
+  M = _decoupled_model(snet, cands, part, withVaOffset)
+  length(M.rows) == length(cands) || error("restore_observability: a candidate row has no row in the $(part) model")
+  return M.A
+end
+
+"""
+    restore_observability(net, measurements; dense_max_n=$(_SE_DENSE_LINALG_MAX_N)) -> NamedTuple
+    restore_observability(net; kwargs...) -> NamedTuple
+
+Replacement values from the schedule that close the rank deficit of a set
+that is not observable (concept 1.2): zero injections at passive buses,
+P and Q from the scheduled values of the loads and generators, U by a
+fixed order. No flow values (the schedule
+knows no flows). Per network island, never across a network island border;
+a network island without measurements is left out. The caller's vector is
+not changed.
+
+Candidates per bus of a network island (none on a bus inside a closed-link
+cluster of more than one bus):
+- a passive bus (`findPassiveBuses`: no load, generation or shunt) without
+  an active injection row of a type: the zero injection P = 0 or Q = 0
+  with `state_estimation.zero_injection_sigma_mva` (`:passive`, a
+  zero-injection row, a constraint under `zero_injection = constraint`).
+  Under `zero_injection = off` they are not inserted;
+  `passive_not_inserted` lists the ones that would lower a deficit.
+- P and Q at any other bus without an active injection row of that type: minus
+  the sum of the scheduled power into the equipment of the prosumers at
+  the bus (`pVal`, `qVal`, as `generatePseudoMeasurementTable` reads them;
+  a passive bus or a prosumer without a value gives no candidate). Sigma
+  `max(restore_sigma_rel * |value|, floor)`, the floor the default P or Q
+  sigma of `measurementStdDevs`.
+- U where the bus has no active Vm row, by the first rule that applies:
+  (1) the stored state `net._sv_vm_pu` (`:stored_state`), (2) the set
+  point of a voltage-controlled unit at the bus (`:unit_setpoint`), both
+  with the default Vm sigma; (3) the median of the measured Vm rows of the
+  network island at the nominal voltage of the bus (`:level_median`), sigma
+  their standard deviation, at least the default Vm sigma; (4) 1.0 pu with
+  `state_estimation.observability.restore_vm_sigma_nominal_pu`
+  (`:nominal`).
+
+Selection on the decoupled models of the not-observable verdict (concept
+G4'): a P candidate is taken when it lowers the deficit of the P-theta
+model by one, a Q or U candidate when it lowers the deficit of the Q-V
+model by one; so the number taken is at most those deficits. Order: the
+passive P, then the scheduled P, each by bus; the passive Q, then U of
+rules 1 and 2, then the scheduled Q, then U of rules 3 and 4, each by bus.
+A candidate that does not lower the deficit is skipped as redundant.
+
+The taken rows have `origin = :pseudo_restore` (protected from bad-data
+elimination) and the id `restore_<type>_bus_<bus>` (`restore_Pinj_bus_8`).
+After the selection the set with the taken rows is checked again
+([`evaluate_global_observability`](@ref)): `verdict` is `:observable` when
+it has no null direction and, at the stored state of the net, no branch or
+bus above the bounds of the weak class (`success`); `:weakly_observable`
+("weakly observable after restoring") when one is above them, the
+branches in `weak.branches`; `:not_observable` when a null direction is
+left; `:not_judged` on a net that stores the flat profile, where the weak
+class cannot be judged (`weak_judged = false`). Neither stops an
+estimation.
+
+Returns `(rows, restored, skipped, passive_not_inserted, network_islands,
+rank_deficit_before, rank_deficit_after, observable, weak, weak_judged,
+verdict, success)`: `rows` the
+taken `Measurement`s in the caller's numbering, `restored` one row per
+taken value `(id, bus, bus_name, network_island, quantity, value, sigma,
+source)` (quantity `:P`, `:Q`, `:U`; source `:passive`, `:schedule`,
+`:stored_state`, `:unit_setpoint`, `:level_median`, `:nominal`), `skipped`
+the redundant candidates `(bus, network_island, quantity, source)`,
+`passive_not_inserted` rows `(bus, bus_name, network_island, quantity)`,
+`network_islands` one
+row per measured network island `(network_island, angle_rank_deficit,
+magnitude_rank_deficit, angle_rank_deficit_after,
+magnitude_rank_deficit_after, n_taken)`, the summed deficits before and
+after, `observable` (no null direction after), `weak` the weak report after
+(as in `evaluate_global_observability`). What the schedule does not close
+stays in the deficits after.
+"""
+function restore_observability(net::Net, measurements::Vector{Measurement}; dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
+  cfg = state_estimation_config()
+  rel = cfg.observability.restore_sigma_rel
+  sigmaNominal = cfg.observability.restore_vm_sigma_nominal_pu
+  # passive buses are zero injections only where the zero-injection rule
+  # is in force; under off they are reported, not inserted (concept U3)
+  insertPassive = cfg.zero_injection !== :off
+  # the range check of runse!: a substitute (origin :range_check) is no
+  # measured U for the level median
+  measurements = first(_se_range_check(net, measurements))
+  part = _se_island_partition(net, measurements)
+  names = _bus_name_by_idx(net)
+  rows = Measurement[]
+  restored = NamedTuple[]
+  skipped = NamedTuple[]
+  passiveOff = NamedTuple[]
+  perIsland = NamedTuple[]
+  base = length(part.rows) == 1 ? nothing : _se_island_base(net)
+  for (k, nrow) in enumerate(part.rows)
+    isempty(part.perIsland[k]) && continue
+    # the network island on its own net: the caller's net for a single one,
+    # else its subnet; `toCaller` maps its buses back
+    inet, meas_k, toCaller = if length(part.rows) == 1
+      (net, measurements, collect(1:length(net.nodeVec)))
+    else
+      sub = _se_island_subnet(net, nrow; base = base)
+      m_k, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[k])
+      (sub.inet, m_k, collect(nrow.buses))
+    end
+    any(m -> m.active && !(m.typ in (ImagMeas, IaMeas)), meas_k) || continue
+    prep, act, _ = _observability_rows(inet, meas_k, "restore_observability")
+    snet = prep.snet
+    withVaOffset = _va_offset_active(act, cfg.pmu_ref_offset)
+    cs = _restore_candidates(inet, meas_k, rel, sigmaNominal, cfg.zero_injection_sigma_mva)
+    # a bus the contraction does not reach (isolated) carries no state
+    inWorking(c) = get(prep.busmap, prep.reps[c.bus], 0) != 0
+    # a candidate row in the working net: the bus through the contraction
+    working(c) = Measurement(typ = c.typ, value = c.value, sigma = c.sigma, busIdx = prep.busmap[prep.reps[c.bus]], id = "restore_candidate", zero_injection = c.source === :passive)
+    pt = _ptheta_model(snet, act, withVaOffset)
+    qt = _qv_model(snet, act)
+    pas = (filter(inWorking, cs.passive_p), filter(inWorking, cs.passive_q))
+    # the passive buses first (an exact balance), then the schedule; under
+    # zero_injection = off the passive ones alone show what they would
+    # close (the greedy selection takes the same passive rows in front of
+    # the schedule), and the selection runs without them
+    if !insertPassive
+      for (pc, A, kind, off) in ((pas[1], pt.A, :ptheta, withVaOffset), (pas[2], qt.A, :qv, false))
+        isempty(pc) && continue
+        sel = _restore_select(A, _restore_candidate_matrix(snet, Measurement[working(c) for c in pc], kind, off), dense_max_n)
+        for i in sel.taken
+          push!(passiveOff, (bus = toCaller[pc[i].bus], bus_name = get(names, toCaller[pc[i].bus], string(toCaller[pc[i].bus])), network_island = k, quantity = pc[i].quantity))
+        end
+      end
+    end
+    angleC = filter(inWorking, insertPassive ? vcat(pas[1], cs.angle) : cs.angle)
+    magC = filter(inWorking, insertPassive ? vcat(pas[2], cs.magnitude) : cs.magnitude)
+    selP = _restore_select(pt.A, _restore_candidate_matrix(snet, Measurement[working(c) for c in angleC], :ptheta, withVaOffset), dense_max_n)
+    selQ = _restore_select(qt.A, _restore_candidate_matrix(snet, Measurement[working(c) for c in magC], :qv, false), dense_max_n)
+    for (cands, sel) in ((angleC, selP), (magC, selQ))
+      for i in sel.taken
+        c = cands[i]
+        b = toCaller[c.bus]
+        id = string("restore_", _default_measurement_id(c.typ; busIdx = b))
+        push!(rows, Measurement(typ = c.typ, value = c.value, sigma = c.sigma, busIdx = b, id = id, zero_injection = c.source === :passive, origin = :pseudo_restore))
+        push!(restored, (id = id, bus = b, bus_name = get(names, b, string(b)), network_island = k, quantity = c.quantity, value = c.value, sigma = c.sigma, source = c.source))
+      end
+      for i in sel.rejected
+        c = cands[i]
+        push!(skipped, (bus = toCaller[c.bus], network_island = k, quantity = c.quantity, source = c.source))
+      end
+    end
+    push!(perIsland, (network_island = k, angle_rank_deficit = selP.before, magnitude_rank_deficit = selQ.before, angle_rank_deficit_after = selP.after, magnitude_rank_deficit_after = selQ.after, n_taken = length(selP.taken) + length(selQ.taken)))
+  end
+  isempty(perIsland) && throw(SENoActiveMeasurementsError("restore_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+  before = sum(r -> r.angle_rank_deficit + r.magnitude_rank_deficit, perIsland)
+  after = sum(r -> r.angle_rank_deficit_after + r.magnitude_rank_deficit_after, perIsland)
+  # concept R1: the set with the taken rows, judged again, the weak class
+  # at the stored state of the net
+  chk = _evaluate_global_observability(net, vcat(measurements, rows); islands_mode = :off, dense_max_n = dense_max_n)
+  weak = chk.weak_observability
+  judged = chk.numerical_observable && weak.basis !== :not_determined
+  # concept U2: a weak branch or bus after the restoration is its own
+  # verdict, with the affected branches in `weak`
+  verdict = !chk.numerical_observable ? :not_observable : !judged ? :not_judged : weak.n_buses > 0 ? :weakly_observable : :observable
+  return (rows = rows, restored = restored, skipped = skipped, passive_not_inserted = passiveOff, network_islands = perIsland, rank_deficit_before = before, rank_deficit_after = after, observable = chk.numerical_observable, weak = weak, weak_judged = judged, verdict = verdict, success = verdict === :observable)
+end
+
+restore_observability(net::Net; kwargs...) = restore_observability(net, Measurement[m for m in net.measurements]; kwargs...)
+
+## The weak class at the estimate of `res` (concept G2, M2) for runse!
+## under observable_islands and scheduled: per estimation unit of `part`
+## (each estimated observable island on its subnet, or the whole net) at
+## the estimated voltages of `res`, without touching `net`. Returns the
+## report of `evaluate_weak_observability` with basis :estimated_state; on
+## an estimate of the observable islands one by one its rows are per
+## estimated island (`label`, `network_island`).
+## `island_subnets` from the run of `res` saves cutting the islands again.
+function _se_weak_at_result(net::Net, measurements::Vector{Measurement}, res::SEResult, part; island_subnets::_SEIslandSubnets = _SEIslandSubnets())
+  if !hasproperty(part, :observable)
+    netc = deepcopy(net)
+    # a multi-island result is in the bus numbering of the net; a
+    # single-island one in the numbering of the contracted working net
+    # (closed links fused, branchless pockets dropped), read back through
+    # the representative of each bus like the write-back does
+    prep = res.islands === nothing ? _se_prepare(net, measurements) : nothing
+    for (b, nd) in enumerate(netc.nodeVec)
+      s = prep === nothing ? b : get(prep.busmap, prep.reps[b], 0)
+      s == 0 && continue
+      nd._vm_pu = abs(res.voltages[s])
+      nd._va_deg = rad2deg(angle(res.voltages[s]))
+    end
+    return _weak_at_estimate(_evaluate_weak_observability(netc, measurements))
+  end
+  parts = Any[]
+  units = NamedTuple[]
+  shared = island_subnets.voltages === res.voltages
+  base = shared ? nothing : _se_island_base(net)
+  for info in res.islands
+    info.estimated || continue
+    row = part.rows[info.island]
+    sub = shared ? island_subnets.subs[info.island] : _se_island_subnet(net, row; base = base)
+    for (nb, ob) in enumerate(row.buses)
+      sub.inet.nodeVec[nb]._vm_pu = abs(res.voltages[ob])
+      sub.inet.nodeVec[nb]._va_deg = rad2deg(angle(res.voltages[ob]))
+    end
+    meas_k, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[info.island])
+    w = evaluate_weak_observability(sub.inet, meas_k)
+    push!(parts, _weak_part_in_caller(w, row))
+    push!(units, (label = row.label, network_island = row.network_island))
+  end
+  m = _weak_report_merge(parts)
+  rowsOut = NamedTuple[merge(r, units[r.network_island]) for r in m.network_islands]
+  return _weak_at_estimate(merge((weakly_observable = m.n_buses > 0,), merge(m, (network_islands = rowsOut,))))
 end
 
 # the row reasons of a changer that was no state of the run (not released,
@@ -3346,19 +5740,32 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
   νsum = 0
   conv = true
   measured = 0
+  # an observable-island partition (`_se_run_partition`): a unit that
+  # `_runse_islands!` does not estimate (skipped, or not of full rank once
+  # its boundary rows are out) is not diagnosed either
+  obsMode = hasproperty(part, :observable)
+  cfg = state_estimation_config()
+  base = _se_island_base(net)
   for (iid, row) in enumerate(part.rows)
     idxs = part.perIsland[iid]
-    if isempty(idxs)
+    if isempty(idxs) || (obsMode && row.skip !== :none)
       push!(islandReports, (island = iid, n_bus = row.n_bus, measured = false, report = nothing))
       continue
     end
-    sub = _se_island_subnet(net, row)
+    sub = _se_island_subnet(net, row; base = base)
     meas_i, keptIdx = _se_remap_island_measurements(sub, measurements, idxs)
     if isempty(meas_i)
       push!(islandReports, (island = iid, n_bus = row.n_bus, measured = false, report = nothing))
       continue
     end
-    r = _validate_measurements(sub.inet, meas_i, tapExcl)
+    if obsMode && row.rank_check
+      d = _se_decoupled_deficits(sub.inet, meas_i, cfg)
+      if d === nothing || d.angle + d.magnitude > 0
+        push!(islandReports, (island = iid, n_bus = row.n_bus, measured = false, report = nothing))
+        continue
+      end
+    end
+    r = _validate_measurements(sub.inet, meas_i, tapExcl; observable_islands = false)
     measured += 1
     conv &= r.converged
     Jsum += r.objective.value
@@ -3380,7 +5787,12 @@ function _validate_measurements_islands(net::Net, measurements::Vector{Measureme
     end
     push!(islandReports, (island = iid, n_bus = row.n_bus, measured = true, report = r))
   end
-  measured == 0 && error("validate_measurements: no active measurements")
+  if measured == 0
+    # an observable-island partition without a unit of full rank is the
+    # failure of runse! under observable_islands and scheduled
+    obsMode && throw(SENotObservableError("validate_measurements: the set is not observable and none of its observable islands can be estimated"))
+    throw(SENoActiveMeasurementsError("validate_measurements: no active measurements"))
+  end
   sort!(ranking; by = x -> x.abs_normalized_residual, rev = true)
   verdict = _band_test_verdict(Jsum, νsum)
   within = _j_within_3sigma_band(Jsum, νsum)
@@ -3611,10 +6023,44 @@ function _se_solve_constrained!(ctx::_SENormalEquationsSolver, G::SparseMatrixCS
   return sol[1:n], a .* sol[(n + 1):end], ctx.lu_ctx.fallback_count > fallbacks
 end
 
+# _se_jacobi_scaled(M) -> S M S with S diagonal: the symmetric Jacobi
+# scaling of the gain or KKT matrix. A row with a positive diagonal gets
+# 1/sqrt(M_ii), so the scaled gain matrix has a unit diagonal. A row with a
+# zero diagonal (a constraint row of the KKT matrix, or an empty column of
+# a singular gain matrix) gets 1/max_j |M_ij| s_j over the scaled columns,
+# so its largest entry becomes 1 (1 for an empty row). The scaling removes
+# the unit mix of the state vector: angles and magnitudes in rad and pu,
+# the circulation states of coupler rings in MW and Mvar. What remains
+# is the conditioning of the estimation problem itself (tiny sigmas, weak
+# redundancy), which a unit choice cannot change.
+function _se_jacobi_scaled(M::SparseMatrixCSC{Float64,Int64})::SparseMatrixCSC{Float64,Int64}
+  d = diag(M)
+  s = [di > 0.0 ? 1.0 / sqrt(di) : 0.0 for di in d]
+  zero_rows = findall(<=(0.0), d)
+  if !isempty(zero_rows)
+    # largest scaled entry per row, read column-wise (M is symmetric)
+    rowmax = zeros(length(d))
+    rv = rowvals(M)
+    nz = nonzeros(M)
+    for j in axes(M, 2)
+      s[j] > 0.0 || continue
+      for p in nzrange(M, j)
+        rowmax[rv[p]] = max(rowmax[rv[p]], abs(nz[p]) * s[j])
+      end
+    end
+    for i in zero_rows
+      s[i] = rowmax[i] > 0.0 ? 1.0 / rowmax[i] : 1.0
+    end
+  end
+  S = Diagonal(s)
+  return S * M * S
+end
+
 # _se_conditioning(G, C, mode) -> NamedTuple: the condition number of the
 # matrix of the last Gauss-Newton step, for SEResult.conditioning. With
 # constraint rows (C not nothing) the scaled KKT matrix, else the gain
-# matrix G as solved (zero-injection rows weighted, the tap prior in).
+# matrix G as solved (zero-injection rows weighted, the tap prior in), in
+# both cases Jacobi-scaled (`_se_jacobi_scaled`, `scaling = :jacobi`).
 # condestJacobian: the Hager/Higham 1-norm estimate on one sparse LU, never
 # a dense cond. A singular matrix has no finite condition number: the LU
 # throws SingularException (UMFPACK) or ZeroPivotException, and the run
@@ -3622,14 +6068,14 @@ end
 function _se_conditioning(G::Union{Nothing,SparseMatrixCSC{Float64,Int64}}, C::Union{Nothing,SparseMatrixCSC{Float64,Int64}}, mode::Symbol)
   G === nothing && return nothing
   matrix = C === nothing ? :gain : :kkt
-  M = C === nothing ? G : first(_se_kkt_matrix(G, C))
+  M = _se_jacobi_scaled(C === nothing ? G : first(_se_kkt_matrix(G, C)))
   kappa = try
     condestJacobian(M)
   catch err
     (err isa SingularException || err isa ZeroPivotException) || rethrow()
     Inf
   end
-  return (zero_injection = mode, matrix = matrix, condition_number = kappa, method = :hager_1norm)
+  return (zero_injection = mode, matrix = matrix, scaling = :jacobi, condition_number = kappa, method = :hager_1norm)
 end
 
 # _se_pin_steps(G, g, pins) -> (G2, g2): the normal equations with the steps
@@ -3720,7 +6166,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   net = prep.snet
   activeMeas = prep.meas
   activeOrig = prep.origIdx   # caller-vector positions (0 = LINKAGG aggregate)
-  isempty(activeMeas) && error("runse!: no active measurements")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("runse!: no active measurements"))
 
   # ImagMeas value gate: near zero current the derivative of
   # |I| is discontinuous, so a current measurement below 3 sigma is excluded
@@ -3753,7 +6199,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       activeMeas = activeMeas[keepIa]
       activeOrig = activeOrig[keepIa]
     end
-    isempty(activeMeas) && error("runse!: no active measurements left after the ImagMeas 3-sigma value gate")
+    isempty(activeMeas) && throw(SENoActiveMeasurementsError("runse!: no active measurements left after the ImagMeas 3-sigma value gate"))
   end
   # r0.9.10 scope guard: the estimator's measurement model does not carry
   # the one-sided branch reduction yet; a flow measurement on a partially
@@ -5260,7 +7706,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
 
   conditioning = _se_conditioning(lastGain, lastConJac, cfg.zero_injection)
   ziMultipliers = (isempty(conIdx) || lastLambda === nothing) ? nothing : _se_zero_injection_multipliers(net, activeMeas, activeOrig, conIdx, lastLambda)
-  return SEResult(VestModel, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(x[end]) : nothing, shuntEstimates, robustRows, nothing, tapEstimates, tapFixation, nothing, activeObjective, linkCircEst, conditioning, ziMultipliers, flatstart ? :flat : :stored)
+  return SEResult(VestModel, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(x[end]) : nothing, shuntEstimates, robustRows, nothing, tapEstimates, tapFixation, nothing, activeObjective, linkCircEst, conditioning, ziMultipliers, flatstart ? :flat : :stored, nothing, nothing, nothing)
 end
 
 # The multipliers of the constraint rows `conIdx` of `meas` (on the working
@@ -5298,7 +7744,10 @@ _se_vm_out_of_range(v::Float64)::Bool = !isfinite(v) || v < _SE_VM_RANGE_PU[1] |
 ## solve). A bus typed Isolated without a closed link to such an island and
 ## every bus of an island without a source are not energized.
 function _se_energized_buses(net::Net)::Set{Int}
-  rows = detect_ac_islands(net; promote_generators = true).rows
+  return _se_energized_buses(net, detect_ac_islands(net; promote_generators = true).rows)
+end
+
+function _se_energized_buses(net::Net, rows)::Set{Int}
   n = length(net.nodeVec)
   parent = collect(1:n)
   function findroot(i::Int)
@@ -5353,10 +7802,90 @@ function _se_measurement_at_bus(net::Net, m::Measurement, b::Int)::Bool
   return false
 end
 
-const _SE_RANGE_ROW = NamedTuple{(:measurement_index, :id, :bus, :value, :reason, :substitute, :source, :sigma, :sigma_substitute, :deactivated),Tuple{Int,String,Int,Float64,Symbol,Float64,Symbol,Float64,Float64,Vector{Int}}}
+## the bus at which row `m` lies in a part the switching state does not
+## energize, 0 when it does not: its bus, an end of its link, the measured
+## end and the closed ends of its branch. A branch open at both ends counts
+## with both (as the 0 kV rule, `_se_measurement_at_bus`); the open end of a
+## branch open at one end is an isolated bus, and the row at its closed end
+## stays for the check of partial branches.
+function _se_dead_row_bus(net::Net, m::Measurement, energized::Set{Int})::Int
+  if m.linkIdx !== nothing
+    1 <= m.linkIdx <= length(net.linkVec) || return 0
+    l = net.linkVec[m.linkIdx]
+    for b in (Int(l.fromBus), Int(l.toBus))
+      b in energized || return b
+    end
+    return 0
+  elseif m.branchIdx !== nothing
+    1 <= m.branchIdx <= length(net.branchVec) || return 0
+    br = net.branchVec[m.branchIdx]
+    st = _branch_terminal_state(br)
+    measured = m.direction === :to ? Int(br.toBus) : Int(br.fromBus)
+    ends = st === :open_to ? (Int(br.fromBus), measured) : st === :open_from ? (Int(br.toBus), measured) : (Int(br.fromBus), Int(br.toBus))
+    for b in ends
+      b in energized || return b
+    end
+    return 0
+  elseif m.busIdx !== nothing
+    b = Int(m.busIdx)
+    return b in energized ? 0 : b
+  end
+  return 0
+end
 
-## The range check, the step before every WLS of the library. Per active
-## VmMeas outside _SE_VM_RANGE_PU (0 kV and non-finite values included):
+# A network island without a source counts as dead only while none of its
+# voltage measurements says otherwise: a value above this bound (pu) is a
+# reading of a live bus, so the topology (a neighbour outside the model, a
+# wrong switch state) contradicts the measurement. The bound only separates
+# "near zero" from "under voltage"; its exact value is not critical.
+const _SE_DEAD_VM_MAX_PU = 0.1
+
+const _SE_RANGE_ROW = NamedTuple{(:measurement_index, :id, :bus, :value, :reason, :substitute, :source, :sigma, :sigma_substitute, :deactivated, :vm_above),Tuple{Int,String,Int,Float64,Symbol,Float64,Symbol,Float64,Float64,Vector{Int},Vector{Int}}}
+
+## The parts of `net` without a source that carry active rows of
+## `measurements`: one entry per network island of `islandRows` (`id` its
+## number) and per isolated bus outside every island (`id` "0"), with its
+## first bus, the rows located in it (`_se_dead_row_bus`) and the voltage
+## rows among them above _SE_DEAD_VM_MAX_PU (`vm_above`, by value
+## descending). Empty when no bus is energized (a bare estimation net).
+function _se_dead_parts(net::Net, measurements::Vector{Measurement}, islandRows, energized::Set{Int})
+  parts = NamedTuple{(:id, :bus, :rows, :vm_above),Tuple{String,Int,Vector{Int},Vector{Int}}}[]
+  isempty(energized) && return parts
+  islandOf = Dict{Int,Int}(b => k for (k, r) in enumerate(islandRows) for b in r.buses)
+  # an isolated bus is a part of its own (key -bus), an island its number
+  byKey = Dict{Int,Vector{Int}}()
+  for (k, m) in enumerate(measurements)
+    m.active || continue
+    b = _se_dead_row_bus(net, m, energized)
+    b == 0 && continue
+    push!(get!(byKey, get(islandOf, b, -b), Int[]), k)
+  end
+  for key in sort!(collect(keys(byKey)); by = k -> (k < 0, abs(k)))
+    ks = byKey[key]
+    above = Int[k for k in ks if measurements[k].typ == VmMeas && isfinite(measurements[k].value) && measurements[k].value > _SE_DEAD_VM_MAX_PU]
+    sort!(above; by = k -> -measurements[k].value)
+    push!(parts, (id = key < 0 ? "0" : string(key), bus = key < 0 ? -key : first(islandRows[key].buses), rows = ks, vm_above = above))
+  end
+  return parts
+end
+
+## The range check, the step before every WLS of the library.
+## 0. topology first, for every row (1.1.0): a network island the switching
+##    state does not energize sends no readings. Every active row located
+##    in such an island is set inactive, one row per island with reason
+##    :deenergized_island (`id` its number as `_se_island_partition`
+##    counts it, "0" for an isolated bus, `bus` its first bus,
+##    `deactivated` the rows). A row is located at its bus, at both ends of
+##    its link, at the closed and the measured ends of its branch
+##    (`_se_dead_row_bus`). A part with a voltage row above
+##    _SE_DEAD_VM_MAX_PU is not dead by the measurements: its rows stay and
+##    are estimated as on a net without a source model, one row with reason
+##    :topology_contradiction (`value` the largest such voltage,
+##    `vm_above` those rows) reports the contradiction. A net without any
+##    energized bus is left alone: it has no source model at all (a bare
+##    estimation net), not a dead part.
+## Then per active VmMeas outside _SE_VM_RANGE_PU (0 kV and non-finite
+## values included):
 ## 1. topology first: on a bus the switching state does not energize
 ##    (`_se_energized_buses`) 0 kV is right; the row and every other active
 ##    row at the bus, its branches and its links are set inactive, so the
@@ -5372,10 +7901,23 @@ const _SE_RANGE_ROW = NamedTuple{(:measurement_index, :id, :bus, :value, :reason
 ## service writes the same lines into run.log.
 function _se_range_check(net::Net, measurements::Vector{Measurement})::Tuple{Vector{Measurement},Vector{_SE_RANGE_ROW}}
   rows = _SE_RANGE_ROW[]
-  hits = [k for (k, m) in enumerate(measurements) if m.active && m.typ == VmMeas && m.busIdx !== nothing && _se_vm_out_of_range(m.value)]
-  isempty(hits) && return measurements, rows
-  out = copy(measurements)
-  energized = _se_energized_buses(net)
+  islandRows = detect_ac_islands(net; promote_generators = true).rows
+  energized = _se_energized_buses(net, islandRows)
+  out = measurements
+  for part in _se_dead_parts(net, measurements, islandRows, energized)
+    if !isempty(part.vm_above)
+      push!(rows, _SE_RANGE_ROW((0, part.id, part.bus, measurements[first(part.vm_above)].value, :topology_contradiction, NaN, :none, NaN, NaN, Int[], part.vm_above)))
+      continue
+    end
+    out === measurements && (out = copy(measurements))
+    for k in part.rows
+      out[k] = _set_measurement_active(out[k], false)
+    end
+    push!(rows, _SE_RANGE_ROW((0, part.id, part.bus, NaN, :deenergized_island, NaN, :none, NaN, NaN, part.rows, Int[])))
+  end
+  hits = [k for (k, m) in enumerate(out) if m.active && m.typ == VmMeas && m.busIdx !== nothing && _se_vm_out_of_range(m.value)]
+  isempty(hits) && return out, rows
+  out === measurements && (out = copy(measurements))
   factor = state_estimation_config().bad_data.substitute_sigma_factor
   for k in hits
     # a row a dead bus found earlier already took out
@@ -5384,8 +7926,8 @@ function _se_range_check(net::Net, measurements::Vector{Measurement})::Tuple{Vec
     b = Int(m.busIdx)
     if b in energized
       v, src = _se_range_substitute(net, b)
-      out[k] = Measurement(typ = m.typ, value = v, sigma = m.sigma * factor, active = true, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
-      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :range_check_substituted, v, src, m.sigma, m.sigma * factor, Int[])))
+      out[k] = Measurement(typ = m.typ, value = v, sigma = m.sigma * factor, active = true, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = :range_check)
+      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :range_check_substituted, v, src, m.sigma, m.sigma * factor, Int[], Int[])))
     else
       off = Int[]
       for j in eachindex(out)
@@ -5393,7 +7935,7 @@ function _se_range_check(net::Net, measurements::Vector{Measurement})::Tuple{Vec
         out[j] = _set_measurement_active(out[j], false)
         push!(off, j)
       end
-      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :deenergized, NaN, :none, m.sigma, NaN, off)))
+      push!(rows, _SE_RANGE_ROW((k, m.id, b, m.value, :deenergized, NaN, :none, m.sigma, NaN, off, Int[])))
     end
   end
   return out, rows
@@ -5406,6 +7948,15 @@ function _se_range_check_lines(net::Net, rows::AbstractVector)::Vector{String}
   lines = String[]
   for r in rows
     bus = get(names, r.bus, string(r.bus))
+    if r.reason in (:deenergized_island, :topology_contradiction)
+      where = r.id == "0" ? string("isolated bus ", bus) : string("network island ", r.id, " (bus ", bus, ")")
+      if r.reason === :deenergized_island
+        push!(lines, string("topology check: ", where, " is not energized by the switching state: ", length(r.deactivated), " measurement(s) inactive (deenergized_island)"))
+      else
+        push!(lines, string("topology check: measurement contradicts the topology: ", where, " has no source in the model, but ", length(r.vm_above), " voltage measurement(s) above ", _SE_DEAD_VM_MAX_PU, " pu (largest ", round(r.value; sigdigits = 6), " pu); its measurements stay in the estimation (topology_contradiction)"))
+      end
+      continue
+    end
     head = string("range check: voltage measurement ", r.id, " at bus ", bus, " is ", round(r.value; sigdigits = 6), " pu, outside ", _SE_VM_RANGE_PU[1], " to ", _SE_VM_RANGE_PU[2], " pu")
     if r.reason === :range_check_substituted
       src = r.source === :imported_state ? "imported state" : "nominal voltage"
@@ -5418,17 +7969,18 @@ function _se_range_check_lines(net::Net, rows::AbstractVector)::Vector{String}
 end
 
 ## the log of the range check of one public call: a warning per substituted
-## row (a gross error), an info line per dead bus (0 kV is right there)
+## row (a gross error) and per contradiction of measurement and topology,
+## an info line per dead bus or part (0 kV is right there)
 function _se_log_range_check(net::Net, rows::AbstractVector, caller::AbstractString)
   isempty(rows) && return nothing
   for (r, line) in zip(rows, _se_range_check_lines(net, rows))
-    r.reason === :range_check_substituted ? (@warn string(caller, ": ", line)) : (@info string(caller, ": ", line))
+    r.reason in (:range_check_substituted, :topology_contradiction) ? (@warn string(caller, ": ", line)) : (@info string(caller, ": ", line))
   end
   return nothing
 end
 
 ## the counter of the range check, as the diagnostics results carry it
-_se_range_check_summary(rows::AbstractVector) = (substituted = count(r -> r.reason === :range_check_substituted, rows), deenergized = count(r -> r.reason === :deenergized, rows), rows = rows)
+_se_range_check_summary(rows::AbstractVector) = (substituted = count(r -> r.reason === :range_check_substituted, rows), deenergized = count(r -> r.reason === :deenergized, rows), deenergized_islands = count(r -> r.reason === :deenergized_island, rows), topology_contradictions = count(r -> r.reason === :topology_contradiction, rows), rows = rows)
 
 ## a diagnostics report of `_validate_measurements` with the range check of
 ## its call: the counter as field `range_check`, and every ranking row
@@ -5498,14 +8050,93 @@ PMU angle measurements (`VaMeas`, degrees) are modeled as
 offset of the PMU time base against the model angle reference. With
 `pmu_ref_offset = :off` the offset state is omitted and PMU angles are
 taken in the model angle reference.
+
+`state_estimation.observability.on_unobservable` decides what happens to a
+set that is not observable. Under `abort` (default) nothing is checked
+before the estimation and the estimate is the same as without the setting;
+after a converged run with `update_net` the weak class at the estimated
+state ([`evaluate_weak_observability`](@ref), basis `:estimated_state`,
+from the covariance of the estimate) goes into the result field
+`weakObservability`. It only reports and changes no estimated value.
+`state_estimation.observability.weak_check_after_estimation = false`
+switches it off (mass runs); then, and without `update_net`, the field is
+`nothing`.
+
+Under `observable_islands` the observable islands of
+[`evaluate_global_observability`](@ref) refine the network islands, and
+each observable island is estimated on its own subnet through the
+network-island path:
+
+- A bus with a dark magnitude (null space of the Q-V model) leaves its
+  observable island before the island is cut; its branches count as
+  unobservable. The connected parts that remain are observable islands of
+  their own, numbered k.1, k.2, ... in their network island k ("k" for a
+  network island that stays one island and loses no bus).
+  `observableIslands.removed_buses` lists the removed buses with their
+  reason.
+- Rows on unobservable branches, rows of removed buses, P and Q injections
+  at the end buses of unobservable branches and link rows of such a fused
+  cluster are not used (they hold an undetermined flow);
+  `observableIslands.dropped_measurements` names them.
+- Each island is rank checked (decoupled P-theta and Q-V models) before it
+  is estimated; one that is not of full rank is not estimated (`reason =
+  :not_observable`, with `rank_deficit`). When no island can be estimated,
+  runse! throws `SENotObservableError` (the SE service reports it as
+  `se_not_observable`).
+- Reference: the island with the Slack (or the promoted reference of its
+  network island) keeps it; any other island takes the bus of its best
+  voltage-controlled unit, else of its best generating unit (the rule of
+  `detect_ac_islands`), else its lowest bus. Its angles are relative to
+  that bus and marked (`relative_angles`, `relative_angle` per bus).
+- Unestimated buses have NaN voltages, in the result and with `update_net`
+  in the net; closed branches outside every estimated island have NaN flows
+  and losses, and the total losses are NaN. [`runpf_from_se!`](@ref)
+  refuses such an estimate. A later run that starts from the stored state
+  (`flatstart = false`) starts these buses flat.
+- After a converged run the weak class is determined at the estimate,
+  per estimated island, whatever `weak_check_after_estimation` says
+  (`weakObservability`). While a branch or bus is above the bounds, the
+  affected buses (the ends of the branches whose flow standard deviation
+  exceeds `weak_flow_sigma_mw` and the buses whose magnitude standard
+  deviation exceeds `weak_vm_sigma_pu`) leave their island with reason
+  `:weak`, and the islands are cut and estimated again from the same start,
+  until nothing is above the bounds, no new bus is affected or no bus
+  would be left. This also applies to an observable set that is weakly
+  observable at its estimate.
+- When the loop ends with buses above the bounds (no island of the cut
+  passes its rank check, no new bus is affected, no bus would be left, or
+  the estimate of the cut does not converge, which keeps the converged
+  estimate before the cut), the estimate is kept with that report in
+  `weakObservability`, which
+  marks it unusable as under `abort`; with `update_net` the flows and
+  losses of its branches and the total losses are NaN in the net.
+
+Under `scheduled` [`restore_observability`](@ref) first adds replacement
+values from the schedule (field `restoredRows`); the set with them then
+runs as under `observable_islands`, so what the schedule does not close is
+estimated per observable island.
+
+The result of an estimate per observable island has one `islands` row per
+observable island and the field `observableIslands` (see
+[`SEResult`](@ref)); [`print_observable_islands`](@ref) prints one line per
+island. An observable set that is not weakly observable at its estimate
+runs as under `abort`.
 """
 function runse!(net::Net, measurements::Vector{Measurement})
   cfg = state_estimation_config()
+  onUnobs = cfg.observability.on_unobservable
+  onUnobs in SE_ON_UNOBSERVABLE_VALUES || error("runse!: state_estimation.observability.on_unobservable must be one of $(join(SE_ON_UNOBSERVABLE_VALUES, ", ")) (got $(onUnobs))")
   _tap_warn_unknown_exclusions(net, cfg.tap_estimation, "runse!")
   # range check of the voltage measurements before the WLS
   checked, rc = _se_range_check(net, measurements)
   _se_log_range_check(net, rc, "runse!")
-  res = _runse_configured!(net, checked, cfg)
+  res = if onUnobs === :abort
+    _runse_configured!(net, checked, cfg)
+  else
+    # one cache of the decoupled null spaces for the restoration and all
+    # rounds (`_SEDecoupledNullCache`)
+    Base.ScopedValues.with(() -> _runse_unobservable!(net, checked, cfg), _SE_DECOUPLED_NULL_CACHE => _SEDecoupledNullCache())
+  end
   # one warning per regulator whose estimate left its band. Within 2 sigma_s
   # of the band end step the fixation sets it to that step and the status
   # stays :estimated, so without the warning the result looks normal;
@@ -5517,7 +8148,170 @@ function runse!(net::Net, measurements::Vector{Measurement})
       t.out_of_range && @warn string("runse!: ", _tap_out_of_range_line(t))
     end
   end
+  # the final weak class at the estimate under abort (concept G2, U4),
+  # from the covariance at the estimate; weak_check_after_estimation =
+  # false switches it off for mass runs. The estimate must be in the net
+  # (update_net).
+  if onUnobs === :abort && cfg.observability.weak_check_after_estimation && cfg.update_net && res.converged
+    w = _evaluate_weak_observability(net, checked)
+    res = _se_result_with(res; weakObservability = _weak_at_estimate(w))
+  end
   return res
+end
+
+## runse! under on_unobservable = scheduled or observable_islands: the
+## restoration (scheduled), then the estimate per observable island with
+## the weak-gap rounds (`_runse_weak_gaps!`).
+function _runse_unobservable!(net::Net, checked::Vector{Measurement}, cfg::StateEstimationConfig)
+  onUnobs = cfg.observability.on_unobservable
+  restored = nothing
+  if onUnobs === :scheduled
+    # replacement values from the schedule first; what they do not close
+    # is estimated per observable island below
+    rest = restore_observability(net, checked)
+    restored = rest.restored
+    isempty(rest.rows) || (checked = vcat(checked, rest.rows))
+    nP = count(r -> r.quantity === :P, rest.restored)
+    nQ = count(r -> r.quantity === :Q, rest.restored)
+    nU = count(r -> r.quantity === :U, rest.restored)
+    (rest.rank_deficit_before > 0 || !isempty(rest.restored)) && @info string("runse!: restore: ", length(rest.restored), " row(s) taken (P ", nP, ", Q ", nQ, ", U ", nU, "), ", length(rest.skipped), " skipped as redundant, rank deficit ", rest.rank_deficit_before, " before, ", rest.rank_deficit_after, " after")
+    isempty(rest.passive_not_inserted) || @info string("runse!: restore: zero injections at ", length(rest.passive_not_inserted), " passive bus(es) would close part of the deficit; not inserted, state_estimation.zero_injection is off")
+    rest.verdict === :weakly_observable && @info string("runse!: restore: weakly observable after restoring, ", rest.weak.n_branches, " branch(es) above the flow bound, ", rest.weak.n_buses, " affected bus(es); the estimate cuts them out")
+  end
+  r = _runse_weak_gaps!(net, checked, cfg)
+  return restored === nothing ? r : _se_result_with(r; restoredRows = restored)
+end
+
+## Whether a partition of `_se_observable_island_partition` has a row that
+## `_runse_islands!` estimates: a row without a skip reason whose remapped
+## measurements pass the rank check of the decoupled models (the same
+## steps as the preparation there).
+function _se_partition_estimable(net::Net, measurements::Vector{Measurement}, part, cfg::StateEstimationConfig)::Bool
+  hasproperty(part, :observable) || return true
+  base = _se_island_base(net)
+  for (iid, row) in enumerate(part.rows)
+    row.skip === :none || continue
+    isempty(part.perIsland[iid]) && continue
+    sub = _se_island_subnet(net, row; base = base)
+    meas_i, _ = _se_remap_island_measurements(sub, measurements, part.perIsland[iid])
+    isempty(meas_i) && continue
+    d = _se_decoupled_deficits(sub.inet, meas_i, cfg)
+    (d !== nothing && d.angle + d.magnitude == 0) && return true
+  end
+  return false
+end
+
+## runse! under on_unobservable = observable_islands or scheduled (concept
+## I5, M2): the estimate of the observable islands one by one (or of the
+## whole set when it is observable), then the weak class at the estimate
+## (`_se_weak_at_result`). While a branch or bus is above the bounds, the
+## affected buses (concept G3: the ends of the branches whose flow standard
+## deviation exceeds weak_flow_sigma_mw and the buses whose magnitude
+## standard deviation exceeds weak_vm_sigma_pu) leave their observable
+## island like a dark magnitude (reason :weak), and the islands are cut and
+## estimated again from the same start. The rule is exact in the sense
+## that the loop ends only on an estimate with nothing above the bounds
+## (the class is recomputed at every new estimate, a removal can leave a
+## new weak branch in the rest), or when no new bus is affected,
+## no bus would be left, no island of the cut passes its rank check
+## (`_se_partition_estimable`), or the run does not converge; the last weak
+## report is the result field `weakObservability`. Each round removes at
+## least one bus, so there are at most as many rounds as buses.
+function _runse_weak_gaps!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig)
+  removed = Dict{Int,Symbol}()
+  vStart = [(nd._vm_pu, nd._va_deg) for nd in net.nodeVec]
+  snap = _se_writeback_snapshot(net, cfg)
+  restoreStart! = function ()
+    for (i, nd) in enumerate(net.nodeVec)
+      nd._vm_pu, nd._va_deg = vStart[i]
+    end
+    _se_writeback_restore!(net, snap)
+  end
+  # the partition of the next round: the trial partition of the cut,
+  # computed once and logged when its round runs
+  part = _se_run_partition(net, measurements, true; removed = removed)
+  # the topology precheck runs once; the later rounds attach its findings
+  findings = nothing
+  # the island subnets of each round, reused by its weak check
+  islandSubnets = _SEIslandSubnets()
+  # the last converged round with its partition and weak report: a later
+  # round that does not converge falls back to it
+  good = nothing
+  local res
+  for k = 1:(length(net.nodeVec)+1)
+    res = _runse_configured!(net, measurements, cfg; part = part, precheck = k == 1, findings = findings, island_subnets = islandSubnets)
+    k == 1 && (findings = res.topologyFindings)
+    if !res.converged
+      good === nothing && break
+      # the cut estimate did not converge; the converged estimate of the
+      # round before is kept with its weak report. The net gets its state
+      # back by the same run from the same start (the run writes voltages,
+      # flows, losses, shunt draws, taps and the chain start).
+      @info string("runse!: the estimate without the weak buses did not converge (", res.iterations, " iteration(s)); the converged estimate of the round before is kept with its weak report")
+      restoreStart!()
+      res = _se_result_with(_runse_configured!(net, measurements, cfg; part = good.part, precheck = false, findings = findings); weakObservability = good.w)
+      break
+    end
+    w = _se_weak_at_result(net, measurements, res, part; island_subnets = islandSubnets)
+    res = _se_result_with(res; weakObservability = w)
+    w.n_buses == 0 && break
+    new = Int[b for b in w.buses if !haskey(removed, b)]
+    isempty(new) && break
+    # the buses still estimated after this removal
+    estBuses = if res.observableIslands === nothing
+      Set{Int}(eachindex(net.nodeVec))
+    else
+      Set{Int}(b for b in eachindex(net.nodeVec) if res.observableIslands.estimated[b])
+    end
+    isempty(setdiff(estBuses, new)) && break
+    trial = copy(removed)
+    for b in new
+      trial[b] = :weak
+    end
+    # the cut must leave an island that passes its rank check; otherwise
+    # the weak part cannot be cut out and the estimate stays with its weak
+    # report (marked below, as under abort). The trial partition is cut at
+    # the estimate, before restoreStart!(), and still holds for the next
+    # round: with `removed` set it comes from the network islands and the
+    # decoupled P-theta and Q-V models, which carry no state (measured
+    # 1.1.0 on sp_case118 with 101 weak buses: the same partition at the
+    # estimate and at the flat start, with flatstart on and off).
+    trialPart = _se_run_partition(net, measurements, true; removed = trial, log = false)
+    if !_se_partition_estimable(net, measurements, trialPart, cfg)
+      @info string("runse!: weakly observable at the estimate (", w.n_branches, " branch(es) above the flow bound); without the ", length(new), " affected bus(es) no observable island passes its rank check, the estimate is kept")
+      break
+    end
+    good = (part = part, w = w)
+    removed = trial
+    part = trialPart
+    @info string("runse!: weakly observable at the estimate (", w.n_branches, " branch(es) above the flow bound, largest branch-flow standard deviation ", round(w.max_flow_sigma_mw; digits = 1), " MW); estimating again without ", length(new), " affected bus(es)")
+    _se_log_run_partition(part)
+    # the next round starts where this one started
+    restoreStart!()
+  end
+  # a kept estimate with a weak report (no new bus, no bus left, no island
+  # of the cut passes its rank check, or the cut estimate did not converge)
+  # carries the marking of abort (concept G2): the report in
+  # `weakObservability` marks it unusable, and the flows of the affected
+  # branches are left empty in the net
+  _se_blank_weak_flows!(net, res, cfg)
+  return res
+end
+
+## The flows and losses of the branches in the weak report of `res` set to
+## NaN in `net` (never zero: the flow is not determined by the
+## measurements), and the total losses with them; only after a converged
+## run with update_net, the only case in which the net holds the estimate.
+function _se_blank_weak_flows!(net::Net, res::SEResult, cfg::StateEstimationConfig)
+  w = res.weakObservability
+  (cfg.update_net && res.converged && w !== nothing && !isempty(w.branches)) || return net
+  for j in unique(w.branches)
+    br = net.branchVec[j]
+    setBranchFlow!(br, BranchFlow(nothing, nothing, NaN, NaN), BranchFlow(nothing, nothing, NaN, NaN))
+    setBranchLosses!(br, NaN, NaN)
+  end
+  isempty(net.totalLosses) || (net.totalLosses[end] = (NaN, NaN))
+  return net
 end
 
 runse!(net::Net) = runse!(net, Measurement[m for m in net.measurements])
@@ -5565,7 +8359,13 @@ end
 ## `_tap_exclusion_map`): the solve below runs on the link-contracted copy,
 ## whose fused and renamed buses would otherwise keep out other
 ## transformers (machine test, mRID match) than `runse!` on the same net
-function _validate_measurements(net::Net, measurements::Vector{Measurement}, tapExcl::Dict{String,Symbol})
+##
+## `observable_islands` (default: `on_unobservable` is not `abort`): a set
+## that is not observable is diagnosed per observable island, the units
+## `runse!` estimates under that setting (`_se_run_partition`), so the
+## bad-data diagnostics of the SE service describe the same estimate. The
+## weak-class removal of `runse!` is not repeated here.
+function _validate_measurements(net::Net, measurements::Vector{Measurement}, tapExcl::Dict{String,Symbol}; observable_islands::Bool = state_estimation_config().observability.on_unobservable !== :abort)
   # every setting from the registry (#381); the residual-correlation report
   # and the bad-data thresholds included
   base = state_estimation_config()
@@ -5587,8 +8387,8 @@ function _validate_measurements(net::Net, measurements::Vector{Measurement}, tap
   # island-wise nets: run the full diagnostics per measured island and merge
   # (measurement_index stays the position in the CALLER's vector, so the
   # sequential elimination in runse_diagnostics works unchanged)
-  part = _se_island_partition(net, measurements)
-  if length(part.rows) > 1
+  part = _se_run_partition(net, measurements, observable_islands; log = false)
+  if length(part.rows) > 1 || hasproperty(part, :observable)
     return _validate_measurements_islands(net, measurements, part, tapExcl)
   end
 
@@ -5620,7 +8420,7 @@ function _validate_measurements(net::Net, measurements::Vector{Measurement}, tap
   end
   activeMeas = activeMeas[keep]
   activeIdx = activeIdx[keep]
-  isempty(activeMeas) && error("validate_measurements: no active measurements")
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError("validate_measurements: no active measurements"))
 
   netLocal = deepcopy(net)
   # topologyPrecheck off: the diagnostics re-run this solve per elimination
@@ -5654,7 +8454,7 @@ function _validate_measurements(net::Net, measurements::Vector{Measurement}, tap
     end
     activeMeas = activeMeas[keep2]
     activeIdx = activeIdx[keep2]
-    isempty(activeMeas) && error("validate_measurements: no active measurements left after the IaMeas gate")
+    isempty(activeMeas) && throw(SENoActiveMeasurementsError("validate_measurements: no active measurements left after the IaMeas gate"))
   end
 
   nbus = length(netLocal.nodeVec)
@@ -5799,11 +8599,14 @@ validate_measurements(net::Net) = validate_measurements(net, Measurement[m for m
 ## creates them, also on the LINKAGG aggregate of a cluster of them) encode network
 ## structure, not telemetry, and any near-exact measurement (sigma <= 1e-6)
 ## is a constraint in disguise; eliminating either would remove model
-## knowledge instead of a faulty meter. Derived shunt pseudo-measurements
-## (id prefix "SHDERIV", SE phase 2 case B) are protected too: eliminating
-## one would silently mask its source measurements (bay current, Vm).
+## knowledge instead of a faulty meter. Derived rows (origin :derived, the
+## shunt pseudo-measurements of SE phase 2 case B) are protected too:
+## eliminating one would silently mask its source measurements (bay
+## current, Vm). So are the substitute values an observability restoration
+## adds (origin :pseudo_restore): they are there to keep the set
+## observable. Plain :pseudo rows stay eligible.
 @inline function _elimination_protected(m::Measurement)::Bool
-  return m.zero_injection || startswith(m.id, "SHDERIV") || m.sigma <= 1e-6
+  return m.zero_injection || m.origin in (:derived, :pseudo_restore) || m.sigma <= 1e-6
 end
 
 ## _se_report_tap_fallback(report) -> Vector{Int}: the islands of a
@@ -5829,9 +8632,10 @@ bad-data elimination (identification stage 1):
 While the χ²-like 3σ band test fails, a suspicious measurement
 (`|rn| >= normalizedThreshold`) exists, and fewer than `max_eliminations`
 measurements have been removed, the top suspicious measurement is
-deactivated and the diagnostics rerun. Zero-injection pseudo-measurements
-(id prefix `ZI`), near-exact measurements (`sigma <= 1e-6`) and the pseudo
-measurements of the range check are never eliminated.
+deactivated and the diagnostics rerun. Zero-injection rows, rows with
+origin `:derived` or `:pseudo_restore` (see [`Measurement`](@ref)),
+near-exact measurements (`sigma <= 1e-6`) and the pseudo measurements of
+the range check are never eliminated.
 
 The range check of `runse!` runs once before the first pass (voltage
 measurements outside 0.5 to 1.5 pu: replaced on an energized bus, reason
@@ -5839,6 +8643,12 @@ measurements outside 0.5 to 1.5 pu: replaced on an energized bus, reason
 branches on a bus that is not energized, reason `deenergized`); every pass
 works on the checked set. The default budget `max_eliminations = 5` is also
 the round limit of the loop (one row per round).
+
+With `state_estimation.observability.on_unobservable` set to
+`observable_islands` or `scheduled`, a set that is not observable is
+diagnosed per observable island, the units [`runse!`](@ref) estimates under
+that setting; rows no estimated island uses are not ranked. The removal of
+weak buses at the estimate is not repeated in the diagnostics.
 
 Returns `(diagnostics, rerun, eliminations, reverted, stop_reason, final_diagnostics, topology_findings, range_check)`:
 - `diagnostics`: the initial `validate_measurements` report
@@ -6157,7 +8967,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     println(io, "- **Interpretation:** $(summary.reason)")
     println(io, "- **Suspicious measurements:** $(summary.suspicious_count) / $(summary.total_measurements)")
     rcs = _se_diag_range_check(diag)
-    (rcs !== nothing && !isempty(rcs.rows)) && println(io, "- **Range check of the voltage measurements:** $(rcs.substituted) replaced by a pseudo measurement (`range_check_substituted`), $(rcs.deenergized) at a bus that is not energized (`deenergized`): ", join(("`$(r.id)` ($(r.reason))" for r in rcs.rows), ", "))
+    (rcs !== nothing && !isempty(rcs.rows)) && println(io, "- **Range check of the voltage measurements:** $(rcs.substituted) replaced by a pseudo measurement (`range_check_substituted`), $(rcs.deenergized) at a bus that is not energized (`deenergized`), $(rcs.deenergized_islands) network island(s) without a source (`deenergized_island`): ", join(("`$(r.id)` ($(r.reason))" for r in rcs.rows), ", "))
     # island-wise runs: per-island J/dof plus Wilson-Hilferty, so a single
     # bad island cannot hide inside the summed chi-square
     if hasproperty(base, :islands) && base.islands !== nothing
@@ -6221,7 +9031,7 @@ function print_se_diagnostics(diag; io = stdout, topN::Int = 10, format::Symbol 
     @printf(io, "Suspicious measurements: %d / %d\n", summary.suspicious_count, summary.total_measurements)
     rcs = _se_diag_range_check(diag)
     if rcs !== nothing && !isempty(rcs.rows)
-      @printf(io, "Range check of the voltage measurements: %d substituted, %d deenergized\n", rcs.substituted, rcs.deenergized)
+      @printf(io, "Range check of the voltage measurements: %d substituted, %d deenergized, %d network island(s) not energized\n", rcs.substituted, rcs.deenergized, rcs.deenergized_islands)
       for r in rcs.rows
         println(io, "  ", r.id, " (", r.reason, ")")
       end
@@ -6532,11 +9342,14 @@ const _SE_START_STATES = WeakKeyDict{Any,Any}()
 ## from the nodes themselves: `_se_link_circulation_current` hands out the
 ## circulation only while the net still holds exactly these voltages, so a
 ## later power flow (or any other state write) does not get the circulation
-## of an old estimate.
-function _register_se_start!(net, vm::Vector{Float64}, va::Vector{Float64}, pinj::Vector{Float64}, qinj::Vector{Float64}, converged::Bool; link_circulation::Union{Nothing,Dict{Int,Tuple{Float64,Float64}}} = nothing)
+## of an old estimate. `partial` marks an estimate of the observable islands
+## one by one: buses may be unestimated (NaN) and angles relative;
+## `island_label` holds then the observable-island label per bus ("" for an
+## unestimated bus), empty otherwise.
+function _register_se_start!(net, vm::Vector{Float64}, va::Vector{Float64}, pinj::Vector{Float64}, qinj::Vector{Float64}, converged::Bool; link_circulation::Union{Nothing,Dict{Int,Tuple{Float64,Float64}}} = nothing, partial::Bool = false, island_label::Vector{String} = String[])
   node_vm = Union{Nothing,Float64}[n._vm_pu for n in net.nodeVec]
   node_va = Union{Nothing,Float64}[n._va_deg for n in net.nodeVec]
-  _SE_START_STATES[net] = (vm = vm, va = va, pinj = pinj, qinj = qinj, converged = converged, link_circulation = link_circulation, node_vm = node_vm, node_va = node_va)
+  _SE_START_STATES[net] = (vm = vm, va = va, pinj = pinj, qinj = qinj, converged = converged, link_circulation = link_circulation, node_vm = node_vm, node_va = node_va, partial = partial, island_label = island_label)
   return nothing
 end
 
@@ -6572,7 +9385,10 @@ end
 
 @inline _se_start_state(net) = get(_SE_START_STATES, net, nothing)
 
-const _SE_STATE_CSV_VERSION = "sparlectra-se-state v1"
+const _SE_STATE_CSV_VERSION = "sparlectra-se-state v2"
+# the first version (five columns, every bus estimated); readSEStateCSV!
+# still reads it
+const _SE_STATE_CSV_VERSION_1 = "sparlectra-se-state v1"
 
 """
     writeSEStateCSV(net; file) -> NamedTuple
@@ -6580,46 +9396,68 @@ const _SE_STATE_CSV_VERSION = "sparlectra-se-state v1"
 Write the last SE start state of `net` (registered by
 `runse!` with `state_estimation.update_net = true` or `readSEStateCSV!`) as a CSV artifact:
 
-    # sparlectra-se-state v1
-    bus,vm_pu,va_deg,pinj_MW,qinj_MVar
+    # sparlectra-se-state v2
+    bus,vm_pu,va_deg,pinj_MW,qinj_MVar,estimated,observable_island
 
 (delimiter and decimal separator follow `output.csv_format`, `format`
 keyword; the reader accepts every format)
 
-One row per bus (bus by name). This is the persistence half of the SE -> PF
-chain: a later power-flow run (possibly in another process) restores the
-state with `readSEStateCSV!` and starts via `runpf_from_se!`. Errors when no
-SE state is registered for `net`.
+One row per bus (bus by name). `estimated` is `true` or `false`; a bus
+that was not estimated (an estimate of the observable islands one by one,
+see `runse!`) has `NaN` values. `observable_island` is the label of the
+observable island of the bus ("1.2") and empty for an estimate of the whole
+set. This is the persistence half of the SE -> PF chain: a later power-flow
+run (possibly in another process) restores the state with
+`readSEStateCSV!` and starts via `runpf_from_se!`. Errors when no SE state
+is registered for `net`. Returns `(count, not_estimated)`, the number of
+bus rows and of buses not estimated.
 """
 function writeSEStateCSV(net::Net; file::AbstractString, format = result_csv_format())
   st = _se_start_state(net)
   st === nothing && error("writeSEStateCSV: no state-estimation result registered for this net; run runse! with state_estimation.update_net = true first")
   name_by_idx = _bus_name_by_idx(net)
+  label(i) = isempty(st.island_label) ? "" : st.island_label[i]
   # a result artifact (issue #386): output.csv_format like every other CSV of
   # the run; readSEStateCSV! accepts both delimiters
-  rows = ((get(name_by_idx, i, string(i)), st.vm[i], st.va[i], st.pinj[i], st.qinj[i]) for i in eachindex(net.nodeVec))
-  write_result_csv(file, ("bus", "vm_pu", "va_deg", "pinj_MW", "qinj_MVar"), rows; format = format, comments = [_SE_STATE_CSV_VERSION])
-  return (count = length(net.nodeVec),)
+  rows = ((get(name_by_idx, i, string(i)), st.vm[i], st.va[i], st.pinj[i], st.qinj[i], isnan(st.vm[i]) ? "false" : "true", label(i)) for i in eachindex(net.nodeVec))
+  write_result_csv(file, ("bus", "vm_pu", "va_deg", "pinj_MW", "qinj_MVar", "estimated", "observable_island"), rows; format = format, comments = [_SE_STATE_CSV_VERSION])
+  return (count = length(net.nodeVec), not_estimated = count(isnan, st.vm))
 end
 
 """
     readSEStateCSV!(net; file) -> NamedTuple
 
-Read an SE state CSV (see `writeSEStateCSV`) written for the SAME case,
-write the estimated voltages into `net`, and register the state so
-`runpf_from_se!` can start from it. Buses are matched by name; a bus missing
-from the file or an unknown bus name aborts with a line-precise error.
+Read an SE state CSV (see `writeSEStateCSV`, versions 1 and 2) written for
+the SAME case, write the estimated voltages into `net`, and register the
+state so `runpf_from_se!` can start from it. Buses are matched by name; a
+bus missing from the file or an unknown bus name aborts with a line-precise
+error.
+
+A file of an estimate of the observable islands one by one (version 2 with
+an `observable_island` label or a bus with `estimated = false`) is read
+back as such: a bus not estimated gets NaN voltages, and a closed branch
+with an end not estimated or with its ends in two observable islands is
+not estimated either, its flows and losses are set to NaN (its flow
+follows from no measurement). One warning gives both counts. The state is
+registered as partial, so `runpf_from_se!` refuses it exactly like the
+in-memory estimate. Returns `(count, not_estimated_buses,
+not_estimated_branches, partial)`.
 """
 function readSEStateCSV!(net::Net; file::AbstractString)
   lines = readlines(file)
   isempty(lines) && error("$(file): empty file")
-  expected = "# " * _SE_STATE_CSV_VERSION
-  strip(lines[1]) == expected || error("$(file):1: unknown SE state version ('$(strip(lines[1]))'; expected '$(expected)')")
+  head = strip(lines[1])
+  v2 = head == "# " * _SE_STATE_CSV_VERSION
+  (v2 || head == "# " * _SE_STATE_CSV_VERSION_1) || error("$(file):1: unknown SE state version ('$(head)'; expected '# $(_SE_STATE_CSV_VERSION)' or '# $(_SE_STATE_CSV_VERSION_1)')")
+  nfields = v2 ? 7 : 5
   n = length(net.nodeVec)
   vm = fill(NaN, n)
   va = fill(NaN, n)
   pinj = zeros(Float64, n)
   qinj = zeros(Float64, n)
+  seen = falses(n)
+  estimated = trues(n)
+  labels = fill("", n)
   # the file follows output.csv_format of the run that wrote it: the header
   # line says which delimiter (and thereby which decimal separator) it uses
   delimiter = length(lines) >= 2 ? result_csv_delimiter(lines[2]) : ','
@@ -6628,23 +9466,44 @@ function readSEStateCSV!(net::Net; file::AbstractString)
     line = strip(raw)
     isempty(line) && continue
     fields = split(line, delimiter)
-    length(fields) == 5 || error("$(file):$(ln): expected 5 fields, got $(length(fields))")
-    busIdx = try
-      geNetBusIdx(net = net, busName = String(strip(fields[1])))
-    catch
-      error("$(file):$(ln): unknown bus '$(strip(fields[1]))'")
-    end
+    length(fields) == nfields || error("$(file):$(ln): expected $(nfields) fields, got $(length(fields))")
+    name = String(strip(fields[1]))
+    busIdx = get(net.busDict, name, 0)
+    busIdx == 0 && error("$(file):$(ln): unknown bus '$(name)'")
     vals = map(f -> _parse_result_csv_number(f, delimiter), fields[2:5])
     any(v -> v === nothing, vals) && error("$(file):$(ln): non-numeric value")
     vm[busIdx], va[busIdx], pinj[busIdx], qinj[busIdx] = vals
+    seen[busIdx] = true
+    if v2
+      flag = lowercase(strip(fields[6]))
+      flag in ("true", "false") || error("$(file):$(ln): estimated must be true or false, got '$(strip(fields[6]))'")
+      estimated[busIdx] = flag == "true"
+      labels[busIdx] = String(strip(fields[7]))
+      estimated[busIdx] || (vm[busIdx] = NaN; va[busIdx] = NaN)
+    end
   end
-  missingBuses = [i for i = 1:n if isnan(vm[i])]
+  missingBuses = [i for i = 1:n if !seen[i]]
   isempty(missingBuses) || error("$(file): no state row for bus(es) $(missingBuses); the file does not match this case")
   for i = 1:n
     setVmVa!(node = net.nodeVec[i], vm_pu = vm[i], va_deg = va[i])
   end
-  _register_se_start!(net, vm, va, pinj, qinj, true)
-  return (count = n,)
+  partial = !all(estimated) || any(!isempty, labels)
+  notBuses = Int[i for i = 1:n if !estimated[i]]
+  notBranches = Int[]
+  if partial
+    for (k, br) in enumerate(net.branchVec)
+      _branch_terminal_state(br) == :closed || continue
+      f = Int(br.fromBus)
+      t = Int(br.toBus)
+      (estimated[f] && estimated[t] && labels[f] == labels[t]) && continue
+      push!(notBranches, k)
+      setBranchFlow!(br, BranchFlow(nothing, nothing, NaN, NaN), BranchFlow(nothing, nothing, NaN, NaN))
+      setBranchLosses!(br, NaN, NaN)
+    end
+    @warn "readSEStateCSV!: $(file) holds an estimate of the observable islands one by one: $(length(notBuses)) bus(es) and $(length(notBranches)) branch(es) not estimated; runpf_from_se! refuses this state"
+  end
+  _register_se_start!(net, vm, va, pinj, qinj, true; partial = partial, island_label = partial ? labels : String[])
+  return (count = n, not_estimated_buses = notBuses, not_estimated_branches = notBranches, partial = partial)
 end
 
 """
@@ -6669,7 +9528,9 @@ Modes:
   `profile_source = se_snapshot`.
 
 `kwargs` are forwarded to `runpf!` (the flat start is forced off; the
-estimated voltages ARE the start). Returns `(iterations, erg, converged,
+estimated voltages ARE the start). An estimate of the observable islands
+one by one (relative angles, unestimated buses) is refused like one that
+did not converge. Returns `(iterations, erg, converged,
 mode, slack_pickup_mw, slack_pickup_mvar)`; the slack pickup is the PF slack
 injection minus the estimated injection at the slack bus.
 """
@@ -6678,6 +9539,7 @@ function runpf_from_se!(net::Net, maxIte::Int, tolerance::Float64 = 1e-8, verbos
   st = _se_start_state(net)
   st === nothing && error("runpf_from_se!: no preceding state-estimation result for this net; run runse! with state_estimation.update_net = true or readSEStateCSV! first")
   st.converged || error("runpf_from_se!: the registered state-estimation result did not converge; refusing to start a power flow from it")
+  st.partial && error("runpf_from_se!: the registered state-estimation result covers the observable islands only (unestimated buses, relative angles); refusing to start a power flow from it")
 
   # start voltages := estimated state (re-applied defensively; a PF or other
   # write may have overwritten the node metadata since the SE ran)

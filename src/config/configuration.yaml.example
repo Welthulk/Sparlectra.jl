@@ -524,7 +524,8 @@ state_estimation:
   # removed in one diagnostics run, one per round, so also the round limit
   # of the elimination loop. 0 disables the elimination.
   max_eliminations: 5
-  # FD-aware rank tolerance factor for the observability rank decision.
+  # FD-aware rank tolerance factor of the AC Jacobian rank (numerical_rank,
+  # criticality); the observability verdict comes from the decoupled models.
   rank_tol_factor: 10.0
   # Where the observability rank comes from: decomposition is the SVD of
   # the Jacobian (sparse QR above 2000 states), the exact rank; pivots reads
@@ -560,7 +561,35 @@ state_estimation:
   topology_kcl_k: 4.0
   topology_cluster_min: 3
   observability:
-    enabled: true
+    # Weak class of the observability check: a branch flow with a standard
+    # deviation above weak_flow_sigma_mw (MW) or a voltage magnitude with
+    # one above weak_vm_sigma_pu (pu), from the covariance of the estimate,
+    # makes the set weakly observable. Before the estimation the class is
+    # provisional (at the stored state); the SE service decides at the
+    # estimated state and marks a weakly observable result unusable.
+    # weak_check_after_estimation: runse! determines the class at the
+    # estimate as well (it only reports; false for mass runs).
+    weak_flow_sigma_mw: 20.0
+    weak_vm_sigma_pu: 0.01
+    weak_check_after_estimation: true
+    # What runse! does with a set that is not observable. abort: estimate
+    # as is, no check before. observable_islands: estimate each observable
+    # island on its own with its own reference (relative angles, flows on
+    # unobservable branches and unestimated buses left empty). scheduled:
+    # close the deficit with replacement values from the schedule first,
+    # the rest like observable_islands. Under both runse! estimates again
+    # without the buses of a weak branch or bus at the estimate.
+    on_unobservable: abort
+    # Sigma of a P or Q replacement value as a share of its scheduled
+    # value, at least the default sigma of a P or Q measurement.
+    restore_sigma_rel: 0.30
+    # Sigma (pu) of a U replacement value at the nominal voltage, the last
+    # rule of the U order (stored state, unit set point, median of the
+    # measured U of the level, nominal voltage).
+    restore_vm_sigma_nominal_pu: 0.05
+    # Default cap on the steps of suggest_measurement_placement (one meter
+    # per step).
+    placement_max_steps: 20
   # Transformer tap estimation. enabled: false estimates no tap, every
   # changer keeps its transferred step (SSH profile or measurement file) and
   # se_tap_estimates.csv lists it with status not_estimated, reason disabled.
@@ -608,6 +637,16 @@ state_estimation:
   # substitute_sigma_factor (at least 1; reason range_check_substituted).
   bad_data:
     substitute_sigma_factor: 3.0
+  # Last valid value for a missing or invalid one in a measurement table with
+  # several timestamps: the value of the same key and type from an earlier
+  # timestamp, not older than max_age_min (minutes), with its sigma times
+  # sigma_factor (fixed, at least 1), source last_value;<timestamp>. Comes
+  # before the pseudo rows of the schedule. Both values are a proposal
+  # without a standard behind them. Off by default.
+  last_value:
+    enabled: false
+    max_age_min: 60.0
+    sigma_factor: 3.0
 
 # PowSyBl IIDM import (see docs/src/powsybl_import.md)
 powsybl_import:

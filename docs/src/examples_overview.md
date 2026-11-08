@@ -119,6 +119,7 @@ External FOR001/FOR002 datasets are not shipped; place files under
 | `state_estimation_wls.jl` | baseline WLS run | state_estimation |
 | `state_estimation_manual_measurements.jl` | manual measurement setup | state_estimation |
 | `state_estimation_observability.jl` | observability scenario and diagnostics | state_estimation |
+| `state_estimation_observable_islands.jl` | observable islands, estimation per island, scheduled values and measurement placement on `sp_case118` and `sp_case1354` | state_estimation |
 | `state_estimation_passive_bus_zib_comparison.jl` | passive-bus / ZIB handling comparison | state_estimation |
 | `state_estimation_zero_injection_constraint.jl` | zero injection as weighted rows (`on`) against equality constraints (`constraint`) on `sp_case14`: condition, J, dof, largest ZI residual | state_estimation |
 | `state_estimation_pmu_angles.jl` | PMU angle measurements and the reference-offset state α | state_estimation |

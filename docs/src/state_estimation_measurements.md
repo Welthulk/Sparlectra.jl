@@ -44,7 +44,9 @@ the set this file reads back to.
 The verdict file has one line per data row of the table, joined by its
 line number in `measurements.csv` (a key with its type is not unique: a
 bus sum covers the rows of all its prosumers, and each of them gets the
-verdict of the sum). Its CSV format follows `output.csv_format`.
+verdict of the sum). The replacement values of `on_unobservable =
+scheduled` follow with an empty `line` and their restore id as key. Its
+CSV format follows `output.csv_format`.
 
 | column | content |
 |---|---|
@@ -57,7 +59,8 @@ verdict of the sum). Its CSV format follows `output.csv_format`.
 | `localizable` | `wii` above the localizability threshold |
 | `eliminated` | removed by the bad-data elimination; residual and normalized residual are those of the solve before its removal |
 | `constraint` | zero-injection row solved as a constraint (`state_estimation.zero_injection: constraint`) |
-| `reason` | tokens separated by `;`: `inactive` (valid=false), `deenergized` (the row sits at a bus that is not energized, or at one of its branches, and left the run), `range_check_substituted` (a voltage reading outside the range, replaced by a pseudo measurement; residual and normalized residual are those of the substitute, see [Range check of the voltage measurements](@ref se-range-check)), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical` |
+| `origin` | origin of the measurement: `measured`, `pseudo`, `derived`, `pseudo_restore`, `last_value` |
+| `reason` | tokens separated by `;`: `inactive` (valid=false), `deenergized` (the row sits at a bus that is not energized, or at one of its branches, or in a network island without a source, and left the run), `range_check_substituted` (a voltage reading outside the range, replaced by a pseudo measurement; residual and normalized residual are those of the substitute, see [Range check of the voltage measurements](@ref se-range-check)), `eliminated`, `suppressed`, `downweighted`, `suspicious`, `critical`, `not_used` (an estimate per observable island used no row of it: it holds the flow of an unobservable branch) |
 
 Every other active row carries the residuals of the final diagnostics
 (after every elimination). The suspicious count in `run.log`, on the
@@ -318,7 +321,7 @@ header:
 | `direction` | branch end (`:from`/`:to`) | branch rows only |
 | `value`, `sigma` | measured value and standard deviation in the type's unit (Vm in pu, powers in MW/MVAr, currents in A, angles in degrees) | numbers keep their shortest round-trip form |
 | `active` | active flag | inactive rows are kept in the file |
-| `id` | measurement id | prefixes `ZI` (zero injection) and `SHDERIV` (derived shunt Q) mark protected rows |
+| `id` | measurement id | the prefix `ZI` marks a zero-injection row |
 | `bad_data`, `status` | run artifact before 0.50.0 only | the converter ignores both columns |
 
 Exactly one location group per row (`bus` |

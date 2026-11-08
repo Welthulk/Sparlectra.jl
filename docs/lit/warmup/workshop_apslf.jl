@@ -27,7 +27,7 @@ Run every compile-heavy path of the APSLF workshop once and print how long
 it took. The output of the paths is discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   t_paths = @elapsed redirect_stdout(devnull) do
     w_nr = run_sparlectra(net=build_ring7("warmup NR"), config=cfg_nr)
     w_ap = run_sparlectra(net=scaled_ring7(1.5), config=cfg_apslf)

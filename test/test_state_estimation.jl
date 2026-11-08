@@ -24,6 +24,7 @@ using Logging
 using Sparlectra
 using Random
 import ZipArchives
+import LinearAlgebra
 
 function test_state_estimation_wls_first_version()::Bool
   # Verifies the baseline WLS state-estimation workflow:
@@ -313,8 +314,9 @@ function test_state_estimation_zero_injection_constraint()::Bool
       end
       # SEResult.conditioning: the gain matrix under on, the scaled KKT
       # matrix under constraint, and the KKT matrix is not worse conditioned
-      # than the gain matrix with rows at 1e-3 (1-norm estimates, measured
-      # 2.6e4 against 6.9e9 on sp_case14, 2.4e7 against 2.3e11 on sp_case60)
+      # than the gain matrix with rows at 1e-3 (Jacobi-scaled 1-norm
+      # estimates, measured 6.2e3 against 2.3e9 on sp_case14, 9.0e6 against
+      # 4.9e10 on sp_case60)
       con_c = runs[:constraint].r.conditioning
       on_c = runs[:on].r.conditioning
       @test (on_c.zero_injection, on_c.matrix, con_c.zero_injection, con_c.matrix) == (:on, :gain, :constraint, :kkt)
@@ -405,7 +407,7 @@ function test_state_estimation_zero_injection_constraint()::Bool
     addZeroInjectionMeasurements!(meas; net = net, busIdxs = [loadBus])
     k = findfirst(m -> m.typ == Sparlectra.PflowMeas && abs(m.value) > 5.0, meas)
     g = meas[k]
-    meas[k] = Measurement(typ = g.typ, value = g.value + 30.0 * g.sigma, sigma = g.sigma, busIdx = g.busIdx, branchIdx = g.branchIdx, direction = g.direction, id = g.id, active = g.active)
+    meas[k] = Measurement(typ = g.typ, value = g.value + 30.0 * g.sigma, sigma = g.sigma, busIdx = g.busIdx, branchIdx = g.branchIdx, direction = g.direction, id = g.id, active = g.active, origin = g.origin)
     dd = with_state_estimation_config(zero_injection = :constraint) do
       runse_diagnostics(net, meas)
     end
@@ -454,6 +456,14 @@ function test_state_estimation_zero_injection_constraint()::Bool
                                               (m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas) && ((m.branchIdx in (1, 3) && m.direction == :from) || (m.branchIdx in (2, 4) && m.direction == :to)))]
     @test length(imeas) == 10
     @test Sparlectra._add_missing_zero_injections!(imeas, inet) == 4
+    # the island remap keeps the origin of bus and branch rows
+    omeas = Measurement[Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = :pseudo_restore) for m in imeas]
+    ipart = Sparlectra._se_island_partition(inet, omeas)
+    @test length(ipart.rows) == 2
+    for (iid, row) in enumerate(ipart.rows)
+      remapped_i, _ = Sparlectra._se_remap_island_measurements(Sparlectra._se_island_subnet(inet, row), omeas, ipart.perIsland[iid])
+      @test length(remapped_i) == 7 && all(m -> m.origin === :pseudo_restore, remapped_i)
+    end
     snet = _two_island_transit_net()
     ri = with_state_estimation_config(zero_injection = :constraint, max_iter = 20, tol = 1e-8, jac_eps = 1e-6) do
       runse!(snet, imeas)
@@ -501,6 +511,7 @@ function test_state_estimation_bad_data_diagnostics()::Bool
       branchIdx = bad_meas.branchIdx,
       direction = bad_meas.direction,
       id = bad_meas.id,
+      origin = bad_meas.origin,
     )
 
     report = with_state_estimation_config(max_iter = 12, tol = 1e-8, flatstart = true, jac_eps = 1e-6, k_eliminate = 3.0) do
@@ -802,7 +813,7 @@ function test_state_estimation_sequential_elimination()::Bool
 
     _inject!(meas, idx, nsigma) = begin
       bm = meas[idx]
-      meas[idx] = Measurement(typ = bm.typ, value = bm.value + nsigma * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id)
+      meas[idx] = Measurement(typ = bm.typ, value = bm.value + nsigma * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id, origin = bm.origin)
       bm.id
     end
 
@@ -830,6 +841,23 @@ function test_state_estimation_sequential_elimination()::Bool
       push!(wiiByCase, row.wii)
     end
     @test wiiByCase[2] >= wiiByCase[1] - 1e-6
+
+    # 1b) protection by origin: the same 10-sigma error on a row marked
+    # :pseudo_restore (a value an observability restoration added) still has
+    # the largest normalized residual, but the elimination leaves it in;
+    # marked :pseudo it is eliminated first, as a measured row
+    for (org, eliminated) in ((:pseudo_restore, false), (:pseudo, true))
+      meas = _fresh_meas(net; withImag = false)
+      badIdx = findfirst(m -> m.typ == Sparlectra.PflowMeas, meas)
+      badId = _inject!(meas, badIdx, 10.0)
+      bm = meas[badIdx]
+      meas[badIdx] = Measurement(typ = bm.typ, value = bm.value, sigma = bm.sigma, active = bm.active, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id, origin = org)
+      diag = with_state_estimation_config(max_eliminations = 3, max_iter = 20, tol = 1e-8) do
+        runse_diagnostics(net, meas)
+      end
+      @test first(diag.diagnostics.measurement_ranking).measurement_index == badIdx
+      @test any(t -> t.id == badId, diag.eliminations) == eliminated
+    end
 
     # 2) two independent gross errors, both identified, stop :consistent
     meas = _fresh_meas(net; withImag = false)
@@ -930,7 +958,7 @@ function test_state_estimation_sequential_elimination()::Bool
       @test ite14 > 0
       meas14 = generateMeasurementsFromPF(net14; noise = true, stddev = std14, rng = MersenneTwister(7))
       vm_at(ms, b) = findfirst(m -> m.typ == Sparlectra.VmMeas && m.busIdx == b, ms)
-      with_value(m, v) = Measurement(typ = m.typ, value = v, sigma = m.sigma, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx)
+      with_value(m, v) = Measurement(typ = m.typ, value = v, sigma = m.sigma, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, origin = m.origin)
       # 0 kV at Ilmrode_110 (bus 9) with an imported state of 1.02 pu, a
       # non-finite value at Moorau_20 (bus 10), 1.6 pu at Hassel_20 (bus 11):
       # all three buses are energized
@@ -976,8 +1004,10 @@ function test_state_estimation_sequential_elimination()::Bool
       push!(dmeas, Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = 0.5, busIdx = 13, id = "Pinj_bus_13"))
       push!(dmeas, Measurement(typ = Sparlectra.PflowMeas, value = 0.0, sigma = 0.5, branchIdx = kbr, direction = :from, id = "Pflow_open_branch"))
       n0 = length(dmeas)
-      ddiag = @test_logs (:info, r"Vm_bus_13 at bus Torfloh_20 is 0\.0 pu.*not energized.*3 measurement\(s\) inactive \(deenergized\)") match_mode = :any quiet_diag(dead, dmeas)
-      @test (ddiag.range_check.substituted, ddiag.range_check.deenergized) == (0, 1)
+      # topology first: bus 13 is a network island without a source, so its
+      # rows leave before the voltage check looks at the 0 kV value
+      ddiag = @test_logs (:info, r"topology check: isolated bus Torfloh_20 is not energized.*3 measurement\(s\) inactive \(deenergized_island\)") match_mode = :any quiet_diag(dead, dmeas)
+      @test (ddiag.range_check.substituted, ddiag.range_check.deenergized, ddiag.range_check.deenergized_islands) == (0, 0, 1)
       @test only(ddiag.range_check.rows).deactivated == [n0 - 2, n0 - 1, n0]
       @test ddiag.final_diagnostics.converged
       @test !any(r -> r.measurement_index > n0 - 3, ddiag.final_diagnostics.measurement_ranking)
@@ -1202,6 +1232,7 @@ function test_state_estimation_shunt_back_calculation()::Bool
       @test length(added) == 1
       d = added[1]
       @test startswith(d.id, "SHDERIV")
+      @test d.origin === :derived
       @test d.typ == Sparlectra.ShuntQMeas
       # sign matches the q_shunt convention for both device kinds
       @test sign(d.value) == sign(sh.q_shunt)
@@ -1228,7 +1259,8 @@ function test_state_estimation_shunt_back_calculation()::Bool
     addedm = Test.@test_logs (:warn, r"no active Vm measurement") match_mode = :any deriveShuntPseudoMeasurements!(netm)
     @test isempty(addedm)
 
-    # SHDERIV pseudo-measurements are protected from sequential elimination
+    # derived pseudo-measurements (origin :derived) are protected from
+    # sequential elimination
     nete = create_se_shunt_net()
     runpf!(nete, 40, 1e-10, 0; method = :rectangular)
     updateShuntPowers!(net = nete)
@@ -1243,9 +1275,9 @@ function test_state_estimation_shunt_back_calculation()::Bool
     derived = deriveShuntPseudoMeasurements!(nete)
     @test length(derived) == 1
     # corrupt the derived value grossly; the elimination must not remove it
-    didx = findfirst(m -> startswith(m.id, "SHDERIV"), nete.measurements)
+    didx = findfirst(m -> m.origin === :derived, nete.measurements)
     dm = nete.measurements[didx]
-    nete.measurements[didx] = Measurement(typ = dm.typ, value = dm.value + 20.0 * dm.sigma, sigma = dm.sigma, active = dm.active, busIdx = dm.busIdx, branchIdx = dm.branchIdx, direction = dm.direction, id = dm.id)
+    nete.measurements[didx] = Measurement(typ = dm.typ, value = dm.value + 20.0 * dm.sigma, sigma = dm.sigma, active = dm.active, busIdx = dm.busIdx, branchIdx = dm.branchIdx, direction = dm.direction, id = dm.id, origin = dm.origin)
     diag = with_state_estimation_config(max_eliminations = 3, max_iter = 30, tol = 1e-8) do
       runse_diagnostics(nete)
     end
@@ -1299,6 +1331,16 @@ function test_state_estimation_link_contraction()::Bool
     @test isapprox(aggP.value, sum(m.value for m in memberP); atol = 1e-12)
     @test isapprox(aggP.sigma, sqrt(sum(m.sigma^2 for m in memberP)); atol = 1e-15)
     @test any(n -> n.reason == :aggregated_cluster_injection, prep.notes)
+    # every copy in _se_prepare keeps the origin (bus and branch rows), and
+    # the aggregate takes the common origin of its members, :pseudo when a
+    # substitute value is mixed in
+    withOrigin(m, o) = Measurement(typ = m.typ, value = m.value, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = o)
+    prepRestore = Sparlectra._se_prepare(net, [withOrigin(m, :pseudo_restore) for m in meas])
+    @test any(m -> m.branchIdx !== nothing, prepRestore.meas) && any(m -> m.busIdx !== nothing, prepRestore.meas)
+    @test all(m -> m.origin === :pseudo_restore, prepRestore.meas)
+    @test aggP.origin === :measured
+    measMix = [m.typ == Sparlectra.PinjMeas && m.busIdx == b1a ? withOrigin(m, :pseudo) : m for m in meas]
+    @test only(m for m in Sparlectra._se_prepare(net, measMix).meas if startswith(m.id, "LINKAGG_Pinj")).origin === :pseudo
 
     # partial cluster: only one member measured -> excluded with warning,
     # WLS identical to a run without that measurement
@@ -1418,6 +1460,20 @@ function test_state_estimation_link_contraction()::Bool
     end
     @test resR.converged
     @test resR.linkCirculations !== nothing && length(resR.linkCirculations) == 1
+    # the reported condition number is that of the Jacobi-scaled gain
+    # matrix D^-1/2 G D^-1/2. Dense reference: G = H' W H at the estimated
+    # state (the circulation column in MW, the others in rad and pu), its
+    # exact 1-norm condition after scaling. Unscaled the unit mix alone
+    # puts it about five orders higher (6.6e6 against 19 when written).
+    mjR = with_state_estimation_config(flatstart = false) do
+      measurement_jacobian(netR)
+    end
+    @test mjR.cols[end] == "circP(1)"
+    GR = mjR.H' * (LinearAlgebra.Diagonal([1 / row.sigma^2 for row in mjR.rows]) * mjR.H)
+    SR = LinearAlgebra.Diagonal(1 ./ sqrt.(LinearAlgebra.diag(GR)))
+    @test resR.conditioning.scaling === :jacobi
+    @test isapprox(resR.conditioning.condition_number, LinearAlgebra.cond(SR * GR * SR, 1); rtol = 1e-6)
+    @test LinearAlgebra.cond(GR, 1) > 1e4 * resR.conditioning.condition_number
     rowsR = calcLinkFlowsSE!(netR)
     @test all(abs(rowsR[j].pFlow_MW - fR[j]) < 1e-6 for j in 1:3)
     @test all(r.source == :estimated for r in rowsR)
@@ -1694,14 +1750,23 @@ function test_state_estimation_robust_r()::Bool
     # virtual measurements are exempt regardless of t
     @test Sparlectra._robust_stage(100.0, 1e-7) == (0, 1e-7)
     # the row-level method exempts what elimination protects: a
-    # zero-injection row and a derived shunt row with a real sigma stay at
-    # stage 0 at t = 200, a plain row with the same sigma reaches stage 2
+    # zero-injection row, a derived row and a restoration pseudo row with a
+    # real sigma stay at stage 0 at t = 200, a plain row and a :pseudo row
+    # with the same sigma reach stage 2. The origin decides, not the id: a
+    # SHDERIV id on a measured row protects nothing
     ziRow = Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "ZI_PINJ_bus_1", zero_injection = true)
-    shRow = Measurement(typ = Sparlectra.QinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "SHDERIV_bus_1")
+    shRow = Measurement(typ = Sparlectra.QinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "SHDERIV_bus_1", origin = :derived)
+    restoreRow = Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "Pinj_bus_1", origin = :pseudo_restore)
     plainRow = Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "Pinj_bus_1")
+    pseudoRow = Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "Pinj_bus_1", origin = :pseudo)
+    idOnlyRow = Measurement(typ = Sparlectra.QinjMeas, value = 0.0, sigma = σ, busIdx = 1, id = "SHDERIV_bus_1")
     @test Sparlectra._robust_stage(ziRow, 100.0, 3.0, 6.0) == (0, σ)
     @test Sparlectra._robust_stage(shRow, 100.0, 3.0, 6.0) == (0, σ)
-    @test Sparlectra._robust_stage(plainRow, 100.0, 3.0, 6.0) === Sparlectra._robust_stage(100.0, σ, 3.0, 6.0)
+    @test Sparlectra._robust_stage(restoreRow, 100.0, 3.0, 6.0) == (0, σ)
+    for row in (plainRow, pseudoRow, idOnlyRow)
+      @test Sparlectra._robust_stage(row, 100.0, 3.0, 6.0) === Sparlectra._robust_stage(100.0, σ, 3.0, 6.0)
+    end
+    @test_throws ErrorException Measurement(typ = Sparlectra.PinjMeas, value = 0.0, sigma = σ, busIdx = 1, origin = :guessed)
 
     # --- integration: one 10 sigma gross error on a meshed case
     std = measurementStdDevs(vm = 0.002, pinj = 0.5, qinj = 0.5, pflow = 0.5, qflow = 0.5)
@@ -1715,7 +1780,7 @@ function test_state_estimation_robust_r()::Bool
     meas = _meas()
     badIdx = findfirst(m -> m.typ == Sparlectra.PflowMeas, meas)
     bm = meas[badIdx]
-    meas[badIdx] = Measurement(typ = bm.typ, value = bm.value + 10.0 * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id)
+    meas[badIdx] = Measurement(typ = bm.typ, value = bm.value + 10.0 * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id, origin = bm.origin)
 
     resPlain = with_state_estimation_config(max_iter = 40, tol = 1e-10, update_net = false, robust = false) do
       runse!(net, meas)
@@ -1897,7 +1962,7 @@ function test_state_estimation_wilson_hilferty()::Bool
     measBad = generateMeasurementsFromPF(net; noise = true, stddev = std, rng = MersenneTwister(7))
     bi = findfirst(m -> m.typ == Sparlectra.VmMeas, measBad)
     bmm = measBad[bi]
-    measBad[bi] = Measurement(typ = bmm.typ, value = bmm.value + 10.0 * bmm.sigma, sigma = bmm.sigma, active = bmm.active, busIdx = bmm.busIdx, branchIdx = bmm.branchIdx, direction = bmm.direction, id = bmm.id)
+    measBad[bi] = Measurement(typ = bmm.typ, value = bmm.value + 10.0 * bmm.sigma, sigma = bmm.sigma, active = bmm.active, busIdx = bmm.busIdx, branchIdx = bmm.branchIdx, direction = bmm.direction, id = bmm.id, origin = bmm.origin)
     repHigh = with_state_estimation_config(max_iter = 30, tol = 1e-8) do
       validate_measurements(net, measBad)
     end
@@ -1926,7 +1991,7 @@ function test_state_estimation_diagnostics_unification()::Bool
     # gross error elsewhere (a Pflow), released shunt with direct measurement
     badIdx = findfirst(m -> m.typ == Sparlectra.PflowMeas, meas)
     bm = meas[badIdx]
-    meas[badIdx] = Measurement(typ = bm.typ, value = bm.value + 10.0 * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id)
+    meas[badIdx] = Measurement(typ = bm.typ, value = bm.value + 10.0 * bm.sigma, sigma = bm.sigma, active = bm.active, busIdx = bm.busIdx, branchIdx = bm.branchIdx, direction = bm.direction, id = bm.id, origin = bm.origin)
     setShuntEstimation!(net; busName = "LoadB")
 
     report = with_state_estimation_config(max_iter = 40, tol = 1e-8) do
@@ -1948,6 +2013,32 @@ function test_state_estimation_diagnostics_unification()::Bool
     @test only(r for r in repFrozen.result.shuntEstimates).frozen
     mF = length(repFrozen.measurement_ranking)
     @test repFrozen.objective.dof == mF - (2 * nbus - 1)
+  end)() end
+
+  @testset "Topology precheck notes the skipped flow rule at a flat start" begin (function ()
+    # shipped sp_case14 with its measurement set; the readings of the most
+    # loaded measured branch are set to zero. Under the stored solved
+    # state the precheck names that branch (closed, no flow); with every
+    # angle at 0 there is no expectation, the rule is skipped and the
+    # summary says so instead of staying silent.
+    net = importSCF(joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.scf.json"))
+    readMeasurementTable!(net; file = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case14.measurements.csv"), zero_injection = false)
+    isflow(m) = m.typ in (Sparlectra.PflowMeas, Sparlectra.QflowMeas, Sparlectra.ImagMeas) && m.branchIdx !== nothing
+    pf = [m for m in net.measurements if m.typ == Sparlectra.PflowMeas && m.branchIdx !== nothing]
+    k = pf[argmax([abs(m.value) for m in pf])].branchIdx
+    dead = [isflow(m) && m.branchIdx == k ? Measurement(typ = m.typ, value = 0.0, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id) : m for m in net.measurements]
+    rule2(pre) = [f for f in pre.findings if f.kind == :closed_element_without_flow]
+    pre = validate_topology(net, dead)
+    @test isempty(pre.notes)
+    @test any(f -> occursin("branch $(k) ", f.location), rule2(pre))
+    for n in net.nodeVec
+      n._vm_pu = 1.0
+      n._va_deg = 0.0
+    end
+    pre = validate_topology(net, dead)
+    @test isempty(rule2(pre))
+    @test length(pre.notes) == 1
+    @test occursin("rule 2 (closed branch without flow) skipped: flat start, no expected state", pre.summary)
   end)() end
 
   return true
@@ -3639,7 +3730,7 @@ function test_state_estimation_tap_completion()::Bool
       if grossQ != 0.0
         gi = findfirst(m -> m.typ == Sparlectra.QflowMeas && m.branchIdx == 3, meas)
         m0 = meas[gi]
-        meas[gi] = Measurement(typ = m0.typ, value = m0.value + grossQ * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx)
+        meas[gi] = Measurement(typ = m0.typ, value = m0.value + grossQ * m0.sigma, sigma = m0.sigma, active = m0.active, busIdx = m0.busIdx, branchIdx = m0.branchIdx, direction = m0.direction, id = m0.id, linkIdx = m0.linkIdx, origin = m0.origin)
       end
       return meas
     end

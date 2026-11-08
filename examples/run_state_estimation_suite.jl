@@ -18,7 +18,7 @@
 
 include(joinpath(@__DIR__, "others", "example_suite_runner.jl"))
 using Sparlectra
-using LinearAlgebra: svdvals
+using LinearAlgebra: norm, svdvals
 
 # state_estimation_observability.jl internally includes
 # state_estimation_wls.jl; that duplication is contained in its own
@@ -27,6 +27,7 @@ const SUITE_SPECS = ExampleSpec[
   ExampleSpec(name = "wls", file = "state_estimation/state_estimation_wls.jl", purpose = "classical WLS state-estimation workflow with synthetic measurements"),
   ExampleSpec(name = "manual_measurements", file = "state_estimation/state_estimation_manual_measurements.jl", purpose = "measurement set built via the manual measurement helpers (addVmMeasurement!, ...)"),
   ExampleSpec(name = "observability", file = "state_estimation/state_estimation_observability.jl", purpose = "progressively deactivates branch-flow measurements and logs observability-redundancy metrics"),
+  ExampleSpec(name = "observable_islands", file = "state_estimation/state_estimation_observable_islands.jl", purpose = "observable islands, estimation per observable island, scheduled values and measurement placement on sp_case118 and sp_case1354, with the run time per step"),
   ExampleSpec(name = "passive_bus_zib_comparison", file = "state_estimation/state_estimation_passive_bus_zib_comparison.jl", purpose = "WLS state estimation with and without zero-injection (ZIB) measurements"),
   ExampleSpec(name = "zero_injection_constraint", file = "state_estimation/state_estimation_zero_injection_constraint.jl", purpose = "zero injection as weighted rows (on) against equality constraints (constraint) on sp_case14: condition, J, dof, largest ZI residual"),
   ExampleSpec(name = "pmu_angles", file = "state_estimation/state_estimation_pmu_angles.jl", purpose = "PMU voltage-angle measurements with the reference-angle offset state alpha (aligned vs. shifted PMU time base)"),
@@ -82,8 +83,14 @@ function write_measurement_matrix_report(output_dir::AbstractString)
     evaluate_global_observability(net)
   end
   # H is sparse; the workshop-size matrix is tiny, so
-  # the exact dense singular values stay affordable here
-  sv = svdvals(Matrix(mj.H))
+  # the exact dense singular values stay affordable here. The columns are
+  # scaled to unit 2-norm first (the Jacobi scaling of H'H, as the
+  # estimator reports its gain matrix), so the units of the states (rad,
+  # pu, MW for ring circulations) do not enter the verdict.
+  Hd = Matrix(mj.H)
+  colnorm = [norm(view(Hd, :, j)) for j in axes(Hd, 2)]
+  Hs = Hd ./ permutedims([c > 0.0 ? c : 1.0 for c in colnorm])
+  sv = svdvals(Hs)
   cond_H = sv[end] > 0.0 ? sv[1] / sv[end] : Inf
   # heuristic verdict on the WLS problem's conditioning: the normal
   # equations square the condition of H, so cond(H) above ~1e7 means the
@@ -107,8 +114,8 @@ function write_measurement_matrix_report(output_dir::AbstractString)
     println(io, "| redundancy dof (m - n) | ", gobs.dof, " |")
     println(io, "| redundancy ratio m/n | ", round(gobs.redundancy_ratio; digits = 2), " |")
     println(io, "| critical measurements | ", length(gobs.numerical_critical_measurement_indices), " |")
-    println(io, "| sigma_max / sigma_min of H | ", round(sv[1]; digits = 4), " / ", round(sv[end]; digits = 6), " |")
-    println(io, "| cond(H) | ", round(cond_H; digits = 1), " |")
+    println(io, "| sigma_max / sigma_min of H, columns scaled | ", round(sv[1]; digits = 4), " / ", round(sv[end]; digits = 6), " |")
+    println(io, "| cond(H), columns scaled | ", round(cond_H; digits = 1), " |")
     println(io, "| quality | ", gobs.quality, " |")
     println(io, "| verdict | ", verdict, " |")
     println(io)

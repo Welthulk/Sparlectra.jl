@@ -310,10 +310,11 @@ end
 """
 Resolve the MiniGrid CGMES delivery, which covers the CGMES compile paths
 (ZIP and XML reading, profile harvesting, net construction, control mapping).
-It comes from the same case cache the Web UI uses; when absent it is fetched
-once through the existing registry (network). A failed fetch only skips the
-CGMES traces, never the build, but the gap is logged so the coverage loss is
-visible rather than silent.
+It is fetched through the existing registry into the workload's temporary
+case directory (`server.runtime.case_directory`, below the temporary root);
+the conformity package itself is cached in `data/CGMES`. A failed fetch only
+skips the CGMES traces, never the build, but the gap is logged so the
+coverage loss is visible rather than silent.
 """
 function _workload_cgmes_zip(server)
   zip = joinpath(server.runtime.case_directory, "cgmes_minigrid.zip")
@@ -381,7 +382,15 @@ function _trace_apslf()
   return nothing
 end
 
-function run_workload()
+function run_workload(; root::AbstractString)
+  # The Web UI of the workload runs on `root/runs`, so its case directory,
+  # configuration copy, run registry and operation log are temporary too
+  # (the Web UI places config, data/mpower and logs NEXT TO the output root,
+  # see default_webui_config_path; with `root` itself as output root they
+  # landed in the shared parent, /tmp/config, /tmp/data and /tmp/logs): the traces below stage cases and write measurement
+  # tables into server.runtime.case_directory. 1.1.0 started it on the
+  # default root, wrote five files into the user's case directory and
+  # overwrote a measurement table there.
   server = nothing
   port = 0
   _step("starting the Web UI")
@@ -391,9 +400,7 @@ function run_workload()
     # wording differs per platform: on Windows the same condition arrives as
     # an IOError with a different text, so the build died on a busy port.
     server = try
-      # the workload never touches the user's case directory: no refresh
-      # of shipped case copies here
-      start_sparlectra_webui(open_browser = false, port = candidate, _refresh_shipped_cases = false)
+      start_sparlectra_webui(open_browser = false, port = candidate, output_root = joinpath(root, "runs"), _refresh_shipped_cases = false)
     catch err
       @warn "sysimage workload: port $(candidate) not usable" exception = err
       nothing
@@ -429,7 +436,23 @@ function run_workload()
   return nothing
 end
 
-Base.invokelatest(run_workload)
+# `root` is removed by hand for the reason given at _workload_service_run
+# (open handles on Windows); a leftover temporary directory is harmless
+function _run_workload_in_temp_root()
+  root = mktempdir(; cleanup = false)
+  try
+    run_workload(; root = root)
+  finally
+    try
+      rm(root; recursive = true, force = true)
+    catch err
+      @warn "sysimage workload: temporary Web UI root could not be removed (harmless)" dir = root exception = err
+    end
+  end
+  return nothing
+end
+
+Base.invokelatest(_run_workload_in_temp_root)
 
 # Opt-in comparison trace: the fast test profile plus the
 # Web UI test group. This used to run on every build and dominated its

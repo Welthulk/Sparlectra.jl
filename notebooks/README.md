@@ -1,25 +1,36 @@
 # Sparlectra workshop notebooks
 
-These notebooks run on Google Colab, no local installation required. The
-first cell installs Sparlectra from GitHub (branch `main`) into a fresh
-temporary environment (takes a few minutes); the isolation keeps Colab's
-preinstalled package stack out of the install, and commented lines in the
-same cell switch to another branch or to the latest registered release.
+These notebooks run in Jupyter or VS Code, in the workshop folder that one
+command sets up (Julia if missing, Sparlectra, IJulia, a Jupyter kernel and
+copies of these notebooks):
 
-| Notebook | What it covers | Open |
-|---|---|---|
-| [workshop_tour.ipynb](workshop_tour.ipynb) | The basic tour, Newcomer to Advanced: first network step by step, model editing and Q-limits, slack types and short circuit, OLTC tap control, Q(U) control | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
-| [workshop_tour_advanced.ipynb](workshop_tour_advanced.ipynb) | The advanced tour, Expert and Beyond: remote voltage control, a steerable HVDC link, state estimation, FACTS devices and their limits, N-1 contingency analysis, parallel sweeps on Julia threads | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb) |
-| [workshop_tour_control.ipynb](workshop_tour_control.ipynb) | Part 3 (Advanced and up), coordinated transformer control: the circulating-current trap of parallel units, the master/slave group, and the CGMES RegulatingControl mapping | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb) |
-| [workshop_tour_cgmes.ipynb](workshop_tour_cgmes.ipynb) | The CGMES tour (Expert): anatomy of an ENTSO-E delivery, the import analysis, bus-branch import with SV validation, node-breaker with and without a TP profile, the export round trip, on the official conformity test sets | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb) |
-| [workshop_slack_short_circuit.ipynb](workshop_slack_short_circuit.ipynb) | (Advanced) Three ways to model the grid connection (ideal slack, non-ideal external-grid source, distributed slack) plus an IEC 60909-0 short-circuit sweep from the declared feeder data | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
-| [workshop_distributed_slack.ipynb](workshop_distributed_slack.ipynb) | (Advanced) Distributed slack: how the participation weights are determined (schedule, capacity, headroom, imported APF/normalPF, explicit), how they are normalized, and the fallback when no valid participant exists | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb) |
-| [workshop_transformers.ipynb](workshop_transformers.ipynb) | (Advanced) Transformer taps: ratio taps (OLTC) move voltage, phase taps (PST/Schrägregler) move power; device tap math, the closed control loop with the X(α) characteristic, and the 3WT star equivalent | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb) |
-| [workshop_series_compensation.ipynb](workshop_series_compensation.ipynb) | (Expert) FACTS flow control, TCSC to UPFC: why flow follows reactance, how the series-reactance controller (TCSC) steers a loop-network flow split, and the full UPFC (SSSC+STATCOM composite and the DC-link-coupled model holding a line's P and Q independently) | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb) |
-| [workshop_scenarios.ipynb](workshop_scenarios.ipynb) | (Advanced) Scenarios and screening: outages as data in the SCF scenarios block, N-1 expansion, hand-written patch scenarios via runScenarios!, screening off against flag and what the screened share promises, and the block written back into the case file | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_scenarios.ipynb) |
-| [workshop_qsts.ipynb](workshop_qsts.ipynb) | (Advanced) QSTS: the example day on sp_case14 in mode A (every step on its own) and mode B (in order, taps and bank carried), the switch qsts.mode, qstsValues, qstsSwitching, qstsMetrics, a chart with qstsChart, and what differs between the modes | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_qsts.ipynb) |
-| [workshop_state_estimation.ipynb](workshop_state_estimation.ipynb) | (Advanced to Expert) State estimation: derive a noisy measurement set from a reference power flow, check observability with a placement deep dive (placement diagram, PMU phasors and the reference-angle offset), run the WLS estimator, and see when observability breaks down | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
-| [workshop_se_diagnostics.ipynb](workshop_se_diagnostics.ipynb) | (Expert) Bad data and parameter estimation: the Wilson-Hilferty band test, normalized residuals and localizability, sequential elimination vs robust ride-through, current-magnitude measurements, and recovering a stale shunt susceptance as an estimator state | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb) |
+```sh
+curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.sh | sh -s -- --workshops
+```
+
+Windows (PowerShell):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat --workshops
+```
+
+The first cell of each notebook checks that Sparlectra is installed in that
+environment. Options and details: [Workshops](../README.md#workshops).
+
+| Notebook | What it covers |
+|---|---|
+| [workshop_tour.ipynb](workshop_tour.ipynb) | The basic tour, Newcomer to Advanced: first network step by step, model editing and Q-limits, slack types and short circuit, OLTC tap control, Q(U) control |
+| [workshop_tour_advanced.ipynb](workshop_tour_advanced.ipynb) | The advanced tour, Expert and Beyond: remote voltage control, a steerable HVDC link, state estimation, FACTS devices and their limits, N-1 contingency analysis, parallel sweeps on Julia threads |
+| [workshop_tour_control.ipynb](workshop_tour_control.ipynb) | Part 3 (Advanced and up), coordinated transformer control: the circulating-current trap of parallel units, the master/slave group, and the CGMES RegulatingControl mapping |
+| [workshop_tour_cgmes.ipynb](workshop_tour_cgmes.ipynb) | The CGMES tour (Expert): anatomy of an ENTSO-E delivery, the import analysis, bus-branch import with SV validation, node-breaker with and without a TP profile, the export round trip, on the official conformity test sets |
+| [workshop_slack_short_circuit.ipynb](workshop_slack_short_circuit.ipynb) | (Advanced) Three ways to model the grid connection (ideal slack, non-ideal external-grid source, distributed slack) plus an IEC 60909-0 short-circuit sweep from the declared feeder data |
+| [workshop_distributed_slack.ipynb](workshop_distributed_slack.ipynb) | (Advanced) Distributed slack: how the participation weights are determined (schedule, capacity, headroom, imported APF/normalPF, explicit), how they are normalized, and the fallback when no valid participant exists |
+| [workshop_transformers.ipynb](workshop_transformers.ipynb) | (Advanced) Transformer taps: ratio taps (OLTC) move voltage, phase taps (PST/Schrägregler) move power; device tap math, the closed control loop with the X(α) characteristic, and the 3WT star equivalent |
+| [workshop_series_compensation.ipynb](workshop_series_compensation.ipynb) | (Expert) FACTS flow control, TCSC to UPFC: why flow follows reactance, how the series-reactance controller (TCSC) steers a loop-network flow split, and the full UPFC (SSSC+STATCOM composite and the DC-link-coupled model holding a line's P and Q independently) |
+| [workshop_scenarios.ipynb](workshop_scenarios.ipynb) | (Advanced) Scenarios and screening: outages as data in the SCF scenarios block, N-1 expansion, hand-written patch scenarios via runScenarios!, screening off against flag and what the screened share promises, and the block written back into the case file |
+| [workshop_qsts.ipynb](workshop_qsts.ipynb) | (Advanced) QSTS: the example day on sp_case14 in mode A (every step on its own) and mode B (in order, taps and bank carried), the switch qsts.mode, qstsValues, qstsSwitching, qstsMetrics, a chart with qstsChart, and what differs between the modes |
+| [workshop_state_estimation.ipynb](workshop_state_estimation.ipynb) | (Advanced to Expert) State estimation: derive a noisy measurement set from a reference power flow, check observability with a placement deep dive (placement diagram, PMU phasors and the reference-angle offset), run the WLS estimator, and see when observability breaks down |
+| [workshop_se_diagnostics.ipynb](workshop_se_diagnostics.ipynb) | (Expert) Bad data and parameter estimation: the Wilson-Hilferty band test, normalized residuals and localizability, sequential elimination vs robust ride-through, current-magnitude measurements, and recovering a stale shunt susceptance as an estimator state |
 | [workshop_apslf.ipynb](workshop_apslf.ipynb) | (Intermediate) APSLF in Sparlectra: the analytic power-series solver on a Sparlectra model through the configuration, the series order and its mismatch plateau, the convergence radius `dmin` as a loadability margin on a load-scaled ring, reactive limits under APSLF on case118, and the series as the start value of the rectangular solver (hybrid start). Complements the theory workshop of AnalyticLoadFlow.jl. |
 
 The same content is rendered as documentation pages in the

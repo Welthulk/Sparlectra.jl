@@ -91,6 +91,20 @@ Fields:
   `state_estimation.zero_injection = constraint` such rows are equality
   constraints, and they are protected from bad-data elimination. The id
   alone never decides it: a measurement table uses the meter mRID as id.
+- `origin`: where the value comes from, set by the code that creates the
+  row. `:measured` (default) is a meter reading, `:pseudo` a substitute
+  value (a measurement table row whose `source` carries the token
+  `pseudo`, for example a row of `generatePseudoMeasurementTable`),
+  `:derived` a value computed from other measurements
+  (`deriveShuntPseudoMeasurements!`), `:pseudo_restore` a replacement value
+  of [`restore_observability`](@ref), `:last_value` the last
+  valid value of a meter standing in for a missing one (a measurement table
+  row whose `source` carries the token `last_value`, see
+  `state_estimation.last_value`), `:range_check` the substitute of the
+  voltage range check for an out-of-range U row on an energized bus. Rows
+  with `:derived` or `:pseudo_restore` are protected from bad-data
+  elimination like zero-injection rows; the others are not. A copy of a
+  measurement keeps its origin. Any other value is an error.
 """
 struct Measurement
   typ::MeasurementType
@@ -104,13 +118,42 @@ struct Measurement
   id::String
   linkIdx::Union{Nothing,Int}
   zero_injection::Bool
+  origin::Symbol
 end
 
-function Measurement(; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false)
+function Measurement(; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false, origin::Symbol = :measured)
   σ = Float64(sigma)
   σ <= 0.0 && error("Measurement sigma must be > 0.0")
+  origin in MEASUREMENT_ORIGINS || error("Measurement origin must be one of $(join(MEASUREMENT_ORIGINS, ", ")), got $(repr(origin))")
   w = inv(σ * σ)
-  return Measurement(typ, Float64(value), σ, w, active, busIdx, branchIdx, direction, String(id), linkIdx, zero_injection)
+  return Measurement(typ, Float64(value), σ, w, active, busIdx, branchIdx, direction, String(id), linkIdx, zero_injection, origin)
+end
+
+# the values of Measurement.origin
+const MEASUREMENT_ORIGINS = (:measured, :pseudo, :derived, :pseudo_restore, :last_value, :range_check)
+
+# The origin of a row that sums several measurements (a LINKAGG cluster
+# aggregate, a group sum of a measurement table): the common origin when
+# all parts share one, otherwise :pseudo when any part is a substitute
+# value (the sum is no meter reading then, and the protection of a
+# :pseudo_restore part does not extend to the measured parts), else
+# :last_value when any part is a last value (the sum is no reading of this
+# instant), else :measured.
+function _combined_measurement_origin(origins)::Symbol
+  common = nothing
+  mixed = false
+  any_pseudo = false
+  any_last = false
+  for o in origins
+    common === nothing && (common = o)
+    o === common || (mixed = true)
+    o in (:pseudo, :pseudo_restore) && (any_pseudo = true)
+    o === :last_value && (any_last = true)
+  end
+  common === nothing && return :measured
+  mixed || return common
+  any_pseudo && return :pseudo
+  return any_last ? :last_value : :measured
 end
 
 @inline function _default_measurement_id(typ::MeasurementType; busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, linkIdx::Union{Nothing,Int} = nothing)
@@ -165,11 +208,13 @@ end
 end
 
 """
-    addMeasurement!(measurements; typ, value, sigma, active=true, busIdx=nothing, branchIdx=nothing, direction=:none, id="", zero_injection=false)
+    addMeasurement!(measurements; typ, value, sigma, active=true, busIdx=nothing, branchIdx=nothing, direction=:none, id="", zero_injection=false, origin=:measured)
 
 Append a state-estimation measurement to `measurements` and return it.
+`origin` says where the value comes from (`:measured`, `:pseudo`,
+`:derived`, `:pseudo_restore`, `:last_value`, see [`Measurement`](@ref)).
 """
-function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false)
+function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real, sigma::Real, active::Bool = true, busIdx::Union{Nothing,Int} = nothing, branchIdx::Union{Nothing,Int} = nothing, direction::Symbol = :none, id::AbstractString = "", linkIdx::Union{Nothing,Int} = nothing, zero_injection::Bool = false, origin::Symbol = :measured)
   if !isnothing(linkIdx) && (typ != PflowMeas && typ != QflowMeas)
     error("linkIdx is only valid for flow measurements (PflowMeas/QflowMeas)")
   end
@@ -199,7 +244,7 @@ function addMeasurement!(measurements::Vector; typ::MeasurementType, value::Real
   end
 
   meas_id = isempty(id) ? _default_measurement_id(typ; busIdx = busIdx, branchIdx = branchIdx, direction = direction, linkIdx = linkIdx) : String(id)
-  meas = Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = meas_id, linkIdx = linkIdx, zero_injection = zero_injection)
+  meas = Measurement(typ = typ, value = value, sigma = sigma, active = active, busIdx = busIdx, branchIdx = branchIdx, direction = direction, id = meas_id, linkIdx = linkIdx, zero_injection = zero_injection, origin = origin)
   push!(measurements, meas)
   return meas
 end
@@ -398,8 +443,8 @@ of `addPmuPhasorMeasurement!` for voltages). Returns `(imag, ia)`.
 function addCurrentPhasorMeasurement!(measurements::Vector; net::Net, i_A::Real, ia_deg::Real, sigmaI::Real = 10.0, sigmaIa::Real = 0.05, direction::Symbol = :from, branchNr::Union{Nothing,Int} = nothing, fromBus::Union{Nothing,String} = nothing, toBus::Union{Nothing,String} = nothing, busName::Union{Nothing,String} = nothing, active::Bool = true, idPrefix::AbstractString = "PMU")
   mi = addImagMeasurement!(measurements; net = net, value = i_A, sigma = sigmaI, direction = direction, branchNr = branchNr, fromBus = fromBus, toBus = toBus, busName = busName, active = active, id = "")
   ma = addIaMeasurement!(measurements; net = net, value = ia_deg, sigma = sigmaIa, direction = direction, branchNr = branchNr, fromBus = fromBus, toBus = toBus, busName = busName, active = active, id = "")
-  mi2 = Measurement(typ = mi.typ, value = mi.value, sigma = mi.sigma, active = mi.active, busIdx = mi.busIdx, branchIdx = mi.branchIdx, direction = mi.direction, id = string(idPrefix, "_", mi.id))
-  ma2 = Measurement(typ = ma.typ, value = ma.value, sigma = ma.sigma, active = ma.active, busIdx = ma.busIdx, branchIdx = ma.branchIdx, direction = ma.direction, id = string(idPrefix, "_", ma.id))
+  mi2 = Measurement(typ = mi.typ, value = mi.value, sigma = mi.sigma, active = mi.active, busIdx = mi.busIdx, branchIdx = mi.branchIdx, direction = mi.direction, id = string(idPrefix, "_", mi.id), origin = mi.origin)
+  ma2 = Measurement(typ = ma.typ, value = ma.value, sigma = ma.sigma, active = ma.active, busIdx = ma.busIdx, branchIdx = ma.branchIdx, direction = ma.direction, id = string(idPrefix, "_", ma.id), origin = ma.origin)
   measurements[end-1] = mi2
   measurements[end] = ma2
   return (mi2, ma2)
@@ -773,7 +818,7 @@ function _round_measurement_to_resolution(net::Net, m::Measurement, resolution::
   else
     z = _round_to_resolution(m.value, step)
   end
-  return Measurement(typ = m.typ, value = z, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
+  return Measurement(typ = m.typ, value = z, sigma = m.sigma, active = m.active, busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = m.origin)
 end
 
 """
@@ -864,7 +909,9 @@ function generateMeasurementsFromPF(
   Sbus_MVA = Sbus_pu .* net.baseMVA
   # buses of a closed-link cluster read their own generation minus load
   linkInj = _link_cluster_device_injections(net, Sbus_MVA, V, is_iso, is_dead, iso_shift)
-  injMVA(i::Int) = get(linkInj, i, Sbus_MVA[iso_shift(i)])
+  # not get(linkInj, i, default): the default is evaluated first, and a
+  # link-fed isolated bus after the last Y-bus row has no row to read
+  injMVA(i::Int) = haskey(linkInj, i) ? linkInj[i] : Sbus_MVA[iso_shift(i)]
 
   m = Measurement[]
   nbus = length(net.nodeVec)
@@ -965,7 +1012,7 @@ end
 
 Shunt back-calculation (SE phase 2, case B): a measurement-preprocessing step
 that runs BEFORE `runse!` and derives a `ShuntQMeas` pseudo-measurement (id
-prefix `SHDERIV`) for every in-service shunt whose bay has
+prefix `SHDERIV`, origin `:derived`) for every in-service shunt whose bay has
 
 - an active shunt-bay current measurement (bus-referenced `ImagMeas`),
 - NO active direct `ShuntQMeas` (a direct measurement takes precedence,
@@ -1027,7 +1074,7 @@ function deriveShuntPseudoMeasurements!(net::Net; sigmaFloor::Union{Nothing,Floa
     if sigmaFloor !== nothing
       σ = max(σ, sigmaFloor)
     end
-    push!(added, addMeasurement!(meas; typ = ShuntQMeas, value = q_derived, sigma = σ, busIdx = i, id = "SHDERIV_ShuntQ_bus_$(i)"))
+    push!(added, addMeasurement!(meas; typ = ShuntQMeas, value = q_derived, sigma = σ, busIdx = i, id = "SHDERIV_ShuntQ_bus_$(i)", origin = :derived))
   end
   return added
 end
@@ -1071,7 +1118,7 @@ function addMeasurementNoise!(
       stddev[m.typ]
     end
     net.measurements[k] = Measurement(typ = m.typ, value = m.value + σ * randn(rng), sigma = σ, active = m.active,
-                                      busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection)
+                                      busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.direction, id = m.id, linkIdx = m.linkIdx, zero_injection = m.zero_injection, origin = m.origin)
   end
   return Measurement[m for m in net.measurements]
 end

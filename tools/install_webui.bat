@@ -24,6 +24,12 @@ rem          Web UI start, then starts the Web UI.
 rem          Also works straight from the docs without a GitHub checkout;
 rem          run in PowerShell in the folder where Sparlectra should live:
 rem            iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat
+rem          --workshops sets up the workshop notebooks instead of the Web
+rem          UI (Julia, then tools\install_workshops.jl):
+rem            .\install_webui.bat --workshops
+rem          Options of the workshop mode: --dir <folder>, --rev <branch>,
+rem          --path <checkout>, --no-start. --no-start also works for the
+rem          Web UI (same as SPARLECTRA_START_WEBUI=0).
 
 setlocal
 set "DIR=%~dp0"
@@ -34,6 +40,52 @@ rem The update from the Web UI runs a copy of this script from its log folder
 rem and points it back at the installation with this variable.
 if defined SPARLECTRA_INSTALL_DIR set "DIR=%SPARLECTRA_INSTALL_DIR%\"
 set "REPO=Welthulk/Sparlectra.jl"
+
+rem arguments; %%~dp0 is read above, before shift moves %%0
+rem Each value is kept in its own variable and only joined at the call,
+rem with delayed expansion, so a folder name with & or ^ is passed through
+rem as text instead of being parsed as a command separator or escape.
+set "WORKSHOPS="
+set "WS_NOSTART="
+set "WS_DIR="
+set "WS_REV="
+set "WS_PATH="
+set "WS_ONLY="
+:parse_args
+if "%~1"=="" goto args_done
+if /i "%~1"=="--workshops" goto arg_workshops
+if /i "%~1"=="--no-start" goto arg_no_start
+if /i "%~1"=="--dir" goto arg_value
+if /i "%~1"=="--rev" goto arg_value
+if /i "%~1"=="--path" goto arg_value
+echo Unknown option %~1. Options: --workshops [--dir ^<folder^>] [--rev ^<branch^> ^| --path ^<checkout^>] [--no-start]
+exit /b 1
+:arg_workshops
+set "WORKSHOPS=1"
+shift
+goto parse_args
+:arg_no_start
+set "SPARLECTRA_START_WEBUI=0"
+set "WS_NOSTART=1"
+shift
+goto parse_args
+:arg_value
+if "%~2"=="" (
+  echo Option %~1 needs a value.
+  exit /b 1
+)
+if /i "%~1"=="--dir" set "WS_DIR=%~2"
+if /i "%~1"=="--rev" set "WS_REV=%~2"
+if /i "%~1"=="--path" set "WS_PATH=%~2"
+set "WS_ONLY=1"
+shift
+shift
+goto parse_args
+:args_done
+if defined WS_ONLY if not defined WORKSHOPS (
+  echo --dir, --rev and --path belong to the workshop mode ^(--workshops^).
+  exit /b 1
+)
 
 rem --- 1. Julia --------------------------------------------------------------
 where julia >nul 2>nul
@@ -49,12 +101,58 @@ rem juliaup puts julia into %USERPROFILE%\.juliaup\bin - make it visible NOW.
 set "PATH=%USERPROFILE%\.juliaup\bin;%PATH%"
 where julia >nul 2>nul
 if errorlevel 1 (
-  echo Julia was installed but is not on PATH yet. Open a NEW terminal and run start_webui.bat.
+  echo Julia was installed but is not on PATH yet. Open a NEW terminal and run this installer again.
   pause
   exit /b 1
 )
 :have_julia
 julia --version
+
+rem --- Workshop mode ------------------------------------------------------------
+rem Everything after Julia is in tools\install_workshops.jl, one file for
+rem Linux, macOS and Windows. Inside a checkout that file is used; started
+rem from a downloaded copy of this script it is fetched from main as well.
+if not defined WORKSHOPS goto webui_mode
+rem Sparlectra needs Julia 1.12 or newer (julia = "1.12" in Project.toml)
+julia --startup-file=no -e "exit(VERSION < VersionNumber(1, 12) ? 1 : 0)"
+if errorlevel 1 (
+  echo This Julia does not start or is older than 1.12, which Sparlectra needs. With juliaup:
+  echo   juliaup add release
+  echo   juliaup default release
+  pause
+  exit /b 1
+)
+set "WS_JL=%DIR%tools\install_workshops.jl"
+set "WS_TMP="
+if exist "%WS_JL%" goto ws_run
+set "WS_TMP=%TEMP%\sparlectra_install_workshops.jl"
+set "WS_JL=%WS_TMP%"
+rem a copy left by a run stopped with Ctrl+C must not stand in for a failed
+rem download, so it goes first and the exit code of the download counts
+if exist "%WS_TMP%" del "%WS_TMP%" >nul 2>nul
+powershell -NoProfile -Command "$ErrorActionPreference='Stop'; try { Invoke-WebRequest 'https://raw.githubusercontent.com/%REPO%/main/tools/install_workshops.jl' -OutFile '%WS_JL%' } catch { exit 1 }"
+if errorlevel 1 goto ws_download_failed
+if not exist "%WS_JL%" goto ws_download_failed
+goto ws_run
+:ws_download_failed
+echo Download of install_workshops.jl failed.
+if exist "%WS_TMP%" del "%WS_TMP%" >nul 2>nul
+pause
+exit /b 1
+:ws_run
+setlocal EnableDelayedExpansion
+set "WS_A="
+if defined WS_DIR set WS_A=!WS_A! --dir "!WS_DIR!"
+if defined WS_REV set WS_A=!WS_A! --rev "!WS_REV!"
+if defined WS_PATH set WS_A=!WS_A! --path "!WS_PATH!"
+if defined WS_NOSTART set WS_A=!WS_A! --no-start
+julia --startup-file=no "!WS_JL!" !WS_A!
+set "WS_CODE=!errorlevel!"
+if defined WS_TMP del "!WS_TMP!" >nul 2>nul
+if not "!WS_CODE!"=="0" pause
+exit /b !WS_CODE!
+
+:webui_mode
 
 rem --- 2. Sparlectra at the latest tagged release ----------------------------
 rem The pair Project.toml + start_webui.jl marks a Sparlectra checkout; the

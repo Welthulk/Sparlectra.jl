@@ -1,3 +1,23 @@
+# Version 1.1.0 - 2026-11-04
+
+Observability: observable islands, closing gaps, weak results.
+
+## Highlights
+
+- **Observable islands.** When the measurements do not cover the network, the check names the observable islands, the unobservable branches and the affected region instead of only refusing the run, on any network size. `state_estimation.observability.on_unobservable` (default `abort`) decides whether the run stops, estimates each island on its own reference, or first closes the gaps with zero injections and scheduled values. See [Observability](observability.md).
+- **Weakly observable results.** After every estimate the spread of the branch flows and voltages is checked. A result whose flows the measurements do not pin down is marked unusable instead of returned as valid (`state_estimation.observability.weak_flow_sigma_mw`, default 20 MW).
+- **Measurement placement.** `suggest_measurement_placement` proposes where a new injection, flow or PMU measurement closes a gap; the Web UI shows the proposal on its own page.
+
+## Added
+
+- **Last valid value.** A measurement missing at one timestamp of a table takes its last valid value from up to 60 minutes earlier, with three times its sigma (`state_estimation.last_value.enabled`, default off). The SE service and the Web UI can pick the timestamp of a table.
+- **Workshops run locally.** One installer command sets up all workshop notebooks with their own kernel; Colab is no longer needed.
+
+## Fixed
+
+- **Observability above 2000 states.** The verdict could call an unobservable set observable, and the list of unobservable states contained forward-difference noise.
+- **SE service with several network islands.** It crashed since 1.0.0.
+
 # Version 1.0.0 - 2026-10-25
 
 First major release: quasi-stationary time series (QSTS) and tap estimation per tap changer. The registered versions 0.51.0 to 0.53.0 were version steps with the code of this release.

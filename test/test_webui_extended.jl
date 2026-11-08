@@ -182,7 +182,7 @@ function run_webui_extended_tests()
         err = nothing
         try
           redirect_stderr(devnull) do
-            start_sparlectra_webui(port = busy_port, output_root = mktempdir(), _lifecycle_io = eaddrinuse_io)
+            start_sparlectra_webui(port = busy_port, output_root = joinpath(mktempdir(), "runs"), _lifecycle_io = eaddrinuse_io)
           end
         catch caught
           err = caught
@@ -204,12 +204,12 @@ function run_webui_extended_tests()
       running_port = Int(getsockname(port_probe)[2])
       close(port_probe)
       running_io = IOBuffer()
-      running = start_sparlectra_webui(port = running_port, output_root = mktempdir(), _lifecycle_io = running_io)
+      running = start_sparlectra_webui(port = running_port, output_root = joinpath(mktempdir(), "runs"), _lifecycle_io = running_io)
       try
         opened_url = Ref("")
         second = start_sparlectra_webui(
           port = running_port,
-          output_root = mktempdir(),
+          output_root = joinpath(mktempdir(), "runs"),
           open_browser = true,
           _lifecycle_io = IOBuffer(),
           _browser_opener = url -> (opened_url[] = url; nothing),

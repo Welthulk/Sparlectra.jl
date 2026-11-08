@@ -6,8 +6,6 @@ EditURL = "../../lit/workshop_distributed_slack.jl"
 
 > **Level: Advanced**, deepens the slack chapters of the basic tour.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -26,10 +24,6 @@ WHERE do the weights $\alpha_i$ come from? You will run the same shortfall
 case under every weight mode, watch the shares change, and see the honest
 failure when no valid participant exists.
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia ≥ 1.12.
-
 ## Warm-up and shared helpers
 
 Julia compiles each function on first use. This cell defines what the
@@ -41,8 +35,7 @@ last line, `warmup()`, runs every solver path the chapters use once
 (classical single slack and every distributed-slack weight mode) on the
 study case itself, so nothing stalls mid-notebook; its code is in
 `docs/lit/warmup/workshop_distributed_slack.jl` of the package. How long
-the warm-up takes depends on the machine: a Colab session is several
-times slower than a desktop; every later cell then runs without compile
+the warm-up takes depends on the machine; every later cell then runs without compile
 pauses.
 
 The cell writes the study case as a MATPOWER file: a four-bus ring, drawn as a diagram
@@ -289,11 +282,11 @@ both answer "who covers the imbalance", so you enable at most one.
 
 ## Where to go next
 
-- [Slack types and short circuit](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
+- [Slack types and short circuit](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
   ideal slack vs. external-grid source vs. distributed slack on one
   8-bus network.
 - [Solver documentation](https://welthulk.github.io/Sparlectra.jl/solver/):
   the rectangular Newton-Raphson formulation the extra state plugs into.
-- [Workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb):
-  all workshop examples in one Colab session.
+- [Workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb):
+  all workshop examples in one notebook.
 

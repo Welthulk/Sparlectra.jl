@@ -14,7 +14,6 @@ Power-system analysis in Julia: AC and DC power flow, quasi-static time series, 
 [![Version](https://img.shields.io/badge/dynamic/toml?url=https%3A%2F%2Fraw.githubusercontent.com%2FWelthulk%2FSparlectra.jl%2Fmain%2FProject.toml&query=%24.version&label=version&prefix=v&color=blue)](https://github.com/Welthulk/Sparlectra.jl/blob/main/Project.toml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://github.com/Welthulk/Sparlectra.jl/blob/main/LICENSE)
 [![Julia](https://img.shields.io/badge/Julia-1.x-9558B2.svg)](https://julialang.org/)
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
 [![SBOM: SPDX](https://img.shields.io/badge/SBOM-SPDX-blue.svg)](https://github.com/Welthulk/Sparlectra.jl/releases/latest/download/Sparlectra.spdx.json)
 
 ```@raw html
@@ -32,26 +31,50 @@ The full capability list is in the [feature matrix](feature_matrix.md).
 
 ---
 
-## Try it in your browser
+## Workshops
 
-No installation required, the workshop notebooks run on Google Colab:
+The workshop notebooks run in Jupyter or VS Code. One command installs Julia
+(if missing), Sparlectra, IJulia and the notebooks into
+`~/sparlectra-workshops` and starts Jupyter.
 
-| Notebook | Open |
+Linux/macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.sh | sh -s -- --workshops
+```
+
+Windows (PowerShell):
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/Welthulk/Sparlectra.jl/main/tools/install_webui.bat -OutFile install_webui.bat; .\install_webui.bat --workshops
+```
+
+Options: `--dir <folder>` for another folder, `--rev <branch>` for
+Sparlectra from a branch instead of the registered release, `--no-start` to
+set up only. Without a Jupyter installation IJulia offers to install one. In
+VS Code, open the folder and select the kernel
+"Sparlectra workshops (<folder> <hash>)": every workshop folder gets its
+own kernel, named after the folder with a short hash of its path, and the
+installer prints the name. Running the command again updates Sparlectra and
+the notebooks; a notebook you changed is kept next to the new copy as
+`<name>.ipynb.<date>-<time>.bak`.
+
+| Notebook | File |
 |---|---|
-| **Tour, basic**: first network, model editing, Q-limits, slack types, OLTC and Q(U) control | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
-| **Tour, advanced**: remote voltage control, HVDC link, state estimation, FACTS incl. UPFC, N-1, threaded sweeps | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb) |
-| **Transformer control**: parallel units, master/slave groups, CGMES RegulatingControl | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb) |
-| **Foreign formats**: CGMES (anatomy of a delivery, bus-branch and node-breaker import, SV validation, export round trip), PowSyBl IIDM compared with OpenLoadFlow, a DTF deck with its outage records | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb) |
-| **Slack types and short circuit**: ideal, external grid, distributed slack, IEC 60909-0 currents | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
-| **Distributed slack**: participation weights, normalization, fallback | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb) |
-| **Transformer taps**: OLTC, PST, X(α) characteristic, 3WT star equivalent | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb) |
-| **FACTS flow control**: TCSC to UPFC | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb) |
-| **Scenarios and N-1 screening** | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_scenarios.ipynb) |
-| **QSTS**: a day on sp_case14, snapshot run and sequential run with tap and bank controllers | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_qsts.ipynb) |
-| **State estimation**: measurement sets, observability, WLS, bad data | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
-| **SE bad data and parameter estimation**: normalized residuals, sequential elimination, robust estimation, shunt estimation | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb) |
-| **SE taps, phasors and topology**: J and its degrees of freedom, tap estimation, PMU phasors, topology errors, islands | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_taps.ipynb) |
-| **APSLF**: analytic power-series solver on a Sparlectra model, convergence radius as a loadability margin, hybrid start | [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_apslf.ipynb) |
+| **Tour, basic**: first network, model editing, Q-limits, slack types, OLTC and Q(U) control | [workshop_tour.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb) |
+| **Tour, advanced**: remote voltage control, HVDC link, state estimation, FACTS incl. UPFC, N-1, threaded sweeps | [workshop_tour_advanced.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb) |
+| **Transformer control**: parallel units, master/slave groups, CGMES RegulatingControl | [workshop_tour_control.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb) |
+| **Foreign formats**: CGMES (anatomy of a delivery, bus-branch and node-breaker import, SV validation, export round trip), PowSyBl IIDM compared with OpenLoadFlow, a DTF deck with its outage records | [workshop_tour_cgmes.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_cgmes.ipynb) |
+| **Slack types and short circuit**: ideal, external grid, distributed slack, IEC 60909-0 currents | [workshop_slack_short_circuit.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb) |
+| **Distributed slack**: participation weights, normalization, fallback | [workshop_distributed_slack.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb) |
+| **Transformer taps**: OLTC, PST, X(α) characteristic, 3WT star equivalent | [workshop_transformers.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb) |
+| **FACTS flow control**: TCSC to UPFC | [workshop_series_compensation.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_series_compensation.ipynb) |
+| **Scenarios and N-1 screening** | [workshop_scenarios.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_scenarios.ipynb) |
+| **QSTS**: a day on sp_case14, snapshot run and sequential run with tap and bank controllers | [workshop_qsts.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_qsts.ipynb) |
+| **State estimation**: measurement sets, observability, WLS, bad data | [workshop_state_estimation.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb) |
+| **SE bad data and parameter estimation**: normalized residuals, sequential elimination, robust estimation, shunt estimation | [workshop_se_diagnostics.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb) |
+| **SE taps, phasors and topology**: J and its degrees of freedom, tap estimation, PMU phasors, topology errors, islands | [workshop_se_taps.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_taps.ipynb) |
+| **APSLF**: analytic power-series solver on a Sparlectra model, convergence radius as a loadability margin, hybrid start | [workshop_apslf.ipynb](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_apslf.ipynb) |
 
 The notebooks are generated from [docs/lit/](https://github.com/Welthulk/Sparlectra.jl/tree/main/docs/lit/) and are also part of the [documentation](https://welthulk.github.io/Sparlectra.jl/generated/workshop_tour/).
 

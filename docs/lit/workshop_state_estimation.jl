@@ -23,8 +23,6 @@
 #
 # > **Level: Advanced to Expert**, companion of the advanced tour's state-estimation chapter; the observability section is the advanced deep dive.
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_state_estimation.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -54,35 +52,15 @@
 #    |           /\           |
 #    B7 ---- B6 ---- B5 ------+
 # ```
-#
-# > **Note:** On Google Colab the install cell takes a minute or two on a
-# > fresh session (package download and precompilation). Colab's Julia
-# > version may change over time; this notebook targets Julia ≥ 1.12.
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. The isolation matters on Colab: the shared
-#nb # default environment ships many preinstalled packages, and installing
-#nb # anything there triggers precompilation of that whole stack. Run this
-#nb # cell first, once per session; it takes a minute or two.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## To test another branch, set rev to its name, e.g. rev = "dev/r0.9.8".
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
-#nb ## Switching versions in a running session? A "[loaded: ...]" note means
-#nb ## the old version is still active: restart the runtime, then rerun
-#nb ## this cell.
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up
 #
@@ -100,11 +78,11 @@
 # chapters exercise once on tiny throwaway networks (the power-flow solver
 # that produces the reference state, the WLS estimator, the observability
 # checks (global, local, on a matrix), the hand-placed and zero-injection
-# measurements, the measurement Jacobian and the PMU phasors), so the real
-# study runs at full speed; its code is in
+# measurements, the measurement Jacobian, the PMU phasors, the observable
+# islands, the estimate per island, the restoration and the placement),
+# so the real study runs at full speed; its code is in
 # `docs/lit/warmup/workshop_state_estimation.jl` of the package. How long
-# the warm-up takes depends on the machine: a Colab session is several
-# times slower than a desktop; every later cell then runs without compile
+# the warm-up takes depends on the machine; every later cell then runs without compile
 # pauses.
 
 using Sparlectra
@@ -167,7 +145,7 @@ ok || error("Network validation failed: $msg")
 ite_pf, status_pf = runpf!(net, 40, 1e-10, 0)
 status_pf == 0 || error("Power flow did not converge")
 println("reference power flow (true state): ", ite_pf, " iterations")
-@assert ite_pf == 5
+@assert ite_pf == 5                                                         #src
 ## the true state, kept for the comparison with the estimate below
 vm_true = [net.nodeVec[i]._vm_pu for i in eachindex(net.nodeVec)]
 va_true = [net.nodeVec[i]._va_deg for i in eachindex(net.nodeVec)]
@@ -196,7 +174,7 @@ setMeasurementsFromPF!(
   rng = MersenneTwister(42),
 )
 println("measurement set from the true state: ", length(net.measurements), " rows, seeded noise")
-@assert length(net.measurements) == 57
+@assert length(net.measurements) == 57                                      #src
 
 # ## Check observability
 #
@@ -225,9 +203,9 @@ gobs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
 println("global observability of the set: quality = ", gobs.quality)
-@assert gobs.quality == :good
+@assert gobs.quality == :good                                               #src
 println("  measurement rows m = ", gobs.n_measurements, ", state variables n = ", gobs.n_states)
-@assert gobs.n_measurements == 57 && gobs.n_states == 13
+@assert gobs.n_measurements == 57 && gobs.n_states == 13                    #src
 
 # ## Run the estimator
 #
@@ -246,9 +224,9 @@ se = with_state_estimation_config(max_iter = 12, tol = 1e-6, flatstart = true, j
 end
 
 println("SE converged: ", se.converged, " in ", se.iterations, " iterations")
-@assert se.converged && se.iterations == 3
+@assert se.converged && se.iterations == 3                                  #src
 @printf("objective J of the estimate [-]: %.2f\n", se.objectiveJ)
-@assert 30 < se.objectiveJ < 70
+@assert 30 < se.objectiveJ < 70                                             #src
 
 # ## Inspect the estimated state
 #
@@ -272,19 +250,19 @@ println("SE converged: ", se.converged, " in ", se.iterations, " iterations")
 @isdefined(se) || error("Run the section \"Run the estimator\" first: it sets up se.")
 (@isdefined(va_true) && @isdefined(vm_true)) || error("Run the section \"Solve the reference power flow\" first: it sets up va_true, vm_true.")
 @printf("J/dof of the estimate [-]:       %.3f   (healthy noise: approximately 1)\n", se.objectiveJ / se.dof)
-@assert 0.5 < se.objectiveJ / se.dof < 2.0
+@assert 0.5 < se.objectiveJ / se.dof < 2.0                                  #src
 
 println("dof = m - n (redundant rows):    ", se.dof)
-@assert se.dof == 44
+@assert se.dof == 44                                                        #src
 println("J within 3σ band:                ", se.jWithin3Sigma)
-@assert se.jWithin3Sigma === true
+@assert se.jWithin3Sigma === true                                           #src
 println()
 println("Bus voltages, true (reference power flow) and estimated:")
 println("  bus   Vm true [pu]   Vm est [pu]   Va true [deg]   Va est [deg]")
 for (name, idx) in sort(collect(net.busDict); by = last)
   v = se.voltages[idx]
   @printf("  %-4s %12.4f %13.4f %15.3f %14.3f\n", name, vm_true[idx], abs(v), va_true[idx], rad2deg(angle(v)))
-  @assert 0.9 < abs(v) < 1.1 && abs(rad2deg(angle(v))) < 10
+  @assert 0.9 < abs(v) < 1.1 && abs(rad2deg(angle(v))) < 10                 #src
 end
 
 # ## Building measurement sets manually
@@ -310,9 +288,9 @@ obs = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
 println("sparse manual set: quality = ", obs.quality)
-@assert obs.quality == :not_observable
+@assert obs.quality == :not_observable                                      #src
 println("  measurement rows m = ", obs.n_measurements, ", state variables n = ", obs.n_states)
-@assert obs.n_measurements == 5 && obs.n_states == 13
+@assert obs.n_measurements == 5 && obs.n_states == 13                       #src
 
 # Reading aid (Example 2): five measurements against 13 states: the check
 # reports the shortfall instead of letting the estimator run into a
@@ -336,9 +314,9 @@ H_B = [
 ]
 obs_B = evaluate_observability_matrix(H_B)
 println("H_B: numerically observable = ", obs_B.numerical_observable, ", dof = m - n = ", obs_B.dof)
-@assert obs_B.numerical_observable === true && obs_B.dof == 0
+@assert obs_B.numerical_observable === true && obs_B.dof == 0               #src
 println("  critical rows of H_B: ", obs_B.numerical_critical_measurement_indices)
-@assert obs_B.numerical_critical_measurement_indices == [1, 2, 3]
+@assert obs_B.numerical_critical_measurement_indices == [1, 2, 3]           #src
 
 # **Example 4 (`H_A`), duplicated information:** the same identity plus
 # two extra rows, but BOTH duplicating the same information about
@@ -355,12 +333,12 @@ H_A = [
 ]
 obs_A = evaluate_observability_matrix(H_A)
 println("H_A: numerically observable = ", obs_A.numerical_observable, ", dof = m - n = ", obs_A.dof)
-@assert obs_A.numerical_observable === true && obs_A.dof == 2
+@assert obs_A.numerical_observable === true && obs_A.dof == 2               #src
 println("  critical rows of H_A: ", obs_A.numerical_critical_measurement_indices)
-@assert obs_A.numerical_critical_measurement_indices == [3]
+@assert obs_A.numerical_critical_measurement_indices == [3]                 #src
 for i in axes(H_A, 1)
   println("  row ", i, " of H_A: numerical check ", numerical_row_redundant(H_A, i) ? "redundant" : "CRITICAL", ", structural check ", structural_row_redundant(H_A, i) ? "redundant" : "CRITICAL")
-  @assert numerical_row_redundant(H_A, i) == (i != 3)
+  @assert numerical_row_redundant(H_A, i) == (i != 3)                       #src
 end
 
 # **Example 5 (`H_E`), the bridge to networks:** an incidence-like matrix
@@ -395,9 +373,9 @@ H_E = [
 ]
 obs_E = evaluate_observability_matrix(H_E)
 println("H_E: numerically observable = ", obs_E.numerical_observable, ", dof = m - n = ", obs_E.dof)
-@assert obs_E.numerical_observable === true && obs_E.dof == 1
+@assert obs_E.numerical_observable === true && obs_E.dof == 1               #src
 println("  critical rows of H_E: ", obs_E.numerical_critical_measurement_indices)
-@assert obs_E.numerical_critical_measurement_indices == [3, 4]
+@assert obs_E.numerical_critical_measurement_indices == [3, 4]              #src
 
 # Reading aid (Example 5): row 3 (the only path to bus 4) is critical;
 # row 4 (the injection at bus 2) is critical too, it is the only row that
@@ -439,11 +417,12 @@ println("  critical rows of H_E: ", obs_E.numerical_critical_measurement_indices
 # $$H \nu = 0,\ \nu \neq 0 \quad\Longrightarrow\quad \text{state } i \text{ is unobservable when } \nu_i \neq 0$$
 #
 # The null-space vectors are the dark regions: directions the state can
-# drift without any measurement changing. The set of their nonzero
-# components partitions the network into OBSERVABLE ISLANDS (the term to
-# search the literature for is Monticelli's observable-island analysis).
-# Sparlectra reports exactly these components as
-# `unobservable_state_columns` on a not-observable global result.
+# drift without any measurement changing. Their nonzero components are the
+# DARK STATES, which Sparlectra reports as `unobservable_state_columns` on
+# a not-observable global result. Dark states and observable islands are
+# two answers: the islands are the connected parts whose states are fixed
+# once one of their buses is the reference (Monticelli and Wu), found by a
+# separate analysis, see Example 13.
 #
 # **Example 6: why a local verdict can mislead.** One warning before
 # using the LOCAL check: restricting $H$ to the
@@ -461,14 +440,14 @@ println("  critical rows of H_E: ", obs_E.numerical_critical_measurement_indices
 H_flow = [1.0 -1.0]
 loc = evaluate_local_observability_matrix(H_flow, [1])
 println("local submatrix test on state 1: observable = ", loc.numerical_observable, "  (misleading)")
-@assert loc.numerical_observable === true
+@assert loc.numerical_observable === true                                   #src
 println("null-space vector of H (normalized, states 1 and 2): ", vec(round.(nullspace(H_flow); digits = 4)))
 let ns = vec(nullspace(H_flow))
-  @assert length(ns) == 2 && isapprox(abs(ns[1]), abs(ns[2]); atol = 1e-9)
+  @assert length(ns) == 2 && isapprox(abs(ns[1]), abs(ns[2]); atol = 1e-9)  #src
 end
 glob_flow = evaluate_observability_matrix(H_flow)
 println("global check, unobservable state columns: ", glob_flow.unobservable_state_columns, "  (the rigorous answer)")
-@assert glob_flow.unobservable_state_columns == [1, 2]
+@assert glob_flow.unobservable_state_columns == [1, 2]                      #src
 
 # Reading aid (Example 6): the local check remains useful, it localizes
 # candidate regions fast, but a positive local verdict must be confirmed
@@ -560,11 +539,11 @@ gmin = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
 println("minimal tree set: quality = ", gmin.quality, " (measurement rows m = ", gmin.n_measurements, ", state variables n = ", gmin.n_states, ")")
-@assert gmin.quality == :critical && gmin.n_measurements == 13 && gmin.n_states == 13
+@assert gmin.quality == :critical && gmin.n_measurements == 13 && gmin.n_states == 13  #src
 println("  structurally observable: ", gmin.structural_observable, ", numerically observable: ", gmin.numerical_observable, " (numerical rank of H = ", gmin.numerical_rank, ")")
-@assert gmin.structural_observable && gmin.numerical_observable && gmin.numerical_rank == 13
+@assert gmin.structural_observable && gmin.numerical_observable && gmin.numerical_rank == 13  #src
 println("  redundancy dof = m - n = ", gmin.dof, ", critical measurement rows: ", length(gmin.numerical_critical_measurement_indices), " of ", gmin.n_measurements)
-@assert gmin.dof == 0 && length(gmin.numerical_critical_measurement_indices) == 13
+@assert gmin.dof == 0 && length(gmin.numerical_critical_measurement_indices) == 13  #src
 
 # Reading aid (Example 7): observable, but `quality = :critical` and EVERY row is on
 # the critical list: with zero redundancy, losing any single meter blinds
@@ -593,10 +572,10 @@ println("  redundancy dof = m - n = ", gmin.dof, ", critical measurement rows: "
 @isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7 first: they set up net.")
 mj = measurement_jacobian(net)
 println("measurement Jacobian H: ", size(mj.H, 1), " measurement rows x ", size(mj.H, 2), " state columns; first columns: ", join(mj.cols[1:4], ", "), ", ...")
-@assert size(mj.H) == (13, 13)
+@assert size(mj.H) == (13, 13)                                              #src
 r1 = mj.rows[1]
 println("row 1 of H: ", r1.type, " at ", r1.location, " touches ", count(j -> abs(mj.H[1, j]) > 1e-9, eachindex(mj.cols)), " states (nonzero entries)")
-@assert count(j -> abs(mj.H[1, j]) > 1e-9, eachindex(mj.cols)) == 3
+@assert count(j -> abs(mj.H[1, j]) > 1e-9, eachindex(mj.cols)) == 3         #src
 #
 # ### Breaking a corner, and finding it with the local check
 #
@@ -621,18 +600,18 @@ gbroken = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
 println("without the B6-B7 flow pair: quality = ", gbroken.quality, " (numerical rank of H = ", gbroken.numerical_rank, " of n = ", gbroken.n_states, " states)")
-@assert gbroken.quality == :not_observable && gbroken.numerical_rank == 11 && gbroken.n_states == 13
+@assert gbroken.quality == :not_observable && gbroken.numerical_rank == 11 && gbroken.n_states == 13  #src
 ## the rigorous per-state answer, straight from the null space: exactly
 ## B7's states are dark (angle column 6, magnitude column 13)
 println("dark states (unobservable_state_columns): ", gbroken.unobservable_state_columns)
-@assert gbroken.unobservable_state_columns == [6, 13]
+@assert gbroken.unobservable_state_columns == [6, 13]                       #src
 
 ## local check on B2 (angle col 1, magnitude col 8): still fully covered
 lb2 = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_local_observability(net, [1, 8])
 end
 println("local B2: numerically observable = ", lb2.numerical_observable)
-@assert lb2.numerical_observable === true
+@assert lb2.numerical_observable === true                                   #src
 ## local check on B7 (angle col 6, magnitude col 13): NO measurement even
 ## touches these states anymore, which the check reports as an error;
 ## this is the EASY case for the local test, the hard case (touched but
@@ -644,7 +623,7 @@ try
   end
 catch err
   println("local B7: ", sprint(showerror, err))
-  @assert occursin("no active measurement", sprint(showerror, err))
+  @assert occursin("no active measurement", sprint(showerror, err))         #src
 end
 
 # ### Repairing with an injection
@@ -666,7 +645,7 @@ grepaired = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
 println("with P/Q injection at B7: quality = ", grepaired.quality, " (numerical rank of H = ", grepaired.numerical_rank, " of n = ", grepaired.n_states, " states)")
-@assert grepaired.quality == :critical && grepaired.numerical_rank == 13
+@assert grepaired.quality == :critical && grepaired.numerical_rank == 13    #src
 
 # Placement rules, condensed: flow pairs see the two ends of their branch,
 # injections see the bus AND all its neighbors, `Vm` anchors the magnitude
@@ -716,16 +695,16 @@ g_no_zib = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net_p)
 end
 println("without ZIB rows: quality = ", g_no_zib.quality, ", dof = m - n = ", g_no_zib.dof, ", unobservable state columns = ", g_no_zib.unobservable_state_columns)
-@assert g_no_zib.quality == :not_observable && g_no_zib.dof == -2 && g_no_zib.unobservable_state_columns == [6, 13]
+@assert g_no_zib.quality == :not_observable && g_no_zib.dof == -2 && g_no_zib.unobservable_state_columns == [6, 13]  #src
 
 added = addZeroInjectionMeasurements!(net_p; sigma = 1e-6)   ## auto-detects the passive B7
 println("zero-injection rows added at the passive bus: ", length(added))
-@assert length(added) == 2
+@assert length(added) == 2                                                  #src
 g_zib = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net_p)
 end
 println("with ZIB rows:    quality = ", g_zib.quality, ", dof = m - n = ", g_zib.dof)
-@assert g_zib.quality == :critical && g_zib.dof == 0
+@assert g_zib.quality == :critical && g_zib.dof == 0                        #src
 
 # Reading aid (Example 10): the ZIB pair acts exactly like the injection
 # repair of Example 9, it couples B7 to its neighbors, but it costs
@@ -756,7 +735,7 @@ for zib_sigma in (1e-6, 1e-2)
   @printf("  objective J of the estimate [-]:                      %.1e\n", sev.objectiveJ)
   @printf("  Vm at B7, estimated [pu]:                             %.5f\n", vm_b7)
   @printf("  weight ratio ZIB row / flow row (sigma 0.8 MW) [-]:   %.1e\n", (0.8 / zib_sigma)^2)
-  @assert sev.converged && sev.objectiveJ < 1e-8 && isapprox(vm_b7, 1.00672; atol = 1e-3)
+  @assert sev.converged && sev.objectiveJ < 1e-8 && isapprox(vm_b7, 1.00672; atol = 1e-3)  #src
 end
 
 # Reading aid (Example 11): with clean synthetic data both sigmas land on the same
@@ -793,7 +772,7 @@ gpmu = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
   evaluate_global_observability(net)
 end
 println("with 2 PMUs: quality = ", gpmu.quality, " (measurement rows m = ", gpmu.n_measurements, ", state variables n = ", gpmu.n_states, ", offset state included)")
-@assert gpmu.quality == :critical && gpmu.n_measurements == 17 && gpmu.n_states == 14
+@assert gpmu.quality == :critical && gpmu.n_measurements == 17 && gpmu.n_states == 14  #src
 
 se_pmu = with_state_estimation_config(max_iter = 15, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = false) do
   runse!(net)
@@ -802,7 +781,7 @@ println("SE converged: ", se_pmu.converged)
 println("PMU reference-angle offset [deg]:")
 @printf("  true (time-base shift put on the PMU angles):   %.3f\n", pmu_shift_deg)
 @printf("  estimated by SE:                                %.3f\n", se_pmu.vaRefOffsetDeg)
-@assert se_pmu.converged && isapprox(se_pmu.vaRefOffsetDeg, pmu_shift_deg; atol = 0.05)
+@assert se_pmu.converged && isapprox(se_pmu.vaRefOffsetDeg, pmu_shift_deg; atol = 0.05)  #src
 
 # Reading aid (Example 12): the estimator recovers the 2° time-base shift as the extra
 # state instead of bending the bus angles toward it, and the estimated
@@ -811,17 +790,212 @@ println("PMU reference-angle offset [deg]:")
 # flow measurements and inflate $J$. Theory and the measurement model:
 # [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/).
 #
+# ## When the set is not observable: islands, closing, placement
+#
+# Examples 8 to 10 repaired the broken corner by hand. The library can do
+# the three steps itself: find the observable islands, estimate them one
+# by one or close the gap with scheduled values, and suggest where a meter
+# is missing. All four examples start from the broken tree of Example 8.
+#
+# **Example 13: observable islands.** A NETWORK island is a topologically
+# separate part with its own reference; the workshop net is one. An
+# OBSERVABLE island lies inside a network island: the buses whose states
+# the measurements fix once one of them is the reference, labeled "k.j"
+# (observable island j of network island k). Not observable is decided on
+# the decoupled linear models: P injections, P flows and PMU angles
+# against the angles (P-theta), Q rows and Vm against the magnitudes
+# (Q-V). The deficit counts free directions, the island count counts
+# pieces; the two are reported separately.
+
+## uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9, Example 12); tree (Example 7)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9, Example 12 first: they set up net.")
+@isdefined(tree) || error("Run Example 7 first: it sets up tree.")
+empty!(net.measurements)
+for (f, t) in tree[1:5]   ## the broken tree of Example 8
+  addPflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_p_from_to_mw(net, f, t), sigma = 0.8, direction = :from)
+  addQflowMeasurement!(net; fromBus = f, toBus = t, value = get_branch_q_from_to_mvar(net, f, t), sigma = 0.8, direction = :from)
+end
+addVmMeasurement!(net; busName = "B1", value = net.nodeVec[net.busDict["B1"]]._vm_pu, sigma = 0.002)
+meas8 = Measurement[deepcopy(m) for m in net.measurements]   ## kept for the placement in Example 16
+isl = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  identify_observable_islands(net)
+end
+print_observable_islands(isl)
+@assert length(isl.island_buses[1]) == 6 && isl.passes == 1 && isl.region_buses == isl.dark_magnitude_buses == [net.busDict["B7"]]  #src
+println("observable islands: ", isl.n_islands, " (", join(isl.island_labels, ", "), "), B7 alone: ", isl.island_buses[2] == [net.busDict["B7"]])
+@assert isl.n_islands == 2 && isl.island_labels == ["1.1", "1.2"] && isl.island_buses[2] == [net.busDict["B7"]]  #src
+println("rank deficit: ", isl.rank_deficit, " (angles ", isl.angle_rank_deficit, ", magnitudes ", isl.magnitude_rank_deficit, ")")
+@assert (isl.rank_deficit, isl.angle_rank_deficit, isl.magnitude_rank_deficit) == (2, 1, 1)  #src
+println("unobservable branches: ", join(isl.unobservable_branch_names, ", "))
+@assert isl.unobservable_branch_names == ["B6 - B7", "B7 - B1"]             #src
+## the chords carry no meter, yet their flows follow from the angles of
+## island 1.1
+metered = Set(m.branchIdx for m in net.measurements if m.branchIdx !== nothing)
+unmetered = [k for k in eachindex(net.branchVec) if !(k in metered)]
+observable_unmetered = [k for k in unmetered if !(k in isl.unobservable_branches)]
+println("unmeasured, but observable: ", join(["B$(net.branchVec[k].fromBus) - B$(net.branchVec[k].toBus)" for k in observable_unmetered], ", "))
+@assert [(net.branchVec[k].fromBus, net.branchVec[k].toBus) for k in observable_unmetered] == [(2, 5), (3, 6)]  #src
+
+# Reading aid (Example 13): one network island, two observable islands.
+# B7 is cut off on both sides, so B6-B7 and B7-B1 are unobservable; the
+# chords B2-B5 and B3-B6 carry no meter but are observable, because both
+# their ends lie in island 1.1. "Unmeasured" is not "unobservable". The
+# deficit is 2 (the angle and the magnitude of B7), the island count is 2
+# as well, but the two numbers answer different questions: a larger gap
+# can leave many single-bus islands with a small deficit, or the
+# reverse.
+#
+# **Example 14: estimating the observable islands one by one.** With
+# `state_estimation.observability.on_unobservable = observable_islands`
+# `runse!` estimates every observable island on its own subnet. An island
+# without the slack takes its own reference, and its angles are relative
+# to it. A bus whose magnitude is dark is no estimated island, so B7 first
+# gets its Vm meter:
+
+## uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9, Example 12, Example 13); va_true, vm_true (Solve the reference power flow)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9, Example 12, Example 13 first: they set up net.")
+(@isdefined(va_true) && @isdefined(vm_true)) || error("Run the section \"Solve the reference power flow\" first: it sets up va_true, vm_true.")
+addVmMeasurement!(net; busName = "B7", value = net.nodeVec[net.busDict["B7"]]._vm_pu, sigma = 0.002)
+net_i = deepcopy(net)
+se_i = with_state_estimation_config(max_iter = 15, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true, observability = Sparlectra.ObservabilityConfig(on_unobservable = :observable_islands)) do
+  runse!(net_i)
+end
+print_observable_islands(se_i)
+@assert se_i.converged && length(se_i.islands) == 2 && all(r -> r.objectiveJ < 1e-12 && r.dof == 0, se_i.islands)  #src
+oi = se_i.observableIslands
+dvm = maximum(abs(abs(se_i.voltages[b]) - vm_true[b]) for b in 1:6)
+dva = maximum(abs(rad2deg(angle(se_i.voltages[b])) - va_true[b]) for b in 1:6)
+@printf("B1 to B6 against the truth: max |dVm| %.1e pu, max |dVa| %.1e deg\n", dvm, dva)
+@assert dvm < 1e-6 && dva < 1e-6                                            #src
+b7 = net.busDict["B7"]
+println("B7: island ", oi.label_of_bus[b7], ", relative angle: ", oi.relative_angle[b7])
+@assert oi.label_of_bus[b7] == "1.2" && oi.relative_angle[b7] && !any(oi.relative_angle[1:6])  #src
+p67 = get_branch_p_from_to_mw(net_i, "B6", "B7")
+p71 = get_branch_p_from_to_mw(net_i, "B7", "B1")
+println("flows on the unobservable branches B6-B7 and B7-B1 [MW]: ", p67, ", ", p71)
+@assert isnan(p67) && isnan(p71)                                            #src
+
+# Reading aid (Example 14): island 1.1 reproduces the truth, island 1.2 is
+# B7 alone with B7 as its own reference: its magnitude comes from the
+# meter, its angle says nothing about B1. The flows between the islands
+# stay empty (NaN), not zero: no measurement fixes them, and a zero would
+# look like a result.
+#
+# **Example 15: closing with scheduled values.** `on_unobservable =
+# scheduled` first fills the deficit with replacement values: zero
+# injections at passive buses, then the scheduled P and Q of the
+# prosumers, then U from the stored state, a set point, the median of the
+# level or the nominal voltage. Each value gets 30 % of its size as sigma
+# (`restore_sigma_rel`), at least the sigma of a meter. A candidate is
+# taken only when it lowers the deficit; the rows are marked as
+# replacement values (`origin = :pseudo_restore`) and never eliminated as
+# bad data:
+
+## uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14); va_true (Solve the reference power flow)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14 first: they set up net.")
+@isdefined(va_true) || error("Run the section \"Solve the reference power flow\" first: it sets up va_true.")
+schedule_run(n) = with_state_estimation_config(max_iter = 15, tol = 1e-6, flatstart = true, jac_eps = 1e-6, update_net = true, observability = Sparlectra.ObservabilityConfig(on_unobservable = :scheduled)) do
+  runse!(n)
+end
+net_s = deepcopy(net)
+se_s = schedule_run(net_s)
+for r in se_s.restoredRows
+  @printf("restored row: %s at %s, value %.1f MW, sigma %.1f MW, source %s\n", r.quantity, r.bus_name, r.value, r.sigma, r.source)
+end
+@assert length(se_s.restoredRows) == 1                                      #src
+rrow = only(se_s.restoredRows)
+@assert rrow.bus_name == "B6" && rrow.quantity === :P && rrow.value == -30.0 && rrow.sigma == 9.0  #src
+println("estimated as one island: ", se_s.observableIslands === nothing, ", converged: ", se_s.converged)
+@assert se_s.observableIslands === nothing && se_s.converged                #src
+dva_s = maximum(abs(rad2deg(angle(se_s.voltages[b])) - va_true[b]) for b in eachindex(va_true))
+@printf("all buses against the truth: max |dVa| %.1e deg\n", dva_s)
+@assert dva_s < 1e-6                                                        #src
+
+# The taken value is the only row that sees the flow into B7, so it is
+# critical: whatever the schedule says, the estimate follows. Shift the
+# schedule of the load at that bus by 10 MW and estimate again:
+
+## uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14); net_s, rrow, schedule_run (Example 15)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14 first: they set up net.")
+(@isdefined(net_s) && @isdefined(rrow) && @isdefined(schedule_run)) || error("Run Example 15 first: it sets up net_s, rrow, schedule_run.")
+net_w = deepcopy(net)
+load = only(ps for ps in net_w.prosumpsVec if getPosumerBusIndex(ps) == rrow.bus)
+updatePQ!(load, load.pVal + 10.0, nothing)
+se_w = schedule_run(net_w)
+@printf("replacement value at %s: %.1f MW (schedule shifted by 10 MW)\n", rrow.bus_name, only(se_w.restoredRows).value)
+@assert only(se_w.restoredRows).value == -40.0                              #src
+dp = get_branch_p_from_to_mw(net_w, "B6", "B7") - get_branch_p_from_to_mw(net_s, "B6", "B7")
+@printf("estimated flow B6-B7 moves by %.2f MW\n", dp)
+@assert isapprox(dp, -10.0; atol = 0.1)                                     #src
+
+# Reading aid (Example 15): the deficit was one angle, so one value closed
+# it, the P schedule at B6 (the first bus by number whose injection sees
+# the cut flow). The restoration picks by rank, not by place, so the
+# replacement value need not sit at the dark bus B7: an injection at a
+# neighbor reaches its states as well (Example 9). The Web UI shows such a run yellow, "observable through 1
+# restored row". A replacement value carries no redundancy: the 10 MW
+# error of the schedule goes fully into the flow B6-B7, and no residual
+# shows it.
+#
+# **Example 16: suggesting meter places.** `suggest_measurement_placement`
+# adds one meter per step until the set is observable, from candidates of
+# one kind: `injection` (P, Q or U at a bus), `flow` (a P and Q pair at a
+# branch end) or `pmu` (a voltage angle). For the one-row kinds the number
+# of steps equals the deficit (plus one step for the offset of a first
+# PMU), the minimum; for `flow` the choice is
+# greedy, without a guarantee of the minimum. Back to the set of
+# Example 8:
+
+## uses: meas8 (Example 13); net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14)
+@isdefined(meas8) || error("Run Example 13 first: it sets up meas8.")
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14 first: they set up net.")
+plc = Dict{Symbol,Any}()
+for kind in (:injection, :flow, :pmu)
+  plc[kind] = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+    suggest_measurement_placement(net, meas8; kind = kind)
+  end
+  r = plc[kind]
+  println(kind, ": ", length(r.steps), " step(s), observable: ", r.reached, " (stop: ", r.stop_reason, ")")
+  for s in r.steps
+    println("  step ", s.step, ": ", s.quantity, " at ", s.location, ", deficit angles ", s.angle_rank_deficit_before, " -> ", s.angle_rank_deficit_after, ", magnitudes ", s.magnitude_rank_deficit_before, " -> ", s.magnitude_rank_deficit_after)
+  end
+end
+steps_of(kind) = [(s.quantity, s.location, s.angle_rank_deficit_after, s.magnitude_rank_deficit_after) for s in plc[kind].steps]
+@assert plc[:injection].reached && steps_of(:injection) == [(:P, "B1", 0, 1), (:Q, "B1", 0, 0)]  #src
+@assert plc[:flow].reached && steps_of(:flow) == [(:PQ, "B6 - B7 (from end)", 0, 0)]  #src
+@assert !plc[:pmu].reached && plc[:pmu].stop_reason === :no_candidate && steps_of(:pmu) == [(:Va, "B1", 1, 1), (:Va, "B7", 0, 1)]  #src
+@assert all(s.angle_rank_deficit_before == 1 && s.magnitude_rank_deficit_before == 1 for s in plc[:pmu].steps)  #src
+@assert (plc[:injection].steps[2].angle_rank_deficit_before, plc[:injection].steps[2].magnitude_rank_deficit_before) == (0, 1)  #src
+## the suggestion of the first kind built in: rows at the suggested places
+## (placeholder values, enough for the observability check)
+g16 = with_state_estimation_config(flatstart = true, jac_eps = 1e-6) do
+  evaluate_global_observability(net, vcat(meas8, plc[:injection].rows))
+end
+println("Example 8 set with the injection suggestion: quality = ", g16.quality, ", rank deficit ", g16.rank_deficit)
+@assert g16.quality != :not_observable && g16.rank_deficit == 0             #src
+
+# Reading aid (Example 16): two injection rows close the deficit of two,
+# one flow pair on B6-B7 closes both at once. The PMU list needs two steps
+# for one angle: the first PMU of a set only fixes the time-base offset of
+# Example 12, the second fixes the angle of B7. Its magnitude stays dark,
+# because a PMU here counts as an angle only; the placement stops and says
+# so. See `examples/state_estimation/state_estimation_observable_islands.jl`
+# for the same chain on sp_case118 and sp_case1354.
+#
 # ## Where to go next
 #
 # - The sequel notebook,
-#   [bad data and parameter estimation](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb):
+#   [bad data and parameter estimation](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_se_diagnostics.ipynb):
 #   what happens when $J/\mathrm{dof}$ is NOT near one: normalized
 #   residuals and localizability, sequential elimination, robust
 #   estimation, current measurements, and shunt-parameter estimation.
+# - [`state_estimation_observable_islands.jl`](https://github.com/Welthulk/Sparlectra.jl/blob/main/examples/state_estimation/state_estimation_observable_islands.jl):
+#   Examples 13 to 16 on sp_case118 and sp_case1354, with the run time per
+#   step.
 # - New to Sparlectra? The
-#   [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-#   builds a network from scratch step by step, directly in Colab.
-# - [Slack types and short-circuit currents](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
+#   [workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
+#   builds a network from scratch step by step.
+# - [Slack types and short-circuit currents](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb):
 #   the grid-connection notebook: slack representations and IEC 60909-0
 #   fault currents.
 # - [State Estimation](https://welthulk.github.io/Sparlectra.jl/state_estimation/):

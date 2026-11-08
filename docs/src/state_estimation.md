@@ -231,8 +231,8 @@ value; the predictions add the injection analytically,
 `S_sh = |V_i|^2 conj(G + jB) baseMVA`, so the Ybus stays constant across the
 FD perturbations. Case B takes `Q_sh` from `S = sqrt(3) U I`, the sign from
 the model susceptance, the sigma from first-order error propagation
-(`sigmaFloor` sets a minimum); `SHDERIV` rows are protected from
-elimination like `ZI` rows.
+(`sigmaFloor` sets a minimum); `SHDERIV` rows carry the origin `:derived`
+and are protected from elimination like `ZI` rows.
 
 ### [Link flow measurements](@id se_link_measurements)
 
@@ -276,18 +276,21 @@ $\lambda_k$ is the force of the measurements against the balance at bus $k$; a l
 measurement error nearby. A small sigma makes the gain matrix ill-conditioned. The KKT system scales
 the constraint rows by $a = \max \operatorname{diag}(G) / \max |C|$ with $G = H_M^T W H_M$, so both blocks are of the same
 order; the solution does not depend on $a$, the condition number does. `SEResult.conditioning` gives the
-condition number of the run. On sp_case14 with a noisy generated set and the passive buses as zero
-injections it is about 6.9e9 for the gain matrix under `on` with the default sigma and 2.6e4 for the
-KKT matrix under `constraint`. Inside a cluster the link flows $f = A^{+} b(x) + N c$ meet every member balance by
+condition number of the run, taken of the Jacobi-scaled matrix $D^{-1/2} M D^{-1/2}$ with $D$ the
+diagonal of $M$, so the units of the states (rad, pu, MW for the circulation of a coupler ring) do not
+enter it. On sp_case14 with a noisy generated set and the passive buses as zero injections it is about
+2.3e9 for the gain matrix under `on` with the default sigma and 6.2e3 for the KKT matrix under
+`constraint`. Inside a cluster the link flows $f = A^{+} b(x) + N c$ meet every member balance by
 construction, and the fused balance is the `LINKAGG` row, so there is no separate link multiplier.
 
 ## Observability
 
-Run `evaluate_global_observability(net; ...)` before estimating (structural
-islands, then FD-aware numeric rank; verdict `:good` / `:critical` /
-`:not_observable`), and `evaluate_local_observability(net, cols; ...)` for
-placement studies on chosen state columns; see
-[Observability](observability.md).
+Run `evaluate_global_observability(net; ...)` before estimating (verdict
+`:good` / `:critical` / `:weakly_observable` / `:not_observable`), and
+`evaluate_local_observability(net, cols; ...)` for placement studies on
+chosen state columns; see [Observability](observability.md). Islands,
+scheduled values and meter places for a set that is not observable:
+[When the set is not observable](@ref se_observability_gaps).
 
 ## Integration with the Net workflow
 
@@ -570,9 +573,10 @@ Defaults and ranges of every key:
   `rn = 0`.
 - Virtual measurements (`σ ≤ 1e-6`), the `ZI` rows (sigma
   `state_estimation.zero_injection_sigma_mva`, default 1e-3 MW, also the
-  aggregate of a coupler cluster of them) and the derived shunt rows
-  (`SHDERIV`) are exempt in every mode: they are never eliminated and never
-  down-weighted by `replacement` or `staged`. They carry network structure
+  aggregate of a coupler cluster of them), the derived shunt rows
+  (`SHDERIV`, origin `:derived`) and rows with origin `:pseudo_restore`
+  (the replacement values of `on_unobservable = scheduled`) are
+  exempt in every mode: they are never eliminated and never down-weighted by `replacement` or `staged`. They carry network structure
   or other measurements, not a meter of their own.
 - The replacement threshold is judged on the converged state, never on
   flat-start transients: the estimator solves plain, builds the suppression
@@ -592,7 +596,25 @@ Defaults and ranges of every key:
 ### [Range check of the voltage measurements](@id se-range-check)
 
 Before every WLS (`runse!`, `validate_measurements`, `runse_diagnostics`,
-hence also the SE service and the Web UI) each active voltage measurement
+the observability check, hence also the SE service and the Web UI) the
+topology comes first: a network island the switching state does not
+energize (no source, or an isolated bus) sends no readings. Every active
+row at its buses, at a link with an end in it or at a branch whose closed
+or measured end lies in it, is inactive for
+the run, reason `deenergized_island`; the log and `run.log` name the
+island and the number of rows (`topology check: network island 3 (bus
+Erlbach_20) is not energized ...: 31 measurement(s) inactive`). Such a
+part counts as dead only while none of its voltage measurements lies
+above 0.1 pu. A reading above that says the part is live: a neighbour
+outside the model feeds it, or a switch state is wrong. Then the rows
+stay, the part is estimated like a net without a source model, and a
+warning, `run.log` and the topology pre-check
+(`:measurement_contradicts_topology`) report the contradiction with the
+number of such voltages and the largest one (reason
+`topology_contradiction`). A network without any source (a bare
+estimation net) is left alone.
+
+Then each active voltage measurement
 outside 0.5 to 1.5 pu, 0 kV and non-finite values included, is checked
 against the switching state. On a bus that is not energized (an isolated
 bus, or an island without a source) 0 kV is right: the bus and its branches
@@ -604,10 +626,12 @@ import, otherwise 1.0 pu) with its sigma times
 `state_estimation.bad_data.substitute_sigma_factor` (default 3), reason
 `range_check_substituted`. Each finding gets one line in the log and in
 `run.log`; the diagnostics carry the counter `range_check` (`substituted`,
-`deenergized`) and mark the row in the ranking (field
+`deenergized`, `deenergized_islands`, `topology_contradictions`) and mark the row in the ranking (field
 `range_check = :range_check_substituted`), the SE service writes the reason
 into `measurements_verdict.csv` and the counts into the metadata
-(`se_range_check_substituted`, `se_range_check_deenergized`). Only then run
+(`se_range_check_substituted`, `se_range_check_deenergized`,
+`se_range_check_deenergized_islands`,
+`se_range_check_topology_contradictions`). Only then run
 the WLS, the residual analysis and the elimination.
 
 ### [Localizability: the residual sensitivity `wii`](@id se-localizability)
@@ -626,9 +650,11 @@ above 3) is localizable (`wii` > 0.3), the worst row is deactivated and the
 estimation reruns, up to this many times. `0` disables elimination
 (diagnostics only).
 
-Protected rows (`ZI`, `SHDERIV`, `LINKAGG` aggregates and any row with
-`sigma <= 1e-6`) encode model knowledge, not telemetry, and are never
-eliminated. The trace lands in `se_diagnostics.md`. Configuration key
+Protected rows (`ZI`, origin `:derived` or `:pseudo_restore`, `LINKAGG`
+aggregates of them and any row with `sigma <= 1e-6`) encode model
+knowledge, not telemetry, and are never eliminated. The protection follows
+`Measurement.origin`, not the id; `:pseudo` rows from a measurement table
+are eliminated like measured rows. The trace lands in `se_diagnostics.md`. Configuration key
 `state_estimation.max_eliminations` (default 5, one row per round, so also
 the round limit of the loop); the Web UI field **Sequential elimination
 budget** sets it per run. Pseudo measurements of the
@@ -664,7 +690,10 @@ Which path the residual diagnostics take, for Vm plus P/Q injection sets,
 with the default `report_residual_correlation = true`. Up to 2000 states
 the correlation report needs the full `Ω` and pins the dense path; above
 2000 states `Ω_ii` comes from the Takahashi path and the correlations from
-a blockwise solve:
+a blockwise solve. The observability check (observable islands, dark
+states, deficit, weak class) is computed completely at any size; at 2000
+states only the computation path switches from dense to sparse
+factorizations:
 
 | Network | m × n | residual diagnostics | notes |
 |---|---|---|---|
@@ -673,14 +702,10 @@ a blockwise solve:
 | case1354pegase | 4062 × 2707 | Takahashi | every diagnostic available; criticality from `diag(Omega)` (no size budget) |
 | case13659pegase | 40977 × 27317 | Takahashi | criticality from `diag(Omega)`; K-matrix report skipped above 20000 rows |
 
-Three bounds:
+Two bounds:
 
 * the per-row criticality tests (`criticality_method = rank`) are skipped
-  with a warning above an m·n budget of 300000, the dark-state SVD behind
-  `unobservable_state_columns` above 2000 states or measurements;
-* the dense `pinv` diagnostics path stops at 2000 states; above it the
-  diagonal comes from the Takahashi path or, when that refuses, from a
-  blockwise sparse solve;
+  with a warning above an m·n budget of 300000;
 * the `state_estimation.report_residual_correlation` columns are skipped
   with a warning above 20000 measurement rows.
 
@@ -781,5 +806,5 @@ NASPI TR-006, *Phase Angle Calculations: Considerations and Use Cases*.
 * 7-bus tutorial: [advanced workshop tour](generated/workshop_tour_advanced.md), [state-estimation notebook](generated/workshop_state_estimation.md)
 * Bad-data localization, elimination, robust estimation, shunt estimation: the [SE diagnostics notebook](generated/workshop_se_diagnostics.md)
 * Tap estimation, current measurements, PMU phasors, topology advisory, islands, $J$ versus $J_{active}$: the [taps, phasors and topology notebook](generated/workshop_se_taps.md)
-* Scripts in `examples/state_estimation/`: `state_estimation_wls.jl`, `state_estimation_pmu_angles.jl`, `state_estimation_observability.jl`, `state_estimation_passive_bus_zib_comparison.jl`, `state_estimation_zero_injection_constraint.jl`, `h_matrix_observability_demo.jl`
+* Scripts in `examples/state_estimation/`: `state_estimation_wls.jl`, `state_estimation_pmu_angles.jl`, `state_estimation_observability.jl`, `state_estimation_observable_islands.jl`, `state_estimation_passive_bus_zib_comparison.jl`, `state_estimation_zero_injection_constraint.jl`, `h_matrix_observability_demo.jl`
 * A [Sparlectra Case Format](scf.md) case carries its own measurement set, see [Case files carry their own measurements](@ref se-case-file-measurements)

@@ -6,8 +6,6 @@ EditURL = "../../lit/workshop_slack_short_circuit.jl"
 
 > **Level: Advanced**, companion of basic-tour chapter 3.
 
-[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_slack_short_circuit.ipynb)
-
 > **Note:** This workshop was created with AI assistance and is reviewed
 > and curated by the maintainer; it is not a fully machine-generated text.
 
@@ -44,10 +42,6 @@ verticals B2-B7 and B3-B6); the grid connection under study sits at B1:
    B8 ---- B7 ---- B6 ---- B5
 ```
 
-> **Note:** On Google Colab the install cell takes a minute or two on a
-> fresh session (package download and precompilation). Colab's Julia
-> version may change over time; this notebook targets Julia ≥ 1.12.
-
 ## Warm-up and shared helpers
 
 Julia compiles each function on first use. This cell defines what the
@@ -59,8 +53,7 @@ power-flow solver with ideal slack, external-grid source and distributed
 slack, the result tables, and the IEC 60909 short-circuit engine with
 its printout), so nothing stalls mid-notebook; its code is in
 `docs/lit/warmup/workshop_slack_short_circuit.jl` of the package. How
-long the warm-up takes depends on the machine: a Colab session is
-several times slower than a desktop; every later cell then runs without
+long the warm-up takes depends on the machine; every later cell then runs without
 compile pauses.
 
 ````@example workshop_slack_short_circuit
@@ -284,12 +277,12 @@ less than a third of the connection-bus current.
 ## Where to go next
 
 - New to Sparlectra? Chapter 1 of the
-  [workshop tour](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
-  builds a network from scratch step by step, directly in Colab.
+  [workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
+  builds a network from scratch step by step.
 - [Slack Bus and External Grid Sources](https://welthulk.github.io/Sparlectra.jl/slack_vs_source/):
   the full theory: why the load flow needs a slack, the source model, and
   how the equation system changes.
-- [Distributed slack notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb):
+- [Distributed slack notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_distributed_slack.ipynb):
   where the participation weights come from (schedule, headroom, imported
   APF/normalPF, explicit) and the fallback when no participant is valid.
 - [Short-Circuit Compendium](https://welthulk.github.io/Sparlectra.jl/short_circuit/):

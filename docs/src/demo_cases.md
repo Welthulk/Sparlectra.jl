@@ -1,6 +1,6 @@
 # Shipped Demo Cases
 
-Sparlectra ships five self-built networks in the [Sparlectra Case
+Sparlectra ships seven self-built networks in the [Sparlectra Case
 Format](scf.md), tracked in `data/scf`, so a fresh install can run power
 flow, state estimation, short circuit, N-1 and scenarios without
 downloading anything.
@@ -25,13 +25,17 @@ noisy CSV with the seed in the header, plus a bad-data variant with one
 gross reading), a scenarios block (explicit mode; N-1 expansions are
 chosen on the Runs page), short-circuit study buses and a solved start
 state. `sp_case6tap` ships with one measurement table and nothing else of
-this list.
+this list; `sp_case14_islands` ships with the thinned measurement table of
+`sp_case14` and no bad-data variant, `sp_case16_islands` with a
+measurement table, a scenarios block and a start state.
 
 | Case | Buses | What it demonstrates |
 |---|---|---|
 | `sp_case5` | 5 | The hand-checkable entry: two voltage levels, an external grid as slack and IEC 60909 feeder, one PV machine, ratings chosen so that line outages overload the surviving parallel path (`line_Borntal_Lindhof_out`: 122 percent) while the base keeps 32 percent reserve. |
 | `sp_case6tap` | 6 | The tap control case: three transformers, two of them regulated, see [sp_case6tap](@ref sp_case6tap_tap_control). Power flow, short circuit and state estimation on a measurement table taken from the settled controller state (no bad-data variant). |
 | `sp_case14` | 14 | The regulated feeder: a meshed 110 kV level, a radial 20 kV feeder behind a transformer with a discrete tap controller (deadband 0.01 pu, settles in 5 outer iterations), a fixed-tap transformer off neutral, and N-1 outages that island the load-only feeder. |
+| `sp_case14_islands` | 14 | `sp_case14` with a measurement set that leaves the transformer `Wehrden_110_20` and the injections at both its ends unmeasured: two observable islands, the transformer unobservable. Zero injection is off in its case configuration. The demo for the observability gap modes and the measurement placement, see [Observability](@ref se_observability_gaps). |
+| `sp_case16_islands` | 16 | `sp_case6tap` plus two attached networks on switchable ties, see [sp_case16_islands](@ref sp_case16_islands_ties). The measurement table leaves one tie unmeasured: two observable islands; the scenarios open the ties into three network islands. |
 | `sp_case60` | 60 | The feature-dense operated grid: 220/110/20 kV, a PST holding its corridor flow, a combined ratio-and-phase Schraegregler, an SVC, a 40 percent series-compensated corridor, a same-name double circuit across two busbar sections joined by an impedance-less link, and a bridge branch whose outage island solves via PV promotion. No branch above 80 percent in the base case: the screening fixture. |
 | `sp_case188` | 188 | The benchmark: a 380 kV double ring with a double busbar, a steerable HVDC pair (60 MW setpoint), four parametric 110/20 kV zones, a STATCOM with a remote target, an SSSC, a PST and a series-compensated corridor. |
 
@@ -81,6 +85,21 @@ Three controllers run in the outer loop: the T1 ratio changer holds
 (deadband 4 MW). All taps start at position 0.
 
 ![Single-line diagram of sp_case6tap](assets/sp_case6tap_single_line.svg)
+
+## [sp_case16_islands: attached networks and ties](@id sp_case16_islands_ties)
+
+`sp_case16_islands` is the `sp_case6tap` network unchanged plus two
+attached networks of five buses each. Network B (110/20 kV, the machine
+`Gen_Weidach`) hangs on the tie `Ostheim_Haldorf`, network C (20 kV, loads
+only) on the tie `Lindenau_Erlbach`. Both ties are closed in the base
+state. The measurement table leaves out the flows of `Ostheim_Haldorf` and
+the P and Q injections at both its ends: two observable islands, the tie
+unobservable, zero injection on. The scenario `ties_out_three_islands`
+opens both ties (three network islands; C has no source, so its power flow
+does not converge and its readings are gone), `tie_Ostheim_Haldorf_out`
+only the tie to B. See [When the set is not observable](@ref se_observability_gaps).
+
+![Single-line diagram of sp_case16_islands](assets/sp_case16_islands_single_line.svg)
 
 ## PowSyBl networks
 

@@ -21,8 +21,6 @@
 
 # # The Sparlectra workshop tour, part 3: coordinated control
 #
-# [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_control.ipynb)
-#
 # > **Note:** This workshop was created with AI assistance and is reviewed
 # > and curated by the maintainer; it is not a fully machine-generated text.
 #
@@ -45,24 +43,14 @@
 # 4. The master/slave group
 # 5. Where the data comes from: CGMES RegulatingControl
 
-#nb # ## Setup (Colab)
-#nb # This cell installs Sparlectra from GitHub (branch `main`) into a fresh
-#nb # temporary environment. Run it first, once per session; it takes a few
-#nb # minutes.
-#nb # > **Colab is slow here.** The install cell below fetches Sparlectra and
-#nb # > its dependencies and precompiles them on Colab's two cores; that takes a
-#nb # > minute or two and prints one line per package as it goes. Sparlectra
-#nb # > itself precompiles in well under a minute; the first cell that
-#nb # > imports a case and solves it then compiles for about a minute more,
-#nb # > every later cell runs at speed. Wait for the install cell to finish
-#nb # > before running the next one; a second click on it starts the whole
-#nb # > install again.
+#nb # ## Setup
+#nb # This notebook runs in the workshop folder that the installer sets up
+#nb # (Julia, Sparlectra, IJulia and the notebooks in one command, see
+#nb # [Workshops](https://welthulk.github.io/Sparlectra.jl/#Workshops)).
+#nb # This cell checks that Sparlectra is installed and shows its version.
 #nb using Pkg
-#nb Pkg.activate(temp = true)
-#nb ## no APSLF in this workshop: skip the precompile workload of AnalyticLoadFlow (set before Pkg.add, the precompile processes inherit ENV)
-#nb ENV["ANALYTICLOADFLOW_PRECOMPILE_WORKLOAD"] = "off"
-#nb Pkg.add(url = "https://github.com/Welthulk/Sparlectra.jl", rev = "main")
-#nb ## For the latest registered release use: Pkg.add("Sparlectra")
+#nb Base.find_package("Sparlectra") === nothing && error("Sparlectra is not installed in this environment; run the workshop installer, see https://welthulk.github.io/Sparlectra.jl/#Workshops")
+#nb Pkg.status("Sparlectra")
 
 # ## Warm-up and shared helpers
 #
@@ -75,8 +63,7 @@
 # registration, the master/slave group in the outer control loop, the
 # element view), so nothing stalls mid-workshop; its code is in
 # `docs/lit/warmup/workshop_tour_control.jl` of the package. How long the
-# warm-up takes depends on the machine: a Colab session is several times
-# slower than a desktop; every later cell then runs without compile
+# warm-up takes depends on the machine; every later cell then runs without compile
 # pauses.
 
 using Sparlectra
@@ -145,13 +132,13 @@ warmup()
 #          Feeder (40 MW / 12 MVAr)
 # ```
 
-## uses: build_substation, solve!, trafo_ids (warm-up cell)
+## uses: build_substation, solve! (warm-up cell)
 net0 = build_substation("substation")
 solve!(net0)
 t0 = [br for br in net0.branchVec if br.ratio != 0.0]
-## the controllers of chapters 3 and 4 address T1 and T2 by the branch ids
-## the warm-up read from its own substation; the same builder gives the same ids
-@assert [string(br.branchIdx) for br in t0] == trafo_ids "trafo_ids of the warm-up do not match this substation"
+## the controllers of chapters 3 and 4 address T1 and T2 by the branch ids  #src
+## the warm-up read from its own substation; the same builder gives the same ids  #src
+@assert [string(br.branchIdx) for br in t0] == trafo_ids "trafo_ids of the warm-up do not match this substation"  #src
 println("Aligned taps (both units at ratio 1.0), flow at the HV terminal, computed:")
 println("  ", rpad("unit", 5), lpad("P [MW]", 8), lpad("Q [MVAr]", 11))
 for (k, br) in enumerate(t0)
@@ -287,9 +274,9 @@ end
 # - [Control Framework](https://welthulk.github.io/Sparlectra.jl/control_framework/):
 #   the group's theory section, the hook interface, and the declarative
 #   controller configuration.
-# - [Transformer taps notebook](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb):
+# - [Transformer taps notebook](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_transformers.ipynb):
 #   the single-unit tap mechanics this part builds on.
-# - [Workshop tour, advanced](https://colab.research.google.com/github/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
+# - [Workshop tour, advanced](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour_advanced.ipynb):
 #   FACTS limits, N-1, state estimation, threads.
 # - [CGMES Import](https://welthulk.github.io/Sparlectra.jl/cgmes_import/):
 #   how deliveries map onto the network model.

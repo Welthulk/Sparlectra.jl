@@ -29,7 +29,7 @@ how long the first solve, the first estimation and the rest took. The
 output and log notices of the paths are discarded.
 """
 function warmup()
-  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine (a Colab session is several times slower than a desktop)")
+  println("warm-up: compiles the paths of this workshop once; how long it takes depends on the machine")
   wnet = Net(name = "warmup", baseMVA = 100.0)
   addBus!(net = wnet, busName = "A", vn_kV = 110.0)
   addBus!(net = wnet, busName = "B", vn_kV = 110.0)
