@@ -1,4 +1,4 @@
-# Version 1.1.0 - 2026-11-04
+# Version 1.1.0 - 2026-11-08
 
 Observability: observable islands, closing gaps, weak results.
 
