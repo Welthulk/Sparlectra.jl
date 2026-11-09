@@ -23,9 +23,10 @@ The full capability list is in the [feature matrix](docs/src/feature_matrix.md).
 
 ## Workshops
 
-The workshop notebooks run in Jupyter or VS Code. One command installs Julia
-(if missing), Sparlectra, IJulia and the notebooks into
-`~/sparlectra-workshops` and starts Jupyter.
+The workshop notebooks run in Jupyter or VS Code. The Web UI installer has a
+workshop mode (`--workshops`): one command installs Julia (if missing),
+Sparlectra, IJulia and the notebooks into `~/sparlectra-workshops` and
+starts Jupyter.
 
 Linux/macOS:
 
@@ -147,18 +148,23 @@ println(result.iterations)
 println(result.final_mismatch)
 ```
 
-An ENTSO-E CGMES delivery: diagnose, import, solve, compare with the delivered SV profile:
+A CGMES model: diagnose, import, solve, compare with the delivered SV profile.
+The example uses the CGMES demo files shipped with the package:
 
 ```julia
 using Sparlectra
 
-summary = summarizeCGMES(path = ["grid.zip", "boundary.zip"])
-result  = importCGMES(path = ["grid.zip", "boundary.zip"])
+demo    = joinpath(pkgdir(Sparlectra), "data", "cgmes_demo", "sp_case14")
+summary = summarizeCGMES(path = demo)
+result  = importCGMES(path = demo)
 runpf!(result.net, 30, 1e-8, 0)
 
 cmp = compareWithSV(result)
 @show cmp.max_dvm
 ```
+
+For an ENTSO-E delivery of your own, `path` takes a folder, ZIP files or XML
+files, for example `path = ["grid.zip", "boundary.zip"]`.
 
 Embedding Sparlectra in your own tooling (scripts, sysimage, API): [integration guide](docs/src/integration.md).
 
