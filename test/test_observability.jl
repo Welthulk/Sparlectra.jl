@@ -397,6 +397,10 @@ function test_observability_fd_rank_tolerance(fx)::Bool
     @test [(r.reason, r.id) for r in rcD] == [(:deenergized_island, "2")]
     @test only(rcD).deactivated == [k for (k, m) in enumerate(chkD) if !m.active] && !isempty(only(rcD).deactivated)
     @test !any(f -> f.kind === :measurement_contradicts_topology, validate_topology(netO, deadO).findings)
+    # every row in the dead island: the error names the range check as the
+    # cause (until 1.1.1 it blamed current rows, of which the set has none)
+    onlyDead = deadO[only(rcD).deactivated]
+    @test_throws "$(length(onlyDead)) row(s) at de-energized buses switched off by the voltage range check)" evaluate_global_observability(netO, onlyDead)
 
     # an explicit tol still wins over the FD-aware default
     obsT = evaluate_global_observability(netC, meas; tol = 1e-14)

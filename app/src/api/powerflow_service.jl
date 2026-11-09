@@ -163,24 +163,38 @@ function _se_optional_float(request::AbstractDict, key::AbstractString)::Union{N
   raw = _service_request_value(request, key, nothing)
   raw === nothing && return nothing
   raw isa AbstractString && isempty(strip(raw)) && return nothing
-  return Float64(raw isa AbstractString ? something(tryparse(Float64, strip(raw)), throw(ArgumentError("$(key) must be a number, got $(repr(raw))."))) : raw)
+  raw isa AbstractString && return something(tryparse(Float64, strip(raw)), throw(ArgumentError("$(key) must be a number, got $(repr(raw)).")))
+  raw isa Real || throw(ArgumentError("$(key) must be a number, got $(repr(raw))."))
+  return Float64(raw)
 end
 
+## a whole number: 2.5 is refused, not rounded (until 1.1.1 it was rounded
+## without a word)
 function _se_optional_int(request::AbstractDict, key::AbstractString)::Union{Nothing,Int}
   v = _se_optional_float(request, key)
-  return v === nothing ? nothing : Int(round(v))
+  v === nothing && return nothing
+  (isfinite(v) && isinteger(v)) || throw(ArgumentError("$(key) must be a whole number, got $(v)."))
+  return Int(v)
 end
 
+## true/false, also as text; anything else is an invalid request (until
+## 1.1.1 `Bool(raw)` failed during the run as an execution error)
 function _se_optional_bool(request::AbstractDict, key::AbstractString)::Union{Nothing,Bool}
   raw = _service_request_value(request, key, nothing)
   raw === nothing && return nothing
-  raw isa AbstractString && isempty(strip(raw)) && return nothing
-  return Bool(raw)
+  raw isa Bool && return raw
+  if raw isa AbstractString
+    text = lowercase(strip(raw))
+    isempty(text) && return nothing
+    text in ("true", "false") && return text == "true"
+  end
+  throw(ArgumentError("$(key) must be true or false, got $(repr(raw))."))
 end
 
 function _se_optional_symbol(request::AbstractDict, key::AbstractString)::Union{Nothing,Symbol}
   raw = _service_request_value(request, key, nothing)
   raw === nothing && return nothing
+  raw isa Union{AbstractString,Symbol} || throw(ArgumentError("$(key) must be a name, got $(repr(raw))."))
   text = lowercase(strip(String(raw)))
   isempty(text) && return nothing
   return Symbol(text)
@@ -348,10 +362,13 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   # the request may omit the set for one; every other format still has to name
   # a measurement file, and the service reports a missing one by name.
   if se_mode && !(measurement_file isa AbstractString && !isempty(strip(measurement_file)))
+    # a case that does not resolve fails with its own reason (until 1.1.1
+    # the error became "requires measurement_file")
     case_is_scf = try
       _detect_case_format(_resolve_powerflow_casefile(String(casefile), case_directory === nothing ? "" : String(case_directory))) === :scf
-    catch
-      false
+    catch err
+      err isa ArgumentError || rethrow()
+      return _service_failure("invalid_request", sprint(showerror, err))
     end
     case_is_scf || return _service_failure("invalid_request", "se_mode requires measurement_file (a Sparlectra Case Format case may carry its measurements instead).")
     measurement_file = ""
@@ -559,6 +576,27 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
     # the measurement placement (Web UI placement page) is an SE request
     # with a placement kind: the same case and set, no estimation
     placement = placement_kind !== nothing && !isempty(strip(placement_kind))
+    # the optional SE settings are read before the run: a value of the
+    # wrong type is an invalid request, not an execution error with a
+    # backtrace (the helpers throw ArgumentError and nothing else)
+    se_opts = try
+      (max_iter = _se_optional_int(request, "se_max_iter"),
+       tol = _se_optional_float(request, "se_tol"),
+       flatstart = _se_optional_bool(request, "se_flatstart"),
+       robust = _se_optional_bool(request, "se_robust"),
+       max_eliminations = _se_optional_int(request, "se_max_eliminations"),
+       update_shunts = something(_se_optional_bool(request, "se_update_shunts"), false),
+       report_correlation = _se_optional_bool(request, "se_report_correlation"),
+       k_eliminate = _se_optional_float(request, "se_k_eliminate"),
+       robust_mode = _se_optional_symbol(request, "se_robust_mode"),
+       robust_k1 = _se_optional_float(request, "se_robust_k1"),
+       robust_k2 = _se_optional_float(request, "se_robust_k2"),
+       k_suppress = _se_optional_float(request, "se_k_suppress"),
+       suppression_sigma = _se_optional_float(request, "se_suppression_sigma"))
+    catch err
+      err isa ArgumentError || rethrow()
+      return _service_failure("invalid_request", sprint(showerror, err); run_id = run_id)
+    end
     se_result = try
       placement ? _run_se_placement_service(casefile, config_file, output_dir, run_id, mf; kind = Symbol(strip(placement_kind)), target = Symbol(strip(placement_target)),
                                             config_overrides = config_overrides, case_format = _normalize_case_format(case_format), phase_callback = phase_callback, timestamp = se_timestamp) :
@@ -573,19 +611,7 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
         # would silently outrank the configured default (that is how a run
         # kept using k_suppress 6.0 while the configuration said 4.0).
         config_overrides = config_overrides,
-        max_iter = _se_optional_int(request, "se_max_iter"),
-        tol = _se_optional_float(request, "se_tol"),
-        flatstart = _se_optional_bool(request, "se_flatstart"),
-        robust = _se_optional_bool(request, "se_robust"),
-        max_eliminations = _se_optional_int(request, "se_max_eliminations"),
-        update_shunts = Bool(_service_request_value(request, "se_update_shunts", false)),
-        report_correlation = _se_optional_bool(request, "se_report_correlation"),
-        k_eliminate = _se_optional_float(request, "se_k_eliminate"),
-        robust_mode = _se_optional_symbol(request, "se_robust_mode"),
-        robust_k1 = _se_optional_float(request, "se_robust_k1"),
-        robust_k2 = _se_optional_float(request, "se_robust_k2"),
-        k_suppress = _se_optional_float(request, "se_k_suppress"),
-        suppression_sigma = _se_optional_float(request, "se_suppression_sigma"),
+        se_opts...,
         # a bare .DAT is ambiguous (FOR001 network vs FOR002 reference), so
         # the SE path needs the same explicit format the power flow gets.
         # The request carries it as a string; the normalizer validates it.

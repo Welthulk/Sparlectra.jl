@@ -642,7 +642,7 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
   in_table = Set{Int}(art.measurement)
   restored = [mi for (mi, m) in enumerate(net.measurements) if m.origin === :pseudo_restore && !(mi in in_table)]
   entries = vcat([(string(art.lines[k]), art.keys[k], art.types[k], art.measurement[k]) for k in eachindex(art.lines)],
-                 [("", net.measurements[mi].id, _se_table_type(net.measurements[mi].typ), mi) for mi in restored])
+                 [("", net.measurements[mi].id, something(_sigma_table_type(net.measurements[mi].typ), string(net.measurements[mi].typ)), mi) for mi in restored])
   open(file, "w") do io
     println(io, join(_SE_VERDICT_HEADER, delim))
     for (line, key, typ, mi) in entries
@@ -690,10 +690,6 @@ function _se_write_measurement_verdict(file::AbstractString, net::Net, art, diag
   end
   return flagged
 end
-
-## the table type of a replacement value (P, Q, U), as the table rows of
-## the verdict carry it
-_se_table_type(typ::MeasurementType) = typ == PinjMeas ? "P" : typ == QinjMeas ? "Q" : typ == VmMeas ? "U" : string(typ)
 
 # state_estimation.sigma_by_voltage_level of one run: per nominal voltage the
 # number of measurements and where their sigma came from (row, level,
@@ -1681,7 +1677,9 @@ function _run_state_estimation_service_body(
   on_unobs = obs_cfg.on_unobservable
   not_obs = obs.quality == :not_observable
   isl_pre = obs.observable_islands
-  # one CSV format for every artifact of the run (issue #376)
+  # one CSV format for every artifact of the run (issue #376); only
+  # measurements.csv keeps the fixed layout of the measurement table (comma,
+  # decimal point), so the run can read it back
   se_csv_format = _resolve_detailed_csv_format(String(config.output.csv_format))
   se_csv_delim = se_csv_format.delimiter
   base_metadata["se_on_unobservable"] = String(on_unobs)

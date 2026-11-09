@@ -52,6 +52,7 @@ const SPARLECTRA_APP_ROOT = normpath(joinpath(@__DIR__, ".."))
 import Sparlectra:
   _flatten_config_values!,
   _qlimit_solver_kwargs,
+  _sigma_table_type,
   qlimit_pv_to_pq_event_count,
   EnergyConsumer,
   ExternalNetworkInjection,

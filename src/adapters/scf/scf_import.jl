@@ -1562,7 +1562,7 @@ function _scf_read_measurements_v10!(net::Net, case::SCFCase, bus_by_id, branch_
 end
 
 # keys a row of measurements.rows may carry (revision 1.2)
-const _SCF_MEASUREMENT_ROW_KEYS = ("type", "id", "node", "terminal", "sensor", "value", "sigma", "valid", "zero_injection")
+const _SCF_MEASUREMENT_ROW_KEYS = ("type", "id", "node", "terminal", "sensor", "value", "sigma", "valid", "zero_injection", "origin")
 
 # Revision 1.2: measurements.rows with the semantics of the measurement
 # table, one entry per measured value in the order of the measurement vector.
@@ -1709,8 +1709,12 @@ function _scf_read_measurement_rows!(net::Net, case::SCFCase, bus_by_id, branch_
     zi = _scf_get(r, "zero_injection", false)
     zi isa Bool || throw(ArgumentError("SCF: $(ctx(k)).zero_injection must be true or false, got $(repr(zi))."))
     (zi && !(typ == PinjMeas || typ == QinjMeas)) && throw(ArgumentError("SCF: $(ctx(k)).zero_injection is set on a $(t) row that is no bus balance; only P and Q at a node can be a zero injection."))
+    # origin of the value (1.1.1): absent means a meter reading; a file
+    # written before 1.1.1 has no such key and reads as before
+    og = _scf_get(r, "origin", "measured")
+    (og isa AbstractString && Symbol(og) in MEASUREMENT_ORIGINS) || throw(ArgumentError("SCF: $(ctx(k)).origin must be one of $(join(MEASUREMENT_ORIGINS, ", ")), got $(repr(og))."))
     id = haskey(r, "id") ? String(r["id"]) : _default_measurement_id(typ; busIdx = busIdx, branchIdx = branchIdx, direction = dir)
-    push!(net.measurements, Measurement(typ = typ, value = value, sigma = sigma, active = valid, busIdx = busIdx, branchIdx = branchIdx, direction = dir, id = id, zero_injection = zi))
+    push!(net.measurements, Measurement(typ = typ, value = value, sigma = sigma, active = valid, busIdx = busIdx, branchIdx = branchIdx, direction = dir, id = id, zero_injection = zi, origin = Symbol(og)))
   end
   # sensors no row took (added by hand or by another tool) come after the
   # rows, read as in a file without the block

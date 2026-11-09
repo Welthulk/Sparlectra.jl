@@ -458,11 +458,22 @@ function run_scf_tests()
     @test dup[1].id == dup[3].id && dup[2].id == dup[4].id
     pushfirst!(full.measurements, dup[1], dup[2])
     append!(full.measurements, dup[3:4])
+    # a derived and a restored row (1.1.1): the origin crosses the file, so
+    # both keep their protection from bad-data elimination; before, every
+    # row came back as a reading and lost it
+    Sparlectra.addMeasurement!(full.measurements; typ = Sparlectra.ShuntQMeas, value = 4.1, sigma = 0.5, busIdx = bay, id = "ShuntQ_derived_probe", origin = :derived)
+    Sparlectra.addMeasurement!(full.measurements; typ = Sparlectra.PinjMeas, value = 0.0, sigma = 5.0, busIdx = bay, id = "Pinj_restore_probe", origin = :pseudo_restore)
     fa = exportSCF(full; file = joinpath(d, "full_a.scf.json"))
     full_back = importSCF(fa)
     @test length(full_back.measurements) == length(full.measurements)
     @test [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in full_back.measurements] == [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in full.measurements]
     @test read(exportSCF(full_back; file = joinpath(d, "full_b.scf.json")), String) == read(fa, String)
+    @test [m.origin for m in full_back.measurements] == [m.origin for m in full.measurements]
+    probes = filter(m -> m.id in ("ShuntQ_derived_probe", "Pinj_restore_probe"), full_back.measurements)
+    @test [m.origin for m in probes] == [:derived, :pseudo_restore] && all(Sparlectra._elimination_protected, probes)
+    # a set of readings writes no origin key, and a row without one reads
+    # as a reading (every file before 1.1.1)
+    @test !any(r -> haskey(r, "origin"), arows) && all(m -> m.origin === :measured, back.measurements)
     mtuple(n) = [(m.typ, m.busIdx, m.branchIdx, m.direction, m.id, m.value, m.sigma, m.active) for m in n.measurements]
     # SCF since 1.2: one row per measurement with the table semantics; the shunt
     # bay is a row of its own with the value, current sensors carry ampere
@@ -475,7 +486,8 @@ function run_scf_tests()
     # an id is written only where it is not the default of its location
     # (the generated rows), and it reads back either way
     @test [get(r, "id", nothing) for r in rows] == [m.id == Sparlectra._default_measurement_id(m.typ; busIdx = m.busIdx, branchIdx = m.branchIdx, direction = m.branchIdx === nothing ? :none : m.direction) ? nothing : m.id for m in full.measurements]
-    @test count(r -> haskey(r, "id"), rows) == 2
+    # the two shunt-bay probes and the two origin probes
+    @test count(r -> haskey(r, "id"), rows) == 4
     bay_row = only(r for r in rows if get(r, "id", "") == "Imag_shunt_probe")
     @test haskey(bay_row["terminal"], "shunt_bay") && bay_row["type"] == "I" && bay_row["value"] == 12.5 && !haskey(bay_row, "sensor")
     @test only(r for r in rows if get(r, "id", "") == "Ia_shunt_probe")["valid"] == false

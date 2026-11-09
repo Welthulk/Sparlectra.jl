@@ -1328,6 +1328,8 @@ function test_configuration_value_domain_validation()
     factor_bad = test_scratch_path(".yaml")
     write(factor_bad, "state_estimation:\n  bad_data:\n    substitute_sigma_factor: 0.5\n")
     @test_throws "state_estimation.bad_data.substitute_sigma_factor" Sparlectra.load_sparlectra_config(factor_bad; reload = true)
+    # the keyword constructor refuses it as well (1.1.1)
+    @test_throws "state_estimation.bad_data.substitute_sigma_factor" Sparlectra.BadDataConfig(substitute_sigma_factor = 0.5)
     # the last value of a meter (state_estimation.last_value): off by
     # default, 60 minutes, factor 3; a factor below 1 (an old value more
     # trusted than the reading), an age that is not positive and a scalar
