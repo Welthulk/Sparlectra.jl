@@ -50,6 +50,18 @@ installer prints the name. Running the command again updates Sparlectra and
 the notebooks; a notebook you changed is kept next to the new copy as
 `<name>.ipynb.<date>-<time>.bak`.
 
+The Web UI itself has no workshop button. If you already have the Web UI (a
+copy from the one-line install or a git checkout), set up the workshops from
+its folder; `--path .` takes Sparlectra from that folder, so the notebooks
+match the version you run:
+
+```sh
+julia tools/install_workshops.jl --path .
+```
+
+On Windows: `julia tools\install_workshops.jl --path .`. The options above
+apply here as well.
+
 | Notebook | File |
 |---|---|
 | **Tour, basic**: first network, model editing, Q-limits, slack types, OLTC and Q(U) control | [workshop_tour.ipynb](notebooks/workshop_tour.ipynb) |
@@ -227,4 +239,3 @@ The development of Sparlectra.jl is supported by [SOPTIM AG](https://www.soptim.
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE).
-
