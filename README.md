@@ -227,3 +227,4 @@ The development of Sparlectra.jl is supported by [SOPTIM AG](https://www.soptim.
 ## License
 
 Apache License 2.0, see [LICENSE](LICENSE).
+
