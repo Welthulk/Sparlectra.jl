@@ -199,6 +199,11 @@ mutable struct Net
   # the range check of the state estimation takes it as the substitute of
   # an implausible voltage measurement (1.0 pu where it has no entry).
   _sv_vm_pu::Dict{Int,Float64}
+  # the names of the bus areas (`_area` of the nodes), keyed by area
+  # number: the model authority or region of a CGMES import, the SCF block
+  # `sparlectra.areas`. Empty when the source names no area (MATPOWER, an
+  # SCF file with numbers only); the numbers alone stay valid then.
+  area_names::Dict{Int,String}
 
   #! format: off
   function Net(; name::String, baseMVA::Float64, vmin_pu::Float64 = 0.9, vmax_pu::Float64 = 1.1, cooldown_iters::Int = DEFAULT_QLIMIT_CONFIG.cooldown_iters, q_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.hysteresis_pu, reenable_v_hyst_pu::Float64 = DEFAULT_QLIMIT_CONFIG.reenable_v_hyst_pu, final_q_accept_pu::Float64 = 2 * q_hyst_pu, flatstart::Bool = false, bus_shunt_model = :admittance, nominal_frequency_hz::Real = model_config().nominal_frequency_hz)
@@ -256,7 +261,8 @@ mutable struct Net
         false,                                     # _frequency_from_case
         false,                                     # _frequency_used
         nothing,                                   # _se_link_rows
-        Dict{Int,Float64}())                       # _sv_vm_pu
+        Dict{Int,Float64}(),                       # _sv_vm_pu
+        Dict{Int,String}())                        # area_names
   end
   #! format: on
   function Base.show(io::IO, net::Net)

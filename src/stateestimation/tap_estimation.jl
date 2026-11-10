@@ -2125,6 +2125,7 @@ const _TAP_NOTICE_TEXTS = Dict{Symbol,String}(
   :model_mismatch => "frozen: the branch ratio and angle do not lie on the curves of its tap changer data",
   :disabled => "not estimated: tap estimation is switched off (state_estimation.tap_estimation.enabled = false), the transferred step stays",
   :excluded => "not estimated: named in state_estimation.tap_estimation.exclude, the transferred step stays and is not calculated",
+  :tie_branch => "not estimated: the transformer is a tie branch between two areas of the multi-area estimation, the transferred step stays",
   :machine_transformer => "not estimated: machine (generator step-up) transformer (state_estimation.tap_estimation.include_machine_transformers = false), its step is calculated by a converged run with update_net = true",
   :q_not_measured_in_group => "not calculated: machine transformer whose machine node has no Q measurement on every bus, the transferred step stays",
   :fallback_not_converged => "not estimated: the run with tap estimation did not converge, the result is the run without tap estimation, the transferred step stays",

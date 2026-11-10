@@ -1342,6 +1342,25 @@ function test_configuration_value_domain_validation()
       write(lv_bad, "state_estimation:\n" * body)
       @test_throws key Sparlectra.load_sparlectra_config(lv_bad; reload = true)
     end
+    # the multi-area block (1.2.0): off by default, bus_area, 20 passes,
+    # comparison on; a bare off reads as the mode off; an unknown mode, a
+    # pass count that is not positive and a scalar block are refused with
+    # the key named, by the loader and by the keyword constructor
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}()).state_estimation.multi_area == Sparlectra.MultiAreaConfig(mode = :off, partition = "bus_area", max_passes = 20, compare_integrated = true)
+    ma_ok = test_scratch_path(".yaml")
+    write(ma_ok, "state_estimation:\n  multi_area:\n    mode: two_level\n    partition: areas.csv\n    max_passes: 7\n    compare_integrated: false\n")
+    @test Sparlectra.load_sparlectra_config(ma_ok; reload = true).state_estimation.multi_area == Sparlectra.MultiAreaConfig(mode = :two_level, partition = "areas.csv", max_passes = 7, compare_integrated = false)
+    write(ma_ok, "state_estimation:\n  multi_area:\n    mode: off\n")
+    @test Sparlectra.load_sparlectra_config(ma_ok; reload = true).state_estimation.multi_area.mode === :off
+    for (body, key) in (("  multi_area:\n    mode: iterative\n", "state_estimation.multi_area.mode"),
+                        ("  multi_area:\n    max_passes: 0\n", "state_estimation.multi_area.max_passes"),
+                        ("  multi_area: true\n", "state_estimation.multi_area must be a block"))
+      ma_bad = test_scratch_path(".yaml")
+      write(ma_bad, "state_estimation:\n" * body)
+      @test_throws key Sparlectra.load_sparlectra_config(ma_bad; reload = true)
+    end
+    @test_throws "state_estimation.multi_area.max_passes" Sparlectra.MultiAreaConfig(max_passes = 0)
+    @test_throws "state_estimation.multi_area.mode" Sparlectra.MultiAreaConfig(mode = :iterative)
 
     bool_ok_true = test_scratch_path(".yaml")
     write(bool_ok_true, "power_flow:\n  autodamp: true\n")

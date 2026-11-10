@@ -647,6 +647,19 @@ state_estimation:
     enabled: false
     max_age_min: 60.0
     sigma_factor: 3.0
+  # Multi-area state estimation (runse_multi_area!): with mode two_level the
+  # SE service runs it after the normal estimation on the same final rows
+  # and writes se_areas.csv, se_area_borders.csv, se_area_compare.csv
+  # (runse! is unaffected).
+  # partition: bus_area (the areas stored with the buses) or the path of an
+  # area list (bus name and area number per line). max_passes: the most
+  # passes before the run stops unconverged. compare_integrated: carry the
+  # integrated estimate on the same rows and the difference per state.
+  multi_area:
+    mode: off
+    partition: bus_area
+    max_passes: 20
+    compare_integrated: true
 
 # PowSyBl IIDM import (see docs/src/powsybl_import.md)
 powsybl_import:
@@ -728,6 +741,12 @@ cgmes_import:
   # default: the injection stays as mapped (PQ at the SSH p and q, PV with
   # regulationStatus, slack when it holds the SV angle reference).
   equivalent_injection_as_source: false
+  # Area of each bus, the partition of the multi-area state estimation:
+  # model_authority (the operator model of a CGM, Model.modelingAuthoritySet
+  # of its EQ), sub_geographical_region, geographical_region (the region of
+  # the substation), or none. A boundary node takes the smallest area among
+  # its neighbours; the areas are numbered by name.
+  area_source: model_authority
   # Plausibility band for a voltage RegulatingControl target, in p.u. of the
   # regulated bus's nominal voltage. Outside the band the target is treated as a
   # placeholder: ignored, unit held PV at the bus voltage derived from the

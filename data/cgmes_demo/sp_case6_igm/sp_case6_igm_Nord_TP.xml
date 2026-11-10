@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-nord-tp">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model Nord</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/Topology/4/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://nord.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:TopologicalNode rdf:ID="_tn_Holm">
+    <cim:IdentifiedObject.name>Holm</cim:IdentifiedObject.name>
+    <cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/>
+    <cim:TopologicalNode.ConnectivityNodeContainer rdf:resource="#_vl_Holm"/>
+  </cim:TopologicalNode>
+  <cim:TopologicalNode rdf:ID="_tn_Rabe">
+    <cim:IdentifiedObject.name>Rabe</cim:IdentifiedObject.name>
+    <cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/>
+    <cim:TopologicalNode.ConnectivityNodeContainer rdf:resource="#_vl_Rabe"/>
+  </cim:TopologicalNode>
+  <cim:Terminal rdf:about="#_t_eni_Holm_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Holm"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_load_Rabe_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Rabe"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Holm_Rabe_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Holm"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Holm_Rabe_2">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Rabe"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Rabe_X1_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Rabe"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Rabe_X1_2">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_XN_Rabe_Mar"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Holm_X2_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Holm"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Holm_X2_2">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_XN_Holm_Nes"/>
+  </cim:Terminal>
+</rdf:RDF>

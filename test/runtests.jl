@@ -160,6 +160,7 @@ const TEST_GROUPS = TestGroup[
     TestGroup("observability", ["test_observability.jl"], [:run_observability_tests, :run_observability_rank_tests]),
     TestGroup("topology_validation", ["test_legacy_topology_validation.jl"], [:run_legacy_topology_validation_tests]),
     TestGroup("measurement_table", ["test_measurement_table.jl"], [:run_measurement_table_tests]),
+    TestGroup("multi_area", ["test_multi_area.jl"], [:run_multi_area_tests]),
     # --- config: configuration surface, its documentation, repository hygiene
     TestGroup("configuration", ["test_configuration_coverage.jl"], [:run_configuration_coverage_tests]),
     TestGroup("configuration_docs", ["test_configuration_docs.jl"], [:run_configuration_docs_tests]),
@@ -227,7 +228,7 @@ const TEST_GROUPS = TestGroup[
 const TEST_PROFILES = Dict{Symbol,Vector{String}}(
     :fast => ["docstrings", "api_smoke", "hand_calculations", "matpower_header", "entsoe_sv", "openloadflow"],
     :pf => ["core_model", "terminal_status", "powerflow_rectangular", "factorized_linear_solver", "3wt_phase_taps", "dc_powerflow", "distributed_slack", "island_diagnostics", "external_grid", "auto_powerflow", "short_circuit", "parallel_foundation", "contingency", "scenarios", "controls", "core_model_extended", "contingency_extended", "scenario_engine", "apslf"],
-    :se => ["state_estimation", "observability", "topology_validation", "measurement_table"],
+    :se => ["state_estimation", "observability", "topology_validation", "measurement_table", "multi_area"],
     :config => ["configuration", "configuration_docs", "repository_hygiene"],
     :webui => ["webui", "webui_extended", "webui_state_estimation"],
     # --- extd: the service layer and the shipped demo cases
@@ -283,6 +284,7 @@ const THREAD_GROUPS = TestGroup[
     TestGroup("island_powerflow_parallel", ["test_parallel_foundation.jl"], [:run_parallel_island_tests]),
     TestGroup("contingency_parallel", ["test_contingency.jl"], [:run_contingency_parallel_tests, :run_contingency_extended_tests]),
     TestGroup("state_estimation_parallel", ["test_state_estimation.jl"], [:run_state_estimation_parallel_tests]),
+    TestGroup("multi_area_parallel", ["test_multi_area.jl"], [:run_multi_area_parallel_tests]),
     TestGroup("qsts_parallel", ["test_scf_series.jl"], [:run_scf_series_parallel_tests]),
     TestGroup("cgmes_ssh_series_parallel", ["test_cgmes_ssh_series.jl"], [:run_cgmes_ssh_series_parallel_tests]),
 ]

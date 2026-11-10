@@ -745,6 +745,12 @@ export
   restore_observability,                  # Replacement values from the schedule that close the rank deficit of a not-observable set.
   suggest_measurement_placement,          # Meter or PMU locations, step by step, until a set is observable or has no critical row.
   print_measurement_placement,            # REPL printout of the placement steps.
+  runse_multi_area!,                      # Multi-area state estimation, two-level method (areas estimate, a coordinator joins the borders).
+  area_partition,                         # Areas, tie branches and border buses of a net for the multi-area estimation.
+  AreaPartition,                          # Result type of area_partition.
+  MultiAreaSEResult,                      # Result type of runse_multi_area!.
+  read_area_list,                         # Area list file (bus name, area) for area_partition.
+  runse_multi_area_diagnostics,           # Bad-data elimination for the multi-area estimation (exact normalized residuals over all areas).
   measurement_jacobian,                   # Labeled measurement Jacobian H (rows/cols described) for matrix reports.
   evaluate_local_observability,           # Evaluate local SE observability.
 
@@ -880,6 +886,7 @@ include("stateestimation/tap_changer_data.jl")
 include("stateestimation/tap_estimation.jl")
 include("stateestimation/state_estimation.jl")
 include("stateestimation/measurement_placement.jl")
+include("stateestimation/multi_area.jl")
 include("stateestimation/topology_validation.jl")
 # IEC 60909 balanced short-circuit evaluation (issue #277). Consumes
 # Net + the CGMES short-circuit harvest; reuses the equicircuit branch

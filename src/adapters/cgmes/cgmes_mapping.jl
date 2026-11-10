@@ -4720,6 +4720,17 @@ record; one notice counts the sources and one names those without
 impedance. Off, the injection stays as mapped (PQ at the SSH p and q, PV
 with `regulationStatus`, slack when it holds the SV angle reference).
 
+`area_source` sets the area of every bus (`Node._area`, the partition of
+`runse_multi_area!`): `:model_authority` (default) the operator model of
+a CGM, i.e. the `Model.modelingAuthoritySet` of the EQ file that defines
+the container of the bus; `:sub_geographical_region` or
+`:geographical_region` the region of its substation; `:none` no area. A
+bus without an area of its own (a boundary X node, a per-side split bus, a
+star point) takes the smallest area among its neighbours. The areas count
+from 1 in the order of their names, so the result does not depend on the
+order of the files; the names go to `net.area_names`. Where the delivery has `TieFlow` objects, a notice
+counts their terminals at a border bus of the areas; nothing is changed.
+
 Every class with terminals or with an SSH active power value of which no
 object outside the boundary set is mapped gets one row `class not mapped:`
 with its object count and the sum of its SSH P in MW, below one header
@@ -4759,8 +4770,10 @@ function importCGMES(;
   shunt_control::Bool = false,
   read_dynamics::Bool = false,
   equivalent_injection_as_source::Bool = false,
+  area_source::Symbol = :model_authority,
   name::Union{Nothing,String} = nothing,
 )::CGMESImportResult
+  area_source in Sparlectra.CGMES_AREA_SOURCE_VALUES || throw(ArgumentError("importCGMES: area_source must be one of $(join(Sparlectra.CGMES_AREA_SOURCE_VALUES, ", ")), got :$(area_source)"))
   vset_min_pu <= vset_max_pu || throw(ArgumentError("importCGMES: vset_min_pu ($(vset_min_pu)) must not exceed vset_max_pu ($(vset_max_pu))"))
   hvdc_mode in (:injections, :paired_control) || throw(ArgumentError("importCGMES: hvdc_mode must be :injections or :paired_control, got :$(hvdc_mode)"))
   # the topology processor below is the one step that writes into the store;
@@ -4950,6 +4963,9 @@ function importCGMES(;
   # result.sv_tap_step_fits (_svTapStepFits, cgmes_report.jl)
   sv_tap_step_fits = _svTapStepFits(net, store, topo, ctx.element_by_mrid)
   isempty(sv_tap_step_fits) || push!(ctx.messages, "notice: $(length(sv_tap_step_fits)) tap changer(s) whose SvTapStep fits the SV flows of its transformer clearly worse than another step (list in result.sv_tap_step_fits)")
+
+  # every bus and branch exists, so a boundary node finds its neighbours
+  _assignCGMESAreas!(net, store, topo, ctx, area_source)
 
   # Everything else is collected silently and inspected via result.messages.
   # "warning:" is reserved for data defects where the importer had to substitute

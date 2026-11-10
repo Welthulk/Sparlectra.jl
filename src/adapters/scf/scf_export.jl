@@ -1565,6 +1565,9 @@ function net_to_scf(
   isempty(split_block) || (spar["branch_shunt_split"] = split_block)
   model_block = _scf_tap_changer_models(net, ids)
   isempty(model_block) || (spar["tap_changer_models"] = model_block)
+  # the names of the bus areas (a CGMES import names its operator models);
+  # the numbers are written per node in extra.<node>.area
+  isempty(net.area_names) || (spar["areas"] = Dict{String,Any}(string(k) => v for (k, v) in net.area_names))
   if !isempty(meas_rows)
     block = Dict{String,Any}("rows" => meas_rows)
     # where the values came from, and above all WHETHER THEY CARRY NOISE: a

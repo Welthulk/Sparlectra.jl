@@ -269,6 +269,23 @@ keeps every attribute PGM requires.
 `area` and `zone` are not in this list (their constructor value is
 "unknown", not `1`) and are written only when set.
 
+### Areas and zones
+
+`extra.<node>.area` and `extra.<node>.zone` are integers: the bus's area
+and loss zone, from the MATPOWER bus table (columns `BUS_AREA` and `ZONE`)
+or set with `addBus!(area = ...)`. A bus without one has no key. The reader
+restores both onto the bus. The multi-area state estimation takes its
+partition from `area` (see [Multi-area estimation](@ref se_multi_area)).
+
+The names of the areas, where the source has them (the operator models or
+regions of a CGMES import, [Bus areas](@ref cgmes_bus_areas)), go to the
+block `sparlectra.areas`, area number => name; a file without names has
+no block:
+
+```json
+"areas": { "1": "http://nord.example/sparlectra", "2": "http://sued.example/sparlectra" }
+```
+
 ## File layout
 
 The root object is the PGM root object with exactly one added key:

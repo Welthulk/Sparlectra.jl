@@ -101,6 +101,28 @@ only the tie to B. See [When the set is not observable](@ref se_observability_ga
 
 ![Single-line diagram of sp_case16_islands](assets/sp_case16_islands_single_line.svg)
 
+## [sp_case10_areas: three areas for the multi-area estimation](@id sp_case10_areas_case)
+
+`sp_case10_areas` is small enough to follow the
+[multi-area estimation](@ref se_multi_area) by hand. Ten buses in three
+areas, taken from the bus table of the file:
+
+| Area | Buses | Border buses | Rows |
+|---|---|---|---|
+| 1 | `Holmfeld_110` (slack), `Rabenau_110`, `Kirchau_110`, `Lindwerk_110` | `Kirchau_110`, `Lindwerk_110` | 32 |
+| 2 | `Marbach_110`, `Marbach_110b` (closed coupler), `Nesselau_110` (machine) | `Marbach_110`, `Nesselau_110` | 17 |
+| 3 | `Oberried_110`, `Pfaffing_110`, `Oberried_20` | `Oberried_110`, `Pfaffing_110` | 21 |
+
+The tie lines `Kirchau_Marbach`, `Lindwerk_Oberried` and
+`Nesselau_Pfaffing` close a ring over the areas. The transformer
+`Oberried_110_20` in area 3 carries a ratio changer (+-12 steps of 1.25
+percent) released for estimation. The case file holds it at step 0; the
+measurement table (70 rows, seed 20261110) comes from the power flow at
+step +2. `runse!` and `runse_multi_area!` both fix the changer at +2 and
+end with J 52.1 at dof 51; the multi-area run takes three passes with the
+changer continuous and two with it fixed. The Literate workshop on state
+estimation walks through it (Example 17).
+
 ## PowSyBl networks
 
 `data/powsybl/` ships three of PowSyBl's example networks as IIDM files
@@ -120,7 +142,7 @@ writes it card by card. It runs like every other case
 of the foreign-formats workshop; decks of other origin are external data
 and do not ship. See [DTF legacy input format](dtf_format.md).
 
-## CGMES deliveries of the demo cases
+## [CGMES deliveries of the demo cases](@id cgmes_demo_cases)
 
 `data/cgmes_demo/<case>/` holds CGMES 2.4.15 deliveries (EQ, TP, SSH, SV)
 that `tools/gen_cgmes_fixtures.jl` exports from `sp_case14`, `sp_case118`
@@ -129,3 +151,14 @@ identical apart from the Sparlectra version in the file header. They
 appear in the Web UI case selector as `<case>_cgmes.zip`. The exporter
 writes bus-branch deliveries only: no node-breaker topology, boundary sets
 or DifferenceModel.
+
+`data/cgmes_demo/sp_case6_igm/` is written by hand by the same tool
+(no export): a CGM of two operator models and a boundary set, for the bus
+areas of the CGMES import ([Bus areas](@ref cgmes_bus_areas)) and the
+multi-area state estimation. Six 110 kV buses: Holm (external grid,
+slack) and Rabe (load 30 MW) in the model Nord, Marbach (25 MW) and
+Nesselau (15 MW) in the model Sued, and the X nodes XN_Rabe_Mar and
+XN_Holm_Nes. Each of the two tie lines is a half in each model, joined at
+its X node; the lines are 0.12 + j0.4 ohm/km and 9.5 nF/km. Nord has the
+sub-regions Nord-West (Holm) and Nord-Ost (Rabe). The delivery has no SV
+profile and carries no version stamp.

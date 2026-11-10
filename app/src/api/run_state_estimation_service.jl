@@ -1266,6 +1266,61 @@ function _se_set_binding_check(case_path::String, measurement_file::String, form
   return nothing
 end
 
+## Multi-area estimation in the SE service (state_estimation.multi_area.mode
+## = two_level, 1.2.0): after the normal estimation the two-level method runs
+## on the same final rows (eliminated rows inactive) and writes
+## se_areas.csv, se_area_borders.csv and se_area_compare.csv. The state
+## artifacts stay those of the integrated estimate, the fixed point of the
+## two-level method; se_area_compare.csv shows the difference per state.
+## Returns the run.log line and the metadata. A refusal of the method (an
+## ArgumentError: an area without rows, two slack buses, zero_injection =
+## constraint, PMU rows in two areas, a bus missing from the area list) is
+## reported in both, the run itself stands.
+function _se_multi_area_service!(net::Net, run_cfg, output_dir::AbstractString, fmt)
+  meas = Measurement[m for m in net.measurements]
+  ma = try
+    with_sparlectra_config(() -> runse_multi_area!(deepcopy(net), meas; update_net = false), run_cfg)
+  catch err
+    err isa ArgumentError || rethrow()
+    msg = sprint(showerror, err)
+    return (line = "multi-area (two_level): not run, $(msg)", metadata = Dict{String,Any}("se_multi_area" => false, "se_multi_area_error" => msg))
+  end
+  delim = fmt.delimiter
+  num(x) = (x === nothing || !isfinite(x)) ? "" : _format_csv_number(round(Float64(x); sigdigits = 10), fmt)
+  cf(s) = _csv_field(string(s), delim, fmt)
+  open(joinpath(output_dir, "se_areas.csv"), "w") do io
+    println(io, join(("area", "name", "buses", "border_buses", "rows", "j", "iterations", "converged"), delim))
+    for a in ma.areas
+      println(io, join((a.area, cf(a.name), length(a.buses), length(a.border_buses), a.rows, num(a.j), a.iterations, a.converged), delim))
+    end
+  end
+  open(joinpath(output_dir, "se_area_borders.csv"), "w") do io
+    println(io, join(("bus", "name", "area", "vm_pu", "va_deg"), delim))
+    for b in ma.borders
+      println(io, join((b.bus, cf(b.name), b.area, num(b.vm_pu), num(b.va_deg)), delim))
+    end
+  end
+  cmp = ma.comparison
+  if cmp !== nothing
+    open(joinpath(output_dir, "se_area_compare.csv"), "w") do io
+      println(io, join(("bus", "name", "quantity", "multi_area", "integrated", "difference", "sigma", "difference_sigma"), delim))
+      for r in cmp.rows
+        println(io, join((r.bus, cf(r.name), r.quantity, num(r.multi_area), num(r.integrated), num(r.difference), num(r.sigma), num(r.difference_sigma)), delim))
+      end
+    end
+  end
+  part = ma.partition
+  line = string("multi-area (two_level): ", length(part.areas), " area(s), ", length(part.tie_branches), " tie branch(es), ", ma.converged ? "converged after " : "not converged after ", ma.passes, " pass(es), J ", round(ma.objectiveJ; sigdigits = 6), " (dof ", ma.dof, ")",
+                cmp === nothing ? "" : string(", largest difference to the integrated estimate ", round(cmp.max_dvm_pu; sigdigits = 3), " pu, ", round(cmp.max_dva_deg; sigdigits = 3), " deg"),
+                (cmp === nothing || isempty(cmp.tap_release)) ? "" : string(", tap release ", cmp.tap_release_differences == 0 ? "as in the integrated estimate" : string("differs for ", cmp.tap_release_differences, " regulator(s): ", join([string(t.name, " ", t.multi_area[1], "/", t.multi_area[2], ", integrated ", t.integrated[1], "/", t.integrated[2]) for t in cmp.tap_release if !t.same], "; "))),
+                "; se_areas.csv, se_area_borders.csv", cmp === nothing ? "" : ", se_area_compare.csv")
+  md = Dict{String,Any}("se_multi_area" => true, "se_multi_area_converged" => ma.converged, "se_multi_area_passes" => ma.passes, "se_multi_area_areas" => length(part.areas),
+                        "se_multi_area_tie_branches" => length(part.tie_branches), "se_multi_area_objective" => ma.objectiveJ, "se_multi_area_dof" => ma.dof,
+                        "se_multi_area_max_dvm_pu" => cmp === nothing ? nothing : cmp.max_dvm_pu, "se_multi_area_max_dva_deg" => cmp === nothing ? nothing : cmp.max_dva_deg,
+                        "se_multi_area_tap_release_differences" => cmp === nothing ? nothing : cmp.tap_release_differences)
+  return (line = line, metadata = md)
+end
+
 """
     _run_state_estimation_service(case_path, config_file, output_dir, run_id, measurement_file; kwargs...) -> SparlectraApiResult
 
@@ -1281,6 +1336,11 @@ carried over; the run estimates the set this file reads back to),
 `measurements_verdict.csv` (the verdict per table row), `se_diagnostics.md`, `se_view.md`,
 `shunt_estimates.csv` (when shunts were released), and `se_state.csv` (the
 chain anchor a later SE-started power flow consumes via `readSEStateCSV!`).
+With `state_estimation.multi_area.mode = two_level` the multi-area
+estimation ([`runse_multi_area!`](@ref)) runs afterwards on the same final
+rows and writes `se_areas.csv`, `se_area_borders.csv` and
+`se_area_compare.csv` (metadata `se_multi_area*`); a refusal of the method
+is named in run.log and in `se_multi_area_error`.
 
 Options: `max_iter`, `tol`, `flatstart`, `robust`, `max_eliminations`,
 `update_shunts`, `report_correlation` mirror the estimator keywords.
@@ -2240,6 +2300,12 @@ function _run_state_estimation_service_body(
   verdict_flagged = _se_write_measurement_verdict(joinpath(output_dir, "measurements_verdict.csv"), net, artifact, diag, eliminations, res, crit_idx, config.state_estimation.zero_injection === :constraint, se_csv_format; range_rows = range_rows, not_used = not_used)
   se_phase("writing_artifacts")
   writeSEStateCSV(net; file = joinpath(output_dir, "se_state.csv"), format = String(config.output.csv_format))
+  ma_out = nothing
+  if run_cfg.state_estimation.multi_area.mode === :two_level
+    se_phase("multi_area")
+    ma_out = _se_multi_area_service!(net, run_cfg, output_dir, se_csv_format)
+    merge!(base_metadata, ma_out.metadata)
+  end
 
   # band verdict from the POST-elimination report: it must describe the
   # same state as the headline J (the pre-elimination report still tells
@@ -2313,6 +2379,7 @@ function _run_state_estimation_service_body(
     end
     (!isempty(suspicious) || !isempty(eliminations) || !isempty(suppressedIds)) && println(io, "bad data: measurements_verdict.csv (", length(suspicious), " suspicious, ", length(eliminations), " eliminated, ", length(suppressedIds), " suppressed, ", length(downweightedIds), " down-weighted; ", verdict_flagged, " table row(s) flagged)")
     deltas_written && println(io, "deltas: se_deltas.csv (measured vs generator truth vs estimated, per row and per released tap)")
+    ma_out === nothing || println(io, ma_out.line)
     link_rows !== nothing && println(io, "link flows: se_link_flows.csv (", length(link_rows), " closed link(s), ", n_link_measured, " with link flow measurements or an estimated circulation)")
     println(io, "Artifacts: measurements.csv, measurements_verdict.csv, se_diagnostics.md, se_view.md, se_state.csv", isfile(joinpath(output_dir, "se_observable_islands.csv")) ? ", se_observable_islands.csv, se_unobservable_branches.csv" : "", isfile(joinpath(output_dir, "se_restored_rows.csv")) ? ", se_restored_rows.csv" : "", res.shuntEstimates !== nothing ? ", shunt_estimates.csv" : "", res.zeroInjectionMultipliers !== nothing ? ", se_zero_injection_multipliers.csv" : "", res.tapEstimates !== nothing ? ", se_tap_estimates.csv" : "", deltas_written ? ", se_deltas.csv" : "", link_rows !== nothing ? ", se_link_flows.csv" : "", isempty(topo_pre.findings) ? "" : ", se_topology.csv")
   end

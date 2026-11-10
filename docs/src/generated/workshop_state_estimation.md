@@ -945,6 +945,127 @@ because a PMU here counts as an angle only; the placement stops and says
 so. See `examples/state_estimation/state_estimation_observable_islands.jl`
 for the same chain on sp_case118 and sp_case1354.
 
+## Several areas, one estimate
+
+**Example 17: multi-area estimation.** A large net is often run by
+several operators, each with its own meters. `runse_multi_area!` lets
+every area estimate with its own rows: a bus row belongs to the area of
+its bus, a flow row to the area of its measured end. A coordinator joins
+the areas at the border buses (the ends of the tie branches between two
+areas), pass by pass. The result is the integrated estimate on the same
+rows, which the result carries for comparison. Here area 1 is B1, B2 and
+B7, area 2 is B3 to B6, on a fresh copy of the net with a fresh noisy set:
+
+````@example workshop_state_estimation
+# uses: net (Example 1, Solve the reference power flow, Derive a noisy measurement set, Run the estimator, Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14)
+@isdefined(net) || error("Run Example 1, the section \"Solve the reference power flow\", the section \"Derive a noisy measurement set\", the section \"Run the estimator\", Example 2, Example 7, Example 8, Example 9, Example 12, Example 13, Example 14 first: they set up net.")
+net17 = deepcopy(net)
+runpf!(net17, 40, 1e-10, 0)
+meas17 = generateMeasurementsFromPF(net17; noise = true, rng = MersenneTwister(17))
+part17 = area_partition(net17; areas = Dict("B1" => 1, "B2" => 1, "B7" => 1, "B3" => 2, "B4" => 2, "B5" => 2, "B6" => 2))
+println("tie branches: ", join(["$(getCompName(net17.nodeVec[net17.branchVec[k].fromBus].comp)) - $(getCompName(net17.nodeVec[net17.branchVec[k].toBus].comp))" for k in part17.tie_branches], ", "))
+r17 = runse_multi_area!(net17, meas17; partition = part17)
+@printf("converged %s after %d passes, J = %.3f, dof = %d\n", r17.converged, r17.passes, r17.objectiveJ, r17.dof)
+@printf("largest difference to the integrated estimate: %.1e pu, %.1e deg\n", r17.comparison.max_dvm_pu, r17.comparison.max_dva_deg)
+````
+
+Reading aid (Example 17): three lines cross the cut (B2-B3, B6-B7, B2-B5),
+so B2, B3, B5, B6 and B7 are border buses; B1 and B4 are inside. Each pass, both
+areas estimate their interior with the border buses held, and the
+coordinator corrects the border buses from what both areas report. After
+a few passes nothing moves and the estimate equals the integrated one
+within the solver tolerance. `runse_multi_area_diagnostics` does the same
+for bad data: a gross error on a tie branch is found and removed in the
+same order as by `runse_diagnostics`.
+
+**Example 17, step by step on a shipped case.** `sp_case10_areas` has ten
+buses in three areas, stored in the case file. Area 1 holds the slack, area
+2 two busbar sections on a closed coupler, area 3 a transformer whose ratio
+changer is released for estimation. The case file has the changer at step
+0; the measurement table was taken with it at step +2, as if the position
+in the model were stale.
+
+Step 1: the case, its measurement table and the partition from the bus
+areas.
+
+````@example workshop_state_estimation
+case17 = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case10_areas.scf.json")
+table17 = joinpath(pkgdir(Sparlectra), "data", "scf", "sp_case10_areas.measurements.csv")
+net10 = importSCF(case17)
+readMeasurementTable!(net10; file = table17)
+meas10 = Measurement[m for m in net10.measurements]
+part10 = area_partition(net10)
+busname(n, b) = getCompName(n.nodeVec[b].comp)
+for a in part10.areas
+  own = [busname(net10, b) for b in eachindex(net10.nodeVec) if part10.area_of_bus[b] == a]
+  border = [busname(net10, b) for b in part10.border_buses if part10.area_of_bus[b] == a]
+  println("area ", a, ": ", join(own, ", "), "; border buses ", join(border, ", "))
+end
+println("tie lines: ", join([getCompName(net10.branchVec[k].comp) for k in part10.tie_branches], ", "))
+trafo10 = only(k for (k, br) in enumerate(net10.branchVec) if getCompName(br.comp) == "Oberried_110_20")
+println("Oberried_110_20 released as ", net10.branchVec[trafo10].tap_est_mode, ", ", length(meas10), " measurement rows")
+````
+
+Reading aid (step 1): the three tie lines close a ring over the areas, so
+every area has two border buses. `Marbach_110b` sits inside area 2 although
+the coupler joins it to the border bus `Marbach_110`: a coupled group is
+never cut. Every row has one owner, a flow row the area of its measured
+end.
+
+Step 2: the reference, `runse!` on all rows at once.
+
+````@example workshop_state_estimation
+# uses: meas10, net10 (Example 17)
+(@isdefined(meas10) && @isdefined(net10)) || error("Run Example 17 first: it sets up meas10, net10.")
+ri10 = runse!(deepcopy(net10), meas10)
+tap(rows) = only(t for t in rows if t.name == "Oberried_110_20")
+@printf("runse!: converged %s, J = %.3f, dof = %d, changer estimate %.2f, fixed at step %.0f\n", ri10.converged, ri10.objectiveJ, ri10.dof, tap(ri10.tapEstimates).s_est, tap(ri10.tapEstimates).step_fixed)
+````
+
+Step 3: the multi-area estimate. Each area sees only its own rows.
+
+````@example workshop_state_estimation
+# uses: meas10, net10, tap (Example 17)
+(@isdefined(meas10) && @isdefined(net10) && @isdefined(tap)) || error("Run Example 17 first: it sets up meas10, net10, tap.")
+r10 = runse_multi_area!(deepcopy(net10), meas10)
+for (k, d) in enumerate(r10.border_change)
+  @printf("pass %d: largest border change %.1e\n", k, d)
+end
+for a in r10.areas
+  @printf("area %d: %d own rows, J %.2f\n", a.area, a.rows, a.j)
+end
+@printf("converged %s after %d passes, J = %.3f, dof = %d, changer fixed at step %.0f\n", r10.converged, r10.passes, r10.objectiveJ, r10.dof, tap(r10.tapEstimates).step_fixed)
+````
+
+Reading aid (step 3): in every pass each area estimates its interior with
+all its border buses held, and returns what its rows say about the border:
+the Schur complement of its gain matrix and its reduced gradient. The
+coordinator adds them up and takes one Gauss-Newton step on the six border
+buses. The first passes run with the changer as a continuous state; once
+the border stops moving, area 3 rounds the changer to the nearest step
+(+2), and the jump in the border change after that is the effect of the
+rounding. Two more passes settle the border with the step fixed. The area
+values of J add up to the J of the whole set.
+
+Step 4: the comparison with `runse!`, per border bus and for the changer.
+
+````@example workshop_state_estimation
+# uses: part10, r10, ri10 (Example 17)
+(@isdefined(part10) && @isdefined(r10) && @isdefined(ri10)) || error("Run Example 17 first: it sets up part10, r10, ri10.")
+cmp10 = r10.comparison
+for row in cmp10.rows
+  row.bus in part10.border_buses || continue
+  @printf("%-14s %s  multi-area %10.6f  runse! %10.6f  difference %.1e\n", row.name, row.quantity, row.multi_area, row.integrated, row.difference)
+end
+@printf("largest difference: %.1e pu, %.1e deg; J difference %.1e\n", cmp10.max_dvm_pu, cmp10.max_dva_deg, r10.objectiveJ - ri10.objectiveJ)
+println("tap release as in runse!: ", cmp10.tap_release_differences == 0)
+````
+
+Reading aid (step 4): the two estimates differ only in the last digits the
+solver tolerance leaves open. That is the point of the method: the areas
+never exchanged a single row, and the result is the integrated estimate
+on the same set, not an approximation of it.
+
 ## Where to go next
 
 - The sequel notebook,
@@ -955,6 +1076,9 @@ for the same chain on sp_case118 and sp_case1354.
 - [`state_estimation_observable_islands.jl`](https://github.com/Welthulk/Sparlectra.jl/blob/main/examples/state_estimation/state_estimation_observable_islands.jl):
   Examples 13 to 16 on sp_case118 and sp_case1354, with the run time per
   step.
+- [`state_estimation_multi_area.jl`](https://github.com/Welthulk/Sparlectra.jl/blob/main/examples/state_estimation/state_estimation_multi_area.jl):
+  Example 17 on sp_case118 with its three MATPOWER areas, with bad data on
+  a tie branch.
 - New to Sparlectra? The
   [workshop tour](https://github.com/Welthulk/Sparlectra.jl/blob/main/notebooks/workshop_tour.ipynb)
   builds a network from scratch step by step.

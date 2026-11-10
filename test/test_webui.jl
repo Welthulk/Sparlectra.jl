@@ -820,7 +820,7 @@ function run_webui_fast_tests()
             @test rendered(body60, "matpower_export_write_solution")
             @test selected(body60) == "60.0"
             @test freq_disabled(body60)
-            @test occursin("data-hidden-options=\"11\"", body60)
+            @test occursin("data-hidden-options=\"12\"", body60)
             @test SparlectraApp.webui_form_state(selected_casefile="freq60.scf.json", case_directory=cases)["model_nominal_frequency_hz"] == 60.0
             # an SCF file without f_nom: the select is enabled and shows the
             # configured key

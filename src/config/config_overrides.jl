@@ -151,6 +151,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "matpower_import.import_for001_contingencies",
   "matpower_import.matpower_dcline_mode",
   "cgmes_import.hvdc_mode",
+  "cgmes_import.area_source",
   "powsybl_import.base_mva",
   "powsybl_import.hvdc_mode",
   "powsybl_import.slack_ids",
@@ -422,6 +423,8 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), MATPOWER_DCLINE_MODE_VALUES)
   elseif key == "cgmes_import.hvdc_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), CGMES_HVDC_MODE_VALUES)
+  elseif key == "cgmes_import.area_source"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), CGMES_AREA_SOURCE_VALUES)
   elseif key == "powsybl_import.hvdc_mode"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWSYBL_HVDC_MODE_VALUES)
   elseif key == "powsybl_import.remote_regulation"
@@ -907,6 +910,7 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "cgmes_import.shunt_control",
   "cgmes_import.read_dynamics",
   "cgmes_import.equivalent_injection_as_source",
+  "cgmes_import.area_source",
   "powsybl_import.hvdc_mode",
   "powsybl_import.multi_slack",
   "powsybl_import.remote_regulation",

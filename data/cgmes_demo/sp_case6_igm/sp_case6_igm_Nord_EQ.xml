@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-nord-eq">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model Nord</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://nord.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:GeographicalRegion rdf:ID="_gr_Nord">
+    <cim:IdentifiedObject.name>Nord</cim:IdentifiedObject.name>
+  </cim:GeographicalRegion>
+  <cim:SubGeographicalRegion rdf:ID="_sgr_Nord-West">
+    <cim:IdentifiedObject.name>Nord-West</cim:IdentifiedObject.name>
+    <cim:SubGeographicalRegion.Region rdf:resource="#_gr_Nord"/>
+  </cim:SubGeographicalRegion>
+  <cim:SubGeographicalRegion rdf:ID="_sgr_Nord-Ost">
+    <cim:IdentifiedObject.name>Nord-Ost</cim:IdentifiedObject.name>
+    <cim:SubGeographicalRegion.Region rdf:resource="#_gr_Nord"/>
+  </cim:SubGeographicalRegion>
+  <cim:Substation rdf:ID="_ss_Holm">
+    <cim:IdentifiedObject.name>Holm</cim:IdentifiedObject.name>
+    <cim:Substation.Region rdf:resource="#_sgr_Nord-West"/>
+  </cim:Substation>
+  <cim:VoltageLevel rdf:ID="_vl_Holm">
+    <cim:IdentifiedObject.name>Holm_110</cim:IdentifiedObject.name>
+    <cim:VoltageLevel.Substation rdf:resource="#_ss_Holm"/>
+    <cim:VoltageLevel.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:VoltageLevel>
+  <cim:Substation rdf:ID="_ss_Rabe">
+    <cim:IdentifiedObject.name>Rabe</cim:IdentifiedObject.name>
+    <cim:Substation.Region rdf:resource="#_sgr_Nord-Ost"/>
+  </cim:Substation>
+  <cim:VoltageLevel rdf:ID="_vl_Rabe">
+    <cim:IdentifiedObject.name>Rabe_110</cim:IdentifiedObject.name>
+    <cim:VoltageLevel.Substation rdf:resource="#_ss_Rabe"/>
+    <cim:VoltageLevel.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:VoltageLevel>
+  <cim:ExternalNetworkInjection rdf:ID="_eni_Holm">
+    <cim:IdentifiedObject.name>Grid_Holm</cim:IdentifiedObject.name>
+    <cim:ExternalNetworkInjection.referencePriority>1</cim:ExternalNetworkInjection.referencePriority>
+  </cim:ExternalNetworkInjection>
+  <cim:Terminal rdf:ID="_t_eni_Holm_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_eni_Holm"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:EnergyConsumer rdf:ID="_load_Rabe">
+    <cim:IdentifiedObject.name>Load_Rabe</cim:IdentifiedObject.name>
+  </cim:EnergyConsumer>
+  <cim:Terminal rdf:ID="_t_load_Rabe_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_load_Rabe"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_L_Holm_Rabe">
+    <cim:IdentifiedObject.name>L_Holm_Rabe</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>2.4</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>8</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>5.96903e-05</cim:ACLineSegment.bch>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_t_L_Holm_Rabe_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Holm_Rabe"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t_L_Holm_Rabe_2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Holm_Rabe"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_L_Rabe_X1">
+    <cim:IdentifiedObject.name>L_Rabe_X1</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>1.8</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>6</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>4.47677e-05</cim:ACLineSegment.bch>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_t_L_Rabe_X1_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Rabe_X1"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t_L_Rabe_X1_2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Rabe_X1"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_L_Holm_X2">
+    <cim:IdentifiedObject.name>L_Holm_X2</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>3</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>10</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>7.46128e-05</cim:ACLineSegment.bch>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_t_L_Holm_X2_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Holm_X2"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t_L_Holm_X2_2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Holm_X2"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ControlArea rdf:ID="_ca_Nord">
+    <cim:IdentifiedObject.name>CA_Nord</cim:IdentifiedObject.name>
+    <cim:ControlArea.type rdf:resource="http://iec.ch/TC57/2013/CIM-schema-cim16#ControlAreaTypeKind.Interchange"/>
+  </cim:ControlArea>
+  <cim:TieFlow rdf:ID="_tf_L_Rabe_X1">
+    <cim:TieFlow.ControlArea rdf:resource="#_ca_Nord"/>
+    <cim:TieFlow.positiveFlowIn>true</cim:TieFlow.positiveFlowIn>
+    <cim:TieFlow.Terminal rdf:resource="#_t_L_Rabe_X1_2"/>
+  </cim:TieFlow>
+  <cim:TieFlow rdf:ID="_tf_L_Holm_X2">
+    <cim:TieFlow.ControlArea rdf:resource="#_ca_Nord"/>
+    <cim:TieFlow.positiveFlowIn>true</cim:TieFlow.positiveFlowIn>
+    <cim:TieFlow.Terminal rdf:resource="#_t_L_Holm_X2_2"/>
+  </cim:TieFlow>
+</rdf:RDF>

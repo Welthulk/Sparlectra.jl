@@ -349,6 +349,9 @@ Base.@kwdef mutable struct SCFSparlectra
   # step; absent blocks mean symmetric and no model
   branch_shunt_split::Dict{String,Any} = Dict{String,Any}()
   tap_changer_models::Dict{String,Any} = Dict{String,Any}()
+  # area number (as string) => area name (1.2.0); the numbers sit on the
+  # nodes (extra.<node>.area), absent when the source names no area
+  areas::Dict{String,Any} = Dict{String,Any}()
 end
 
 """
@@ -691,6 +694,7 @@ function scfcase_from_root(root::AbstractDict)::SCFCase
       scenarios = _scfcase_dict(_scf_get(spar_raw, "scenarios", nothing)),
       branch_shunt_split = _scfcase_dict(_scf_get(spar_raw, "branch_shunt_split", nothing)),
       tap_changer_models = _scfcase_dict(_scf_get(spar_raw, "tap_changer_models", nothing)),
+      areas = _scfcase_dict(_scf_get(spar_raw, "areas", nothing)),
     )
   else
     nothing
@@ -837,7 +841,7 @@ function scf_root_dict(case::SCFCase)::Dict{String,Any}
     isempty(components) || (sd["components"] = components)
     start_state = _scfdict_start_state(spar.start_state)
     isempty(start_state) || (sd["start_state"] = start_state)
-    for (key, block) in (("measurements", spar.measurements), ("short_circuit", spar.short_circuit), ("config", spar.config), ("transformer_types", spar.transformer_types), ("scenarios", spar.scenarios), ("branch_shunt_split", spar.branch_shunt_split), ("tap_changer_models", spar.tap_changer_models))
+    for (key, block) in (("measurements", spar.measurements), ("short_circuit", spar.short_circuit), ("config", spar.config), ("transformer_types", spar.transformer_types), ("scenarios", spar.scenarios), ("branch_shunt_split", spar.branch_shunt_split), ("tap_changer_models", spar.tap_changer_models), ("areas", spar.areas))
       isempty(block) || (sd[key] = block)
     end
     root["sparlectra"] = sd

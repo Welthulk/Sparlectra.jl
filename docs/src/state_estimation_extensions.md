@@ -123,6 +123,116 @@ indices. Independent chi-squares add, so the summed `J`/`dof` is a valid
 overall statistic, while the per-island verdict keeps a local problem
 visible.
 
+## [Multi-area estimation](@id se_multi_area)
+
+!!! warning "Experimental"
+    New in 1.2.0. The call, the keys and the result fields may still change.
+
+One connected AC net split into areas, each estimated with its own
+measurements; a coordinator joins the borders. The result is the
+integrated estimate on the same rows (same state, `J` and `dof`), reached
+without one area seeing the rows of another.
+
+| | |
+|---|---|
+| Call | `runse_multi_area!(net, meas)`, with bad-data elimination `runse_multi_area_diagnostics(net, meas)` |
+| Areas | `area_partition(net)` from the areas stored with the buses (MATPOWER area column, SCF `extra.area`, the operator model or region of a CGMES import, `addBus!(area = ...)`), or from a map bus name => area or an area list file (`read_area_list`); key `state_estimation.multi_area.partition` |
+| Result | `MultiAreaSEResult`: voltages, `converged`, `passes`, `border_change` per pass, `objectiveJ`, `dof`, one row per area (with its `SEResult`), one row per border bus, and the comparison with the integrated estimate per state and per released tap regulator |
+| Keys | `state_estimation.multi_area` (`mode`, `partition`, `max_passes`, `compare_integrated`), see [State-Estimation Configuration](state_estimation_configuration.md) |
+| Service, Web UI | with `mode = two_level` the SE service runs it after the normal estimation on the same final rows and writes `se_areas.csv`, `se_area_borders.csv`, `se_area_compare.csv`; the result page shows them in the Areas section. The state artifacts stay those of the integrated estimate, which is the same state. |
+| Data | `data/scf/sp_case10_areas` (10 buses, three areas, see [Shipped Demo Cases](@ref sp_case10_areas_case)); `data/cgmes_demo/sp_case6_igm`, a CGM of two operator models (six buses, two areas); a larger case is `data/mpower/sp_case118.m` (three areas in its bus table) with `generateMeasurementsFromPF(net; noise = true, rng = MersenneTwister(1))`, as in `examples/state_estimation/state_estimation_multi_area.jl` |
+
+**Areas and borders.** A tie branch is a closed branch between two areas,
+its ends are the border buses. Each area works on its own buses plus copies
+of the foreign ends of its tie branches. A bus row belongs to the area of
+its bus, a branch row to the area of its measured end, so every row has
+exactly one owner.
+
+**One pass.** The border state `b` is the angle (not of the slack) and the
+magnitude of every border bus.
+
+```
+                     coordinator:  (S_1 + S_2 + S_3) db = -(g_1 + g_2 + g_3)
+                       ^       |         ^       |         ^       |
+                  S_1, g_1     b    S_2, g_2     b    S_3, g_3     b
+                       |       v         |       v         |       v
+                     area 1            area 2            area 3
+                     interior x_1      interior x_2      interior x_3
+                     own rows z_1      own rows z_2      own rows z_3
+```
+
+1. Every area estimates its interior `x_a` from its own rows `z_a` with
+   all border buses it touches held at `b`: its own border buses and the
+   copies of the foreign ends.
+2. At that state it returns the Schur complement of its gain matrix onto
+   the border columns, $S_a = G_{BB} - G_{BI} G_{II}^{-1} G_{IB}$, and the
+   reduced gradient $g_a$.
+3. The coordinator solves $(\sum_a S_a)\,\Delta b = -\sum_a g_a$ and sets
+   $b \leftarrow b + \Delta b$.
+
+The areas exchange only $S_a$ and $g_a$, never rows. The reduced objective
+$J(b) = \sum_a \min_{x_a} J_a(x_a, b)$ has the sums of $S_a$ and $g_a$ as
+its Gauss-Newton matrix and gradient, so every pass is one Gauss-Newton
+step of the integrated problem with the interiors eliminated. At the fixed
+point $\sum_a g_a = 0$, the optimality condition of the integrated
+estimate.
+
+**Why one pass is not an approximation.** With the border held fixed, a
+pass gives each interior the best fit to the border it started from, not
+to the rows of the neighbours. After one pass the border has taken one
+Gauss-Newton step from its start value (stored voltages or flat); how close
+that is to the estimate depends only on the start. It is not a coarser
+estimate of the same state, so there is no one-pass mode. The largest
+border change of each pass is in `border_change`.
+
+**Stop rule.** The passes stop as converged when no border state changes
+by more than the larger of `state_estimation.tol` and
+`state_estimation.jac_eps` (radians for angles, pu for magnitudes); on the
+shipped cases with three areas that takes four or five passes. After
+`state_estimation.multi_area.max_passes` (default 20) passes without that,
+the result has `converged = false`. Each area run inside a pass stops by
+the rules of `runse!`.
+
+**Tap regulators: continuous, then rounded once.** A released tap regulator
+inside an area is estimated by that area. During the passes its step is a
+continuous state of the area. Once the border has converged, each area
+rounds its regulators with the rule of `runse!` (nearest physical step,
+band check) at that border, the steps are fixed in the model, and the
+passes go on from the current border with the fixed steps until they
+converge again, within the remaining passes (at least one). Rounding in
+every pass does not work: a fixed step and the border magnitudes made up
+for each other, and with nine regulators on sp_case118 the passes settled
+one to five steps away from `runse!`. Each area decides which of its
+regulators it releases; the comparison with the integrated estimate checks
+that decision per regulator (`comparison.tap_release`) and names a
+difference in a warning. A regulator on a tie branch is not estimated
+(reason `:tie_branch`), also in the comparison run. The rows are in
+`MultiAreaSEResult.tapEstimates`.
+
+Rules:
+
+- A group of buses joined by closed links is never cut; the area list
+  cannot split it (the group goes to the area of its lowest bus, with a
+  note).
+- A CGMES boundary node (X node) is an ordinary bus of the net and belongs
+  to exactly one area. The CGMES import puts it in the smallest area among
+  its neighbours ([Bus areas](@ref cgmes_bus_areas)); an area list must name
+  it like any other bus.
+- Bad data: the normalized residuals use the exact residual covariance of
+  the whole estimate (the border covariance is the inverse of the
+  coordinator matrix), so a row at a border is judged as in
+  [`runse_diagnostics`](@ref) and the elimination order is the same.
+- Refused with the reason: an area without active rows, an area whose rows
+  do not determine its interior, more than one slack bus,
+  `zero_injection = constraint`, PMU angle rows in more than one area.
+- PMU angles in several areas are a limit of 1.2.0: the angles of a PMU
+  set refer to one common time base, not to the slack, so the estimate
+  carries one offset for all of them. With PMUs in one area that offset is
+  a state inside that area; with PMUs in several areas it would be a state
+  shared by the areas, like a border state, and the coordinator does not
+  solve for it yet. Such a set is refused with that reason, the integrated
+  estimate ([`runse!`](@ref)) handles it.
+
 ## [Transformer tap estimation](@id se-tap-estimation)
 
 A tap position that disagrees with the model (a stale SCADA position, a
