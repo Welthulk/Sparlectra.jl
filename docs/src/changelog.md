@@ -1,3 +1,13 @@
+# Version 1.1.1 - 2026-11-10
+
+Fixes from the review of 1.1.0.
+
+## Fixed
+
+- **Measurement origin in SCF.** Derived and restored measurements keep their origin in a case file and stay protected from bad-data elimination; older files read as before.
+- **Error when no measurement is left.** The message names the voltage range check when it switched off every row, instead of blaming current measurements.
+- **SE service requests.** A request value of the wrong type is refused as an invalid request instead of failing the run.
+
 # Version 1.1.0 - 2026-11-09
 
 Observability: observable islands, closing gaps, weak results.
