@@ -607,6 +607,7 @@ the measurement vector (the WLS objective sums in that order):
 | `sigma` | in the same unit |
 | `valid` | `false` for an inactive measurement; absent means `true` |
 | `zero_injection` | `true` for a zero-injection row (a `P` or `Q` balance at a node, the source token `zero_injection` of the table); absent means `false`. From 1.2 on the id decides nothing; a 1.0 file marks such a row only by the id `ZI_PINJ_bus_<k>` / `ZI_QINJ_bus_<k>` with value 0, and the reader keeps that rule for 1.0 |
+| `origin` | where the value comes from (`pseudo`, `derived`, `pseudo_restore`, `last_value`, `range_check`, see `Measurement`); absent means `measured`, a meter reading. Written since Sparlectra 1.1.1 |
 
 Units carry no base, as in the table: only `U` is divided by the rated
 voltage of the node (`u_rated` / 1000) on reading. A `U` value or sigma

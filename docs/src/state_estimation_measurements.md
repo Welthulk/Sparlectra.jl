@@ -17,6 +17,10 @@ cases are tables. `readMeasurementTable!(net; file)` reads one set into
 `net.measurements`; `writeMeasurementTable(file, rows)` writes rows, for
 example from `generateMeasurementTableFromPF`. The measurement CSV v1 is
 no longer read (see [Removed: measurement CSV v1](@ref se_measurement_csv_v1)).
+The table keeps the origin of a value only as the source tokens `pseudo`
+and `last_value`; derived and restored rows read back as readings or
+`pseudo` and lose their protection from bad-data elimination. A case file
+(SCF) keeps the origin.
 
 **Run artifacts.** An estimation run writes the set it estimated as a
 measurement table, `measurements.csv` in the run directory, and the

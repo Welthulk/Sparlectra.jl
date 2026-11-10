@@ -934,6 +934,10 @@ function _scf_sensors(net::Net, ids::ScfIdMap, next_id::Ref{Int})
     # a zero-injection row says so itself (the table has its source token;
     # the id decides nothing), written only when true
     m.zero_injection && (row["zero_injection"] = true)
+    # the origin only when it is not a meter reading, so a set of readings
+    # writes the same bytes as before 1.1.1; :derived and :pseudo_restore
+    # keep their protection from bad-data elimination over a round trip
+    m.origin === :measured || (row["origin"] = String(m.origin))
     push!(rows, row)
   end
   # Whatever is left has no slot in the file. A link flow is a WLS row of the

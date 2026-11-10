@@ -3573,12 +3573,28 @@ function _weak_network_island(net::Net, prep::SEWorkingNet, activeMeas::Vector{M
   return _weak_report_caller(net, prep, w, :stored_state)
 end
 
+## The text of SENoActiveMeasurementsError of the observability checks:
+## what took the rows out. `range_off` counts the rows the voltage range
+## check switched off at de-energized buses. Until 1.1.1 the text blamed
+## the current rows also when that check had taken every row.
+function _se_no_rows_message(caller::AbstractString, measurements::Vector{Measurement}; range_off::Integer = 0)::String
+  nCur = count(m -> m.active && m.typ in (ImagMeas, IaMeas), measurements)
+  why = String[]
+  range_off > 0 && push!(why, string(range_off, " row(s) at de-energized buses switched off by the voltage range check"))
+  nCur > 0 && push!(why, string(nCur, " current row(s) left out, the set must be observable without them"))
+  isempty(why) && push!(why, "no row of the set is active")
+  return string(caller, ": no active measurements (", join(why, "; "), ")")
+end
+
+## rows the voltage range check switched off (de-energized buses)
+_se_range_off(rcRows) = sum(r -> length(r.deactivated), rcRows; init = 0)
+
 ## the working net and the active rows the observability checks use: the
 ## contracted net of `_se_prepare`, current rows (ImagMeas, IaMeas) dropped
-function _observability_rows(net::Net, measurements::Vector{Measurement}, caller::AbstractString)
+function _observability_rows(net::Net, measurements::Vector{Measurement}, caller::AbstractString; range_off::Integer = 0)
   prep = _se_prepare(net, measurements)
   keep = [k for k in eachindex(prep.meas) if !(prep.meas[k].typ in (ImagMeas, IaMeas))]
-  isempty(keep) && throw(SENoActiveMeasurementsError("$(caller): no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+  isempty(keep) && throw(SENoActiveMeasurementsError(_se_no_rows_message(caller, measurements; range_off = range_off)))
   return prep, prep.meas[keep], prep.origIdx[keep]
 end
 
@@ -3635,11 +3651,12 @@ function _evaluate_weak_observability(net::Net, measurements::Vector{Measurement
   cfg = state_estimation_config()
   # the rows the estimator reads: the range check of runse! (a substitute
   # carries its widened sigma, a row on a de-energized bus is inactive)
-  measurements = first(_se_range_check(net, measurements))
+  measurements, rcRows = _se_range_check(net, measurements)
+  rangeOff = _se_range_off(rcRows)
   part = _se_island_partition(net, measurements)
   parts = Any[nothing for _ in part.rows]
   function single(inet::Net, meas::Vector{Measurement})
-    prep, activeMeas, _ = _observability_rows(inet, meas, "evaluate_weak_observability")
+    prep, activeMeas, _ = _observability_rows(inet, meas, "evaluate_weak_observability"; range_off = rangeOff)
     return _weak_network_island(inet, prep, activeMeas, _va_offset_active(activeMeas, cfg.pmu_ref_offset), cfg, dense_max_n)
   end
   if length(part.rows) <= 1
@@ -3654,7 +3671,7 @@ function _evaluate_weak_observability(net::Net, measurements::Vector{Measurement
       w = single(sub.inet, meas_k)
       parts[k] = merge(w, (buses = Int[row.buses[b] for b in w.buses], branches = Int[row.branches[j] for j in w.branches]))
     end
-    all(isnothing, parts) && throw(SENoActiveMeasurementsError("evaluate_weak_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+    all(isnothing, parts) && throw(SENoActiveMeasurementsError(_se_no_rows_message("evaluate_weak_observability", measurements; range_off = rangeOff)))
   end
   w = _weak_report_merge(parts)
   return merge((weakly_observable = w.n_buses > 0,), w)
@@ -3767,20 +3784,21 @@ function _evaluate_global_observability(net::Net, measurements::Vector{Measureme
   cfg = base
   # the rows the estimator reads: the range check of runse! (a substitute
   # carries its widened sigma, a row on a de-energized bus is inactive)
-  measurements = first(_se_range_check(net, measurements))
+  measurements, rcRows = _se_range_check(net, measurements)
+  rangeOff = _se_range_off(rcRows)
   # network islands: judge every measured one on its own subnet with its
   # own reference (the estimator solves them the same way) and aggregate;
   # unmeasured network islands are excluded from the estimation and reported
   part = _se_island_partition(net, measurements)
   if length(part.rows) > 1
-    return _evaluate_global_observability_islands(net, measurements, part; tol = tol, islands_mode = islands_mode, dense_max_n = dense_max_n, max_passes = max_passes, weak_class = weak_class)
+    return _evaluate_global_observability_islands(net, measurements, part; tol = tol, islands_mode = islands_mode, dense_max_n = dense_max_n, max_passes = max_passes, weak_class = weak_class, range_off = rangeOff)
   end
 
   # SE phase 3: observability is judged on the contracted net (links fused),
   # with the same measurement remapping the estimator uses; currents must
   # not carry observability, their rows are dropped up front
   callerNet = net
-  prep, activeMeas, activeIdx = _observability_rows(net, measurements, "evaluate_global_observability")
+  prep, activeMeas, activeIdx = _observability_rows(net, measurements, "evaluate_global_observability"; range_off = rangeOff)
   net = prep.snet
 
   nbus = length(net.nodeVec)
@@ -3844,7 +3862,7 @@ end
 ## `islands` rows), the merged field is left empty. The observable islands
 ## are numbered per network island ("k.j"); a measured network island that
 ## is observable is one observable island "k".
-function _evaluate_global_observability_islands(net::Net, measurements::Vector{Measurement}, part; islands_mode::Symbol = :unobservable, kwargs...)
+function _evaluate_global_observability_islands(net::Net, measurements::Vector{Measurement}, part; islands_mode::Symbol = :unobservable, range_off::Integer = 0, kwargs...)
   sev(q) = q == :not_observable ? 4 : (q == :weakly_observable ? 3 : (q == :critical ? 2 : 1))
   islandsOut = NamedTuple[]
   worst = :good
@@ -3922,7 +3940,7 @@ function _evaluate_global_observability_islands(net::Net, measurements::Vector{M
     weakParts[iid] = _weak_part_in_caller(wk, row)
     push!(islandsOut, (island = iid, n_bus = row.n_bus, measured = true, result = r))
   end
-  measured == 0 && throw(SENoActiveMeasurementsError("evaluate_global_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+  measured == 0 && throw(SENoActiveMeasurementsError(_se_no_rows_message("evaluate_global_observability", measurements; range_off = range_off)))
   ν = nMeas - nStates
   want = islands_mode === :always || (islands_mode === :unobservable && worst === :not_observable)
   isl = ObservableIslands()
@@ -4282,7 +4300,7 @@ function evaluate_local_observability(net::Net, measurements::Vector{Measurement
   keep = [k for k in eachindex(activeMeas) if !(activeMeas[k].typ in (ImagMeas, IaMeas))]
   activeMeas = activeMeas[keep]
   activeIdx = activeIdx[keep]
-  isempty(activeMeas) && throw(SENoActiveMeasurementsError("evaluate_local_observability: no active measurements (current magnitudes are excluded)"))
+  isempty(activeMeas) && throw(SENoActiveMeasurementsError(_se_no_rows_message("evaluate_local_observability", measurements)))
 
   nbus = length(net.nodeVec)
   slackIdx = _find_slack_idx(net)
@@ -5501,6 +5519,16 @@ after, `observable` (no null direction after), `weak` the weak report after
 stays in the deficits after.
 """
 function restore_observability(net::Net, measurements::Vector{Measurement}; dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
+  sel = _restore_rows(net, measurements; dense_max_n = dense_max_n)
+  return _restore_judged(net, sel; dense_max_n = dense_max_n)
+end
+
+## The selection of `restore_observability` without the final judgement:
+## the taken rows, the skipped candidates and the deficits per network
+## island, plus the range-checked set the rows complete. runse! judges only
+## when a row was taken (1.1.1: an observable set ran the whole check of
+## the restored set for nothing).
+function _restore_rows(net::Net, measurements::Vector{Measurement}; dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
   cfg = state_estimation_config()
   rel = cfg.observability.restore_sigma_rel
   sigmaNominal = cfg.observability.restore_vm_sigma_nominal_pu
@@ -5573,18 +5601,22 @@ function restore_observability(net::Net, measurements::Vector{Measurement}; dens
     end
     push!(perIsland, (network_island = k, angle_rank_deficit = selP.before, magnitude_rank_deficit = selQ.before, angle_rank_deficit_after = selP.after, magnitude_rank_deficit_after = selQ.after, n_taken = length(selP.taken) + length(selQ.taken)))
   end
-  isempty(perIsland) && throw(SENoActiveMeasurementsError("restore_observability: no active measurements (current magnitudes are excluded; the system must be observable without them)"))
+  isempty(perIsland) && throw(SENoActiveMeasurementsError(_se_no_rows_message("restore_observability", measurements)))
   before = sum(r -> r.angle_rank_deficit + r.magnitude_rank_deficit, perIsland)
   after = sum(r -> r.angle_rank_deficit_after + r.magnitude_rank_deficit_after, perIsland)
-  # concept R1: the set with the taken rows, judged again, the weak class
-  # at the stored state of the net
-  chk = _evaluate_global_observability(net, vcat(measurements, rows); islands_mode = :off, dense_max_n = dense_max_n)
+  return (rows = rows, restored = restored, skipped = skipped, passive_not_inserted = passiveOff, network_islands = perIsland, rank_deficit_before = before, rank_deficit_after = after, checked = measurements)
+end
+
+## The judgement of `restore_observability` on a selection of
+## `_restore_rows`: concept R1, the set with the taken rows judged again,
+## the weak class at the stored state of the net; concept U2, a weak
+## branch or bus after the restoration is its own verdict.
+function _restore_judged(net::Net, sel; dense_max_n::Integer = _SE_DENSE_LINALG_MAX_N)
+  chk = _evaluate_global_observability(net, vcat(sel.checked, sel.rows); islands_mode = :off, dense_max_n = dense_max_n)
   weak = chk.weak_observability
   judged = chk.numerical_observable && weak.basis !== :not_determined
-  # concept U2: a weak branch or bus after the restoration is its own
-  # verdict, with the affected branches in `weak`
   verdict = !chk.numerical_observable ? :not_observable : !judged ? :not_judged : weak.n_buses > 0 ? :weakly_observable : :observable
-  return (rows = rows, restored = restored, skipped = skipped, passive_not_inserted = passiveOff, network_islands = perIsland, rank_deficit_before = before, rank_deficit_after = after, observable = chk.numerical_observable, weak = weak, weak_judged = judged, verdict = verdict, success = verdict === :observable)
+  return (rows = sel.rows, restored = sel.restored, skipped = sel.skipped, passive_not_inserted = sel.passive_not_inserted, network_islands = sel.network_islands, rank_deficit_before = sel.rank_deficit_before, rank_deficit_after = sel.rank_deficit_after, observable = chk.numerical_observable, weak = weak, weak_judged = judged, verdict = verdict, success = verdict === :observable)
 end
 
 restore_observability(net::Net; kwargs...) = restore_observability(net, Measurement[m for m in net.measurements]; kwargs...)
@@ -8125,7 +8157,6 @@ runs as under `abort`.
 function runse!(net::Net, measurements::Vector{Measurement})
   cfg = state_estimation_config()
   onUnobs = cfg.observability.on_unobservable
-  onUnobs in SE_ON_UNOBSERVABLE_VALUES || error("runse!: state_estimation.observability.on_unobservable must be one of $(join(SE_ON_UNOBSERVABLE_VALUES, ", ")) (got $(onUnobs))")
   _tap_warn_unknown_exclusions(net, cfg.tap_estimation, "runse!")
   # range check of the voltage measurements before the WLS
   checked, rc = _se_range_check(net, measurements)
@@ -8168,7 +8199,7 @@ function _runse_unobservable!(net::Net, checked::Vector{Measurement}, cfg::State
   if onUnobs === :scheduled
     # replacement values from the schedule first; what they do not close
     # is estimated per observable island below
-    rest = restore_observability(net, checked)
+    rest = _restore_rows(net, checked)
     restored = rest.restored
     isempty(rest.rows) || (checked = vcat(checked, rest.rows))
     nP = count(r -> r.quantity === :P, rest.restored)
@@ -8176,7 +8207,12 @@ function _runse_unobservable!(net::Net, checked::Vector{Measurement}, cfg::State
     nU = count(r -> r.quantity === :U, rest.restored)
     (rest.rank_deficit_before > 0 || !isempty(rest.restored)) && @info string("runse!: restore: ", length(rest.restored), " row(s) taken (P ", nP, ", Q ", nQ, ", U ", nU, "), ", length(rest.skipped), " skipped as redundant, rank deficit ", rest.rank_deficit_before, " before, ", rest.rank_deficit_after, " after")
     isempty(rest.passive_not_inserted) || @info string("runse!: restore: zero injections at ", length(rest.passive_not_inserted), " passive bus(es) would close part of the deficit; not inserted, state_estimation.zero_injection is off")
-    rest.verdict === :weakly_observable && @info string("runse!: restore: weakly observable after restoring, ", rest.weak.n_branches, " branch(es) above the flow bound, ", rest.weak.n_buses, " affected bus(es); the estimate cuts them out")
+    # the restored set is judged only when a row was taken; an observable
+    # set goes on to the weak rounds, which judge the estimate itself
+    if !isempty(rest.rows)
+      judged = _restore_judged(net, rest)
+      judged.verdict === :weakly_observable && @info string("runse!: restore: weakly observable after restoring, ", judged.weak.n_branches, " branch(es) above the flow bound, ", judged.weak.n_buses, " affected bus(es); the estimate cuts them out")
+    end
   end
   r = _runse_weak_gaps!(net, checked, cfg)
   return restored === nothing ? r : _se_result_with(r; restoredRows = restored)

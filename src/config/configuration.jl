@@ -689,6 +689,13 @@ Base.@kwdef struct BadDataConfig
   # of the meter keeps it from pulling the bus harder than the meter would
   # have, and leaves it well inside the WLS (default 3)
   substitute_sigma_factor::Float64 = 3.0
+  # the keyword constructor checks what the file loader checks (until
+  # 1.1.1 a factor below 1 passed here and gave the substitute a smaller
+  # sigma than the meter)
+  function BadDataConfig(substitute_sigma_factor)
+    (isfinite(substitute_sigma_factor) && substitute_sigma_factor >= 1.0) || throw(ArgumentError("state_estimation.bad_data.substitute_sigma_factor must be a finite number >= 1; got $(substitute_sigma_factor)."))
+    return new(substitute_sigma_factor)
+  end
 end
 
 """

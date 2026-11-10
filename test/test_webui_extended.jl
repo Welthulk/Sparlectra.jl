@@ -2670,6 +2670,12 @@ form:
         @test String(md["se_robust_mode"]) == "replacement"
         @test Float64(md["se_k_suppress"]) ≈ 5.5
         @test Float64(md["se_suppression_sigma"]) ≈ 1234.0
+        # a request value of the wrong type is an invalid request, not an
+        # execution error of the run with a backtrace (1.1.1)
+        for (k, v) in (("se_update_shunts", "maybe"), ("se_max_iter", 2.5), ("se_flatstart", 1))
+          bad = SparlectraApp.start_powerflow_run(Dict{String,Any}("casefile" => "sp_case14.scf.json", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => d, "se_mode" => true, k => v); case_directory = dirname(case))
+          @test (bad["status"], bad["reason"]) == ("failed", "invalid_request") && occursin(k, bad["message"])
+        end
       end
     end)() end
 
