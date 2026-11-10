@@ -1,3 +1,16 @@
+# Version 1.2.0 - 2026-11-10
+
+Multi-area state estimation and bus areas from CGMES.
+
+## Highlights
+
+- **Multi-area state estimation.** `runse_multi_area!` estimates each area on its own measurements and coordinates the areas over the border buses until the result equals the estimate of the whole network. Tap regulators, bad-data elimination and the area checks work per area. The SE service and the Web UI run it with `state_estimation.multi_area.mode: two_level`. See [State Estimation Extensions](state_estimation_extensions.md).
+- **Bus areas from CGMES.** A CGMES import sets the bus area from the operator model (`cgmes_import.area_source`). An SCF export of a CGMES network now carries areas and area names; `area_source: none` keeps the old output.
+
+## Added
+
+- **Demo cases.** `sp_case10_areas` (three areas with measurements) and `sp_case6_igm` (a CGM of two operator models).
+
 # Version 1.1.1 - 2026-11-10
 
 Fixes from the review of 1.1.0.
