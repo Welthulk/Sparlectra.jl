@@ -2973,5 +2973,91 @@ function run_cgmes_importer_tests()
       case60 = redirect_stdout(() -> convert_case(CGMESAdapter(), dir, Sparlectra.CGMESAdapterOptions(f_nom = 60.0)), devnull)
       @test case60.sparlectra.meta["f_nom"] == 60.0
     end)() end
+
+    # cgmes_import.area_source on the shipped two-operator CGM
+    # (data/cgmes_demo/sp_case6_igm, tools/gen_cgmes_fixtures.jl). The truth is
+    # the fixture definition: Holm and Rabe in the Nord model, Marbach and
+    # Nesselau in Sued; the areas are numbered by name (nord before sued),
+    # each X node has a Nord and a Sued neighbour and takes the smaller area
+    # (Nord). Sub-regions by name: Nord-Ost (Rabe) 1, Nord-West (Holm) 2,
+    # Sued 3; XN_Rabe_Mar between Rabe and Marbach takes 1, XN_Holm_Nes
+    # between Holm and Nesselau 2. The four TieFlow terminals sit on the X
+    # nodes, the ends of the two Sued tie halves. The same delivery with the
+    # files in reverse order gives the same areas: with the former rule (first
+    # line in file order) the X nodes went to Sued.
+    @testset "bus areas from the operator models (sp_case6_igm)" begin (function ()
+      dir = cgmes_fixture_dir("sp_case6_igm")
+      buses = ["Holm", "Rabe", "XN_Rabe_Mar", "XN_Holm_Nes", "Marbach", "Nesselau"]
+      areas_of(r) = [r.net.nodeVec[r.net.busDict[b]]._area for b in buses]
+      nord, sued = "http://nord.example/sparlectra", "http://sued.example/sparlectra"
+      r = importCGMES(path = dir)
+      @test areas_of(r) == [1, 1, 1, 1, 2, 2]
+      @test r.net.area_names == Dict(1 => nord, 2 => sued)
+      @test any(m -> occursin("2 bus(es) without an area of their own", m) && occursin("XN_Holm_Nes -> 1, XN_Rabe_Mar -> 1", m), r.messages)
+      files = sort(readdir(dir; join = true))
+      for src in (:model_authority, :sub_geographical_region)
+        fwd = importCGMES(path = files, area_source = src)
+        rev = importCGMES(path = reverse(files), area_source = src)
+        @test areas_of(rev) == areas_of(fwd) && rev.net.area_names == fwd.net.area_names
+      end
+      @test any(m -> occursin("4 of 4 TieFlow terminal(s) at a border bus", m), r.messages)
+      rs = importCGMES(path = dir, area_source = :sub_geographical_region)
+      @test areas_of(rs) == [2, 1, 1, 2, 3, 3]
+      @test rs.net.area_names == Dict(1 => "Nord-Ost", 2 => "Nord-West", 3 => "Sued")
+      rg = importCGMES(path = dir, area_source = :geographical_region)
+      @test areas_of(rg) == [1, 1, 1, 1, 2, 2]
+      @test rg.net.area_names == Dict(1 => "Nord", 2 => "Sued")
+      rn = importCGMES(path = dir, area_source = :none)
+      @test all(isnothing, areas_of(rn)) && isempty(rn.net.area_names)
+      @test_throws ArgumentError importCGMES(path = dir, area_source = :tso)
+      # the key reaches the import through the configuration and the adapter
+      cfg = Sparlectra.SparlectraConfig(cgmes = Sparlectra.CGMESImportConfig(area_source = :geographical_region))
+      @test areas_of(importCGMES(cfg; path = dir, name = "igm_cfg")) == [1, 1, 1, 1, 2, 2]
+      @test Sparlectra.CGMESImportConfig(Dict{String,Any}("cgmes_import" => Dict{String,Any}("area_source" => "none"))).area_source === :none
+      @test Sparlectra.cgmes_adapter_options(cfg).area_source === :geographical_region
+      # CGMES to SCF and back: the numbers per node and the names stay
+      case = redirect_stdout(() -> convert_case(CGMESAdapter(), dir, Sparlectra.CGMESAdapterOptions()), devnull)
+      @test case.sparlectra.areas == Dict{String,Any}("1" => nord, "2" => sued)
+      f = joinpath(mktempdir(), "igm.scf.json")
+      write_scf_json(case, f)
+      n2 = importSCF(f)
+      @test [n2.nodeVec[n2.busDict[b]]._area for b in buses] == [1, 1, 1, 1, 2, 2]
+      @test n2.area_names == Dict(1 => nord, 2 => sued)
+      @test area_partition(n2).area_names == [nord, sued]
+    end)() end
+
+    # The same rule on the ENTSO-E deliveries of the CGMES cache (not in the
+    # repository): every bus whose TN a TP file of an operator defines lies
+    # in the area named after that file's modelingAuthoritySet; MicroGrid
+    # assembled has two operators, FullGrid one (one area and the notice).
+    for (alias, n_areas) in (("microgrid_assembled", 2), ("fullgrid", 1))
+      zip = joinpath(Sparlectra.CGMESImporter.cgmesTestSetCacheDir(), "cases", "cgmes_" * alias * ".zip")
+      if !isfile(zip)
+        println("      cgmes_importer: ", alias, " bus areas SKIPPED (", zip, " not in the CGMES cache)")
+        continue
+      end
+      println("      cgmes_importer: ", alias, " bus areas RAN")
+      @testset "bus areas of $(alias)" begin (function ()
+        r = with_logger(NullLogger()) do
+          importCGMES(path = zip)
+        end
+        @test length(r.net.area_names) == n_areas
+        auth = Dict(f.name => f.modeling_authority for f in r.store.files)
+        own = [(tn, bus) for (tn, bus) in r.topo.bus_name if !(tn in r.store.boundary) && haskey(r.net.busDict, bus)]
+        @test !isempty(own)
+        @test all(((tn, bus),) -> r.net.area_names[r.net.nodeVec[r.net.busDict[bus]]._area] == auth[r.store.objects[tn].source], own)
+        @test all(nd -> nd._area !== nothing, r.net.nodeVec)
+        # the files of the delivery one by one, in reverse order: the same
+        # areas, numbers and names per bus
+        tmp = mktempdir()
+        paths = [(p = joinpath(tmp, basename(f.name)); write(p, f.content); p) for f in Sparlectra.CGMESImporter.collectCGMESFiles(zip)]
+        rr = with_logger(NullLogger()) do
+          importCGMES(path = reverse(paths))
+        end
+        by_bus(x) = Dict(Sparlectra.getCompName(nd.comp) => x.net.area_names[nd._area] for nd in x.net.nodeVec)
+        @test by_bus(rr) == by_bus(r) && rr.net.area_names == r.net.area_names
+        n_areas == 1 && @test any(m -> occursin("one model authority", m), r.messages)
+      end)() end
+    end
   end)() end
 end

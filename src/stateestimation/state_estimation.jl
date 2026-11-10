@@ -6171,10 +6171,28 @@ function _kkt_singular_reason(C::SparseMatrixCSC{Float64,Int64})::String
   return "the measurements and the constraints do not fix every state (an unobservable part, such as an island only zero injections touch)"
 end
 
+## the default of the `linearization` keyword of `_runse_with_config!`: no
+## caller asked for it. Never written (the run writes only into a Ref the
+## caller passed), so one shared object is safe under threads.
+const _SE_NO_LINEARIZATION = Ref{Any}(nothing)
+
 ## `machine_rows` (default `cfg.update_net`): calculate the steps of the
 ## machine transformers after a converged run; the island runs pass the
 ## caller's update_net, their own cfg always has it on.
-function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig; machine_rows::Bool = cfg.update_net, tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation))
+## `pinned_buses` (multi-area estimation, 1.2.0): buses of `net` whose
+## magnitude and angle stay at their stored values (the copies of the
+## foreign ends of the tie branches); their columns get a zero step in every
+## solve, so the caller must start from the stored voltages
+## (`flatstart = false`). `linearization`: a Ref the run fills with the
+## last linearization (Jacobian, weights in use, residual linearized at the
+## final state, state layout), from which the area takes its border
+## information. `tap_fix = false`: the released regulators are not fixed to
+## their steps after the continuous estimate (the passes of the multi-area
+## estimation keep them as interior states; it fixes them once at the end).
+## `fd_coloring_min_states`: state count from which the WLS loop colors the
+## finite-difference Jacobian (the area runs of the multi-area estimation
+## lower it; the colored Jacobian is the same bit for bit).
+function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::StateEstimationConfig; machine_rows::Bool = cfg.update_net, tap_excl::Dict{String,Symbol} = _tap_exclusion_map(net, cfg.tap_estimation), pinned_buses::Vector{Int} = Int[], linearization::Base.RefValue{Any} = _SE_NO_LINEARIZATION, tap_fix::Bool = true, fd_coloring_min_states::Int = _SE_FD_COLORING_MIN_STATES)
   maxIte = cfg.max_iter
   flatstart = cfg.flatstart
   jacEps = cfg.jac_eps
@@ -6256,6 +6274,19 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
   # predictions, the write-back and the result add it (_se_slack_ref_deg)
   vaRefDeg = _se_slack_ref_deg(net, slackIdx)
   refRad = deg2rad(vaRefDeg)
+
+  # pinned buses (multi-area): the angle column (none for the slack) and
+  # the magnitude column of each, held at a zero step in every solve
+  pinPairs = Tuple{Int,Float64}[]
+  for b in pinned_buses
+    s = get(prep.busmap, prep.reps[b], 0)
+    s == 0 && error("runse!: pinned bus $(b) is not in the working net")
+    s != slackIdx && push!(pinPairs, (s < slackIdx ? s : s - 1, 0.0))
+    push!(pinPairs, (nbus - 1 + s, 0.0))
+  end
+  (isempty(pinPairs) || cfg.zero_injection !== :constraint) || error("runse!: pinned buses are not supported with state_estimation.zero_injection = constraint")
+  wantLin = linearization !== _SE_NO_LINEARIZATION
+  linCap = Ref{Any}(nothing)
 
   # --- released shunt selection (SE phase 2, case A) ---------------------
   # A shunt marked via setShuntEstimation! becomes a B state only when at
@@ -6550,7 +6581,7 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     # first assembly of every solve, the later ones evaluate only the rows
     # inside each color's pattern.
     local fdPatternHeld = false
-    local fdColoring = length(x) >= _SE_FD_COLORING_MIN_STATES ? _fd_structural_coloring(activeMeas, length(x), slackIdx, nbus, Ybus, withVaOffset, shuntMap, tapMap, net) : nothing
+    local fdColoring = length(x) >= fd_coloring_min_states ? _fd_structural_coloring(activeMeas, length(x), slackIdx, nbus, Ybus, withVaOffset, shuntMap, tapMap, net) : nothing
     # tap states of THIS solve (none in the fixation run): the per-iteration
     # step limit in steps, the step size per column for the stop test, and
     # the columns of the parallel-pair prior
@@ -6613,21 +6644,27 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
       # below takes the sparse factorization path; the former dense
       # HW-broadcast form would have densified through the adjoint
       # broadcast.
+      # wUsed: the weights this step used per row (zero for a gated row),
+      # kept only when the caller asked for the linearization
+      wUsed = wSolve
       if gateImag && hasImag && ite < imagGate
         Hs = H[nonImagRows, :]
         ws = wSolve[nonImagRows]
         G = _se_gain_matrix(Hs, ws, symmetricGain)
         g = Hs' * (ws .* r[nonImagRows])
+        wantLin && (wUsed = zeros(length(wSolve)); wUsed[nonImagRows] .= ws)
       elseif !isempty(iaRows) && !isempty(_ia_gated!(_state_to_voltage(x, slackIdx, nbus)))
         useRows = [i for i in eachindex(activeMeas) if !(i in iaGatedNow)]
         Hs = H[useRows, :]
         ws = wSolve[useRows]
         G = _se_gain_matrix(Hs, ws, symmetricGain)
         g = Hs' * (ws .* r[useRows])
+        wantLin && (wUsed = zeros(length(wSolve)); wUsed[useRows] .= ws)
       else
         G = _se_gain_matrix(H, wSolve, symmetricGain)
         g = H' * (wSolve .* r)
       end
+      isempty(pinPairs) || ((G, g) = _se_pin_steps(G, g, pinPairs))
 
       # svd_max_n raised for the WLS normal equations: released extra
       # states (shunt B, tap steps) can turn out COLLECTIVELY dependent even
@@ -6707,6 +6744,9 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
         α < 1.0 && (Δx .*= α)
       end
       x .+= Δx
+      # the residual linearized at the new state (r - H dx): with H and the
+      # weights it is the Gauss-Newton model at the point the run returns
+      wantLin && (linCap[] = (H = H, w = copy(wUsed), r = r .- H * Δx))
 
       iteDone = ite
       # a tap step counts with its step size (du, or the step angle), so tol
@@ -7361,7 +7401,9 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
     tapIteEst = iteDone
     tapConvEst = converged
     tapXEst = copy(x)
-    if converged
+    # tap_fix = false (multi-area passes): the continuous estimate is the
+    # result, the steps stay states of the last linearization
+    if converged && tap_fix
       # sigma of the step from the covariance,
       # on the Jacobian of the last iteration and the rows of J (the Ia rows
       # gated at the estimate left out)
@@ -7738,6 +7780,10 @@ function _runse_with_config!(net::Net, measurements::Vector{Measurement}, cfg::S
 
   conditioning = _se_conditioning(lastGain, lastConJac, cfg.zero_injection)
   ziMultipliers = (isempty(conIdx) || lastLambda === nothing) ? nothing : _se_zero_injection_multipliers(net, activeMeas, activeOrig, conIdx, lastLambda)
+  # the last linearization for a multi-area caller: columns follow the state
+  # layout (angles without the slack, magnitudes, then the extra states),
+  # rows follow `meas`; `buses` maps a working-net bus to the caller's bus
+  wantLin && (linearization[] = (cap = linCap[], x = copy(x), slackIdx = slackIdx, nbus = nbus, withVaOffset = withVaOffset, vaRefDeg = vaRefDeg, buses = prep.buses, meas = activeMeas, orig = activeOrig, converged = converged))
   return SEResult(VestModel, converged, iteDone, norm(r), r, jval, ν, _j_within_3sigma_band(jval, ν), withVaOffset ? rad2deg(x[end]) : nothing, shuntEstimates, robustRows, nothing, tapEstimates, tapFixation, nothing, activeObjective, linkCircEst, conditioning, ziMultipliers, flatstart ? :flat : :stored, nothing, nothing, nothing)
 end
 

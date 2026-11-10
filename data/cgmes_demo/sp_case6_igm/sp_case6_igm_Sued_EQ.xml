@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-sued-eq">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model Sued</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/EquipmentCore/3/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://sued.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:GeographicalRegion rdf:ID="_gr_Sued">
+    <cim:IdentifiedObject.name>Sued</cim:IdentifiedObject.name>
+  </cim:GeographicalRegion>
+  <cim:SubGeographicalRegion rdf:ID="_sgr_Sued">
+    <cim:IdentifiedObject.name>Sued</cim:IdentifiedObject.name>
+    <cim:SubGeographicalRegion.Region rdf:resource="#_gr_Sued"/>
+  </cim:SubGeographicalRegion>
+  <cim:Substation rdf:ID="_ss_Marbach">
+    <cim:IdentifiedObject.name>Marbach</cim:IdentifiedObject.name>
+    <cim:Substation.Region rdf:resource="#_sgr_Sued"/>
+  </cim:Substation>
+  <cim:VoltageLevel rdf:ID="_vl_Marbach">
+    <cim:IdentifiedObject.name>Marbach_110</cim:IdentifiedObject.name>
+    <cim:VoltageLevel.Substation rdf:resource="#_ss_Marbach"/>
+    <cim:VoltageLevel.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:VoltageLevel>
+  <cim:Substation rdf:ID="_ss_Nesselau">
+    <cim:IdentifiedObject.name>Nesselau</cim:IdentifiedObject.name>
+    <cim:Substation.Region rdf:resource="#_sgr_Sued"/>
+  </cim:Substation>
+  <cim:VoltageLevel rdf:ID="_vl_Nesselau">
+    <cim:IdentifiedObject.name>Nesselau_110</cim:IdentifiedObject.name>
+    <cim:VoltageLevel.Substation rdf:resource="#_ss_Nesselau"/>
+    <cim:VoltageLevel.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:VoltageLevel>
+  <cim:EnergyConsumer rdf:ID="_load_Marbach">
+    <cim:IdentifiedObject.name>Load_Marbach</cim:IdentifiedObject.name>
+  </cim:EnergyConsumer>
+  <cim:Terminal rdf:ID="_t_load_Marbach_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_load_Marbach"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:EnergyConsumer rdf:ID="_load_Nesselau">
+    <cim:IdentifiedObject.name>Load_Nesselau</cim:IdentifiedObject.name>
+  </cim:EnergyConsumer>
+  <cim:Terminal rdf:ID="_t_load_Nesselau_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_load_Nesselau"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_L_X1_Mar">
+    <cim:IdentifiedObject.name>L_X1_Mar</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>1.2</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>4</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>2.98451e-05</cim:ACLineSegment.bch>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_t_L_X1_Mar_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_X1_Mar"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t_L_X1_Mar_2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_X1_Mar"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_L_X2_Nes">
+    <cim:IdentifiedObject.name>L_X2_Nes</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>2.4</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>8</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>5.96903e-05</cim:ACLineSegment.bch>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_t_L_X2_Nes_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_X2_Nes"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t_L_X2_Nes_2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_X2_Nes"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ACLineSegment rdf:ID="_L_Mar_Nes">
+    <cim:IdentifiedObject.name>L_Mar_Nes</cim:IdentifiedObject.name>
+    <cim:ACLineSegment.r>1.44</cim:ACLineSegment.r>
+    <cim:ACLineSegment.x>4.8</cim:ACLineSegment.x>
+    <cim:ACLineSegment.bch>3.58142e-05</cim:ACLineSegment.bch>
+    <cim:ConductingEquipment.BaseVoltage rdf:resource="#_bv110"/>
+  </cim:ACLineSegment>
+  <cim:Terminal rdf:ID="_t_L_Mar_Nes_1">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Mar_Nes"/>
+    <cim:ACDCTerminal.sequenceNumber>1</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:Terminal rdf:ID="_t_L_Mar_Nes_2">
+    <cim:Terminal.ConductingEquipment rdf:resource="#_L_Mar_Nes"/>
+    <cim:ACDCTerminal.sequenceNumber>2</cim:ACDCTerminal.sequenceNumber>
+  </cim:Terminal>
+  <cim:ControlArea rdf:ID="_ca_Sued">
+    <cim:IdentifiedObject.name>CA_Sued</cim:IdentifiedObject.name>
+    <cim:ControlArea.type rdf:resource="http://iec.ch/TC57/2013/CIM-schema-cim16#ControlAreaTypeKind.Interchange"/>
+  </cim:ControlArea>
+  <cim:TieFlow rdf:ID="_tf_L_X1_Mar">
+    <cim:TieFlow.ControlArea rdf:resource="#_ca_Sued"/>
+    <cim:TieFlow.positiveFlowIn>true</cim:TieFlow.positiveFlowIn>
+    <cim:TieFlow.Terminal rdf:resource="#_t_L_X1_Mar_1"/>
+  </cim:TieFlow>
+  <cim:TieFlow rdf:ID="_tf_L_X2_Nes">
+    <cim:TieFlow.ControlArea rdf:resource="#_ca_Sued"/>
+    <cim:TieFlow.positiveFlowIn>true</cim:TieFlow.positiveFlowIn>
+    <cim:TieFlow.Terminal rdf:resource="#_t_L_X2_Nes_1"/>
+  </cim:TieFlow>
+</rdf:RDF>

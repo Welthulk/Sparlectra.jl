@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-sued-tp">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model Sued</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/Topology/4/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://sued.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:TopologicalNode rdf:ID="_tn_Marbach">
+    <cim:IdentifiedObject.name>Marbach</cim:IdentifiedObject.name>
+    <cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/>
+    <cim:TopologicalNode.ConnectivityNodeContainer rdf:resource="#_vl_Marbach"/>
+  </cim:TopologicalNode>
+  <cim:TopologicalNode rdf:ID="_tn_Nesselau">
+    <cim:IdentifiedObject.name>Nesselau</cim:IdentifiedObject.name>
+    <cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/>
+    <cim:TopologicalNode.ConnectivityNodeContainer rdf:resource="#_vl_Nesselau"/>
+  </cim:TopologicalNode>
+  <cim:Terminal rdf:about="#_t_load_Marbach_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Marbach"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_load_Nesselau_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Nesselau"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X1_Mar_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_XN_Rabe_Mar"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X1_Mar_2">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Marbach"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X2_Nes_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_XN_Holm_Nes"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X2_Nes_2">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Nesselau"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Mar_Nes_1">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Marbach"/>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Mar_Nes_2">
+    <cim:Terminal.TopologicalNode rdf:resource="#_tn_Nesselau"/>
+  </cim:Terminal>
+</rdf:RDF>

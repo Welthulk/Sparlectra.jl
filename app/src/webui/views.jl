@@ -1511,6 +1511,7 @@ const _WEBUI_ADAPTER_FIELD_PRESENTATION = Dict{String,NamedTuple}(
   "cgmes_equivalent_injection_as_source" => (label = "Equivalent injections as source", title = "Import an EquivalentInjection on the SV angle reference node or on a boundary node as a voltage-regulating source at the SV voltage of its node, with the short-circuit power from its r/x; the one on the SV angle reference is the slack. Off, the injection stays as mapped.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_read_dynamics" => (label = "Read dynamic data (DY profile)", title = "Read the DY profile and give the machines their dynamic data (inertia, damping, rating, droop). No calculation reads it; off, the DY file is skipped.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = nothing),
   "cgmes_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model: fixed injections reproduce the delivery snapshot; a paired controller couples both converters of a link and makes the transfer steerable.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("injections" => "Fixed injections (Stage 0, default)", "paired_control" => "Paired controller (steerable link)")),
+  "cgmes_area_source" => (label = "Bus areas", title = "Area of each bus for the multi-area estimation: the operator model of a CGM, the sub-region or region of the substation, or none.", attrs = " data-cgmes-start-values-field", input_attrs = "", option_labels = Dict("model_authority" => "Operator model (default)", "sub_geographical_region" => "Sub-region of the substation", "geographical_region" => "Region of the substation", "none" => "None")),
   "powsybl_import_hvdc_mode" => (label = "HVDC converters", title = "HVDC converter model of a PowSyBl network: fixed injections reproduce the OpenLoadFlow snapshot (rectifier draw and inverter delivery with the loss factors); a paired controller is not implemented yet and is rejected at import.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("fixed_injection" => "Fixed injections (default)", "paired_control" => "Paired controller (not implemented)")),
   "powsybl_import_remote_regulation" => (label = "Remote voltage regulation", title = "A generator that regulates another bus: hold_local keeps it PV at its own bus with the target voltage, pq makes it a fixed injection, remote attaches an outer-loop machine voltage control on the regulated bus (reproduces OpenLoadFlow).", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = Dict("hold_local" => "Hold the target at the unit's own bus (default)", "pq" => "Fixed P and Q", "remote" => "Outer-loop control of the regulated bus")),
   "powsybl_import_multi_slack" => (label = "One slack per synchronous component", title = "Every synchronous component gets its own slack generator (the regulating unit with the largest max_p). Uncheck to leave the other components without a reference; they are then reported as islands without a reference.", attrs = " data-powsybl-import-field", input_attrs = "", option_labels = nothing),
@@ -1551,6 +1552,7 @@ const _WEBUI_FIELD_CASE_FORMATS = Dict{String,Vector{Symbol}}(
   "cgmes_read_dynamics" => [:cgmes],
   "cgmes_equivalent_injection_as_source" => [:cgmes],
   "cgmes_hvdc_mode" => [:cgmes],
+  "cgmes_area_source" => [:cgmes],
   "powsybl_import_hvdc_mode" => [:powsybl],
   "powsybl_import_remote_regulation" => [:powsybl],
   "powsybl_import_multi_slack" => [:powsybl],
@@ -1594,7 +1596,7 @@ end
 # convention; each is an :adapter-scope spec without a same-named struct
 # field
 const _WEBUI_ADAPTER_SECTIONS = (
-  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_read_dynamics", "cgmes_equivalent_injection_as_source", "cgmes_hvdc_mode"), extras = ()),
+  (adapter = CGMESAdapter(), key = :cgmes, prefix = "cgmes_import.", order = ("cgmes_start_values", "cgmes_require_boundary", "cgmes_infer_base_voltages", "cgmes_read_dynamics", "cgmes_equivalent_injection_as_source", "cgmes_hvdc_mode", "cgmes_area_source"), extras = ()),
   (adapter = PowsyblAdapter(), key = :powsybl, prefix = "powsybl_import.", order = ("powsybl_import_hvdc_mode", "powsybl_import_remote_regulation", "powsybl_import_multi_slack", "powsybl_import_slack_ids", "powsybl_import_base_mva"), extras = ()),
   (adapter = MatpowerAdapter(), key = :matpower, prefix = "matpower_import.", order = ("matpower_import_auto_profile", "matpower_import_ratio", "matpower_import_shift_sign", "matpower_import_shift_unit", "matpower_import_bus_shunt_model", "matpower_import_dcline_mode", "matpower_import_pv_voltage_source", "matpower_import_compare_voltage_reference", "transformer_tap_changer_model", "matpower_import_apply_bus_names", "matpower_export_write_solution"), extras = ("matpower_import_auto_profile", "matpower_import_bus_shunt_model", "matpower_import_compare_voltage_reference", "matpower_export_write_solution")),
   (adapter = DTFAdapter(), key = :dtf, prefix = "", order = (), extras = ()),
@@ -3283,6 +3285,7 @@ function render_powerflow_result(result::AbstractDict)::String
   se_topology_section = active ? "" : _webui_se_topology_section(result)
   se_chain_section = active ? "" : _webui_se_chain_section(result)
   se_observability_section = active ? "" : _webui_se_observability_section(result)
+  se_multi_area_section = active ? "" : _webui_se_multi_area_section(result)
   se_placement_section = active ? "" : _webui_se_placement_section(result)
   n1_table_section = active ? "" : _webui_contingency_table_section(result)
   qsts_section = active ? "" : _webui_qsts_section(result)
@@ -3293,7 +3296,7 @@ function render_powerflow_result(result::AbstractDict)::String
   # reads like a crashed power flow, and the residual it measured (which IS
   # the answer) looks like the symptom of one.
   diagnose_probe && (runtime_notice *= "<div class=\"alert info\"><strong>This is a diagnosis, not a solve.</strong> The self-check takes exactly one step from the case's own stored voltages (<code>max_iter = 1</code>, no rescue, Q-limit handling off), so a remaining residual is the RESULT and not a failure. The numbers below therefore show one iteration and a non-zero mismatch by design; <code>diagnose.log</code> names the worst bus and what to do about it.</div>")
-  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(se_observability_section)$(se_placement_section)$(n1_table_section)$(qsts_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
+  return _webui_layout(_webui_result_page_title(result), "<section class=\"panel\">$(result_summary)$(runtime_notice)<table class=\"details\">$(rows)</table>$(active_hint)$(links)$(se_chain_section)</section>$(se_observability_section)$(se_multi_area_section)$(se_placement_section)$(n1_table_section)$(qsts_section)$(se_tap_section)$(se_sigma_section)$(se_topology_section)$(save_section)"; show_back = true, refresh_url)
 end
 
 # N-1 / scenario result table on the run result page: the browser must show WHICH case was
@@ -5330,6 +5333,48 @@ function _webui_se_observability_section(result::AbstractDict)::String
         button("scheduled", "Estimate with scheduled substitute values", "replacement values from the schedule close the gaps first, the rest per observable island"),
         isempty(run_id) ? "" : "<form method=\"get\" action=\"/stateestimation/placement\" class=\"se-gap-action\"><input type=\"hidden\" name=\"run_id\" value=\"$(esc(run_id))\"><button type=\"submit\">Suggest measurement places</button> <span class=\"field-help\">injection, flow or PMU places step by step until the set is observable</span></form>",
         "</div></section>")
+  return join(parts, "")
+end
+
+## The Areas section of an SE run with state_estimation.multi_area.mode =
+## two_level (1.2.0): one line with passes, J and the largest difference to
+## the integrated estimate, the area table (se_areas.csv), the border table
+## (se_area_borders.csv) and the link to the comparison per state
+## (se_area_compare.csv); a refusal of the method as one line with its
+## reason. Empty for every other run.
+function _webui_se_multi_area_section(result::AbstractDict)::String
+  metadata = get(result, "metadata", Dict{String,Any}())
+  metadata isa AbstractDict || return ""
+  haskey(metadata, "se_multi_area") || return ""
+  esc = _webui_escape
+  run_id = String(get(result, "run_id", ""))
+  od = String(get(result, "output_dir", ""))
+  art(name) = isempty(od) ? "" : joinpath(od, name)
+  link(name) = _webui_run_artifact_link(run_id, od, name)
+  parts = String["<section class=\"panel se-multi-area\" id=\"se-multi-area\"><h2>Areas</h2>"]
+  if metadata["se_multi_area"] != true
+    push!(parts, "<p>The multi-area estimation did not run: $(esc(string(get(metadata, "se_multi_area_error", ""))))</p></section>")
+    return join(parts, "")
+  end
+  conv = get(metadata, "se_multi_area_converged", false) == true
+  fmt(x; d = 3) = x isa Real ? string(round(Float64(x); sigdigits = d)) : ""
+  diff = haskey(metadata, "se_multi_area_max_dvm_pu") && metadata["se_multi_area_max_dvm_pu"] !== nothing ? "; largest difference to the integrated estimate $(fmt(metadata["se_multi_area_max_dvm_pu"])) pu, $(fmt(metadata["se_multi_area_max_dva_deg"])) deg ($(link("se_area_compare.csv")))" : ""
+  push!(parts, "<p>$(get(metadata, "se_multi_area_areas", 0)) area(s), $(get(metadata, "se_multi_area_tie_branches", 0)) tie branch(es), $(conv ? "converged" : "not converged") after $(get(metadata, "se_multi_area_passes", 0)) pass(es), J $(fmt(get(metadata, "se_multi_area_objective", nothing); d = 6)) (dof $(get(metadata, "se_multi_area_dof", "")))$(diff).</p>")
+  # each area decides the release of its tap regulators; a difference to
+  # the integrated decision is named here and in run.log
+  nrel = get(metadata, "se_multi_area_tap_release_differences", nothing)
+  (nrel isa Integer && nrel > 0) && push!(parts, "<p class=\"warning\">The tap release of $(nrel) regulator(s) differs from the integrated estimate, see run.log.</p>")
+  areas = _webui_se_csv_rows(art("se_areas.csv"))
+  if !isempty(areas)
+    trs = ["<tr><td>$(esc(get(r, "area", "")))</td><td>$(esc(get(r, "name", "")))</td><td>$(esc(get(r, "buses", "")))</td><td>$(esc(get(r, "border_buses", "")))</td><td>$(esc(get(r, "rows", "")))</td><td>$(esc(get(r, "j", "")))</td><td>$(esc(get(r, "iterations", "")))</td><td>$(esc(get(r, "converged", "")))</td></tr>" for r in areas]
+    push!(parts, _webui_long_table("<tr><th>area</th><th>name</th><th>buses</th><th>border buses</th><th>rows</th><th>J</th><th>iterations (last pass)</th><th>converged</th></tr>", trs; total = length(areas), csv = link("se_areas.csv")))
+  end
+  borders = _webui_se_csv_rows(art("se_area_borders.csv"))
+  if !isempty(borders)
+    trs = ["<tr><td>$(esc(get(r, "name", "")))</td><td>$(esc(get(r, "area", "")))</td><td>$(esc(get(r, "vm_pu", "")))</td><td>$(esc(get(r, "va_deg", "")))</td></tr>" for r in first(borders, _WEBUI_LONG_TABLE_MAX_ROWS)]
+    push!(parts, "<h3>Border buses</h3>", _webui_long_table("<tr><th>bus</th><th>area</th><th>Vm (pu)</th><th>Va (deg)</th></tr>", trs; total = length(borders), csv = link("se_area_borders.csv")))
+  end
+  push!(parts, "</section>")
   return join(parts, "")
 end
 

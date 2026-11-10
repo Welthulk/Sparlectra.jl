@@ -200,6 +200,7 @@ function CGMESImporter.importCGMES(config::SparlectraConfig; path, name::Abstrac
     shunt_control = cgmes_cfg.shunt_control,
     read_dynamics = cgmes_cfg.read_dynamics,
     equivalent_injection_as_source = cgmes_cfg.equivalent_injection_as_source,
+    area_source = cgmes_cfg.area_source,
     name = String(name),
   )
   return result

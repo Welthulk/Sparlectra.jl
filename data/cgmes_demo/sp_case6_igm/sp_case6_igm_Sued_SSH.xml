@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-sued-ssh">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model Sued</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/SteadyStateHypothesis/1/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://sued.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:EnergyConsumer rdf:about="#_load_Marbach">
+    <cim:EnergyConsumer.p>25</cim:EnergyConsumer.p>
+    <cim:EnergyConsumer.q>8</cim:EnergyConsumer.q>
+  </cim:EnergyConsumer>
+  <cim:EnergyConsumer rdf:about="#_load_Nesselau">
+    <cim:EnergyConsumer.p>15</cim:EnergyConsumer.p>
+    <cim:EnergyConsumer.q>5</cim:EnergyConsumer.q>
+  </cim:EnergyConsumer>
+  <cim:Terminal rdf:about="#_t_load_Marbach_1">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_load_Nesselau_1">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X1_Mar_1">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X1_Mar_2">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X2_Nes_1">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_X2_Nes_2">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Mar_Nes_1">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+  <cim:Terminal rdf:about="#_t_L_Mar_Nes_2">
+    <cim:ACDCTerminal.connected>true</cim:ACDCTerminal.connected>
+  </cim:Terminal>
+</rdf:RDF>

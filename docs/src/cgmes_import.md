@@ -207,6 +207,7 @@ The keys that steer a CGMES import: where the delivery is, the system base, whet
 | `cgmes_import.equivalent_branch_min_z_pu` | `1e-6` | An `EquivalentBranch` whose impedance in both directions (`r`, `x` and `r21`, `x21`, per unit on the base of terminal 1) lies below this value builds no branch: its two buses are joined as a bus link, with a notice. `0` switches it off. |
 | `cgmes_import.placeholder_guards` | `warn_skip` | Behavior of the placeholder guards (implausible shunt admittances, tap corrections outside 0.5 … 2.0). `warn_skip`: keep the filler value out of the solve with a warning. `strict`: abort the import with an error naming the object. Allowed values: `warn_skip`, `strict`. |
 | `cgmes_import.infer_base_voltages` | `false` | Reconstruct missing nominal voltages when the delivery ships without its `BaseVoltage` catalog: nodes are seeded from the SV voltages (kV, snapped to the standard level series) and transformer rated voltages, then the levels propagate across level-preserving equipment (anything but a transformer). All substitutions are summarized as one `warning:` with per-source and per-level counts. Pair with `require_boundary: false`; nodes that stay unresolved still abort with the import analysis. Allowed values: `true`, `false`. |
+| `cgmes_import.area_source` | `model_authority` | Area of each bus, the partition of the multi-area state estimation ([Bus areas](@ref cgmes_bus_areas)): `model_authority` (the operator model), `sub_geographical_region`, `geographical_region` (the region of the substation), or `none`. |
 | `cgmes_import.hvdc_mode` | `injections` | HVDC converter handling. `injections`: fixed PCC injections with the SSH operating point; areas joined only through HVDC stay separate islands. `paired_control`: the same injections plus one steerable `HvdcPairControl` per detected converter pair; the DC topology (`ACDCConverterDCTerminal`, `DCNode`, `DCLineSegment`) groups the converters into links, the transfer and loss are derived from the two SSH operating points, and the outer loop keeps the pairing exact. Detection runs in both modes and names every pair in the import messages; a pair that cannot be attached (skipped converter, inconsistent snapshot) degrades to the fixed injections with a notice. Allowed values: `injections`, `paired_control`. |
 | `cgmes_import.start_values` | `auto` | Newton-Raphson start state for CGMES runs. `auto`: the delivery's `SvVoltage` state when it carries one, else the flat start. `sv`: always the imported state. `flat`: always the flat start. With an SV start the other start-value machines (`start_projection`, `dc_seed_unconditional`, `start_mode.rotate_behind_pst`, `start_current_iteration`, `apslf_start`) are forced off for the run. An explicit `sv` or `flat` wins over `power_flow.flatstart`; under `auto` a set `power_flow.flatstart` chooses the flat start although the delivery carries an SV state. MATPOWER and DTF runs ignore this key. The resolved decision (what `auto` chose, overridden keys) is logged to `run.log` and `cgmes_import_report.md`; the SV comparison (`sv_compare.csv`) runs in every mode. Allowed values: `auto`, `flat`, `sv`. |
 
@@ -375,6 +376,43 @@ pairing controller and the reason there is no angle coupling:
   (`CIMObject.source`), so the split needs separate files per area; a
   CGM merged into a single file loses the criterion, the split silently
   does not apply, and the crossing stays galvanically joined.
+
+## [Bus areas](@id cgmes_bus_areas)
+
+The import gives every bus an area (`Node._area`), the partition of the
+multi-area state estimation ([Multi-area estimation](@ref se_multi_area)).
+`cgmes_import.area_source` says where it comes from:
+
+| Value | Area of a bus |
+|---|---|
+| `model_authority` (default) | the operator model: the `Model.modelingAuthoritySet` of the EQ file that defines the container of its TopologicalNode. In a CGM every operator ships its own EQ, so this is the operator border, where each operator holds its own measurements. |
+| `sub_geographical_region` | the `SubGeographicalRegion` of its substation |
+| `geographical_region` | the `GeographicalRegion` above that |
+| `none` | no area |
+
+- The areas count from 1 in the order of their names (the authority URI or
+  the region name). The names go to `net.area_names`, to the partition and
+  the area table of the estimation, and to SCF (`sparlectra.areas`).
+- A bus without an area of its own takes, among the buses at the other
+  ends of its lines and links that have an area, the smallest area, i.e.
+  the one with the smallest name. That covers an X node of the boundary set,
+  a per-side split bus and a transformer star point. In a CGM the X node
+  of a tie line between two operators therefore belongs to the operator with
+  the smaller name. The import lists every bus assigned this way in one
+  notice.
+- Neither rule depends on the order of the files: the same delivery in any
+  file order gives the same areas, numbers and names.
+- A delivery of one operator gives one area; a notice says so and points
+  to `sub_geographical_region`.
+- `ControlArea` and `TieFlow` are only a check: a notice counts the TieFlow
+  terminals at a border bus of the areas and names those that are not.
+  Nothing is changed.
+
+`data/cgmes_demo/sp_case6_igm` is a small CGM for this: two operator models
+(Nord with Holm and Rabe, Sued with Marbach and Nesselau), a boundary set
+with two X nodes, two tie lines each split at its X node, sub-regions,
+regions and one `ControlArea` with `TieFlow` per operator. See
+[Shipped Demo Cases](@ref cgmes_demo_cases).
 
 ## Tap control
 

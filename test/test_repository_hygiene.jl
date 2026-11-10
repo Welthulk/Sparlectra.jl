@@ -236,7 +236,9 @@ function run_repository_hygiene_tests()
         @test isempty(layering)
         # the shipped demo cases: provenance in the file, a case config that
         # pins the tolerance (machine-neutral), the bad-data twin, and the
-        # size budget (420 kB per bundle since the place names, 900 kB total)
+        # size budget (420 kB per bundle since the place names; 950 kB total
+        # since 1.2.0, for the multi-area case
+        # sp_case10_areas)
         scf_dir = joinpath(repo, "data", "scf")
         for name in ("sp_case5", "sp_case14", "sp_case60", "sp_case188")
           scf_path = joinpath(scf_dir, "$(name).scf.json")
@@ -249,6 +251,6 @@ function run_repository_hygiene_tests()
           baddata = joinpath(scf_dir, "$(name).measurements.baddata.csv")
           @test isfile(baddata) && occursin("baddata", read(baddata, String))
         end
-        @test sum(filesize(joinpath(scf_dir, f)) for f in filter(f -> startswith(f, "sp_case"), readdir(scf_dir))) < 900_000
+        @test sum(filesize(joinpath(scf_dir, f)) for f in filter(f -> startswith(f, "sp_case"), readdir(scf_dir))) < 950_000
     end)() end
 end

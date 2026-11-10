@@ -855,16 +855,19 @@ function run_scf_tests()
       ok || println("      SCF estimation round trip of the ", label, " delivery: sets or bytes differ")
     end
     # tap estimation on the delivery and on its re-read: a phase and a
-    # ratio changer released, exact measurements of the import state
+    # ratio changer released, exact measurements of the import state. The
+    # release travels in tap_changer[].tap_est_mode: the re-read is not
+    # released again (until 1.2.0 the reader dropped the key)
     src = deliveries[1][2]
+    setTapEstimation!(src; trafo = 1, mode = :pst)
+    setTapEstimation!(src; trafo = 4, mode = :ratio)
     reread = importSCF(exportSCF(src; file = joinpath(d, "cg_se.scf.json"), source_format = "cgmes"))
+    @test [br.tap_est_mode for br in reread.branchVec] == [br.tap_est_mode for br in src.branchVec]
     truth = deepcopy(src)
     ite, erg = runpf!(truth, 40, 1e-12, 0; method = :rectangular)
     @test erg == 0
     meas = generateMeasurementsFromPF(truth; includeImag = true, includeVa = true)
     runs = map((src, reread)) do n
-      setTapEstimation!(n; trafo = 1, mode = :pst)
-      setTapEstimation!(n; trafo = 4, mode = :ratio)
       with_state_estimation_config(max_iter = 40, tol = 1e-8, update_net = false) do
         runse!(n, meas)
       end
@@ -975,7 +978,7 @@ function run_scf_tests()
     mpc.bus = [
     2 3 0 0 0 0 1 1.02 0 110 1 1.1 0.9;
     10 1 40 15 0 19 1 1.0 0 110 1 1.1 0.9;
-    7 2 20 5 0 0 1 1.01 0 20 1 1.1 0.9;
+    7 2 20 5 0 0 2 1.01 0 20 1 1.1 0.9;
     ];
     mpc.gen = [
     2 40 0 300 -300 1.02 100 1 300 0;
@@ -995,6 +998,10 @@ function run_scf_tests()
       back = @test_logs (:warn, r"neutral tap position lies outside") match_mode = :any importSCF(a)
       b = exportSCF(back; file = joinpath(d, "b_$(label).json"), source_format = "matpower")
       @test read(a, String) == read(b, String)
+      # the MATPOWER area column travels in extra.<node>.area (the
+      # multi-area estimation reads it); bus 7 sits in area 2
+      @test [n._area for n in back.nodeVec] == [n._area for n in net.nodeVec]
+      @test sort(unique(n._area for n in back.nodeVec)) == [1, 2]
       # the generated component names embed the source bus number, so losing
       # it renamed everything and reshuffled the ids
       @test [getCompName(n.comp) for n in net.nodeVec] == [getCompName(n.comp) for n in back.nodeVec]

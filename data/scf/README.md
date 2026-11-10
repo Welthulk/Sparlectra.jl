@@ -36,8 +36,8 @@ declared controllers on every case. A fresh install can run every run kind on th
 downloading anything; new tests should use them instead of downloaded
 cases. `sp_case6tap` is the exception: written by hand, one measurement table
 without a bad-data variant, no start state, no fixture (see its section).
-`sp_case16_islands` ships its case file, the case configuration and one
-measurement table.
+`sp_case16_islands` and `sp_case10_areas` ship their case file, the case
+configuration and one measurement table.
 
 ## sp_case5 (5 buses, the hand-checkable entry)
 
@@ -84,6 +84,21 @@ injections at `Ostheim_110` and `Haldorf_110`: two observable islands, the
 tie unobservable. Zero injection stays on, both tie ends carry a load.
 Scenarios: `ties_out_three_islands` (both ties open, C without a source)
 and `tie_Ostheim_Haldorf_out`. No bad-data variant, no fixture.
+
+## sp_case10_areas (10 buses, multi-area state estimation)
+
+Built by `tools/build_demo_cases.jl`. Three areas in the bus table
+(`extra.area`): area 1 `Holmfeld_110` (external grid, slack),
+`Rabenau_110`, `Kirchau_110`, `Lindwerk_110`; area 2 `Marbach_110` and
+`Marbach_110b` (two busbar sections on a closed coupler), `Nesselau_110`
+(machine `Gen_Nesselau`, 40 MW); area 3 `Oberried_110`, `Pfaffing_110` and,
+behind the transformer `Oberried_110_20` (ratio changer +-12 steps of 1.25
+percent, released for estimation), `Oberried_20`. 114 MW load. The tie
+lines `Kirchau_Marbach`, `Lindwerk_Oberried` and `Nesselau_Pfaffing` close
+a ring over the areas; their six ends are the border buses. The case file
+holds the changer at step 0, the measurement table (70 rows, seed
+20261110) comes from the power flow at step +2, so the estimate has to
+find the step. No bad-data variant, no fixture.
 
 ## sp_case14 (14 buses, the regulated feeder)
 

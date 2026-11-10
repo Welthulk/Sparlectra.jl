@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-bd-tp_bd">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model BD</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/TopologyBoundary/3/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://boundary.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:TopologicalNode rdf:ID="_tn_XN_Rabe_Mar">
+    <cim:IdentifiedObject.name>XN_Rabe_Mar</cim:IdentifiedObject.name>
+    <cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/>
+    <cim:TopologicalNode.ConnectivityNodeContainer rdf:resource="#_bdline_XN_Rabe_Mar"/>
+  </cim:TopologicalNode>
+  <cim:TopologicalNode rdf:ID="_tn_XN_Holm_Nes">
+    <cim:IdentifiedObject.name>XN_Holm_Nes</cim:IdentifiedObject.name>
+    <cim:TopologicalNode.BaseVoltage rdf:resource="#_bv110"/>
+    <cim:TopologicalNode.ConnectivityNodeContainer rdf:resource="#_bdline_XN_Holm_Nes"/>
+  </cim:TopologicalNode>
+</rdf:RDF>

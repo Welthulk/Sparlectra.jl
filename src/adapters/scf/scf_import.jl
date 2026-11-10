@@ -24,7 +24,7 @@
 # Rev. 1 component subset; anything else in `data` is rejected by name
 const _SCF_KNOWN_DATA_COMPONENTS = ("node", "line", "generic_branch", "link", "source", "sym_load", "sym_gen", "shunt", "voltage_regulator", "sym_voltage_sensor", "sym_power_sensor", "sym_current_sensor", "fault")
 const _SCF_KNOWN_ROOT_KEYS = ("version", "type", "is_batch", "attributes", "data", "sparlectra")
-const _SCF_KNOWN_SPARLECTRA_KEYS = ("format_version", "meta", "roles", "components", "extra", "measurements", "start_state", "contingencies", "short_circuit", "config", "transformer_types", "branch_shunt_split", "tap_changer_models", "scenarios")
+const _SCF_KNOWN_SPARLECTRA_KEYS = ("format_version", "meta", "roles", "components", "extra", "measurements", "start_state", "contingencies", "short_circuit", "config", "transformer_types", "branch_shunt_split", "tap_changer_models", "scenarios", "areas")
 # what `sparlectra.measurements` may carry besides the rows; shunt_bay_rows
 # are the bus-referenced shunt-bay readings PGM has no sensor for (revision
 # 1.0 only; in 1.2 they are rows of `rows`)
@@ -538,6 +538,13 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
     haskey(e, "external_id") && (node_comp.cID = String(e["external_id"]))
     node_comp.cName = haskey(e, "component_name") ? String(e["component_name"]) : name
   end
+  # the names of the bus areas (sparlectra.areas, 1.2.0): number => name
+  for (k, v) in spar.areas
+    a = tryparse(Int, String(k))
+    a === nothing && throw(ArgumentError("SCF: sparlectra.areas keys are area numbers, got $(repr(k))."))
+    v isa AbstractString || throw(ArgumentError("SCF: sparlectra.areas $(k) must be a name (string), got $(repr(v))."))
+    net.area_names[a] = String(v)
+  end
 
   # --- start state (start values, never results) -------------------------
   # applied RIGHT AFTER the buses, so appliance setpoints laid down below
@@ -705,9 +712,18 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   # step_assumed: they sit at the middle position, named once per import
   # below
   assumed_steps = Tuple{String,Int}[]
+  # the release for the state estimation (`tap_est_mode`, written when not
+  # "none"), applied after the typed models below: setTapEstimation! checks
+  # the mode against the changers the branch ends up with
+  releases = Tuple{Int,Symbol,Int}[]
   for row in comps.tap_changer
     bidx = branch_index_by_id[row.branch]
     br = net.branchVec[bidx]
+    if row.tap_est_mode !== nothing && row.tap_est_mode != "none"
+      mode = Symbol(row.tap_est_mode)
+      mode in (:ratio, :pst, :both) || throw(ArgumentError("SCF: tap_changer tap_est_mode for branch $(row.branch) must be none, ratio, pst or both, got $(repr(row.tap_est_mode))."))
+      push!(releases, (bidx, mode, row.branch))
+    end
     # the file's ratio_base/angle_base_deg are the NEUTRAL position; the
     # live values were written into k/theta and are restored by the
     # nameplate application from the current step
@@ -891,6 +907,15 @@ function _scf_net_from_case(case::SCFCase; f_nom_default::Float64 = model_config
   end
   for line in _tap_step_assumed_lines(assumed_steps)
     @info "SCF: " * line
+  end
+  for (bidx, mode, bid) in releases
+    try
+      setTapEstimation!(net; trafo = bidx, mode = mode)
+    catch err
+      # the mode names a changer the branch does not carry
+      err isa ArgumentError || rethrow()
+      throw(ArgumentError("SCF: tap_changer tap_est_mode for branch $(bid): " * sprint(showerror, err)))
+    end
   end
 
   # --- appliances -------------------------------------------------------

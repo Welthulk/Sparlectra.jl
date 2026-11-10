@@ -948,7 +948,7 @@
     "format_version": "1.3",
     "meta": {
       "case_name": "sp_case16_islands",
-      "created_by": "Sparlectra 1.1.1",
+      "created_by": "Sparlectra 1.2.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "scenarios"],
       "notes": "Self-built Sparlectra demo network for island checks: the sp_case6tap network unchanged plus two attached networks, B (110/20 kV with the machine Gen_Weidach) on the tie Ostheim_Haldorf and C (20 kV, loads only) on the tie Lindenau_Erlbach. The measurement table leaves out the flows of Ostheim_Haldorf and the injections at both its ends: two observable islands, the tie unobservable. Scenarios open both ties (three network islands) or only the tie to B. Single-line diagram: sp_case16_islands_single_line.svg. The bus count in the name does not make it the IEEE case of that size; no data was taken from MATPOWER, DTF or any other source.",

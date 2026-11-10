@@ -335,6 +335,11 @@ default off) submits `cgmes_import.equivalent_injection_as_source`: an
 a voltage-regulating source at the SV voltage of its node, the one on the
 SV angle reference is the slack
 ([CGMES import configuration](cgmes_import.md#cgmes-import-config)).
+**Bus areas** (CGMES section, saved per case, default operator model)
+submits `cgmes_import.area_source`: the area of each bus for the
+multi-area state estimation, from the operator model, the sub-region or
+region of the substation, or none
+([Bus areas](cgmes_import.md#cgmes_bus_areas)).
 
 ### Long actions on a case
 

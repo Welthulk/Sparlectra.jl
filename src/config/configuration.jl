@@ -727,6 +727,40 @@ Base.@kwdef struct LastValueConfig
   end
 end
 
+const SE_MULTI_AREA_MODE_VALUES = (:off, :two_level)
+
+"""
+    MultiAreaConfig(; mode = :off, partition = "bus_area", max_passes = 20, compare_integrated = true)
+
+Settings of the `state_estimation.multi_area` block (multi-area state
+estimation, see [`runse_multi_area!`](@ref)).
+
+`mode` (`off` or `two_level`, default `off`): with `two_level` the SE
+service runs the multi-area estimation after the normal one on the same
+final rows and writes the area tables, which the Web UI shows; `runse!`
+itself is unaffected.
+`partition` (default `bus_area`): the areas stored with the buses, or the
+path of an area list (one line per bus: bus name and area number, separated
+by `;`, `,` or a tab; a header line and `#` comments are allowed).
+`max_passes` (positive integer, default 20): the most passes before the run
+stops unconverged. `compare_integrated` (default `true`): the result
+carries the integrated estimate on the same rows and the difference per
+state.
+"""
+Base.@kwdef struct MultiAreaConfig
+  mode::Symbol = :off
+  partition::String = "bus_area"
+  max_passes::Int = 20
+  compare_integrated::Bool = true
+  # the keyword constructor checks what the file loader checks
+  function MultiAreaConfig(mode, partition, max_passes, compare_integrated)
+    mode in SE_MULTI_AREA_MODE_VALUES || throw(ArgumentError("state_estimation.multi_area.mode must be one of $(join(SE_MULTI_AREA_MODE_VALUES, ", ")); got $(mode)."))
+    isempty(strip(partition)) && throw(ArgumentError("state_estimation.multi_area.partition must be bus_area or the path of an area list; got an empty value."))
+    max_passes > 0 || throw(ArgumentError("state_estimation.multi_area.max_passes must be positive; got $(max_passes)."))
+    return new(mode, String(partition), max_passes, compare_integrated)
+  end
+end
+
 """
     SEStartModeConfig(; rotate_behind_pst = false)
 
@@ -1029,6 +1063,7 @@ Base.@kwdef struct StateEstimationConfig
   tap_estimation::TapEstimationConfig = TapEstimationConfig()
   bad_data::BadDataConfig = BadDataConfig()
   last_value::LastValueConfig = LastValueConfig()
+  multi_area::MultiAreaConfig = MultiAreaConfig()
 end
 
 """
@@ -1075,6 +1110,14 @@ Options of the `cgmes_import` configuration block, the ENTSO-E CGMES import
   `r`/`x` where the EQ states them. Off by default: the injection stays as
   mapped (PQ at the SSH p and q, PV with `regulationStatus`, slack when it
   holds the SV angle reference).
+- `area_source::Symbol`: where the area of a bus (`Node._area`, the
+  partition of the multi-area state estimation) comes from.
+  `:model_authority` (default): the model of each operator in a CGM
+  (`Model.modelingAuthoritySet` of the EQ that defines the bus container);
+  `:sub_geographical_region` and `:geographical_region`: the region of the
+  substation; `:none`: no area. A boundary node takes the smallest area
+  among its neighbours; the areas are numbered by name, the names go to
+  `net.area_names`.
 - `vset_min_pu`, `vset_max_pu::Float64`: plausibility band for a voltage
   `RegulatingControl.targetValue`, in p.u. of the regulated bus's nominal
   voltage. A target outside the band is treated as a placeholder: it is ignored
@@ -1124,6 +1167,8 @@ Base.@kwdef struct CGMESImportConfig
   # fixed PCC injections, :paired_control additionally attaches one
   # steerable HvdcPairControl per detected converter pair.
   hvdc_mode::Symbol = :injections
+  # area per bus from the operator model or the region, see the docstring
+  area_source::Symbol = :model_authority
 end
 
 """
@@ -1587,6 +1632,7 @@ const CGMES_START_VALUES_VALUES = (:auto, :flat, :sv)
 # deliveries where silently dropping data is not acceptable
 const CGMES_PLACEHOLDER_GUARDS_VALUES = (:warn_skip, :strict)
 const CGMES_HVDC_MODE_VALUES = (:injections, :paired_control)
+const CGMES_AREA_SOURCE_VALUES = (:model_authority, :sub_geographical_region, :geographical_region, :none)
 const POWSYBL_HVDC_MODE_VALUES = (:fixed_injection, :paired_control)
 const POWSYBL_REMOTE_REGULATION_VALUES = (:hold_local, :pq, :remote)
 const TRUST_REGION_STEP_MODE_VALUES = (:scaled, :dogleg)
@@ -2541,6 +2587,15 @@ end
 
 # `raw` is the merged state_estimation section. A factor below 1 would make
 # an old value more trusted than the reading it replaces.
+function MultiAreaConfig(raw::AbstractDict)
+  section = _raw_get(raw, "multi_area", nothing)
+  section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.multi_area must be a block with the keys mode, partition, max_passes and compare_integrated; got $(repr(section))."))
+  merged = _merged_section(raw, "multi_area")
+  mode = _validate_allowed_symbol("state_estimation.multi_area.mode", _as_symbol_cfg(_raw_get(merged, "mode", :off)), SE_MULTI_AREA_MODE_VALUES)
+  passes = Int(_validate_positive("state_estimation.multi_area.max_passes", _as_int_cfg(_raw_get(merged, "max_passes", 20))))
+  return MultiAreaConfig(mode = mode, partition = string(_raw_get(merged, "partition", "bus_area")), max_passes = passes, compare_integrated = _as_bool_cfg(_raw_get(merged, "compare_integrated", true)))
+end
+
 function LastValueConfig(raw::AbstractDict)
   section = _raw_get(raw, "last_value", nothing)
   section === nothing || section isa AbstractDict || throw(ArgumentError("state_estimation.last_value must be a block with the keys enabled, max_age_min and sigma_factor; got $(repr(section))."))
@@ -2648,6 +2703,7 @@ function StateEstimationConfig(raw::AbstractDict)
     tap_estimation = TapEstimationConfig(merged),
     bad_data = BadDataConfig(merged),
     last_value = LastValueConfig(merged),
+    multi_area = MultiAreaConfig(merged),
   )
 end
 
@@ -2673,6 +2729,7 @@ function CGMESImportConfig(raw::AbstractDict)
     placeholder_guards = _validate_allowed_symbol("cgmes_import.placeholder_guards", _as_symbol_cfg(_raw_get(merged, "placeholder_guards", :warn_skip)), CGMES_PLACEHOLDER_GUARDS_VALUES),
     infer_base_voltages = _as_bool_cfg(_raw_get(merged, "infer_base_voltages", false)),
     hvdc_mode = _validate_allowed_symbol("cgmes_import.hvdc_mode", _as_symbol_cfg(_raw_get(merged, "hvdc_mode", :injections)), CGMES_HVDC_MODE_VALUES),
+    area_source = _validate_allowed_symbol("cgmes_import.area_source", _as_symbol_cfg(_raw_get(merged, "area_source", :model_authority)), CGMES_AREA_SOURCE_VALUES),
   )
 end
 
@@ -3746,7 +3803,7 @@ function _print_config_section(io::IO, name::AbstractString, value; indent::Abst
   child_indent = string(indent, "  ")
   for field in fieldnames(typeof(value))
     field_value = getfield(value, field)
-    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig || field_value isa BadDataConfig || field_value isa LastValueConfig
+    if field_value isa StartModeConfig || field_value isa QLimitConfig || field_value isa ObservabilityConfig || field_value isa TapEstimationConfig || field_value isa BadDataConfig || field_value isa LastValueConfig || field_value isa MultiAreaConfig
       _print_config_section(io, String(field), field_value; indent = child_indent)
     else
       println(io, child_indent, field, ": ", field_value)

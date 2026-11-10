@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rdf:RDF xmlns:cim="http://iec.ch/TC57/2013/CIM-schema-cim16#" xmlns:md="http://iec.ch/TC57/61970-552/ModelDescription/1#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <md:FullModel rdf:about="urn:uuid:sp-case6-igm-bd-eq_bd">
+    <md:Model.scenarioTime>2026-01-01T12:00:00Z</md:Model.scenarioTime>
+    <md:Model.description>sp_case6_igm, operator model BD</md:Model.description>
+    <md:Model.profile>http://entsoe.eu/CIM/EquipmentBoundary/3/1</md:Model.profile>
+    <md:Model.modelingAuthoritySet>http://boundary.example/sparlectra</md:Model.modelingAuthoritySet>
+  </md:FullModel>
+  <cim:BaseVoltage rdf:ID="_bv110">
+    <cim:BaseVoltage.nominalVoltage>110</cim:BaseVoltage.nominalVoltage>
+  </cim:BaseVoltage>
+  <cim:Line rdf:ID="_bdline_XN_Rabe_Mar">
+    <cim:IdentifiedObject.name>Line_XN_Rabe_Mar</cim:IdentifiedObject.name>
+  </cim:Line>
+  <cim:ConnectivityNode rdf:ID="_cn_XN_Rabe_Mar">
+    <cim:IdentifiedObject.name>XN_Rabe_Mar</cim:IdentifiedObject.name>
+    <cim:ConnectivityNode.ConnectivityNodeContainer rdf:resource="#_bdline_XN_Rabe_Mar"/>
+  </cim:ConnectivityNode>
+  <cim:Line rdf:ID="_bdline_XN_Holm_Nes">
+    <cim:IdentifiedObject.name>Line_XN_Holm_Nes</cim:IdentifiedObject.name>
+  </cim:Line>
+  <cim:ConnectivityNode rdf:ID="_cn_XN_Holm_Nes">
+    <cim:IdentifiedObject.name>XN_Holm_Nes</cim:IdentifiedObject.name>
+    <cim:ConnectivityNode.ConnectivityNodeContainer rdf:resource="#_bdline_XN_Holm_Nes"/>
+  </cim:ConnectivityNode>
+</rdf:RDF>

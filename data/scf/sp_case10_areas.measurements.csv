@@ -1,0 +1,77 @@
+# sparlectra-measurement-table v1
+# case: sp_case10_areas.scf.json
+# generator: Sparlectra measurement generator, seed=20261110
+# noise: gaussian per-type stddev (measurementStdDevs)
+# state: power flow with Oberried_110_20 at step 2; the case file holds step 0
+# converted from sp_case10_areas.measurements.csv (measurement CSV v1): 70 row(s), 0 not converted
+timestamp,measurement_mrid,terminal_mrid,node_mrid,type,value,sigma,source,valid
+,,,Holmfeld_110,U,111.65068997416193,0.55,converted;v1,true
+,,,Holmfeld_110,P,77.18001096942075,1.0,converted;v1,true
+,,,Holmfeld_110,Q,22.23421072746052,1.0,converted;v1,true
+,,,Rabenau_110,U,111.31455612791547,0.55,converted;v1,true
+,,,Rabenau_110,P,-20.254349065577415,1.0,converted;v1,true
+,,,Rabenau_110,Q,-5.966008533936155,1.0,converted;v1,true
+,,,Kirchau_110,U,110.6514166314982,0.55,converted;v1,true
+,,,Kirchau_110,P,-24.888189976754358,1.0,converted;v1,true
+,,,Kirchau_110,Q,-9.029325217439723,1.0,converted;v1,true
+,,,Lindwerk_110,U,110.71626440096122,0.55,converted;v1,true
+,,,Lindwerk_110,P,-12.865011183876357,1.0,converted;v1,true
+,,,Lindwerk_110,Q,-6.300301851317106,1.0,converted;v1,true
+,,,Marbach_110,U,109.71797340746605,0.55,converted;v1,true
+,,,Marbach_110,P,-8.284464320124055,1.0,converted;v1,true
+,,,Marbach_110,Q,-4.473044961377406,1.0,converted;v1,true
+,,,Marbach_110b,U,110.38296785913681,0.55,converted;v1,true
+,,,Marbach_110b,P,-12.517043592120773,1.0,converted;v1,true
+,,,Marbach_110b,Q,-4.446682957735492,1.0,converted;v1,true
+,,,Nesselau_110,U,110.16682874504437,0.55,converted;v1,true
+,,,Nesselau_110,P,39.42031288592484,1.0,converted;v1,true
+,,,Nesselau_110,Q,11.321567528665518,1.0,converted;v1,true
+,,,Oberried_110,U,110.33642730389282,0.55,converted;v1,true
+,,,Oberried_110,P,0.20876132479861037,1.0,converted;v1,true
+,,,Oberried_110,Q,-0.9811434246315377,1.0,converted;v1,true
+,,,Pfaffing_110,U,110.23126675303071,0.55,converted;v1,true
+,,,Pfaffing_110,P,-11.77443915387937,1.0,converted;v1,true
+,,,Pfaffing_110,Q,-4.215491292844925,1.0,converted;v1,true
+,,,Oberried_20,U,20.05778707103783,0.1,converted;v1,true
+,,,Oberried_20,P,-17.492893382791156,1.0,converted;v1,true
+,,,Oberried_20,Q,-7.124095087533689,1.0,converted;v1,true
+,,Holmfeld_Rabenau:from,,P,37.71298422909636,1.0,converted;v1,true
+,,Holmfeld_Rabenau:to,,P,-36.474293097283635,1.0,converted;v1,true
+,,Holmfeld_Rabenau:from,,Q,11.75174798121994,1.0,converted;v1,true
+,,Holmfeld_Rabenau:to,,Q,-13.083573836931109,1.0,converted;v1,true
+,,Rabenau_Kirchau:from,,P,19.544148651268763,1.0,converted;v1,true
+,,Rabenau_Kirchau:to,,P,-19.711484394105803,1.0,converted;v1,true
+,,Rabenau_Kirchau:from,,Q,4.624769708834158,1.0,converted;v1,true
+,,Rabenau_Kirchau:to,,Q,-6.3188547369907155,1.0,converted;v1,true
+,,Holmfeld_Lindwerk:from,,P,36.569683377743615,1.0,converted;v1,true
+,,Holmfeld_Lindwerk:to,,P,-35.632877017415595,1.0,converted;v1,true
+,,Holmfeld_Lindwerk:from,,Q,10.115995445481936,1.0,converted;v1,true
+,,Holmfeld_Lindwerk:to,,Q,-9.406431555458747,1.0,converted;v1,true
+,,Kirchau_Lindwerk:from,,P,-9.375448519740223,1.0,converted;v1,true
+,,Kirchau_Lindwerk:to,,P,10.307726525654003,1.0,converted;v1,true
+,,Kirchau_Lindwerk:from,,Q,-2.3350717285723293,1.0,converted;v1,true
+,,Kirchau_Lindwerk:to,,Q,2.183834437360942,1.0,converted;v1,true
+,,Marbach_Nesselau:from,,P,-20.434707434657316,1.0,converted;v1,true
+,,Marbach_Nesselau:to,,P,20.22432271828487,1.0,converted;v1,true
+,,Marbach_Nesselau:from,,Q,-5.836525718063752,1.0,converted;v1,true
+,,Marbach_Nesselau:to,,Q,4.5862401312445895,1.0,converted;v1,true
+,,Oberried_Pfaffing:from,,P,-7.094582826569828,1.0,converted;v1,true
+,,Oberried_Pfaffing:to,,P,7.35811575024629,1.0,converted;v1,true
+,,Oberried_Pfaffing:from,,Q,-2.4221343574377103,1.0,converted;v1,true
+,,Oberried_Pfaffing:to,,Q,2.61848835649428,1.0,converted;v1,true
+,,Kirchau_Marbach:from,,P,5.2749105683648265,1.0,converted;v1,true
+,,Kirchau_Marbach:to,,P,-2.3175504626646646,1.0,converted;v1,true
+,,Kirchau_Marbach:from,,Q,-0.4164325828997151,1.0,converted;v1,true
+,,Kirchau_Marbach:to,,Q,-1.3372345696057353,1.0,converted;v1,true
+,,Lindwerk_Oberried:from,,P,10.593937762953315,1.0,converted;v1,true
+,,Lindwerk_Oberried:to,,P,-10.345535024864787,1.0,converted;v1,true
+,,Lindwerk_Oberried:from,,Q,3.673498600232405,1.0,converted;v1,true
+,,Lindwerk_Oberried:to,,Q,-2.155924434873277,1.0,converted;v1,true
+,,Nesselau_Pfaffing:from,,P,19.8134870439308,1.0,converted;v1,true
+,,Nesselau_Pfaffing:to,,P,-19.4485659352603,1.0,converted;v1,true
+,,Nesselau_Pfaffing:from,,Q,6.716993174910044,1.0,converted;v1,true
+,,Nesselau_Pfaffing:to,,Q,-7.16342150029479,1.0,converted;v1,true
+,,Oberried_110_20:from,,P,19.48414072970752,1.0,converted;v1,true
+,,Oberried_110_20:to,,P,-18.934864866541364,1.0,converted;v1,true
+,,Oberried_110_20:from,,Q,6.282496326677516,1.0,converted;v1,true
+,,Oberried_110_20:to,,Q,-5.890595911003009,1.0,converted;v1,true
