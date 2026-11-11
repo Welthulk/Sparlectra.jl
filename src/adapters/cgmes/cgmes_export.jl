@@ -92,7 +92,8 @@ function xmlEscape(s::AbstractString)
   return s
 end
 
-fmtVal(x::Real) = string(Float64(x))
+# rounded under Sparlectra.with_export_significant_digits
+fmtVal(x::Real) = string(Sparlectra._export_float(x))
 
 # write `<cim:TAG>value</cim:TAG>` only when the value is known
 _optNum(io::IO, tag::AbstractString, v::Union{Nothing,Real}) = v === nothing ? nothing : println(io, "    <cim:", tag, ">", fmtVal(v), "</cim:", tag, ">")

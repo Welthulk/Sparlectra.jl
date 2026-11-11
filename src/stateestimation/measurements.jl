@@ -1200,7 +1200,7 @@ function writeMeasurementsCSV(net::Net; file::AbstractString, headerComments::Ve
   # thousands grouping), so the reader restores them bitwise in every format.
   resolved = format isa NamedTuple ? format : _resolve_detailed_csv_format(String(format))
   delim = string(resolved.delimiter)
-  number(v) = resolved.decimal_separator == '.' ? repr(v) : replace(repr(v), "." => string(resolved.decimal_separator))
+  number(v) = (t = repr(v isa AbstractFloat ? _export_float(v) : v); resolved.decimal_separator == '.' ? t : replace(t, "." => string(resolved.decimal_separator)))
   name_by_idx = _bus_name_by_idx(net)
   # :mrid (CGMES only): reference buses by their preserved ENTSO-E UUID;
   # falls back to the name where no mRID is recorded. MATPOWER/DTF nets

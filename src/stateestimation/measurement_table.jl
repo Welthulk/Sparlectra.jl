@@ -286,7 +286,7 @@ function _measurement_table_number(r, field::Symbol)::String
     tryparse(Float64, t) === nothing && throw(ArgumentError("writeMeasurementTable: $(field) $(repr(x)) is not a number"))
     return t
   end
-  return string(Float64(x))
+  return string(_export_float(x))
 end
 
 # U and its sigma in pu of the bus. A cell of up to 17 significant digits

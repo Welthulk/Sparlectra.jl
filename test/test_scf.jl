@@ -256,6 +256,40 @@ function run_scf_tests()
     @test startswith(txt, "{\n  \"version\": \"1.0\",\n  \"type\": \"input\",\n  \"is_batch\": false,")
   end)() end
 
+  @testset "rounded export: output.export_significant_digits" begin (function ()
+    # with_export_significant_digits(8) rounds every float the four case
+    # writers print (SCF JSON, measurement CSV v1, CGMES RDF/XML) to 8
+    # significant digits, so a solver's last digits do not reach the file;
+    # outside the block the shortest round-trip form stays (the round-trip
+    # tests above). sp_case14 solved, with its measurement set.
+    scf14 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+    net = redirect_stdout(() -> Sparlectra.importSCF(scf14), devnull)
+    runpf!(net, 30, 1e-10, 0; method = :rectangular)
+    append!(net.measurements, generateMeasurementsFromPF(net; noise = false))
+    d = mktempdir()
+    full = exportSCF(net; file = joinpath(d, "full.scf.json"))
+    files = with_export_significant_digits(8) do
+      @test Sparlectra._EXPORT_SIGNIFICANT_DIGITS[] == 8
+      (exportSCF(net; file = joinpath(d, "r8.scf.json")), writeMeasurementsCSV(net; file = joinpath(d, "r8.csv"), format = "technical"), writeCGMESFiles(net; path = mkpath(joinpath(d, "cgmes"))))
+    end
+    @test Sparlectra._EXPORT_SIGNIFICANT_DIGITS[] == 0
+    floats(x, acc = Float64[]) = (x isa AbstractDict ? foreach(v -> floats(v, acc), values(x)) : x isa AbstractVector ? foreach(v -> floats(v, acc), x) : x isa AbstractFloat && push!(acc, x); acc)
+    rounded8(v) = all(x -> round(x; sigdigits = 8) == x, v)
+    @test !rounded8(floats(Sparlectra.scf_json_parse(read(full, String))))
+    @test rounded8(floats(Sparlectra.scf_json_parse(read(files[1], String))))
+    csv_lines = [split(l, ',') for l in eachline(joinpath(d, "r8.csv")) if !startswith(l, '#')]
+    cols = [findfirst(==(c), csv_lines[1]) for c in ("value", "sigma")]
+    @test length(csv_lines) > 1 && rounded8([parse(Float64, r[c]) for r in csv_lines[2:end] for c in cols])
+    xml_floats = Float64[parse(Float64, m[1]) for f in files[3] if endswith(f, ".xml") for m in eachmatch(r">(-?\d+\.\d*(?:[eE][-+]?\d+)?)<", read(f, String))]
+    @test !isempty(xml_floats) && rounded8(xml_floats)
+    # the rounded case reads back and solves to the same voltages within the
+    # rounding (8 digits of a pu value: 1e-7 pu)
+    net8 = redirect_stdout(() -> Sparlectra.importSCF(files[1]), devnull)
+    runpf!(net8, 30, 1e-10, 0; method = :rectangular)
+    @test maximum(abs.(getfield.(net8.nodeVec, :_vm_pu) .- getfield.(net.nodeVec, :_vm_pu))) < 1e-6
+    @test_throws ArgumentError with_export_significant_digits(() -> nothing, 18)
+  end)() end
+
   @testset "PGM subset shape and SI unit conversion" begin (function ()
     net = _scf_test_net()
     root = Sparlectra.net_to_scf(net; f_nom = 50.0)

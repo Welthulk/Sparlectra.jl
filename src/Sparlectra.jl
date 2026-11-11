@@ -197,6 +197,7 @@ export
   parallel_max_tasks,                     # Resolve max_tasks (auto = Threads.nthreads()) to a task count.
   DiagnosticsConfig,
   OutputConfig,
+  with_export_significant_digits,         # Round the floats the case writers print (output.export_significant_digits).
   ContingencyConfig,                      # contingency.* settings (ladder, screening, warm start, events, pairs).
   ContingencyEventsConfig,                # contingency.events.*: correlated event classes.
   ContingencyPairsConfig,                 # contingency.pairs.*: N-2 pairs with a cap.

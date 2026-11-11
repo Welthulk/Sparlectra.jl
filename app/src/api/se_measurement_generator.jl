@@ -697,7 +697,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
   for p in conv.problems
     push!(comments, string("not written: ", p.id, ": ", p.problem, ": ", p.detail))
   end
-  writeMeasurementTable(out_path, conv.rows; comments = comments)
+  with_export_significant_digits(() -> writeMeasurementTable(out_path, conv.rows; comments = comments), config.output.export_significant_digits)
   # the level-sigma count describes the written table
   dropped_ids = Set(p.id for p in conv.problems)
   level_rows = count(m -> get(level_sigma, m.id, NaN) == m.sigma && !(m.id in dropped_ids), meas)
