@@ -55,7 +55,7 @@ function _default_suite_options()
   return Dict{String,Any}(
     "mode" => "all",
     "case" => "all",
-    "data-dir" => joinpath(repo, "data", "DTF"),
+    "data-dir" => get(ENV, "SPARLECTRA_DTF_DIR", joinpath(repo, "data", "DTF")),
     "output-dir" => joinpath(@__DIR__, "_out", "dtf_validation_suite"),
     "tol" => 1e-8,
     "max-iter" => 50,

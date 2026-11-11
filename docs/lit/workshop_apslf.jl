@@ -48,8 +48,8 @@
 #
 # Nothing here needs an extra installation: AnalyticLoadFlow.jl is a
 # dependency of Sparlectra, and `power_flow.solver = apslf` in the
-# configuration switches a run over to it. Sparlectra 0.31 needs
-# AnalyticLoadFlow 0.10.0 or newer and refuses to load with an older one.
+# configuration switches a run over to it. Sparlectra 1.2.1 needs
+# AnalyticLoadFlow 0.11.0 or newer and refuses to load with an older one.
 
 #nb # ## Setup
 #nb # This notebook runs in the workshop folder that the installer sets up

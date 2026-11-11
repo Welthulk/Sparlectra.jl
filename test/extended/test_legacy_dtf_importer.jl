@@ -24,8 +24,7 @@ function run_legacy_dtf_importer_tests()
   # cut from the runner function
   @testset "native DTF full local fixture" begin
     if !isfile(DTF_FIXTURE)
-      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dtf/FOR001.DAT or data/DTF/FOR001.DAT for manual validation."
-      @test_skip "FOR001 full reference fixture not available"
+      @info "Skipping full FOR001 fixture validation; external reference network is not tracked. Place a local file at test/fixtures/dtf/FOR001.DAT, data/DTF/FOR001.DAT or in SPARLECTRA_DTF_DIR for manual validation."
       return
     end
     case = Sparlectra.DTFImporter.read_dtf(DTF_FIXTURE)

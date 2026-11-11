@@ -89,6 +89,7 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.apslf.order", "power_flow_apslf_order", Int, :number, 24, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf.nr_polish", "power_flow_apslf_nr_polish", Bool, :checkbox, false, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.apslf.convergence_radius", "power_flow_apslf_convergence_radius", Bool, :checkbox, true, (), :expert, :case, true),
+  WebUIOptionSpec("power_flow.apslf.precision", "power_flow_apslf_precision", String, :select, "float64", APSLF_PRECISION_VALUES, :expert, :case, true),
   WebUIOptionSpec("power_flow.flatstart", "power_flow_flatstart", Bool, :checkbox, false, (), :basic, :case, true),
   WebUIOptionSpec("power_flow.start_mode.ratio_profile", "power_flow_ratio_profile", Bool, :checkbox, true, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.start_mode.rotate_behind_pst", "power_flow_rotate_behind_pst", Bool, :checkbox, false, (), :expert, :case, true),

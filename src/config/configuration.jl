@@ -423,8 +423,14 @@ end
 
 Typed configuration for the AnalyticLoadFlow.jl-backed analytic power-series
 solver (`ApslfSolver`), used when `power_flow.solver == :apslf`. The series
-is evaluated with Padé approximants (AnalyticLoadFlow 0.10.0 has no other
+is evaluated with Padé approximants (AnalyticLoadFlow has no other
 evaluation), so there is no evaluation switch.
+
+`precision` (`power_flow.apslf.precision`) is the arithmetic of the series
+and the Padé evaluation: `:float64` (default) or `:double_double`
+(AnalyticLoadFlow 0.11). Double-double helps where a Float64 run stagnates
+above the tolerance (diagnosis `precision_limit`); without NR polish it needs
+order 48 or 56. The loader rejects any other value.
 """
 Base.@kwdef struct ApslfConfig
   order::Int = 24
@@ -432,6 +438,7 @@ Base.@kwdef struct ApslfConfig
   # Padé-pole margin (APSLF convergence radius) evaluated after the solve;
   # costs about as much as the solve, hence switchable
   convergence_radius::Bool = true
+  precision::Symbol = :float64
 end
 
 """
@@ -570,6 +577,8 @@ const WRONG_BRANCH_DETECTION_VALUES = [:off, :warn, :fail, :rescue]
 const POWERFLOW_SOLVER_VALUES = (:rectangular, :apslf, :dc)
 const POWERFLOW_LINEAR_SOLVER_VALUES = (:umfpack, :umfpack_reuse)
 const POWERFLOW_NEWTON_UPDATE_VALUES = (:rectangular, :polar)
+# power_flow.apslf.precision, the values AnalyticLoadFlow 0.11 accepts
+const APSLF_PRECISION_VALUES = (:float64, :double_double)
 # power_flow.power_mode_lu (0.30.2): one source for the struct, the loader,
 # the override validation and the solver keyword default
 const POWER_MODE_LU_VALUES = (:auto, :klu, :umfpack)
@@ -2313,6 +2322,7 @@ function ApslfConfig(raw::AbstractDict)
     order = order,
     nr_polish = _as_bool_cfg(_raw_get(raw, "nr_polish", false)),
     convergence_radius = _as_bool_cfg(_raw_get(raw, "convergence_radius", true)),
+    precision = _validate_allowed_symbol("power_flow.apslf.precision", _as_symbol_cfg(_raw_get(raw, "precision", :float64)), APSLF_PRECISION_VALUES),
   )
 end
 

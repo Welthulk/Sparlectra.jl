@@ -114,17 +114,29 @@ solver = apslf_solver(order = 24, nr_polish = false)
   every APSLF run (below 1: the plain series does not reach `s = 1`).
 - `mode::Symbol`: `:direct` (native PV handling) or `:outer` (PQ-only
   series plus an outer secant loop for PV enforcement).
+- `precision::Symbol`: `:float64` (default) or `:double_double`, see below.
 
-The series is always evaluated with Padé `[L/M]` approximants
-(AnalyticLoadFlow 0.10.0); there is no switch. The residual of an APSLF
+The series is always evaluated with Padé `[L/M]` approximants; there is no
+switch.
+
+With `precision = :double_double` (`power_flow.apslf.precision`,
+AnalyticLoadFlow 0.11) the series and the Padé evaluation run in
+double-double arithmetic. It is meant for runs that stop above the
+tolerance in Float64 with the diagnosis `precision_limit`: the Padé value at
+`s = 1` stagnates while a pole lies inside `|s| = 1`. Without NR polish it
+needs order 48 or 56; on case6495rte order 32 is not enough
+(`examples/powerflow/exp_apslf_precision.jl`). Only the direct mode has the
+double-double kernel: `apslf_solver` rejects it together with
+`mode = :outer`, and the outer fallback after a failed direct solve runs in
+Float64. The residual of an APSLF
 solution is judged against the bus types the solver ended with: a machine
 clamped at a reactive limit is a PQ bus at that limit, logged like a
 rectangular Q-limit event (result table `PQ*`, Q-V check), and its voltage
 setpoint does not count as a mismatch.
 
 A run that does not converge carries the diagnosis of AnalyticLoadFlow
-(0.10.2): the reason, for example `outside_pade_region` or
-`pade_not_converged`, the nearest Padé pole with its case bus and whether it
+(0.10.2): the reason, for example `outside_pade_region`,
+`pade_not_converged` or `precision_limit`, the nearest Padé pole with its case bus and whether it
 is a conjugate pair, and the change of the Padé value at `s = 1` from order
 `N - 2` to `N`. It appears as one `APSLF diagnosis:` line in the primary
 reason of `run.log` and the Web UI result, and in the run metadata

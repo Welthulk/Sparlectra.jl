@@ -1,3 +1,7 @@
+# Version 1.2.1 - 2026-11-11
+
+Adding AnalyticLoadFlow 0.11.0.
+
 # Version 1.2.0 - 2026-11-10
 
 Multi-area state estimation and bus areas from CGMES.

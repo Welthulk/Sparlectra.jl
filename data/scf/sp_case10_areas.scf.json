@@ -542,7 +542,7 @@
     "format_version": "1.3",
     "meta": {
       "case_name": "sp_case10_areas",
-      "created_by": "Sparlectra 1.2.0",
+      "created_by": "Sparlectra 1.2.1",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation"],
       "notes": "Self-built Sparlectra demo network for the multi-area state estimation: three areas (bus areas 1 to 3) on three tie lines, a closed coupler Marbach_110 - Marbach_110b in area 2 and the transformer Oberried_110_20 with a ratio changer released for estimation in area 3. The case file holds the changer at step 0; the measurement table next to it comes from the power flow at step 2. The bus count in the name does not make it the IEEE case of that size; no data was taken from MATPOWER, DTF or any other source.",

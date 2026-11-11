@@ -48,6 +48,7 @@ the extended test profile.
 | `exp_synthetic_tiled_grid_pf_perf.jl` | `powerflow` | synthetic tiled-grid performance study | powerflow |
 | `qlimit_large_case_mode_comparison.jl` | `powerflow` | Q-limit enforcement modes on large cases | powerflow |
 | `apslf_demo.jl` | `powerflow` | APSLF as standalone, primary or start-value backend | powerflow |
+| `exp_apslf_precision.jl` | `powerflow` | APSLF float64 against double_double on case6495rte, with the expected values | powerflow |
 | `mc_probabilistic_powerflow.jl` | `powerflow` | Monte-Carlo load scaling on the shipped `sp_case14` (N = 1000) | powerflow |
 
 ## Transformers and controllers
@@ -104,7 +105,8 @@ the extended test profile.
 ## DTF validation (Testnetz13 / FOR001-FOR002)
 
 External FOR001/FOR002 datasets are not shipped; place files under
-`data/DTF/` or pass `--dtf-file`/`--for002-file`.
+`data/DTF/`, set `SPARLECTRA_DTF_DIR` to their directory, or pass
+`--dtf-file`/`--for002-file`.
 
 | Example | Demonstrates | Suite |
 |---|---|---|

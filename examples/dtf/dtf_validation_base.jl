@@ -75,7 +75,7 @@ function parse_cli(args)
   # The validation data are stored in <repository>/data/DTF.  Resolve the
   # paths relative to this script so that the program works independently of
   # the current working directory.
-  dtf_data_dir = normpath(joinpath(@__DIR__, "..", "..", "data", "DTF"))
+  dtf_data_dir = normpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(@__DIR__, "..", "..", "data", "DTF")))
   dtf_default = joinpath(dtf_data_dir, "FOR001.DAT")
   for002_default = joinpath(dtf_data_dir, "FOR002.DAT")
 

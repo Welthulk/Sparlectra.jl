@@ -979,6 +979,18 @@ function test_configuration_every_key_arrives()
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("order" => 0))))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("order" => -1))))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "apslf_start" => Dict("enabled" => true))))
+    # power_flow.apslf.precision (AnalyticLoadFlow 0.11): float64 by
+    # default, double_double taken, an unknown value refused at load; the
+    # outer mode has only the Float64 kernel, so apslf_solver (the one place
+    # a mode is chosen) refuses it with double_double before any solve
+    @test Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf"))).powerflow.apslf.precision === :float64
+    dd_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("precision" => "double_double"))))
+    @test dd_cfg.powerflow.apslf.precision === :double_double
+    @test Sparlectra._apslf_solver_from_config(dd_cfg.powerflow).precision === :double_double
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("precision" => "quad"))))
+    @test_throws ArgumentError Sparlectra.apslf_solver(mode = :outer, precision = :double_double)
+    @test_throws ArgumentError Sparlectra.apslf_solver(precision = :quad)
+    @test Sparlectra.apslf_solver(mode = :outer).precision === :float64
     hybrid = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("enabled" => true, "order" => 12))))
     @test hybrid.powerflow.apslf_start.enabled && hybrid.powerflow.apslf_start.order == 12 && hybrid.powerflow.solver === :rectangular
 

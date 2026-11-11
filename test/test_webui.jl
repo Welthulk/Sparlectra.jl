@@ -243,8 +243,10 @@ function run_webui_fast_tests()
             # an unchecked APSLF checkbox posts an explicit "false" (hidden plus
             # checkbox pair) and arrives as false; a field absent from the form
             # (a stale client) is left out instead of defaulting to false
-            apslf_req = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_apslf_nr_polish" => "false"); case_directory=cache)
+            apslf_req = SparlectraApp.powerflow_webui_request(Dict{String,Any}("casefile" => "sp_case14.scf.json", "power_flow_apslf_nr_polish" => "false", "power_flow_apslf_precision" => "double_double"); case_directory=cache)
             @test apslf_req["config_overrides"]["power_flow.apslf.nr_polish"] === false
+            # the precision select reaches the configuration key
+            @test String(apslf_req["config_overrides"]["power_flow.apslf.precision"]) == "double_double"
             @test !haskey(apslf_req["config_overrides"], "power_flow.apslf_start.enabled")
             run = SparlectraApp.start_powerflow_run(merge(req, Dict("output_root" => joinpath(root, "runs"), "config_file" => cfg_rt)); case_directory=cache)
             @test run["status"] == "succeeded"
@@ -2028,9 +2030,14 @@ function run_webui_fast_tests()
                     script = joinpath(A.SPARLECTRA_ROOT, "tools", "install_webui.sh")
                     # local names: a plain assignment in this closure would
                     # rebind the variables of the enclosing testset function
+                    # HOME is the temp folder; a juliaup launcher would set up
+                    # a fresh juliaup depot (with a Julia download) under it,
+                    # and its background update still writes there while the
+                    # temp folder is removed. The launcher keeps the real depot.
+                    juliaup_depot = get(ENV, "JULIAUP_DEPOT_PATH", joinpath(homedir(), ".julia"))
                     function run_installer(env)
                         local buf = IOBuffer()
-                        local base = Dict("PATH" => fakebin * ":" * ENV["PATH"], "HOME" => tmp, "SPARLECTRA_INSTALL_DIR" => sandbox, "SPARLECTRA_START_WEBUI" => "0", "SPARLECTRA_CREATE_SHORTCUT" => "0")
+                        local base = Dict("PATH" => fakebin * ":" * ENV["PATH"], "HOME" => tmp, "JULIAUP_DEPOT_PATH" => juliaup_depot, "SPARLECTRA_INSTALL_DIR" => sandbox, "SPARLECTRA_START_WEBUI" => "0", "SPARLECTRA_CREATE_SHORTCUT" => "0")
                         local proc = run(pipeline(ignorestatus(setenv(`sh $(script)`, merge(base, env))); stdout = buf, stderr = buf))
                         return (proc.exitcode, String(take!(buf)))
                     end
