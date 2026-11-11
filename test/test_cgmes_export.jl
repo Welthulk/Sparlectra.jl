@@ -145,7 +145,10 @@ function _cgmes_values_equal(tag::AbstractString, a::AbstractString, b::Abstract
   fb = tryparse(Float64, b)
   (fa === nothing || fb === nothing) && return false
   tag in ("cim:SvPowerFlow.p", "cim:SvPowerFlow.q") && return isapprox(fa, fb; atol = 1e-6)
-  return isapprox(fa, fb; rtol = 1e-9, atol = 1e-12)
+  # the fixtures carry 9 significant digits (tools/gen_cgmes_fixtures.jl):
+  # a fixture value differs from the full-precision re-export by up to half
+  # a unit of the 9th digit, at most 5e-9 relative
+  return isapprox(fa, fb; rtol = 1e-8, atol = 1e-12)
 end
 
 # Compare one re-exported profile file against its fixture. `drop_classes`

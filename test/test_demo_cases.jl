@@ -115,11 +115,14 @@ function run_demo_case_tests()
       _, erg = runpf!(net; verbose = 0)
       @test erg == 0
       # the sp_case6tap part is that case unchanged: its buses and branches
-      # come first, with the per-unit values of the shipped sp_case6tap
+      # come first, with the per-unit values of the shipped sp_case6tap.
+      # sp_case16_islands is written with 9 significant digits
+      # (tools/build_demo_cases.jl), so a value agrees to half a unit of the
+      # 9th digit, at most 5e-9 relative
       six = Sparlectra.import_case(joinpath(_DEMO_CASE_DIR, "sp_case6tap.scf.json"), cfg).net
       @test [n.comp.cName for n in net.nodeVec[1:6]] == [n.comp.cName for n in six.nodeVec]
       @test [b.comp.cName for b in net.branchVec[1:7]] == [b.comp.cName for b in six.branchVec]
-      @test all(isapprox(getfield(a, f), getfield(b, f); atol = 1.0e-15) for (a, b) in zip(net.branchVec[1:7], six.branchVec) for f in (:r_pu, :x_pu, :b_pu, :g_pu, :ratio, :tap_min, :tap_max))
+      @test all(isapprox(getfield(a, f), getfield(b, f); rtol = 1.0e-8, atol = 1.0e-15) for (a, b) in zip(net.branchVec[1:7], six.branchVec) for f in (:r_pu, :x_pu, :b_pu, :g_pu, :ratio, :tap_min, :tap_max))
       tie(n, name) = n.branchVec[findfirst(b -> b.comp.cName == name, n.branchVec)]
       Sparlectra.with_sparlectra_config(cfg) do
         # base state: one network island, two observable islands

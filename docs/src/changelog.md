@@ -1,3 +1,7 @@
+# Version 1.2.2 - 2026-11-11
+
+The demo cases and CGMES fixtures are written with 9 significant digits, so every machine builds the same bytes.
+
 # Version 1.2.1 - 2026-11-11
 
 Adding AnalyticLoadFlow 0.11.0.

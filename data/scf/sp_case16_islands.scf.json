@@ -6,7 +6,7 @@
   "data": {
     "generic_branch": [
       {
-        "b1": -8.660254037844386e-5,
+        "b1": -8.66025404e-5,
         "from_node": 11,
         "from_status": 1,
         "g1": 5.0e-5,
@@ -17,13 +17,13 @@
         "theta": 0.0,
         "to_node": 12,
         "to_status": 1,
-        "x1": 0.998749217771909
+        "x1": 0.998749218
       },
       {
-        "b1": -1.576759010606522e-5,
+        "b1": -1.57675901e-5,
         "from_node": 9,
         "from_status": 1,
-        "g1": 4.958677685950412e-6,
+        "g1": 4.95867769e-6,
         "id": 32,
         "k": 1.0,
         "r1": 0.1815,
@@ -31,13 +31,13 @@
         "theta": 0.0,
         "to_node": 4,
         "to_status": 1,
-        "x1": 7.257730895396992
+        "x1": 7.2577309
       },
       {
-        "b1": -1.576759010606522e-5,
+        "b1": -1.57675901e-5,
         "from_node": 13,
         "from_status": 1,
-        "g1": 4.958677685950412e-6,
+        "g1": 4.95867769e-6,
         "id": 33,
         "k": 1.0,
         "r1": 0.1815,
@@ -45,10 +45,10 @@
         "theta": 0.0,
         "to_node": 10,
         "to_status": 1,
-        "x1": 7.257730895396992
+        "x1": 7.2577309
       },
       {
-        "b1": -8.660254037844386e-5,
+        "b1": -8.66025404e-5,
         "from_node": 7,
         "from_status": 1,
         "g1": 5.0e-5,
@@ -59,7 +59,7 @@
         "theta": 0.0,
         "to_node": 6,
         "to_status": 1,
-        "x1": 0.998749217771909
+        "x1": 0.998749218
       }
     ],
     "line": [
@@ -67,7 +67,7 @@
         "c1": 7.5e-7,
         "from_node": 1,
         "from_status": 1,
-        "i_n": 401.2584370867899,
+        "i_n": 401.258437,
         "id": 17,
         "r1": 0.4,
         "tan1": 0.0,
@@ -79,7 +79,7 @@
         "c1": 9.0e-7,
         "from_node": 1,
         "from_status": 1,
-        "i_n": 401.2584370867899,
+        "i_n": 401.258437,
         "id": 18,
         "r1": 0.48,
         "tan1": 0.0,
@@ -91,9 +91,9 @@
         "c1": 2.09e-7,
         "from_node": 2,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 19,
-        "r1": 2.6399999999999997,
+        "r1": 2.64,
         "tan1": 0.0,
         "to_node": 11,
         "to_status": 1,
@@ -103,9 +103,9 @@
         "c1": 1.425e-7,
         "from_node": 2,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 20,
-        "r1": 1.7999999999999998,
+        "r1": 1.8,
         "tan1": 0.0,
         "to_node": 15,
         "to_status": 1,
@@ -115,7 +115,7 @@
         "c1": 6.0e-7,
         "from_node": 3,
         "from_status": 1,
-        "i_n": 401.2584370867899,
+        "i_n": 401.258437,
         "id": 21,
         "r1": 0.32,
         "tan1": 0.0,
@@ -124,10 +124,10 @@
         "x1": 0.24
       },
       {
-        "c1": 2.3750000000000003e-7,
+        "c1": 2.375e-7,
         "from_node": 4,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 22,
         "r1": 3.0,
         "tan1": 0.0,
@@ -139,9 +139,9 @@
         "c1": 3.8e-7,
         "from_node": 4,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 23,
-        "r1": 4.800000000000001,
+        "r1": 4.8,
         "tan1": 0.0,
         "to_node": 10,
         "to_status": 1,
@@ -151,7 +151,7 @@
         "c1": 9.0e-7,
         "from_node": 6,
         "from_status": 1,
-        "i_n": 401.2584370867899,
+        "i_n": 401.258437,
         "id": 24,
         "r1": 0.48,
         "tan1": 0.0,
@@ -163,9 +163,9 @@
         "c1": 2.85e-7,
         "from_node": 7,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 25,
-        "r1": 3.5999999999999996,
+        "r1": 3.6,
         "tan1": 0.0,
         "to_node": 10,
         "to_status": 1,
@@ -175,9 +175,9 @@
         "c1": 5.4e-7,
         "from_node": 9,
         "from_status": 1,
-        "i_n": 999.996909430486,
+        "i_n": 999.996909,
         "id": 26,
-        "r1": 4.800000000000001,
+        "r1": 4.8,
         "tan1": 0.0,
         "to_node": 13,
         "to_status": 1,
@@ -187,9 +187,9 @@
         "c1": 1.9e-7,
         "from_node": 10,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 27,
-        "r1": 2.4000000000000004,
+        "r1": 2.4,
         "tan1": 0.0,
         "to_node": 2,
         "to_status": 1,
@@ -199,7 +199,7 @@
         "c1": 1.2e-6,
         "from_node": 12,
         "from_status": 1,
-        "i_n": 401.2584370867899,
+        "i_n": 401.258437,
         "id": 28,
         "r1": 0.64,
         "tan1": 0.0,
@@ -211,7 +211,7 @@
         "c1": 1.71e-7,
         "from_node": 15,
         "from_status": 1,
-        "i_n": 599.9194160761293,
+        "i_n": 599.919416,
         "id": 29,
         "r1": 2.16,
         "tan1": 0.0,
@@ -223,7 +223,7 @@
         "c1": 6.0e-7,
         "from_node": 16,
         "from_status": 1,
-        "i_n": 401.2584370867899,
+        "i_n": 401.258437,
         "id": 30,
         "r1": 0.32,
         "tan1": 0.0,
@@ -488,11 +488,11 @@
           "governorSCD": null,
           "ikSecond": null,
           "kind": "external_network_injection",
-          "maxInitialSymShCCurrent_A": 26243.194054073898,
+          "maxInitialSymShCCurrent_A": 26243.1941,
           "maxR0ToX0Ratio": null,
           "maxR1ToX1Ratio": 0.1,
           "maxZ0ToZ1Ratio": null,
-          "minInitialSymShCCurrent_A": 19682.395540555426,
+          "minInitialSymShCCurrent_A": 19682.3955,
           "minR1ToX1Ratio": 0.1,
           "mrid": "native-eni-Nordwerk_220",
           "name": "ExtGrid_Nordwerk",
@@ -948,7 +948,7 @@
     "format_version": "1.3",
     "meta": {
       "case_name": "sp_case16_islands",
-      "created_by": "Sparlectra 1.2.1",
+      "created_by": "Sparlectra 1.2.2",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "scenarios"],
       "notes": "Self-built Sparlectra demo network for island checks: the sp_case6tap network unchanged plus two attached networks, B (110/20 kV with the machine Gen_Weidach) on the tie Ostheim_Haldorf and C (20 kV, loads only) on the tie Lindenau_Erlbach. The measurement table leaves out the flows of Ostheim_Haldorf and the injections at both its ends: two observable islands, the tie unobservable. Scenarios open both ties (three network islands) or only the tie to B. Single-line diagram: sp_case16_islands_single_line.svg. The bus count in the name does not make it the IEEE case of that size; no data was taken from MATPOWER, DTF or any other source.",
@@ -998,64 +998,64 @@
     "start_state": {
       "nodes": {
         "1": {
-          "va_deg": -8.955083469967768,
-          "vm_pu": 0.9383776004059735
+          "va_deg": -8.95508347,
+          "vm_pu": 0.9383776
         },
         "10": {
-          "va_deg": -2.2052430338428284,
-          "vm_pu": 1.004044869862792
+          "va_deg": -2.20524303,
+          "vm_pu": 1.00404487
         },
         "11": {
-          "va_deg": -2.2573409702255063,
-          "vm_pu": 1.0041904782110709
+          "va_deg": -2.25734097,
+          "vm_pu": 1.00419048
         },
         "12": {
-          "va_deg": -4.827492884559814,
-          "vm_pu": 0.9858893871788206
+          "va_deg": -4.82749288,
+          "vm_pu": 0.985889387
         },
         "13": {
-          "va_deg": 0.20920035670712384,
+          "va_deg": 0.209200357,
           "vm_pu": 1.02
         },
         "14": {
-          "va_deg": -9.033743782635312,
-          "vm_pu": 0.9353348835605191
+          "va_deg": -9.03374378,
+          "vm_pu": 0.935334884
         },
         "15": {
-          "va_deg": -1.7910059713823097,
-          "vm_pu": 1.0100000000000002
+          "va_deg": -1.79100597,
+          "vm_pu": 1.01
         },
         "16": {
-          "va_deg": -9.018927205997588,
-          "vm_pu": 0.9359552395531554
+          "va_deg": -9.01892721,
+          "vm_pu": 0.93595524
         },
         "2": {
-          "va_deg": -2.157539639205798,
-          "vm_pu": 1.0055197895989192
+          "va_deg": -2.15753964,
+          "vm_pu": 1.00551979
         },
         "3": {
-          "va_deg": -9.022458954412789,
-          "vm_pu": 0.9353613604931887
+          "va_deg": -9.02245895,
+          "vm_pu": 0.93536136
         },
         "4": {
-          "va_deg": -1.903875017462075,
-          "vm_pu": 1.0067791983129806
+          "va_deg": -1.90387502,
+          "vm_pu": 1.0067792
         },
         "5": {
-          "va_deg": -5.073075853992443,
-          "vm_pu": 0.9736435855648824
+          "va_deg": -5.07307585,
+          "vm_pu": 0.973643586
         },
         "6": {
-          "va_deg": -8.762365089908108,
-          "vm_pu": 0.9462090499168325
+          "va_deg": -8.76236509,
+          "vm_pu": 0.94620905
         },
         "7": {
-          "va_deg": -4.167307019214144,
-          "vm_pu": 0.9779782661608196
+          "va_deg": -4.16730702,
+          "vm_pu": 0.977978266
         },
         "8": {
-          "va_deg": -9.03991697010308,
-          "vm_pu": 0.9345049851731523
+          "va_deg": -9.03991697,
+          "vm_pu": 0.934504985
         },
         "9": {
           "va_deg": 0.0,

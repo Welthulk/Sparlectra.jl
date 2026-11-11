@@ -74,7 +74,7 @@
         "vm_pu": 1.014759
       },
       "13": {
-        "va_deg": -24.281781,
+        "va_deg": -24.281782,
         "vm_pu": 0.940971
       },
       "14": {
@@ -110,7 +110,7 @@
         "vm_pu": 0.996765
       },
       "21": {
-        "va_deg": -21.152648,
+        "va_deg": -21.152649,
         "vm_pu": 0.964307
       },
       "22": {
@@ -294,11 +294,11 @@
         "vm_pu": 0.976583
       },
       "9": {
-        "va_deg": -24.281781,
+        "va_deg": -24.281782,
         "vm_pu": 0.940971
       }
     },
-    "iterations": 1,
+    "iterations": 2,
     "losses_mw": 11.311285
   },
   "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
@@ -322,7 +322,7 @@
   "short_circuit": {
     "Altau_220": {
       "ik_kA": 22.189576,
-      "sk_MVA": 8455.364023
+      "sk_MVA": 8455.36401
     },
     "Neuberg_110": {
       "ik_kA": 1.719724,
@@ -331,7 +331,7 @@
   },
   "state_estimation": {
     "dof": 209,
-    "objective": 158.830913,
+    "objective": 158.830911,
     "seed": 20260960
   }
 }
