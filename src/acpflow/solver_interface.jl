@@ -150,7 +150,7 @@ function solvePf(::AbstractExternalSolver, ::PFModel; kwargs...)
 end
 
 """
-    apslf_solver(; order::Int=24, nr_polish::Bool=false, mode::Symbol=:direct, convergence_radius::Bool=true) -> AbstractExternalSolver
+    apslf_solver(; order::Int=24, nr_polish::Bool=false, mode::Symbol=:direct, convergence_radius::Bool=true, precision::Symbol=:float64) -> AbstractExternalSolver
 
 Reachability point for the AnalyticLoadFlow.jl-backed external solver (`ApslfSolver`),
 an analytic power-series (holomorphic-embedding-style) load-flow method.
@@ -166,10 +166,16 @@ always available: `using Sparlectra` is enough, and the result goes straight to
   plus an outer secant loop for PV enforcement).
 - `convergence_radius::Bool = true`: evaluate and report the Padé-pole margin
   (the APSLF convergence radius).
+- `precision::Symbol = :float64`: `:float64` or `:double_double`, the
+  arithmetic of the series and the Padé evaluation. Double-double needs the
+  direct kernel: `mode = :outer` with `:double_double` throws an
+  `ArgumentError` here, before any solve, as does an unknown value.
 
 """
-function apslf_solver(; order::Int = 24, nr_polish::Bool = false, mode::Symbol = :direct, convergence_radius::Bool = true)
-  return ApslfSolver(order = order, nr_polish = nr_polish, mode = mode, convergence_radius = convergence_radius)
+function apslf_solver(; order::Int = 24, nr_polish::Bool = false, mode::Symbol = :direct, convergence_radius::Bool = true, precision::Symbol = :float64)
+  _validate_allowed_symbol("power_flow.apslf.precision", precision, APSLF_PRECISION_VALUES)
+  (precision === :double_double && mode === :outer) && throw(ArgumentError("APSLF precision = :double_double needs mode = :direct; the outer mode has only the Float64 kernel (AnalyticLoadFlow 0.11)."))
+  return ApslfSolver(order = order, nr_polish = nr_polish, mode = mode, convergence_radius = convergence_radius, precision = precision)
 end
 
 # -----------------------------------------------------------------------------

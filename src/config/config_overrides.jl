@@ -92,6 +92,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.apslf.order",
   "power_flow.apslf.nr_polish",
   "power_flow.apslf.convergence_radius",
+  "power_flow.apslf.precision",
   "power_flow.apslf_start.enabled",
   "power_flow.apslf_start.order",
   "power_flow.wrong_branch_detection",
@@ -369,6 +370,8 @@ function _validate_gui_override_value(key::String, value)
     method === :rectangular || throw(ArgumentError(unsupported_powerflow_method_message(method)))
   elseif key == "power_flow.solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_SOLVER_VALUES)
+  elseif key == "power_flow.apslf.precision"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), APSLF_PRECISION_VALUES)
   elseif key == "power_flow.linear_solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_LINEAR_SOLVER_VALUES)
   elseif key == "power_flow.newton_update"

@@ -272,7 +272,7 @@ function _trace_scf(server)
 end
 
 function _trace_dtf(server)
-  dtf_case = joinpath(pkgdir(Sparlectra), "data", "DTF", "FOR001.DAT")
+  dtf_case = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(pkgdir(Sparlectra), "data", "DTF")), "FOR001.DAT")
   isfile(dtf_case) || return nothing
   # The DTF parser is a large body of code and one service run does not reach
   # all of it: measured after a first attempt, the first DTF run in a fresh
@@ -280,7 +280,7 @@ function _trace_dtf(server)
   # is exercised directly as well - reader, net builder and case summary - and
   # on a second file, because the branch/outage shapes differ per file.
   for f in ("FOR001.DAT", "FOR001B.DAT")
-    fp = joinpath(pkgdir(Sparlectra), "data", "DTF", f)
+    fp = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(pkgdir(Sparlectra), "data", "DTF")), f)
     isfile(fp) || continue
     try
       dcase = Sparlectra.DTFImporter.read_dtf(fp)

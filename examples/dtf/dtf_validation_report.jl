@@ -221,7 +221,7 @@ end
 function main()
   print_example_banner("examples/dtf/dtf_validation_report.jl", "runs native DTF/FOR002 validation across cases A-E and writes a combined loss/voltage-transfer summary report")
   repo = normpath(joinpath(@__DIR__, "..", ".."))
-  data_dir = joinpath(repo, "data", "DTF")
+  data_dir = get(ENV, "SPARLECTRA_DTF_DIR", joinpath(repo, "data", "DTF"))
   outdir = joinpath(@__DIR__, "..", "_out", "dtf_validation")
   mkpath(outdir)
   missing = String[]

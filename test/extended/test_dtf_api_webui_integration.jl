@@ -22,11 +22,10 @@ using Sparlectra
 function run_dtf_api_webui_integration_tests()
   @testset "DTF API and Web UI integration" begin (function ()
     mktempdir() do tmp
-      dtf = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT")
-      for002 = joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR002.DAT")
+      dtf = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(@__DIR__, "..", "..", "data", "DTF")), "FOR001.DAT")
+      for002 = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(@__DIR__, "..", "..", "data", "DTF")), "FOR002.DAT")
       if !(isfile(dtf) && isfile(for002))
         @info "Skipping full DTF API and Web UI integration; local external FOR001/FOR002 files are absent." dtf for002
-        @test_skip "local FOR001/FOR002 validation data not available"
         return
       end
       direct_output = joinpath(@__DIR__, "..", "..", "examples", "_out", "dtf_api_direct_smoke")

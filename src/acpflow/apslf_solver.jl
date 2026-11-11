@@ -42,20 +42,25 @@ Fields:
   series), so the result carries the coefficient-growth radius of the
   series as well; that one is a root test on the coefficients and always
   evaluated (see `_apslf_series_radius`).
+- `precision::Symbol = :float64`: arithmetic of the series and the Padé
+  evaluation, `:float64` or `:double_double` (AnalyticLoadFlow 0.11, direct
+  mode only); forwarded to `solve_pf_apslf`.
 
-[`apslf_solver`](@ref) is the keyword constructor for it.
+[`apslf_solver`](@ref) is the keyword constructor for it and checks
+`precision` against `mode`.
 """
 Base.@kwdef struct ApslfSolver <: AbstractExternalSolver
   order::Int = 24
   nr_polish::Bool = false
   mode::Symbol = :direct
   convergence_radius::Bool = true
+  precision::Symbol = :float64
 end
 
 # Limits of the outer-mode fallback (PQ series plus a secant loop on the PV
 # reactive powers) that AnalyticLoadFlow.solve_pf_apslf runs after a failed
 # direct solve: the defaults of its keywords outer_fallback_nbus_max and
-# outer_fallback_pv_bus_max in AnalyticLoadFlow 0.10.0. The single-pass call
+# outer_fallback_pv_bus_max in AnalyticLoadFlow 0.10.0, unchanged in 0.11.0. The single-pass call
 # in _apslf_solve switches that fallback off and runs it itself, so it needs
 # the same bounds to stay equivalent. AnalyticLoadFlow 0.10.0 provides no
 # binding for them (literal keyword defaults in its solver_core.jl), so they
@@ -230,6 +235,8 @@ function solvePf(solver::ApslfSolver, model::PFModel; kwargs...)
     solver = :apslf,
     mode = res.effective_mode,
     order = solver.order,
+    # arithmetic the result was computed in (:float64 after the outer fallback)
+    precision = res.precision,
     stability = stability,
     series_radius = series_radius,
     nr_polish_enabled = res.nr_polish_enabled,
@@ -270,10 +277,10 @@ end
 # it with its default germ, no Sparlectra-side special case.
 # Slack angle: solve_pf_apslf sets Vslack = Vm[slack] + 0im internally and
 # splats its keywords after that default, so the Vslack keyword passed here
-# wins (checked against AnalyticLoadFlow 0.10.0 and 0.10.2, the compat lower bound). It
+# wins (checked against AnalyticLoadFlow 0.10.0, 0.10.2 and 0.11.0, the compat lower bound). It
 # also reaches the outer fallback inside solve_pf_apslf and the NR polish.
 function _apslf_solve(solver::ApslfSolver, spec)
-  common = (mode = solver.mode, order = solver.order, nr_polish = solver.nr_polish, return_coeffs = true, Vslack = spec.Vslack)
+  common = (mode = solver.mode, order = solver.order, nr_polish = solver.nr_polish, return_coeffs = true, Vslack = spec.Vslack, precision = solver.precision)
   limits_free = !any(isfinite, spec.Qmin) && !any(isfinite, spec.Qmax)
   (solver.mode === :direct && limits_free) || return AnalyticLoadFlow.solve_pf_apslf(spec; common...)
   res = AnalyticLoadFlow.solve_pf_apslf(spec; common..., max_outer = 1, outer_fallback_nbus_max = 0)
@@ -281,7 +288,9 @@ function _apslf_solve(solver::ApslfSolver, spec)
   nbus = length(spec.bustype)
   npv = count(==(:PV), spec.bustype)
   (nbus <= _APSLF_OUTER_FALLBACK_NBUS_MAX && npv <= _APSLF_OUTER_FALLBACK_PV_BUS_MAX) || return res
-  res_outer = AnalyticLoadFlow.solve_pf_apslf(spec; merge(common, (mode = :outer,))...)
+  # the outer mode has only the Float64 kernel; solve_pf_apslf runs its own
+  # outer fallback with precision = :float64 for the same reason
+  res_outer = AnalyticLoadFlow.solve_pf_apslf(spec; merge(common, (mode = :outer, precision = :float64))...)
   # like solve_pf_apslf itself: the fallback result only when it converged
   return res_outer.converged ? res_outer : res
 end

@@ -39,8 +39,8 @@ end
 
 function parse_cli(args)
   opt = Dict{String,Any}(
-    "dtf-file" => joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT"),
-    "for002-file" => joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR002.DAT"),
+    "dtf-file" => joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(@__DIR__, "..", "..", "data", "DTF")), "FOR001.DAT"),
+    "for002-file" => joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(@__DIR__, "..", "..", "data", "DTF")), "FOR002.DAT"),
     "output-dir" => joinpath(@__DIR__, "..", "_out", "dtf_matpower_export_testnetz13"),
     "tol" => 1e-8,
     "max-iter" => 50,

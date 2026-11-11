@@ -19,7 +19,7 @@
 # The reference network is untracked; both documented drop-in locations are
 # accepted (test/fixtures/dtf/ takes precedence, data/DTF/ is where the
 # validation examples already read it from).
-const _DTF_FIXTURE_CANDIDATES = (joinpath(@__DIR__, "..", "fixtures", "dtf", "FOR001.DAT"), joinpath(@__DIR__, "..", "..", "data", "DTF", "FOR001.DAT"))
+const _DTF_FIXTURE_CANDIDATES = (joinpath(@__DIR__, "..", "fixtures", "dtf", "FOR001.DAT"), joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(@__DIR__, "..", "..", "data", "DTF")), "FOR001.DAT"))
 const DTF_FIXTURE = let i = findfirst(isfile, _DTF_FIXTURE_CANDIDATES)
   _DTF_FIXTURE_CANDIDATES[i === nothing ? 1 : i]
 end
@@ -243,7 +243,7 @@ function run_dtf_importer_tests()
         @test erg == 0
       end
     end
-    local_dir = joinpath(dirname(@__DIR__), "..", "data", "DTF")
+    local_dir = get(ENV, "SPARLECTRA_DTF_DIR", joinpath(dirname(@__DIR__), "..", "data", "DTF"))
     for name in ["FOR001.DAT", "FOR001B.DAT", "FOR001C.DAT", "FOR001D.DAT", "FOR001E.DAT"]
       path = joinpath(local_dir, name)
       if isfile(path)
@@ -251,7 +251,7 @@ function run_dtf_importer_tests()
         case = Sparlectra.DTFImporter.read_dtf(path)
         @test count(bus -> bus.name == case.size.slack && bus.bus_type == 2, case.buses) == 1
       else
-        println("      slack name: ", name, " SKIPPED (not present under data/DTF)")
+        println("      slack name: ", name, " SKIPPED (not present under SPARLECTRA_DTF_DIR or data/DTF)")
       end
     end
   end)() end
@@ -287,14 +287,14 @@ function run_dtf_importer_tests()
     end
     # a named format is still taken as named
     @test Sparlectra._detect_case_format(joinpath(d, "refused_1.DAT"); requested = :dtf_for001) === :dtf_for001
-    local_dir = joinpath(dirname(@__DIR__), "..", "data", "DTF")
+    local_dir = get(ENV, "SPARLECTRA_DTF_DIR", joinpath(dirname(@__DIR__), "..", "data", "DTF"))
     for (name, expected) in [("FOR001.DAT", true), ("FOR001B.DAT", true), ("FOR001C.DAT", true), ("FOR001D.DAT", true), ("FOR001E.DAT", true), ("FOR002.DAT", false)]
       path = joinpath(local_dir, name)
       if isfile(path)
         println("      format detection: ", name, " RAN")
         @test Sparlectra.DTFImporter.is_dtf_deck(path) == expected
       else
-        println("      format detection: ", name, " SKIPPED (not present under data/DTF)")
+        println("      format detection: ", name, " SKIPPED (not present under SPARLECTRA_DTF_DIR or data/DTF)")
       end
     end
   end)() end
@@ -304,10 +304,9 @@ function run_dtf_importer_tests()
     # must survive onto winding.phase_taps for controlled transformers
     # (FOR001E carries skew/longitudinal tap controls). Pure attachment —
     # the numeric branch results are guarded by the DTF validation suites.
-    fixture = joinpath(dirname(@__DIR__), "..", "data", "DTF", "FOR001E.DAT")
+    fixture = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(dirname(@__DIR__), "..", "data", "DTF")), "FOR001E.DAT")
     if !isfile(fixture)
       @info "FOR001E.DAT not available — skipping phase-tap persistence check"
-      @test_skip "FOR001E fixture not available"
       return
     end
     net = Sparlectra.createNetFromDTFFile(fixture)

@@ -46,6 +46,7 @@ power_flow:
     order: 24
     nr_polish: false
     convergence_radius: true
+    precision: float64
   apslf_start:
     enabled: false
     order: 40
@@ -57,6 +58,7 @@ power_flow:
 | `power_flow.apslf.order` | Int | `24` | `>= 1` | Highest power-series coefficient; higher orders help stressed cases and cost more. The series is evaluated with Padé approximants. |
 | `power_flow.apslf.nr_polish` | Bool | `false` | `true`, `false` | Newton-Raphson polishing step on the series result, a debugging aid; the series alone is a load-flow solution. |
 | `power_flow.apslf.convergence_radius` | Bool | `true` | `true`, `false` | Evaluate the Padé margin: the distance `dmin` of the nearest Padé pole to `s = 1`, with its bus and a GRN/YEL/RED level; reported in the result header (`APSLF radius`), the metadata (`apslf_pade_margin`, `apslf_pade_margin_bus`) and on the runs page. Costs about as much as the solve. The series radius (`apslf_series_radius`, `apslf_series_radius_bus`; below 1 the plain series does not reach `s = 1`) is reported on every APSLF run independent of this key. |
+| `power_flow.apslf.precision` | Symbol/String | `float64` | `float64`, `double_double` | Arithmetic of the series and the Padé evaluation. `double_double` helps where a `float64` run stops above the tolerance with the diagnosis `precision_limit`; without `nr_polish` it needs order 48 or 56. |
 | `power_flow.apslf_start.enabled` | Bool | `false` | `true`, `false` | APSLF as a start-value generator ahead of the Newton solve, see below. Rejected together with `solver: apslf`. |
 | `power_flow.apslf_start.order` | Int | `40` | `>= 1` | Series order of the start-value generator; no effect while it is off. |
 

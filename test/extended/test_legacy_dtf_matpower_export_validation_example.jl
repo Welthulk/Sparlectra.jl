@@ -34,11 +34,10 @@ function run_legacy_dtf_matpower_export_validation_example_tests()
       @test !occursin("DTF -> MATPOWER", source)
       @test occursin("createNetFromMatPowerFile", source)
 
-      dtf_file = joinpath(repo, "data", "DTF", "FOR001.DAT")
-      for002_file = joinpath(repo, "data", "DTF", "FOR002.DAT")
+      dtf_file = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(repo, "data", "DTF")), "FOR001.DAT")
+      for002_file = joinpath(get(ENV, "SPARLECTRA_DTF_DIR", joinpath(repo, "data", "DTF")), "FOR002.DAT")
       if !(isfile(dtf_file) && isfile(for002_file))
          @info "Skipping full DTF MATPOWER export validation example; local external FOR001/FOR002 files are absent." dtf_file for002_file
-        @test_skip "local FOR001/FOR002 validation data not available"
         return
       end
 

@@ -132,6 +132,26 @@ function run_apslf_tests()
                 @test !hasproperty(st, :apslf_diagnosis_reason)
                 println("      APSLF against NR on ", label, ": max |dVm| ", maximum(abs.(vm_nr .- vm_ap)), " pu, ", st.apslf_convergence_line)
             end
+            # power_flow.apslf.precision (AnalyticLoadFlow 0.11): sp_case5 in
+            # double-double agrees with Newton like the Float64 run, and the
+            # result names its arithmetic. The Float64 default hands
+            # precision = :float64 to the package, its path of 0.10.3 bit for
+            # bit, so the voltages equal a call without the keyword exactly.
+            cfg_dd = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(precision=:double_double)), output=quiet)
+            r_nr5 = run_sparlectra(net=Sparlectra.importSCF(scf5), config=cfg_nr)
+            r_dd5 = run_sparlectra(net=Sparlectra.importSCF(scf5), config=cfg_dd)
+            @test r_dd5.final_converged
+            @test maximum(abs.(getfield.(r_nr5.net.nodeVec, :_vm_pu) .- getfield.(r_dd5.net.nodeVec, :_vm_pu))) < 1e-6
+            @test maximum(abs.(getfield.(r_nr5.net.nodeVec, :_va_deg) .- getfield.(r_dd5.net.nodeVec, :_va_deg))) < 1e-4
+            m5 = Sparlectra.buildPfModel(Sparlectra.importSCF(scf5); include_limits=false)
+            spec5 = Sparlectra._apslf_spec_from_model(m5)
+            sol64 = Sparlectra.solvePf(apslf_solver(), m5)
+            sol_dd = Sparlectra.solvePf(apslf_solver(precision=:double_double), m5)
+            @test (sol64.meta.precision, sol_dd.meta.precision) === (:float64, :double_double)
+            plain = AnalyticLoadFlow.solve_pf_apslf(spec5; mode=:direct, order=24, nr_polish=false, return_coeffs=true, Vslack=spec5.Vslack, max_outer=1, outer_fallback_nbus_max=0)
+            @test sol64.V == plain.V
+            @test maximum(abs.(sol_dd.V .- sol64.V)) < 1e-9
+
             # A non-converged run carries AnalyticLoadFlow's diagnosis (0.10.2)
             # into the status: sp_case5 at order 4 (Q limits off) stops with
             # the Pade value still moving by 1.4e-3 pu between order 2 and 4,
@@ -144,6 +164,36 @@ function run_apslf_tests()
             @test st_low.apslf_diagnosis_reason === :pade_not_converged
             @test isfinite(st_low.apslf_pole_min_abs) && st_low.apslf_pole_min_bus >= 1
             @test occursin(String(st_low.apslf_diagnosis_line), r_low.reason_text)
+            # precision_limit (AnalyticLoadFlow 0.11: Float64 stagnates with a
+            # Pade pole inside |s| = 1) occurs on no shipped case; on
+            # case6495rte see the gated run below and
+            # examples/powerflow/exp_apslf_precision.jl. The status path takes
+            # the reason and the package's message as they come; checked here
+            # with that reason on the sp_case5 net.
+            pl_msg = "Pade value at s = 1 stagnates at 1.66e-06 pu: Float64 limit; use nr_polish = true or precision = :double_double with order 48 or 56"
+            pl_sol = (meta = (diagnosis = (reason = :precision_limit, message = pl_msg, pole_min_abs = 0.97, pole_bus = 2, pole_pair = true, pade_change = 1.66e-6, order = 32),),)
+            pl_st = Sparlectra._apslf_diagnosis_status(pl_sol, Sparlectra.importSCF(scf5))
+            @test pl_st.apslf_diagnosis_reason === :precision_limit
+            @test occursin("precision_limit", pl_st.apslf_diagnosis_line) && occursin(pl_msg, pl_st.apslf_diagnosis_line)
+            @test occursin(pl_st.apslf_diagnosis_line, pl_st.reason_text)
+            # the same on the real case, when the MATPOWER cache has it:
+            # case6495rte, Float64 order 32 without polish, Q limits off,
+            # stops at 1.66e-6 pu with precision_limit (AnalyticLoadFlow
+            # 0.11.0 release measurement)
+            let path = large_case_path("case6495rte.m")
+                if path === nothing
+                    println("      APSLF precision_limit on case6495rte: SKIPPED (case6495rte not in the MATPOWER cache)")
+                else
+                    println("      APSLF precision_limit on case6495rte: RAN (", path, ")")
+                    cfg32 = SparlectraConfig(powerflow=PowerFlowConfig(solver=:apslf, apslf=Sparlectra.ApslfConfig(order=32), qlimits=Sparlectra.QLimitConfig(ignore_q_limits=true)), output=quiet)
+                    r32 = @test_logs (:warn, r"runs without controllers") match_mode=:any redirect_stdout(() -> run_sparlectra(casefile=path, config=cfg32), devnull)
+                    @test !r32.final_converged
+                    st32 = Sparlectra.rectangular_pf_status(r32.net)
+                    @test st32.apslf_diagnosis_reason === :precision_limit
+                    @test occursin("precision = :double_double", st32.apslf_diagnosis_line)
+                    @test occursin(String(st32.apslf_diagnosis_line), r32.reason_text)
+                end
+            end
             # The same island next to a small second island, run with an output
             # directory as the service does: the island-wise error message and
             # the island's solver log carry the diagnosis of the failed island,

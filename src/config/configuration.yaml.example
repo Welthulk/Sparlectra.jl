@@ -49,6 +49,11 @@ power_flow:
     # pole to s = 1) and report it like the Jacobian condition. Costs about
     # as much as the solve itself.
     convergence_radius: true
+    # Arithmetic of the series and the Pade evaluation: float64 or
+    # double_double. double_double helps where float64 stagnates above the
+    # tolerance (diagnosis precision_limit); without nr_polish it needs
+    # order 48 or 56.
+    precision: float64
   # Use the APSLF solver as a start-value generator ahead of the rectangular
   # Newton-Raphson solve. Incompatible with solver: apslf (start generator is
   # only meaningful ahead of NR). No nr_polish here: polishing is left
