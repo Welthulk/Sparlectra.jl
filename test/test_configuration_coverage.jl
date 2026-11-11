@@ -979,6 +979,12 @@ function test_configuration_every_key_arrives()
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("order" => 0))))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("order" => -1))))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "apslf_start" => Dict("enabled" => true))))
+    # output.export_significant_digits: 0 (full precision) by default, 1 to
+    # 17 taken, anything else refused at load and as an override
+    @test Sparlectra.SparlectraConfig(Dict("output" => Dict())).output.export_significant_digits == 0
+    @test Sparlectra.SparlectraConfig(Dict("output" => Dict("export_significant_digits" => 8))).output.export_significant_digits == 8
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("output" => Dict("export_significant_digits" => 18)))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("output.export_significant_digits" => -1))
     # power_flow.apslf.precision (AnalyticLoadFlow 0.11): float64 by
     # default, double_double taken, an unknown value refused at load; the
     # outer mode has only the Float64 kernel, so apslf_solver (the one place

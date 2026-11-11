@@ -188,6 +188,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "output.detailed_result_csv_buffer_max_bytes",
   "output.detailed_result_csv_streaming_threshold_rows",
   "output.csv_format",
+  "output.export_significant_digits",
   "benchmark.enabled",
   "benchmark.samples",
   "benchmark.seconds",
@@ -458,6 +459,9 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_DETAILED_RESULT_CSV_EXPORTER_VALUES)
   elseif key == "output.csv_format"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), OUTPUT_CSV_FORMAT_VALUES)
+  elseif key == "output.export_significant_digits"
+    _validate_override_type(key, value, Int)
+    _validate_export_significant_digits(Int(value))
   end
   return nothing
 end

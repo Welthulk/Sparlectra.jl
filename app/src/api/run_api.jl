@@ -1092,7 +1092,9 @@ function _run_sparlectra_api_body(
         export_notices = String[]
         # the profile files are intermediate: only the combined delivery zip
         # becomes a run artifact
-        export_files = writeCGMESFiles(raw_result.net; path = mktempdir(), sc_line_data = sc_data, sc_source = cgmes_export_sc_source, notices = export_notices, zip = true)
+        export_files = with_export_significant_digits(config.output.export_significant_digits) do
+          writeCGMESFiles(raw_result.net; path = mktempdir(), sc_line_data = sc_data, sc_source = cgmes_export_sc_source, notices = export_notices, zip = true)
+        end
         zip_artifact = joinpath(output_path, basename(export_files[end]))
         mv(export_files[end], zip_artifact; force = true)
         cgmes_export_metadata["cgmes_export_status"] = "completed"

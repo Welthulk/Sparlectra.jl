@@ -82,7 +82,9 @@ function _scf_json_scalar(io::IO, value)
     # `scf_infinity_sentinel` in the namespaced block or by omitting the key
     # in the PGM dataset.
     isfinite(value) || throw(ArgumentError("SCF: cannot write the non-finite number $(value); JSON has no representation for it."))
-    print(io, iszero(value) ? 0.0 : Float64(value))
+    # rounded under with_export_significant_digits (shortest form otherwise)
+    v = _export_float(value)
+    print(io, iszero(v) ? 0.0 : v)
   else
     print(io, '"', _scf_json_escape(string(value)), '"')
   end

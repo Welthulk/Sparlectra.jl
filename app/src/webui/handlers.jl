@@ -616,17 +616,20 @@ function handle_powerflow_export_scf(form::AbstractDict; output_root::AbstractSt
     # blocks. An SI copy of either loses the last bit of about one value in
     # ten. A strict PGM file has no place for them.
     keep_pu = !strict && (source_format === :matpower || (source_format === :scf && scf_case_units(read_scf_json(case_path)) === :pu))
-    exportSCF(
-      net;
-      file = out_path,
-      case_name = first(splitext(basename(requested))),
-      source_format = String(source_format),
-      units = keep_pu ? :pu : :si,
-      source_reference = basename(requested),
-      intended_calculations = intended,
-      measurement_provenance = provenance,
-      strict_pgm = strict,
-    )
+    # output.export_significant_digits rounds the written floats (0: full)
+    with_export_significant_digits(config.output.export_significant_digits) do
+      exportSCF(
+        net;
+        file = out_path,
+        case_name = first(splitext(basename(requested))),
+        source_format = String(source_format),
+        units = keep_pu ? :pu : :si,
+        source_reference = basename(requested),
+        intended_calculations = intended,
+        measurement_provenance = provenance,
+        strict_pgm = strict,
+      )
+    end
     # case-scope settings travel in the case configuration file next to the
     # export, never inside the case file (the writer emits no config block)
     strict || write_case_config(out_path, overrides)
@@ -725,16 +728,18 @@ function handle_powerflow_case_save_as(form::AbstractDict; output_root::Abstract
     start_from_solved && redirect_stdout(() -> run_sparlectra(; net = net, config = config), devnull)
     intended = String["power_flow"]
     isempty(net.measurements) || push!(intended, "state_estimation")
-    exportSCF(
-      net;
-      file = out_scf,
-      case_name = new_name,
-      source_format = String(_detect_case_format(case_path)),
-      source_reference = "copied from $(requested)",
-      intended_calculations = intended,
-      measurement_provenance = provenance,
-      include_start_state = start_from_solved,
-    )
+    with_export_significant_digits(config.output.export_significant_digits) do
+      exportSCF(
+        net;
+        file = out_scf,
+        case_name = new_name,
+        source_format = String(_detect_case_format(case_path)),
+        source_reference = "copied from $(requested)",
+        intended_calculations = intended,
+        measurement_provenance = provenance,
+        include_start_state = start_from_solved,
+      )
+    end
     keep = Dict{String,Any}(k => v for (k, v) in overrides if scf_is_case_config_key(k))
     existing_config = try
       load_case_config(case_path)
@@ -3423,7 +3428,7 @@ function handle_se_add_noise(form::AbstractDict; output_root::AbstractString = "
     for p in conv.problems
       push!(comments, string("not written: ", p.id, ": ", p.problem, ": ", p.detail))
     end
-    writeMeasurementTable(out_path, conv.rows; comments = comments)
+    with_export_significant_digits(() -> writeMeasurementTable(out_path, conv.rows; comments = comments), config.output.export_significant_digits)
     length(conv.rows)
   catch err
     record_webui_operation!(operation_log, "se_measurements_noised_failed"; route = "/stateestimation/add-noise", method = "POST", user_action = true, casefile = casefile, message = sprint(showerror, err))

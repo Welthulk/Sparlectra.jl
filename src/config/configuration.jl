@@ -1449,6 +1449,42 @@ Base.@kwdef struct OutputConfig
   # one info line per process when running without a sysimage or compiled
   # executable (first run pays JIT warm-up); false silences it
   startup_latency_hint::Bool = true
+  # significant digits of the floats the case exports write (SCF, CGMES,
+  # measurement tables); 0 keeps the shortest round-trip form
+  export_significant_digits::Int = 0
+end
+
+# Significant digits of the floats the case writers print: SCF JSON,
+# measurement CSV v1, measurement table, CGMES RDF/XML. 0 (default) prints
+# the shortest round-trip form, so an export reads back bit for bit.
+# Set for a block with with_export_significant_digits; the service sets it
+# from output.export_significant_digits around its exports.
+const _EXPORT_SIGNIFICANT_DIGITS = Base.ScopedValues.ScopedValue(0)
+
+# the float a case writer prints under the current setting
+_export_float(x::Real)::Float64 = (d = _EXPORT_SIGNIFICANT_DIGITS[]; d == 0 ? Float64(x) : round(Float64(x); sigdigits = d))
+
+function _validate_export_significant_digits(d::Int)::Int
+  (d == 0 || 1 <= d <= 17) || throw(ArgumentError("output.export_significant_digits must be 0 (full precision) or between 1 and 17; got $(d)."))
+  return d
+end
+
+"""
+    with_export_significant_digits(f, digits::Integer)
+
+Run `f()` with the case writers (`exportSCF`, `writeCGMESFiles`,
+`writeMeasurementTable`, `writeMeasurementsCSV`) printing every float
+rounded to `digits` significant digits. `0` prints the shortest round-trip
+form (the default outside such a block). Rounded files do not read back
+bit for bit, but the same values give the same bytes on every machine:
+the last digits a solver leaves depend on the CPU and the linear-algebra
+library. The setting is scoped to `f` and its tasks. Throws an
+`ArgumentError` for a value other than 0 or 1 to 17. Configuration key:
+`output.export_significant_digits`.
+"""
+function with_export_significant_digits(f, digits::Integer)
+  d = _validate_export_significant_digits(Int(digits))
+  return Base.ScopedValues.with(f, _EXPORT_SIGNIFICANT_DIGITS => d)
 end
 
 """
@@ -3039,6 +3075,7 @@ function OutputConfig(raw::AbstractDict)
       _as_symbol_cfg(_raw_get(merged, "csv_format", _raw_get(merged, "detailed_result_csv_format", :auto))),
       OUTPUT_CSV_FORMAT_VALUES,
     ),
+    export_significant_digits = _validate_export_significant_digits(_as_int_cfg(_raw_get(merged, "export_significant_digits", 0))),
   )
 end
 
