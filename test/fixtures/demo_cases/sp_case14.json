@@ -86,7 +86,7 @@
         "vm_pu": 1.003395
       }
     },
-    "iterations": 1,
+    "iterations": 2,
     "losses_mw": 1.725659
   },
   "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
@@ -113,7 +113,7 @@
     },
     "Ostheim_110": {
       "ik_kA": 16.678223,
-      "sk_MVA": 3177.628206
+      "sk_MVA": 3177.6282
     }
   },
   "state_estimation": {

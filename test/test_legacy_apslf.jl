@@ -124,8 +124,12 @@ function run_legacy_apslf_tests()
                   # the generator used nr_polish=true internally, its candidate would
                   # reach comparable machine-precision accuracy and could spuriously
                   # "improve" on an already-converged start, defeating this test.
+                  # tol 1e-12: the shipped case carries its solved voltages with 9
+                  # significant digits, and at tol 1e-8 Newton stops after one
+                  # step at 7.3e-10, which the raw candidate beats; at 1e-12 it
+                  # takes two steps to 6e-16
                   net_converged = deepcopy(net)
-                  runpf!(net_converged, 30, 1e-8, 0)
+                  runpf!(net_converged, 30, 1e-12, 0)
                   model_converged = buildPfModel(net_converged; flatstart=false, include_limits=false)
                   Vgood = copy(model_converged.V0)
                   @test Sparlectra.mismatchInf(model, Vgood) < 1e-6

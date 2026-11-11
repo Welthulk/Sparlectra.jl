@@ -24,24 +24,24 @@
     ],
     "generic_branch": [
       {
-        "b1": -7.815927548784721e-6,
+        "b1": -7.81592755e-6,
         "from_node": 24,
         "from_status": 1,
-        "g1": 4.958677685950412e-6,
+        "g1": 4.95867769e-6,
         "id": 130,
         "k": 1.0,
-        "r1": 0.34571428571428575,
+        "r1": 0.345714286,
         "sn": 1.4e8,
         "theta": 0.0,
         "to_node": 22,
         "to_status": 1,
-        "x1": 11.230394344939858
+        "x1": 11.2303943
       },
       {
-        "b1": -5.161155370577189e-6,
+        "b1": -5.16115537e-6,
         "from_node": 32,
         "from_status": 1,
-        "g1": 4.132231404958678e-6,
+        "g1": 4.1322314e-6,
         "id": 131,
         "k": 1.0,
         "r1": 0.484,
@@ -49,24 +49,24 @@
         "theta": 0.0,
         "to_node": 31,
         "to_status": 1,
-        "x1": 14.511931091346872
+        "x1": 14.5119311
       },
       {
-        "b1": -0.0001384963898446454,
+        "b1": -0.00013849639,
         "from_node": 48,
         "from_status": 1,
         "g1": 7.5e-5,
         "id": 132,
         "k": 1.0,
-        "r1": 0.03174603174603175,
+        "r1": 0.0317460317,
         "sn": 6.3e7,
         "theta": 0.0,
         "to_node": 49,
         "to_status": 1,
-        "x1": 0.6976908246297115
+        "x1": 0.697690825
       },
       {
-        "b1": -8.660254037844386e-5,
+        "b1": -8.66025404e-5,
         "from_node": 52,
         "from_status": 1,
         "g1": 5.0e-5,
@@ -77,21 +77,21 @@
         "theta": 0.0,
         "to_node": 53,
         "to_status": 1,
-        "x1": 0.998749217771909
+        "x1": 0.998749218
       },
       {
-        "b1": -7.815927548784721e-6,
+        "b1": -7.81592755e-6,
         "from_node": 57,
         "from_status": 1,
-        "g1": 4.958677685950412e-6,
+        "g1": 4.95867769e-6,
         "id": 134,
         "k": 1.0,
-        "r1": 0.34571428571428575,
+        "r1": 0.345714286,
         "sn": 1.4e8,
         "theta": 0.0,
         "to_node": 56,
         "to_status": 1,
-        "x1": 11.230394344939858
+        "x1": 11.2303943
       }
     ],
     "line": [
@@ -99,7 +99,7 @@
         "c1": 0.0,
         "from_node": 1,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 61,
         "r1": 29.04,
         "tan1": 0.0,
@@ -111,7 +111,7 @@
         "c1": 0.0,
         "from_node": 1,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 62,
         "r1": 29.04,
         "tan1": 0.0,
@@ -123,19 +123,19 @@
         "c1": 0.0,
         "from_node": 2,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 63,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 25,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 3,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 64,
         "r1": 0.32,
         "tan1": 0.0,
@@ -147,7 +147,7 @@
         "c1": 0.0,
         "from_node": 3,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 65,
         "r1": 0.32,
         "tan1": 0.0,
@@ -159,7 +159,7 @@
         "c1": 0.0,
         "from_node": 4,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 66,
         "r1": 0.32,
         "tan1": 0.0,
@@ -171,31 +171,31 @@
         "c1": 0.0,
         "from_node": 5,
         "from_status": 1,
-        "i_n": 209.9455524325912,
+        "i_n": 209.945552,
         "id": 67,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 12,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 6,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 68,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 11,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 7,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 69,
         "r1": 0.32,
         "tan1": 0.0,
@@ -207,21 +207,21 @@
         "c1": 0.0,
         "from_node": 8,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 70,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 17,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 11,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 71,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 2,
         "to_status": 1,
@@ -231,43 +231,43 @@
         "c1": 0.0,
         "from_node": 11,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 72,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 14,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 13,
         "from_status": 1,
-        "i_n": 209.9455524325912,
+        "i_n": 209.945552,
         "id": 73,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 9,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 14,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 74,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 56,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 15,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 75,
         "r1": 0.32,
         "tan1": 0.0,
@@ -279,7 +279,7 @@
         "c1": 0.0,
         "from_node": 16,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 76,
         "r1": 0.32,
         "tan1": 0.0,
@@ -291,7 +291,7 @@
         "c1": 0.0,
         "from_node": 16,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 77,
         "r1": 0.32,
         "tan1": 0.0,
@@ -303,31 +303,31 @@
         "c1": 0.0,
         "from_node": 17,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 78,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 2,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 17,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 79,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 22,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 18,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 80,
         "r1": 0.32,
         "tan1": 0.0,
@@ -339,7 +339,7 @@
         "c1": 0.0,
         "from_node": 18,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 81,
         "r1": 0.32,
         "tan1": 0.0,
@@ -351,31 +351,31 @@
         "c1": 0.0,
         "from_node": 19,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 82,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 6,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 19,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 83,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 31,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 20,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 84,
         "r1": 0.32,
         "tan1": 0.0,
@@ -387,19 +387,19 @@
         "c1": 0.0,
         "from_node": 21,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 85,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 25,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 24,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 86,
         "r1": 29.04,
         "tan1": 0.0,
@@ -411,7 +411,7 @@
         "c1": 0.0,
         "from_node": 24,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 87,
         "r1": 29.04,
         "tan1": 0.0,
@@ -423,55 +423,55 @@
         "c1": 0.0,
         "from_node": 22,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 88,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 55,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 23,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 89,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 55,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 25,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 90,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 35,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 25,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 91,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 52,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 27,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 92,
         "r1": 0.32,
         "tan1": 0.0,
@@ -483,7 +483,7 @@
         "c1": 0.0,
         "from_node": 28,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 93,
         "r1": 0.32,
         "tan1": 0.0,
@@ -495,7 +495,7 @@
         "c1": 0.0,
         "from_node": 29,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 94,
         "r1": 0.32,
         "tan1": 0.0,
@@ -507,19 +507,19 @@
         "c1": 0.0,
         "from_node": 30,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 95,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 52,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 32,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 96,
         "r1": 29.04,
         "tan1": 0.0,
@@ -531,7 +531,7 @@
         "c1": 0.0,
         "from_node": 32,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 97,
         "r1": 29.04,
         "tan1": 0.0,
@@ -543,7 +543,7 @@
         "c1": 0.0,
         "from_node": 33,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 98,
         "r1": 29.04,
         "tan1": 0.0,
@@ -555,7 +555,7 @@
         "c1": 0.0,
         "from_node": 33,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 99,
         "r1": 29.04,
         "tan1": 0.0,
@@ -567,7 +567,7 @@
         "c1": 0.0,
         "from_node": 34,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 100,
         "r1": 0.32,
         "tan1": 0.0,
@@ -579,19 +579,19 @@
         "c1": 0.0,
         "from_node": 35,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 101,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 37,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 36,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 102,
         "r1": 0.32,
         "tan1": 0.0,
@@ -603,19 +603,19 @@
         "c1": 0.0,
         "from_node": 37,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 103,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 60,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 38,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 104,
         "r1": 29.04,
         "tan1": 0.0,
@@ -627,7 +627,7 @@
         "c1": 0.0,
         "from_node": 38,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 105,
         "r1": 29.04,
         "tan1": 0.0,
@@ -639,7 +639,7 @@
         "c1": 0.0,
         "from_node": 39,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 106,
         "r1": 0.32,
         "tan1": 0.0,
@@ -651,7 +651,7 @@
         "c1": 0.0,
         "from_node": 40,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 107,
         "r1": 0.32,
         "tan1": 0.0,
@@ -663,7 +663,7 @@
         "c1": 0.0,
         "from_node": 41,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 108,
         "r1": 0.32,
         "tan1": 0.0,
@@ -675,7 +675,7 @@
         "c1": 0.0,
         "from_node": 42,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 109,
         "r1": 0.32,
         "tan1": 0.0,
@@ -687,31 +687,31 @@
         "c1": 0.0,
         "from_node": 43,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 110,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 11,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 43,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 111,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 45,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 44,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 112,
         "r1": 0.32,
         "tan1": 0.0,
@@ -723,7 +723,7 @@
         "c1": 0.0,
         "from_node": 44,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 113,
         "r1": 0.32,
         "tan1": 0.0,
@@ -735,31 +735,31 @@
         "c1": 0.0,
         "from_node": 45,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 114,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 2,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 46,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 115,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 21,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 49,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 116,
         "r1": 0.32,
         "tan1": 0.0,
@@ -771,19 +771,19 @@
         "c1": 0.0,
         "from_node": 48,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 117,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 19,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 51,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 118,
         "r1": 0.32,
         "tan1": 0.0,
@@ -795,19 +795,19 @@
         "c1": 0.0,
         "from_node": 52,
         "from_status": 1,
-        "i_n": 209.9455524325912,
+        "i_n": 209.945552,
         "id": 119,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 13,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 53,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 120,
         "r1": 0.32,
         "tan1": 0.0,
@@ -819,19 +819,19 @@
         "c1": 0.0,
         "from_node": 52,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 121,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 46,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 54,
         "from_status": 1,
-        "i_n": 721.6878364870322,
+        "i_n": 721.687836,
         "id": 122,
         "r1": 0.32,
         "tan1": 0.0,
@@ -843,43 +843,43 @@
         "c1": 0.0,
         "from_node": 55,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 123,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 43,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 55,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 124,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 48,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 56,
         "from_status": 1,
-        "i_n": 472.37749297333016,
+        "i_n": 472.377493,
         "id": 125,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 8,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 57,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 126,
         "r1": 29.04,
         "tan1": 0.0,
@@ -891,7 +891,7 @@
         "c1": 0.0,
         "from_node": 57,
         "from_status": 1,
-        "i_n": 656.0798513518474,
+        "i_n": 656.079851,
         "id": 127,
         "r1": 29.04,
         "tan1": 0.0,
@@ -903,25 +903,25 @@
         "c1": 0.0,
         "from_node": 60,
         "from_status": 1,
-        "i_n": 209.9455524325912,
+        "i_n": 209.945552,
         "id": 128,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 5,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       },
       {
         "c1": 0.0,
         "from_node": 60,
         "from_status": 1,
-        "i_n": 314.9183286488868,
+        "i_n": 314.918329,
         "id": 129,
-        "r1": 12.100000000000001,
+        "r1": 12.1,
         "tan1": 0.0,
         "to_node": 30,
         "to_status": 1,
-        "x1": 42.349999999999994
+        "x1": 42.35
       }
     ],
     "link": [
@@ -1177,35 +1177,35 @@
     ],
     "shunt": [
       {
-        "b1": 0.0014876033057851239,
+        "b1": 0.00148760331,
         "g1": 0.0,
         "id": 169,
         "node": 14,
         "status": 1
       },
       {
-        "b1": 0.0009917355371900827,
+        "b1": 0.000991735537,
         "g1": 0.0,
         "id": 170,
         "node": 43,
         "status": 1
       },
       {
-        "b1": 0.0011570247933884298,
+        "b1": 0.00115702479,
         "g1": 0.0,
         "id": 171,
         "node": 37,
         "status": 1
       },
       {
-        "b1": 0.0009917355371900827,
+        "b1": 0.000991735537,
         "g1": 0.0,
         "id": 172,
         "node": 46,
         "status": 1
       },
       {
-        "b1": 0.0004958677685950413,
+        "b1": 0.000495867769,
         "g1": 0.0,
         "id": 173,
         "node": 5,
@@ -1499,487 +1499,487 @@
         "id": 244,
         "measured_object": 1,
         "measured_terminal_type": "node",
-        "p_measured": -1.2084344956583753e7,
+        "p_measured": -1.2084345e7,
         "power_sigma": 1.0e6,
-        "q_measured": 2.03029710523768e7
+        "q_measured": 2.03029711e7
       },
       {
         "id": 245,
         "measured_object": 24,
         "measured_terminal_type": "node",
-        "p_measured": 509349.3962819575,
+        "p_measured": 509349.396,
         "power_sigma": 1.0e6,
-        "q_measured": 1.6698875272199085e6
+        "q_measured": 1.66988753e6
       },
       {
         "id": 246,
         "measured_object": 33,
         "measured_terminal_type": "node",
-        "p_measured": 1.8066093405333827e6,
+        "p_measured": 1.80660934e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.5664361528651873e6
+        "q_measured": -1.56643615e6
       },
       {
         "id": 247,
         "measured_object": 38,
         "measured_terminal_type": "node",
-        "p_measured": 1.2086485760253987e8,
+        "p_measured": 1.20864858e8,
         "power_sigma": 1.0e6,
-        "q_measured": -6.74942048512727e6
+        "q_measured": -6.74942049e6
       },
       {
         "id": 248,
         "measured_object": 57,
         "measured_terminal_type": "node",
-        "p_measured": 410202.32628715085,
+        "p_measured": 410202.326,
         "power_sigma": 1.0e6,
-        "q_measured": -246201.03969122868
+        "q_measured": -246201.04
       },
       {
         "id": 249,
         "measured_object": 32,
         "measured_terminal_type": "node",
-        "p_measured": 455577.70385209116,
+        "p_measured": 455577.704,
         "power_sigma": 1.0e6,
-        "q_measured": -32622.232455528352
+        "q_measured": -32622.2325
       },
       {
         "id": 250,
         "measured_object": 22,
         "measured_terminal_type": "node",
-        "p_measured": 83770.86051267624,
+        "p_measured": 83770.8605,
         "power_sigma": 1.0e6,
-        "q_measured": -718047.7420486888
+        "q_measured": -718047.742
       },
       {
         "id": 251,
         "measured_object": 55,
         "measured_terminal_type": "node",
-        "p_measured": 258246.9892252345,
+        "p_measured": 258246.989,
         "power_sigma": 1.0e6,
-        "q_measured": 365744.9264442807
+        "q_measured": 365744.926
       },
       {
         "id": 252,
         "measured_object": 48,
         "measured_terminal_type": "node",
-        "p_measured": 7508.867044127155,
+        "p_measured": 7508.86704,
         "power_sigma": 1.0e6,
-        "q_measured": 731458.1193092136
+        "q_measured": 731458.119
       },
       {
         "id": 253,
         "measured_object": 19,
         "measured_terminal_type": "node",
-        "p_measured": 543436.9537561553,
+        "p_measured": 543436.954,
         "power_sigma": 1.0e6,
-        "q_measured": -930903.1257034807
+        "q_measured": -930903.126
       },
       {
         "id": 254,
         "measured_object": 6,
         "measured_terminal_type": "node",
-        "p_measured": 1.0576172956883987e7,
+        "p_measured": 1.0576173e7,
         "power_sigma": 1.0e6,
-        "q_measured": -41956.34431139284
+        "q_measured": -41956.3443
       },
       {
         "id": 255,
         "measured_object": 11,
         "measured_terminal_type": "node",
-        "p_measured": -149876.25728221756,
+        "p_measured": -149876.257,
         "power_sigma": 1.0e6,
-        "q_measured": -667267.1446491937
+        "q_measured": -667267.145
       },
       {
         "id": 256,
         "measured_object": 14,
         "measured_terminal_type": "node",
-        "p_measured": -2.4637918926425416e7,
+        "p_measured": -2.46379189e7,
         "power_sigma": 1.0e6,
-        "q_measured": -6.626748170802437e6
+        "q_measured": -6.62674817e6
       },
       {
         "id": 257,
         "measured_object": 56,
         "measured_terminal_type": "node",
-        "p_measured": -1.4584253734302896e6,
+        "p_measured": -1.45842537e6,
         "power_sigma": 1.0e6,
-        "q_measured": 820681.0147100395
+        "q_measured": 820681.015
       },
       {
         "id": 258,
         "measured_object": 8,
         "measured_terminal_type": "node",
-        "p_measured": -2.042189691407927e7,
+        "p_measured": -2.04218969e7,
         "power_sigma": 1.0e6,
-        "q_measured": -5.386811289071641e6
+        "q_measured": -5.38681129e6
       },
       {
         "id": 259,
         "measured_object": 17,
         "measured_terminal_type": "node",
-        "p_measured": 376999.55748526054,
+        "p_measured": 376999.557,
         "power_sigma": 1.0e6,
-        "q_measured": 215147.3405487813
+        "q_measured": 215147.341
       },
       {
         "id": 260,
         "measured_object": 43,
         "measured_terminal_type": "node",
-        "p_measured": 1.2145736870960873e6,
+        "p_measured": 1.21457369e6,
         "power_sigma": 1.0e6,
-        "q_measured": 1.0307569199005208e6
+        "q_measured": 1.03075692e6
       },
       {
         "id": 261,
         "measured_object": 31,
         "measured_terminal_type": "node",
-        "p_measured": 529595.3367429908,
+        "p_measured": 529595.337,
         "power_sigma": 1.0e6,
-        "q_measured": -1.2032329840599801e6
+        "q_measured": -1.20323298e6
       },
       {
         "id": 262,
         "measured_object": 45,
         "measured_terminal_type": "node",
-        "p_measured": -1.3087530365123913e7,
+        "p_measured": -1.30875304e7,
         "power_sigma": 1.0e6,
-        "q_measured": -3.955597464242952e6
+        "q_measured": -3.95559746e6
       },
       {
         "id": 263,
         "measured_object": 2,
         "measured_terminal_type": "node",
-        "p_measured": 14328.580308390045,
+        "p_measured": 14328.5803,
         "power_sigma": 1.0e6,
-        "q_measured": -361402.2370297197
+        "q_measured": -361402.237
       },
       {
         "id": 264,
         "measured_object": 23,
         "measured_terminal_type": "node",
-        "p_measured": 1.5299816846402397e6,
+        "p_measured": 1.52998168e6,
         "power_sigma": 1.0e6,
-        "q_measured": 153417.45673391045
+        "q_measured": 153417.457
       },
       {
         "id": 265,
         "measured_object": 25,
         "measured_terminal_type": "node",
-        "p_measured": -1.2362242058272806e6,
+        "p_measured": -1.23622421e6,
         "power_sigma": 1.0e6,
-        "q_measured": 1.2334981224352391e6
+        "q_measured": 1.23349812e6
       },
       {
         "id": 266,
         "measured_object": 35,
         "measured_terminal_type": "node",
-        "p_measured": -317741.70037011936,
+        "p_measured": -317741.7,
         "power_sigma": 1.0e6,
-        "q_measured": 384208.968372886
+        "q_measured": 384208.968
       },
       {
         "id": 267,
         "measured_object": 37,
         "measured_terminal_type": "node",
-        "p_measured": -2.5429053761081886e7,
+        "p_measured": -2.54290538e7,
         "power_sigma": 1.0e6,
-        "q_measured": -8.721675266350888e6
+        "q_measured": -8.72167527e6
       },
       {
         "id": 268,
         "measured_object": 60,
         "measured_terminal_type": "node",
-        "p_measured": 3.9861435766332224e7,
+        "p_measured": 3.98614358e7,
         "power_sigma": 1.0e6,
-        "q_measured": 5.296065317684739e6
+        "q_measured": 5.29606532e6
       },
       {
         "id": 269,
         "measured_object": 30,
         "measured_terminal_type": "node",
-        "p_measured": -237669.7929283985,
+        "p_measured": -237669.793,
         "power_sigma": 1.0e6,
-        "q_measured": -470013.1646727142
+        "q_measured": -470013.165
       },
       {
         "id": 270,
         "measured_object": 52,
         "measured_terminal_type": "node",
-        "p_measured": 621570.0475917946,
+        "p_measured": 621570.048,
         "power_sigma": 1.0e6,
-        "q_measured": -287052.5965759597
+        "q_measured": -287052.597
       },
       {
         "id": 271,
         "measured_object": 46,
         "measured_terminal_type": "node",
-        "p_measured": -1.922305925806876e7,
+        "p_measured": -1.92230593e7,
         "power_sigma": 1.0e6,
-        "q_measured": -6.520296045878204e6
+        "q_measured": -6.52029605e6
       },
       {
         "id": 272,
         "measured_object": 21,
         "measured_terminal_type": "node",
-        "p_measured": -835426.2521925394,
+        "p_measured": -835426.252,
         "power_sigma": 1.0e6,
-        "q_measured": 250220.1196623941
+        "q_measured": 250220.12
       },
       {
         "id": 273,
         "measured_object": 5,
         "measured_terminal_type": "node",
-        "p_measured": -1.2304407280256411e7,
+        "p_measured": -1.23044073e7,
         "power_sigma": 1.0e6,
-        "q_measured": -2.601541844594405e6
+        "q_measured": -2.60154184e6
       },
       {
         "id": 274,
         "measured_object": 12,
         "measured_terminal_type": "node",
-        "p_measured": -1.1508223830193072e6,
+        "p_measured": -1.15082238e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.1989980214965825e6
+        "q_measured": -1.19899802e6
       },
       {
         "id": 275,
         "measured_object": 13,
         "measured_terminal_type": "node",
-        "p_measured": -9.75378790327508e6,
+        "p_measured": -9.7537879e6,
         "power_sigma": 1.0e6,
-        "q_measured": -2.55228244049147e6
+        "q_measured": -2.55228244e6
       },
       {
         "id": 276,
         "measured_object": 9,
         "measured_terminal_type": "node",
-        "p_measured": 1.1103950133740138e6,
+        "p_measured": 1.11039501e6,
         "power_sigma": 1.0e6,
-        "q_measured": 30414.400233468863
+        "q_measured": 30414.4002
       },
       {
         "id": 277,
         "measured_object": 49,
         "measured_terminal_type": "node",
-        "p_measured": 788867.8453379417,
+        "p_measured": 788867.845,
         "power_sigma": 1.0e6,
-        "q_measured": 60836.64316155701
+        "q_measured": 60836.6432
       },
       {
         "id": 278,
         "measured_object": 18,
         "measured_terminal_type": "node",
-        "p_measured": -2.2890930788195585e6,
+        "p_measured": -2.28909308e6,
         "power_sigma": 1.0e6,
-        "q_measured": -562905.0439130614
+        "q_measured": -562905.044
       },
       {
         "id": 279,
         "measured_object": 42,
         "measured_terminal_type": "node",
-        "p_measured": 974359.9873092391,
+        "p_measured": 974359.987,
         "power_sigma": 1.0e6,
-        "q_measured": -2.1525924924140465e6
+        "q_measured": -2.15259249e6
       },
       {
         "id": 280,
         "measured_object": 3,
         "measured_terminal_type": "node",
-        "p_measured": -1.4570077638700572e6,
+        "p_measured": -1.45700776e6,
         "power_sigma": 1.0e6,
-        "q_measured": -871668.9793696837
+        "q_measured": -871668.979
       },
       {
         "id": 281,
         "measured_object": 27,
         "measured_terminal_type": "node",
-        "p_measured": -2.7571860029967227e6,
+        "p_measured": -2.757186e6,
         "power_sigma": 1.0e6,
-        "q_measured": -2.0542473649389197e6
+        "q_measured": -2.05424736e6
       },
       {
         "id": 282,
         "measured_object": 34,
         "measured_terminal_type": "node",
-        "p_measured": -3.3565298856343715e6,
+        "p_measured": -3.35652989e6,
         "power_sigma": 1.0e6,
-        "q_measured": -215894.09462373532
+        "q_measured": -215894.095
       },
       {
         "id": 283,
         "measured_object": 40,
         "measured_terminal_type": "node",
-        "p_measured": 3.504328863381513e6,
+        "p_measured": 3.50432886e6,
         "power_sigma": 1.0e6,
-        "q_measured": 588409.3034393854
+        "q_measured": 588409.303
       },
       {
         "id": 284,
         "measured_object": 59,
         "measured_terminal_type": "node",
-        "p_measured": -2.7294913642767877e6,
+        "p_measured": -2.72949136e6,
         "power_sigma": 1.0e6,
-        "q_measured": -795513.121979813
+        "q_measured": -795513.122
       },
       {
         "id": 285,
         "measured_object": 29,
         "measured_terminal_type": "node",
-        "p_measured": -3.228911747416845e6,
+        "p_measured": -3.22891175e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.938132693687213e6
+        "q_measured": -1.93813269e6
       },
       {
         "id": 286,
         "measured_object": 51,
         "measured_terminal_type": "node",
-        "p_measured": 1.8207039194344974e6,
+        "p_measured": 1.82070392e6,
         "power_sigma": 1.0e6,
-        "q_measured": 850973.4207959706
+        "q_measured": 850973.421
       },
       {
         "id": 287,
         "measured_object": 50,
         "measured_terminal_type": "node",
-        "p_measured": -5.077040394273078e6,
+        "p_measured": -5.07704039e6,
         "power_sigma": 1.0e6,
-        "q_measured": 526142.4301904194
+        "q_measured": 526142.43
       },
       {
         "id": 288,
         "measured_object": 20,
         "measured_terminal_type": "node",
-        "p_measured": -1.9027513373428208e6,
+        "p_measured": -1.90275134e6,
         "power_sigma": 1.0e6,
-        "q_measured": 161223.90349041543
+        "q_measured": 161223.903
       },
       {
         "id": 289,
         "measured_object": 7,
         "measured_terminal_type": "node",
-        "p_measured": -3.6328756739501306e6,
+        "p_measured": -3.63287567e6,
         "power_sigma": 1.0e6,
-        "q_measured": 161864.34549707553
+        "q_measured": 161864.345
       },
       {
         "id": 290,
         "measured_object": 15,
         "measured_terminal_type": "node",
-        "p_measured": 3.109691470074651e6,
+        "p_measured": 3.10969147e6,
         "power_sigma": 1.0e6,
-        "q_measured": 1.7694925320716745e6
+        "q_measured": 1.76949253e6
       },
       {
         "id": 291,
         "measured_object": 10,
         "measured_terminal_type": "node",
-        "p_measured": -2.6318467924534227e6,
+        "p_measured": -2.63184679e6,
         "power_sigma": 1.0e6,
-        "q_measured": -2.3550163097548303e6
+        "q_measured": -2.35501631e6
       },
       {
         "id": 292,
         "measured_object": 53,
         "measured_terminal_type": "node",
-        "p_measured": 460989.30669225863,
+        "p_measured": 460989.307,
         "power_sigma": 1.0e6,
-        "q_measured": -270377.6052128103
+        "q_measured": -270377.605
       },
       {
         "id": 293,
         "measured_object": 16,
         "measured_terminal_type": "node",
-        "p_measured": -4.350649092432425e6,
+        "p_measured": -4.35064909e6,
         "power_sigma": 1.0e6,
-        "q_measured": -773873.3100752763
+        "q_measured": -773873.31
       },
       {
         "id": 294,
         "measured_object": 41,
         "measured_terminal_type": "node",
-        "p_measured": -472090.47299382166,
+        "p_measured": -472090.473,
         "power_sigma": 1.0e6,
-        "q_measured": 136688.53377459303
+        "q_measured": 136688.534
       },
       {
         "id": 295,
         "measured_object": 44,
         "measured_terminal_type": "node",
-        "p_measured": -444112.5261980656,
+        "p_measured": -444112.526,
         "power_sigma": 1.0e6,
-        "q_measured": -830123.5662347357
+        "q_measured": -830123.566
       },
       {
         "id": 296,
         "measured_object": 4,
         "measured_terminal_type": "node",
-        "p_measured": 1.6606950699046354e6,
+        "p_measured": 1.66069507e6,
         "power_sigma": 1.0e6,
-        "q_measured": -318426.7045894677
+        "q_measured": -318426.705
       },
       {
         "id": 297,
         "measured_object": 26,
         "measured_terminal_type": "node",
-        "p_measured": -2.4855211016763016e6,
+        "p_measured": -2.4855211e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.3522534769760303e6
+        "q_measured": -1.35225348e6
       },
       {
         "id": 298,
         "measured_object": 36,
         "measured_terminal_type": "node",
-        "p_measured": -836227.6488179609,
+        "p_measured": -836227.649,
         "power_sigma": 1.0e6,
-        "q_measured": 1.4995360761519521e6
+        "q_measured": 1.49953608e6
       },
       {
         "id": 299,
         "measured_object": 39,
         "measured_terminal_type": "node",
-        "p_measured": -2.65796671930197e6,
+        "p_measured": -2.65796672e6,
         "power_sigma": 1.0e6,
-        "q_measured": -236972.46859990663
+        "q_measured": -236972.469
       },
       {
         "id": 300,
         "measured_object": 58,
         "measured_terminal_type": "node",
-        "p_measured": 2.939281966720647e6,
+        "p_measured": 2.93928197e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.301116542502161e6
+        "q_measured": -1.30111654e6
       },
       {
         "id": 301,
         "measured_object": 28,
         "measured_terminal_type": "node",
-        "p_measured": -1.5787370680173466e6,
+        "p_measured": -1.57873707e6,
         "power_sigma": 1.0e6,
-        "q_measured": -62348.582281713025
+        "q_measured": -62348.5823
       },
       {
         "id": 302,
         "measured_object": 54,
         "measured_terminal_type": "node",
-        "p_measured": -195057.09980160213,
+        "p_measured": -195057.1,
         "power_sigma": 1.0e6,
-        "q_measured": 2.002187026170934e6
+        "q_measured": 2.00218703e6
       },
       {
         "id": 303,
         "measured_object": 47,
         "measured_terminal_type": "node",
-        "p_measured": -2.199862182975643e6,
+        "p_measured": -2.19986218e6,
         "power_sigma": 1.0e6,
-        "q_measured": -1.46436743636576e6
+        "q_measured": -1.46436744e6
       },
       {
         "id": 304,
         "measured_object": 61,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.505194154523348e6,
+        "p_measured": -2.50519415e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -1987,7 +1987,7 @@
         "id": 305,
         "measured_object": 61,
         "measured_terminal_type": "branch_to",
-        "p_measured": 4.450961824298787e6,
+        "p_measured": 4.45096182e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -1995,7 +1995,7 @@
         "id": 306,
         "measured_object": 62,
         "measured_terminal_type": "branch_from",
-        "p_measured": -3.061986144801619e6,
+        "p_measured": -3.06198614e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2003,7 +2003,7 @@
         "id": 307,
         "measured_object": 62,
         "measured_terminal_type": "branch_to",
-        "p_measured": 3.7582957270177905e6,
+        "p_measured": 3.75829573e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2011,7 +2011,7 @@
         "id": 308,
         "measured_object": 86,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.3124816506262418e7,
+        "p_measured": -2.31248165e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2019,7 +2019,7 @@
         "id": 309,
         "measured_object": 86,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.259787125311243e7,
+        "p_measured": 2.25978713e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2027,7 +2027,7 @@
         "id": 310,
         "measured_object": 87,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.5484689988405164e7,
+        "p_measured": -2.548469e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2035,7 +2035,7 @@
         "id": 311,
         "measured_object": 87,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.3192242856659748e7,
+        "p_measured": 2.31922429e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2043,7 +2043,7 @@
         "id": 312,
         "measured_object": 98,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.293624715230671e7,
+        "p_measured": -2.29362472e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2051,7 +2051,7 @@
         "id": 313,
         "measured_object": 98,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.2615106661713216e7,
+        "p_measured": 2.26151067e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2059,7 +2059,7 @@
         "id": 314,
         "measured_object": 99,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.300762873127115e7,
+        "p_measured": -2.30076287e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2067,7 +2067,7 @@
         "id": 315,
         "measured_object": 99,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.2390831991685934e7,
+        "p_measured": 2.2390832e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2075,7 +2075,7 @@
         "id": 316,
         "measured_object": 104,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.800975729042541e7,
+        "p_measured": 3.80097573e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2083,7 +2083,7 @@
         "id": 317,
         "measured_object": 104,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.433199282568129e7,
+        "p_measured": -3.43319928e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2091,7 +2091,7 @@
         "id": 318,
         "measured_object": 105,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.692756725129077e7,
+        "p_measured": 3.69275673e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2099,7 +2099,7 @@
         "id": 319,
         "measured_object": 105,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.5343785886518e7,
+        "p_measured": -3.53437859e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2107,7 +2107,7 @@
         "id": 320,
         "measured_object": 126,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0207624862880656e7,
+        "p_measured": 1.02076249e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2115,7 +2115,7 @@
         "id": 321,
         "measured_object": 126,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0317475883014372e7,
+        "p_measured": -1.03174759e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2123,7 +2123,7 @@
         "id": 322,
         "measured_object": 127,
         "measured_terminal_type": "branch_from",
-        "p_measured": 8.031548405867609e6,
+        "p_measured": 8.03154841e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2131,7 +2131,7 @@
         "id": 323,
         "measured_object": 127,
         "measured_terminal_type": "branch_to",
-        "p_measured": -8.751923301093128e6,
+        "p_measured": -8.7519233e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2139,7 +2139,7 @@
         "id": 324,
         "measured_object": 96,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.1014229579052185e6,
+        "p_measured": 2.10142296e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2147,7 +2147,7 @@
         "id": 325,
         "measured_object": 96,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.057837687649295e6,
+        "p_measured": -3.05783769e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2155,7 +2155,7 @@
         "id": 326,
         "measured_object": 97,
         "measured_terminal_type": "branch_from",
-        "p_measured": 4.075942476478167e6,
+        "p_measured": 4.07594248e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2163,7 +2163,7 @@
         "id": 327,
         "measured_object": 97,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.5851589917775923e6,
+        "p_measured": -3.58515899e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2171,7 +2171,7 @@
         "id": 328,
         "measured_object": 124,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.3889362534052045e6,
+        "p_measured": 3.38893625e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2179,7 +2179,7 @@
         "id": 329,
         "measured_object": 124,
         "measured_terminal_type": "branch_to",
-        "p_measured": -4.793996005593101e6,
+        "p_measured": -4.79399601e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2187,7 +2187,7 @@
         "id": 330,
         "measured_object": 117,
         "measured_terminal_type": "branch_from",
-        "p_measured": -8.953927464427756e6,
+        "p_measured": -8.95392746e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2195,7 +2195,7 @@
         "id": 331,
         "measured_object": 117,
         "measured_terminal_type": "branch_to",
-        "p_measured": 6.837576652506635e6,
+        "p_measured": 6.83757665e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2203,7 +2203,7 @@
         "id": 332,
         "measured_object": 82,
         "measured_terminal_type": "branch_from",
-        "p_measured": 5.4772505765015865e6,
+        "p_measured": 5.47725058e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2211,7 +2211,7 @@
         "id": 333,
         "measured_object": 82,
         "measured_terminal_type": "branch_to",
-        "p_measured": -5.975099452714544e6,
+        "p_measured": -5.97509945e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2219,7 +2219,7 @@
         "id": 334,
         "measured_object": 68,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.6485393143607628e7,
+        "p_measured": 1.64853931e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2227,7 +2227,7 @@
         "id": 335,
         "measured_object": 68,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.4163665272238513e7,
+        "p_measured": -1.41636653e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2235,7 +2235,7 @@
         "id": 336,
         "measured_object": 72,
         "measured_terminal_type": "branch_from",
-        "p_measured": -3.8290519830247266e6,
+        "p_measured": -3.82905198e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2243,7 +2243,7 @@
         "id": 337,
         "measured_object": 72,
         "measured_terminal_type": "branch_to",
-        "p_measured": 3.1947052163458224e6,
+        "p_measured": 3.19470522e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2251,7 +2251,7 @@
         "id": 338,
         "measured_object": 74,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.7680041625537436e7,
+        "p_measured": -2.76800416e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2259,7 +2259,7 @@
         "id": 339,
         "measured_object": 74,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.733773909183522e7,
+        "p_measured": 2.73377391e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2267,7 +2267,7 @@
         "id": 340,
         "measured_object": 125,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.209924881652848e7,
+        "p_measured": 2.20992488e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2275,7 +2275,7 @@
         "id": 341,
         "measured_object": 125,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.0069378373886593e7,
+        "p_measured": -2.00693784e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2283,7 +2283,7 @@
         "id": 342,
         "measured_object": 70,
         "measured_terminal_type": "branch_from",
-        "p_measured": 393568.82537591486,
+        "p_measured": 393568.825,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2291,7 +2291,7 @@
         "id": 343,
         "measured_object": 70,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.4638853265795675e6,
+        "p_measured": -1.46388533e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2299,7 +2299,7 @@
         "id": 344,
         "measured_object": 79,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.856208608707883e7,
+        "p_measured": -1.85620861e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2307,7 +2307,7 @@
         "id": 345,
         "measured_object": 79,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.0447644269662764e7,
+        "p_measured": 2.04476443e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2315,7 +2315,7 @@
         "id": 346,
         "measured_object": 123,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.6583038631500883e7,
+        "p_measured": 1.65830386e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2323,7 +2323,7 @@
         "id": 347,
         "measured_object": 123,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.7003508898602426e7,
+        "p_measured": -1.70035089e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2331,7 +2331,7 @@
         "id": 348,
         "measured_object": 110,
         "measured_terminal_type": "branch_from",
-        "p_measured": 662002.7296887423,
+        "p_measured": 662002.73,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2339,7 +2339,7 @@
         "id": 349,
         "measured_object": 110,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.0909069197332747e6,
+        "p_measured": -2.09090692e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2347,7 +2347,7 @@
         "id": 350,
         "measured_object": 83,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.1851976692132257e7,
+        "p_measured": -1.18519767e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2355,7 +2355,7 @@
         "id": 351,
         "measured_object": 83,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.2127056297459295e7,
+        "p_measured": 1.21270563e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2363,7 +2363,7 @@
         "id": 352,
         "measured_object": 111,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.393979352860751e7,
+        "p_measured": 1.39397935e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2371,7 +2371,7 @@
         "id": 353,
         "measured_object": 111,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.4636247630288955e7,
+        "p_measured": -1.46362476e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2379,7 +2379,7 @@
         "id": 354,
         "measured_object": 114,
         "measured_terminal_type": "branch_from",
-        "p_measured": -594756.6630351107,
+        "p_measured": -594756.663,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2387,7 +2387,7 @@
         "id": 355,
         "measured_object": 114,
         "measured_terminal_type": "branch_to",
-        "p_measured": 189660.7385733965,
+        "p_measured": 189660.739,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2395,7 +2395,7 @@
         "id": 356,
         "measured_object": 78,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.0446104336244505e7,
+        "p_measured": 2.04461043e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2403,7 +2403,7 @@
         "id": 357,
         "measured_object": 78,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.0969082872578442e7,
+        "p_measured": -2.09690829e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2411,7 +2411,7 @@
         "id": 358,
         "measured_object": 88,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0522688936172247e7,
+        "p_measured": 1.05226889e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2419,7 +2419,7 @@
         "id": 359,
         "measured_object": 88,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0229284212265655e7,
+        "p_measured": -1.02292842e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2427,7 +2427,7 @@
         "id": 360,
         "measured_object": 89,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0352609872875573e7,
+        "p_measured": 1.03526099e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2435,7 +2435,7 @@
         "id": 361,
         "measured_object": 89,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0430412514117526e7,
+        "p_measured": -1.04304125e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2443,7 +2443,7 @@
         "id": 362,
         "measured_object": 71,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.1263604839999165e7,
+        "p_measured": 2.12636048e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2451,7 +2451,7 @@
         "id": 363,
         "measured_object": 71,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.0170807655287735e7,
+        "p_measured": -2.01708077e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2459,7 +2459,7 @@
         "id": 364,
         "measured_object": 90,
         "measured_terminal_type": "branch_from",
-        "p_measured": 7.570686111729207e6,
+        "p_measured": 7.57068611e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2467,7 +2467,7 @@
         "id": 365,
         "measured_object": 90,
         "measured_terminal_type": "branch_to",
-        "p_measured": -7.58223504850602e6,
+        "p_measured": -7.58223505e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2475,7 +2475,7 @@
         "id": 366,
         "measured_object": 101,
         "measured_terminal_type": "branch_from",
-        "p_measured": 6.474860155191902e6,
+        "p_measured": 6.47486016e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2483,7 +2483,7 @@
         "id": 367,
         "measured_object": 101,
         "measured_terminal_type": "branch_to",
-        "p_measured": -6.326945327626073e6,
+        "p_measured": -6.32694533e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2491,7 +2491,7 @@
         "id": 368,
         "measured_object": 103,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.8275290155150525e7,
+        "p_measured": -1.82752902e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2499,7 +2499,7 @@
         "id": 369,
         "measured_object": 103,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.840328404301387e7,
+        "p_measured": 1.8403284e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2507,7 +2507,7 @@
         "id": 370,
         "measured_object": 129,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.1085552230857737e7,
+        "p_measured": 1.10855522e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2515,7 +2515,7 @@
         "id": 371,
         "measured_object": 129,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0556424562810846e7,
+        "p_measured": -1.05564246e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2523,7 +2523,7 @@
         "id": 372,
         "measured_object": 95,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0992256923274005e7,
+        "p_measured": 1.09922569e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2531,7 +2531,7 @@
         "id": 373,
         "measured_object": 95,
         "measured_terminal_type": "branch_to",
-        "p_measured": -9.988309391122632e6,
+        "p_measured": -9.98830939e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2539,7 +2539,7 @@
         "id": 374,
         "measured_object": 121,
         "measured_terminal_type": "branch_from",
-        "p_measured": 7.359041600443016e6,
+        "p_measured": 7.3590416e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2547,7 +2547,7 @@
         "id": 375,
         "measured_object": 121,
         "measured_terminal_type": "branch_to",
-        "p_measured": -8.401976262352021e6,
+        "p_measured": -8.40197626e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2555,7 +2555,7 @@
         "id": 376,
         "measured_object": 115,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.2885038587005524e7,
+        "p_measured": -1.28850386e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2563,7 +2563,7 @@
         "id": 377,
         "measured_object": 115,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.2384043015709294e7,
+        "p_measured": 1.2384043e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2571,7 +2571,7 @@
         "id": 378,
         "measured_object": 85,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.305588051777008e7,
+        "p_measured": -1.30558805e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2579,7 +2579,7 @@
         "id": 379,
         "measured_object": 85,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.2879263224706024e7,
+        "p_measured": 1.28792632e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2587,7 +2587,7 @@
         "id": 380,
         "measured_object": 128,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.1783782338338953e7,
+        "p_measured": 1.17837823e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2595,7 +2595,7 @@
         "id": 381,
         "measured_object": 128,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.2473631889837665e7,
+        "p_measured": -1.24736319e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2603,7 +2603,7 @@
         "id": 382,
         "measured_object": 67,
         "measured_terminal_type": "branch_from",
-        "p_measured": 815665.2544966706,
+        "p_measured": 815665.254,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2611,7 +2611,7 @@
         "id": 383,
         "measured_object": 67,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0144926469545211e6,
+        "p_measured": -1.01449265e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2619,7 +2619,7 @@
         "id": 384,
         "measured_object": 119,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0554518880875394e7,
+        "p_measured": 1.05545189e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2627,7 +2627,7 @@
         "id": 385,
         "measured_object": 119,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.1401302472048063e7,
+        "p_measured": -1.14013025e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2635,7 +2635,7 @@
         "id": 386,
         "measured_object": 73,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.0750407636706266e6,
+        "p_measured": -1.07504076e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2643,7 +2643,7 @@
         "id": 387,
         "measured_object": 73,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.8118951438087528e6,
+        "p_measured": -1.81189514e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2651,7 +2651,7 @@
         "id": 388,
         "measured_object": 91,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.8170097901189603e7,
+        "p_measured": 1.81700979e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2659,7 +2659,7 @@
         "id": 389,
         "measured_object": 91,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.6615774966040036e7,
+        "p_measured": -1.6615775e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2667,7 +2667,7 @@
         "id": 390,
         "measured_object": 63,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.879690097260707e7,
+        "p_measured": 3.8796901e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2675,7 +2675,7 @@
         "id": 391,
         "measured_object": 63,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.86957933840486e7,
+        "p_measured": -3.86957934e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2683,7 +2683,7 @@
         "id": 392,
         "measured_object": 116,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0728112628236238e7,
+        "p_measured": 1.07281126e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2691,7 +2691,7 @@
         "id": 393,
         "measured_object": 116,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.0900755729772449e7,
+        "p_measured": -1.09007557e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2699,7 +2699,7 @@
         "id": 394,
         "measured_object": 81,
         "measured_terminal_type": "branch_from",
-        "p_measured": 6.005228302363149e6,
+        "p_measured": 6.0052283e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2707,7 +2707,7 @@
         "id": 395,
         "measured_object": 81,
         "measured_terminal_type": "branch_to",
-        "p_measured": -6.963208040866561e6,
+        "p_measured": -6.96320804e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2715,7 +2715,7 @@
         "id": 396,
         "measured_object": 109,
         "measured_terminal_type": "branch_from",
-        "p_measured": 7.34828199622614e6,
+        "p_measured": 7.348282e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2723,7 +2723,7 @@
         "id": 397,
         "measured_object": 109,
         "measured_terminal_type": "branch_to",
-        "p_measured": -7.016938308472315e6,
+        "p_measured": -7.01693831e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2731,7 +2731,7 @@
         "id": 398,
         "measured_object": 65,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.6416503848945154e6,
+        "p_measured": 2.64165038e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2739,7 +2739,7 @@
         "id": 399,
         "measured_object": 65,
         "measured_terminal_type": "branch_to",
-        "p_measured": -6.039174438868023e6,
+        "p_measured": -6.03917444e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2747,7 +2747,7 @@
         "id": 400,
         "measured_object": 92,
         "measured_terminal_type": "branch_from",
-        "p_measured": 475954.3944614262,
+        "p_measured": 475954.394,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2755,7 +2755,7 @@
         "id": 401,
         "measured_object": 92,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.7766512380925263e6,
+        "p_measured": -3.77665124e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2763,7 +2763,7 @@
         "id": 402,
         "measured_object": 100,
         "measured_terminal_type": "branch_from",
-        "p_measured": 90217.36581810714,
+        "p_measured": 90217.3658,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2771,7 +2771,7 @@
         "id": 403,
         "measured_object": 100,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.278566484710797e6,
+        "p_measured": 1.27856648e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2779,7 +2779,7 @@
         "id": 404,
         "measured_object": 107,
         "measured_terminal_type": "branch_from",
-        "p_measured": 2.960706353755952e6,
+        "p_measured": 2.96070635e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2787,7 +2787,7 @@
         "id": 405,
         "measured_object": 107,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.8354102790389892e6,
+        "p_measured": -1.83541028e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2795,7 +2795,7 @@
         "id": 406,
         "measured_object": 80,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.2141620862994734e6,
+        "p_measured": 3.21416209e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2803,7 +2803,7 @@
         "id": 407,
         "measured_object": 80,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.2066024080261183e6,
+        "p_measured": -2.20660241e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2811,7 +2811,7 @@
         "id": 408,
         "measured_object": 94,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.9303027831371708e6,
+        "p_measured": -1.93030278e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2819,7 +2819,7 @@
         "id": 409,
         "measured_object": 94,
         "measured_terminal_type": "branch_to",
-        "p_measured": 3.254450792638533e6,
+        "p_measured": 3.25445079e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2827,7 +2827,7 @@
         "id": 410,
         "measured_object": 118,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.5725890446942516e6,
+        "p_measured": 1.57258904e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2835,7 +2835,7 @@
         "id": 411,
         "measured_object": 118,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.38002730881992e6,
+        "p_measured": -3.38002731e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2843,7 +2843,7 @@
         "id": 412,
         "measured_object": 64,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.2713558524660626e6,
+        "p_measured": 3.27135585e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2851,7 +2851,7 @@
         "id": 413,
         "measured_object": 64,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.1528645988781098e6,
+        "p_measured": -1.1528646e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2859,7 +2859,7 @@
         "id": 414,
         "measured_object": 84,
         "measured_terminal_type": "branch_from",
-        "p_measured": 3.0885122163832006e6,
+        "p_measured": 3.08851222e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2867,7 +2867,7 @@
         "id": 415,
         "measured_object": 84,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.3151731109483116e6,
+        "p_measured": -2.31517311e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2875,7 +2875,7 @@
         "id": 416,
         "measured_object": 69,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.7898359468916405e6,
+        "p_measured": -1.78983595e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2883,7 +2883,7 @@
         "id": 417,
         "measured_object": 69,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.3444961840380568e6,
+        "p_measured": 1.34449618e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2891,7 +2891,7 @@
         "id": 418,
         "measured_object": 75,
         "measured_terminal_type": "branch_from",
-        "p_measured": 969610.7192396122,
+        "p_measured": 969610.719,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2899,7 +2899,7 @@
         "id": 419,
         "measured_object": 75,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.218192996718886e6,
+        "p_measured": -2.218193e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2907,7 +2907,7 @@
         "id": 420,
         "measured_object": 120,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.0772987824864551e7,
+        "p_measured": 1.07729878e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2915,7 +2915,7 @@
         "id": 421,
         "measured_object": 120,
         "measured_terminal_type": "branch_to",
-        "p_measured": -9.456655683267748e6,
+        "p_measured": -9.45665568e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2923,7 +2923,7 @@
         "id": 422,
         "measured_object": 77,
         "measured_terminal_type": "branch_from",
-        "p_measured": 7.00340625480491e6,
+        "p_measured": 7.00340625e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2931,7 +2931,7 @@
         "id": 423,
         "measured_object": 77,
         "measured_terminal_type": "branch_to",
-        "p_measured": -7.394621165430036e6,
+        "p_measured": -7.39462117e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2939,7 +2939,7 @@
         "id": 424,
         "measured_object": 108,
         "measured_terminal_type": "branch_from",
-        "p_measured": 5.281294285711776e6,
+        "p_measured": 5.28129429e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2947,7 +2947,7 @@
         "id": 425,
         "measured_object": 108,
         "measured_terminal_type": "branch_to",
-        "p_measured": -6.012260706163958e6,
+        "p_measured": -6.01226071e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2955,7 +2955,7 @@
         "id": 426,
         "measured_object": 112,
         "measured_terminal_type": "branch_from",
-        "p_measured": -1.9078202528569484e6,
+        "p_measured": -1.90782025e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2963,7 +2963,7 @@
         "id": 427,
         "measured_object": 112,
         "measured_terminal_type": "branch_to",
-        "p_measured": 132061.68990242673,
+        "p_measured": 132061.69,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2971,7 +2971,7 @@
         "id": 428,
         "measured_object": 66,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.54478803124024e6,
+        "p_measured": 1.54478803e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2979,7 +2979,7 @@
         "id": 429,
         "measured_object": 66,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.3621082843217903e6,
+        "p_measured": -1.36210828e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2987,7 +2987,7 @@
         "id": 430,
         "measured_object": 76,
         "measured_terminal_type": "branch_from",
-        "p_measured": 141096.72067576685,
+        "p_measured": 141096.721,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -2995,7 +2995,7 @@
         "id": 431,
         "measured_object": 76,
         "measured_terminal_type": "branch_to",
-        "p_measured": 1.4641383828058827e6,
+        "p_measured": 1.46413838e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3003,7 +3003,7 @@
         "id": 432,
         "measured_object": 102,
         "measured_terminal_type": "branch_from",
-        "p_measured": 401330.07381483476,
+        "p_measured": 401330.074,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3011,7 +3011,7 @@
         "id": 433,
         "measured_object": 102,
         "measured_terminal_type": "branch_to",
-        "p_measured": -390761.7500471836,
+        "p_measured": -390761.75,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3019,7 +3019,7 @@
         "id": 434,
         "measured_object": 106,
         "measured_terminal_type": "branch_from",
-        "p_measured": -2.7186388483082396e6,
+        "p_measured": -2.71863885e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3027,7 +3027,7 @@
         "id": 435,
         "measured_object": 106,
         "measured_terminal_type": "branch_to",
-        "p_measured": 2.75936641789931e6,
+        "p_measured": 2.75936642e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3035,7 +3035,7 @@
         "id": 436,
         "measured_object": 113,
         "measured_terminal_type": "branch_from",
-        "p_measured": 4.383021998540259e6,
+        "p_measured": 4.383022e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3043,7 +3043,7 @@
         "id": 437,
         "measured_object": 113,
         "measured_terminal_type": "branch_to",
-        "p_measured": -5.421912945831736e6,
+        "p_measured": -5.42191295e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3051,7 +3051,7 @@
         "id": 438,
         "measured_object": 93,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.4953465961879697e6,
+        "p_measured": 1.4953466e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3059,7 +3059,7 @@
         "id": 439,
         "measured_object": 93,
         "measured_terminal_type": "branch_to",
-        "p_measured": -2.373648236755088e6,
+        "p_measured": -2.37364824e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3067,7 +3067,7 @@
         "id": 440,
         "measured_object": 122,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.994143095319107e6,
+        "p_measured": 1.9941431e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3075,7 +3075,7 @@
         "id": 441,
         "measured_object": 122,
         "measured_terminal_type": "branch_to",
-        "p_measured": -3.070379191538121e6,
+        "p_measured": -3.07037919e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3083,7 +3083,7 @@
         "id": 442,
         "measured_object": 130,
         "measured_terminal_type": "branch_from",
-        "p_measured": 4.007391624713684e7,
+        "p_measured": 4.00739162e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3091,7 +3091,7 @@
         "id": 443,
         "measured_object": 130,
         "measured_terminal_type": "branch_to",
-        "p_measured": -4.112360339904187e7,
+        "p_measured": -4.11236034e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3099,7 +3099,7 @@
         "id": 444,
         "measured_object": 134,
         "measured_terminal_type": "branch_from",
-        "p_measured": 5.3210194123723775e7,
+        "p_measured": 5.32101941e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3107,7 +3107,7 @@
         "id": 445,
         "measured_object": 134,
         "measured_terminal_type": "branch_to",
-        "p_measured": -5.34631927390873e7,
+        "p_measured": -5.34631927e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3115,7 +3115,7 @@
         "id": 446,
         "measured_object": 131,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.3971495330054581e7,
+        "p_measured": 1.39714953e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3123,7 +3123,7 @@
         "id": 447,
         "measured_object": 131,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.321989224065437e7,
+        "p_measured": -1.32198922e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3131,7 +3131,7 @@
         "id": 448,
         "measured_object": 132,
         "measured_terminal_type": "branch_from",
-        "p_measured": 1.1565397663382174e7,
+        "p_measured": 1.15653977e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3139,7 +3139,7 @@
         "id": 449,
         "measured_object": 132,
         "measured_terminal_type": "branch_to",
-        "p_measured": -1.1091805323502226e7,
+        "p_measured": -1.10918053e7,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3147,7 +3147,7 @@
         "id": 450,
         "measured_object": 133,
         "measured_terminal_type": "branch_from",
-        "p_measured": 8.611221765535945e6,
+        "p_measured": 8.61122177e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       },
@@ -3155,7 +3155,7 @@
         "id": 451,
         "measured_object": 133,
         "measured_terminal_type": "branch_to",
-        "p_measured": -8.524375506197741e6,
+        "p_measured": -8.52437551e6,
         "power_sigma": 1.0e6,
         "q_measured": null
       }
@@ -3164,361 +3164,361 @@
       {
         "id": 184,
         "measured_object": 1,
-        "u_measured": 227199.38169277564,
+        "u_measured": 227199.382,
         "u_sigma": 1100.0
       },
       {
         "id": 185,
         "measured_object": 24,
-        "u_measured": 222864.58403155624,
+        "u_measured": 222864.584,
         "u_sigma": 1100.0
       },
       {
         "id": 186,
         "measured_object": 33,
-        "u_measured": 223182.96358212508,
+        "u_measured": 223182.964,
         "u_sigma": 1100.0
       },
       {
         "id": 187,
         "measured_object": 38,
-        "u_measured": 225750.95531301186,
+        "u_measured": 225750.955,
         "u_sigma": 1100.0
       },
       {
         "id": 188,
         "measured_object": 57,
-        "u_measured": 221137.02823066458,
+        "u_measured": 221137.028,
         "u_sigma": 1100.0
       },
       {
         "id": 189,
         "measured_object": 32,
-        "u_measured": 222679.4907448417,
+        "u_measured": 222679.491,
         "u_sigma": 1100.0
       },
       {
         "id": 190,
         "measured_object": 22,
-        "u_measured": 113149.86091321638,
+        "u_measured": 113149.861,
         "u_sigma": 550.0
       },
       {
         "id": 191,
         "measured_object": 55,
-        "u_measured": 112615.65120570731,
+        "u_measured": 112615.651,
         "u_sigma": 550.0
       },
       {
         "id": 192,
         "measured_object": 48,
-        "u_measured": 113416.54119025919,
+        "u_measured": 113416.541,
         "u_sigma": 550.0
       },
       {
         "id": 193,
         "measured_object": 19,
-        "u_measured": 111698.45162825003,
+        "u_measured": 111698.452,
         "u_sigma": 550.0
       },
       {
         "id": 194,
         "measured_object": 6,
-        "u_measured": 111405.85785984668,
+        "u_measured": 111405.858,
         "u_sigma": 550.0
       },
       {
         "id": 195,
         "measured_object": 11,
-        "u_measured": 109595.9269823909,
+        "u_measured": 109595.927,
         "u_sigma": 550.0
       },
       {
         "id": 196,
         "measured_object": 14,
-        "u_measured": 110916.84240915085,
+        "u_measured": 110916.842,
         "u_sigma": 550.0
       },
       {
         "id": 197,
         "measured_object": 56,
-        "u_measured": 110901.49451987477,
+        "u_measured": 110901.495,
         "u_sigma": 550.0
       },
       {
         "id": 198,
         "measured_object": 8,
-        "u_measured": 107105.62896359655,
+        "u_measured": 107105.629,
         "u_sigma": 550.0
       },
       {
         "id": 199,
         "measured_object": 17,
-        "u_measured": 108838.57081769357,
+        "u_measured": 108838.571,
         "u_sigma": 550.0
       },
       {
         "id": 200,
         "measured_object": 43,
-        "u_measured": 111599.2458492257,
+        "u_measured": 111599.246,
         "u_sigma": 550.0
       },
       {
         "id": 201,
         "measured_object": 31,
-        "u_measured": 112205.08736591105,
+        "u_measured": 112205.087,
         "u_sigma": 550.0
       },
       {
         "id": 202,
         "measured_object": 45,
-        "u_measured": 108368.87150921341,
+        "u_measured": 108368.872,
         "u_sigma": 550.0
       },
       {
         "id": 203,
         "measured_object": 2,
-        "u_measured": 107358.47819436203,
+        "u_measured": 107358.478,
         "u_sigma": 550.0
       },
       {
         "id": 204,
         "measured_object": 23,
-        "u_measured": 112074.73585943795,
+        "u_measured": 112074.736,
         "u_sigma": 550.0
       },
       {
         "id": 205,
         "measured_object": 25,
-        "u_measured": 106981.57565730445,
+        "u_measured": 106981.576,
         "u_sigma": 550.0
       },
       {
         "id": 206,
         "measured_object": 35,
-        "u_measured": 108526.31419609155,
+        "u_measured": 108526.314,
         "u_sigma": 550.0
       },
       {
         "id": 207,
         "measured_object": 37,
-        "u_measured": 109512.23096637113,
+        "u_measured": 109512.231,
         "u_sigma": 550.0
       },
       {
         "id": 208,
         "measured_object": 60,
-        "u_measured": 112089.94128466053,
+        "u_measured": 112089.941,
         "u_sigma": 550.0
       },
       {
         "id": 209,
         "measured_object": 30,
-        "u_measured": 109204.11767690716,
+        "u_measured": 109204.118,
         "u_sigma": 550.0
       },
       {
         "id": 210,
         "measured_object": 52,
-        "u_measured": 106091.26543158262,
+        "u_measured": 106091.265,
         "u_sigma": 550.0
       },
       {
         "id": 211,
         "measured_object": 46,
-        "u_measured": 106203.93907184985,
+        "u_measured": 106203.939,
         "u_sigma": 550.0
       },
       {
         "id": 212,
         "measured_object": 21,
-        "u_measured": 106179.66879624287,
+        "u_measured": 106179.669,
         "u_sigma": 550.0
       },
       {
         "id": 213,
         "measured_object": 5,
-        "u_measured": 110906.36992223561,
+        "u_measured": 110906.37,
         "u_sigma": 550.0
       },
       {
         "id": 214,
         "measured_object": 12,
-        "u_measured": 111992.1804428351,
+        "u_measured": 111992.18,
         "u_sigma": 550.0
       },
       {
         "id": 215,
         "measured_object": 13,
-        "u_measured": 103332.03839749563,
+        "u_measured": 103332.038,
         "u_sigma": 550.0
       },
       {
         "id": 216,
         "measured_object": 9,
-        "u_measured": 103658.74697494914,
+        "u_measured": 103658.747,
         "u_sigma": 550.0
       },
       {
         "id": 217,
         "measured_object": 49,
-        "u_measured": 20631.656087278465,
+        "u_measured": 20631.6561,
         "u_sigma": 100.0
       },
       {
         "id": 218,
         "measured_object": 18,
-        "u_measured": 20216.98037636821,
+        "u_measured": 20216.9804,
         "u_sigma": 100.0
       },
       {
         "id": 219,
         "measured_object": 42,
-        "u_measured": 20095.8655145387,
+        "u_measured": 20095.8655,
         "u_sigma": 100.0
       },
       {
         "id": 220,
         "measured_object": 3,
-        "u_measured": 19893.08572140642,
+        "u_measured": 19893.0857,
         "u_sigma": 100.0
       },
       {
         "id": 221,
         "measured_object": 27,
-        "u_measured": 19817.482341522635,
+        "u_measured": 19817.4823,
         "u_sigma": 100.0
       },
       {
         "id": 222,
         "measured_object": 34,
-        "u_measured": 19710.75161767148,
+        "u_measured": 19710.7516,
         "u_sigma": 100.0
       },
       {
         "id": 223,
         "measured_object": 40,
-        "u_measured": 19966.571459422565,
+        "u_measured": 19966.5715,
         "u_sigma": 100.0
       },
       {
         "id": 224,
         "measured_object": 59,
-        "u_measured": 19799.028297412617,
+        "u_measured": 19799.0283,
         "u_sigma": 100.0
       },
       {
         "id": 225,
         "measured_object": 29,
-        "u_measured": 20274.915949310933,
+        "u_measured": 20274.9159,
         "u_sigma": 100.0
       },
       {
         "id": 226,
         "measured_object": 51,
-        "u_measured": 20204.13173538048,
+        "u_measured": 20204.1317,
         "u_sigma": 100.0
       },
       {
         "id": 227,
         "measured_object": 50,
-        "u_measured": 20162.859575899096,
+        "u_measured": 20162.8596,
         "u_sigma": 100.0
       },
       {
         "id": 228,
         "measured_object": 20,
-        "u_measured": 19988.742048994256,
+        "u_measured": 19988.742,
         "u_sigma": 100.0
       },
       {
         "id": 229,
         "measured_object": 7,
-        "u_measured": 19889.294315848492,
+        "u_measured": 19889.2943,
         "u_sigma": 100.0
       },
       {
         "id": 230,
         "measured_object": 15,
-        "u_measured": 19752.438553239488,
+        "u_measured": 19752.4386,
         "u_sigma": 100.0
       },
       {
         "id": 231,
         "measured_object": 10,
-        "u_measured": 19718.960815158567,
+        "u_measured": 19718.9608,
         "u_sigma": 100.0
       },
       {
         "id": 232,
         "measured_object": 53,
-        "u_measured": 19250.636013731077,
+        "u_measured": 19250.636,
         "u_sigma": 100.0
       },
       {
         "id": 233,
         "measured_object": 16,
-        "u_measured": 19078.4088480818,
+        "u_measured": 19078.4088,
         "u_sigma": 100.0
       },
       {
         "id": 234,
         "measured_object": 41,
-        "u_measured": 18931.756682625815,
+        "u_measured": 18931.7567,
         "u_sigma": 100.0
       },
       {
         "id": 235,
         "measured_object": 44,
-        "u_measured": 18619.563902787333,
+        "u_measured": 18619.5639,
         "u_sigma": 100.0
       },
       {
         "id": 236,
         "measured_object": 4,
-        "u_measured": 18541.088294766087,
+        "u_measured": 18541.0883,
         "u_sigma": 100.0
       },
       {
         "id": 237,
         "measured_object": 26,
-        "u_measured": 18715.986766028574,
+        "u_measured": 18715.9868,
         "u_sigma": 100.0
       },
       {
         "id": 238,
         "measured_object": 36,
-        "u_measured": 19027.69547593611,
+        "u_measured": 19027.6955,
         "u_sigma": 100.0
       },
       {
         "id": 239,
         "measured_object": 39,
-        "u_measured": 18972.899161496785,
+        "u_measured": 18972.8992,
         "u_sigma": 100.0
       },
       {
         "id": 240,
         "measured_object": 58,
-        "u_measured": 19144.10705572817,
+        "u_measured": 19144.1071,
         "u_sigma": 100.0
       },
       {
         "id": 241,
         "measured_object": 28,
-        "u_measured": 18574.38331749665,
+        "u_measured": 18574.3833,
         "u_sigma": 100.0
       },
       {
         "id": 242,
         "measured_object": 54,
-        "u_measured": 18543.220838601614,
+        "u_measured": 18543.2208,
         "u_sigma": 100.0
       },
       {
         "id": 243,
         "measured_object": 47,
-        "u_measured": 18654.306693840168,
+        "u_measured": 18654.3067,
         "u_sigma": 100.0
       }
     ],
@@ -3602,11 +3602,11 @@
           "governorSCD": null,
           "ikSecond": null,
           "kind": "external_network_injection",
-          "maxInitialSymShCCurrent_A": 20994.555243259118,
+          "maxInitialSymShCCurrent_A": 20994.5552,
           "maxR0ToX0Ratio": null,
           "maxR1ToX1Ratio": 0.1,
           "maxZ0ToZ1Ratio": null,
-          "minInitialSymShCCurrent_A": 15745.916432444339,
+          "minInitialSymShCCurrent_A": 15745.9164,
           "minR1ToX1Ratio": 0.1,
           "mrid": "native-eni-Altau_220",
           "name": "ExtGrid_Altau",
@@ -5103,8 +5103,7 @@
           "node": 57,
           "sensor": 248,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -0.2462010396912287
+          "type": "Q"
         },
         {
           "node": 32,
@@ -5218,7 +5217,8 @@
           "node": 11,
           "sensor": 195,
           "sigma": 0.55,
-          "type": "U"
+          "type": "U",
+          "value": 109.595927
         },
         {
           "node": 11,
@@ -5248,7 +5248,8 @@
           "node": 14,
           "sensor": 256,
           "sigma": 1.0,
-          "type": "Q"
+          "type": "Q",
+          "value": -6.62674817
         },
         {
           "node": 56,
@@ -5260,7 +5261,8 @@
           "node": 56,
           "sensor": 257,
           "sigma": 1.0,
-          "type": "P"
+          "type": "P",
+          "value": -1.45842537
         },
         {
           "node": 56,
@@ -5278,8 +5280,7 @@
           "node": 8,
           "sensor": 258,
           "sigma": 1.0,
-          "type": "P",
-          "value": -20.42189691407927
+          "type": "P"
         },
         {
           "node": 8,
@@ -5339,8 +5340,7 @@
           "node": 31,
           "sensor": 261,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -1.20323298405998
+          "type": "Q"
         },
         {
           "node": 45,
@@ -5352,7 +5352,8 @@
           "node": 45,
           "sensor": 262,
           "sigma": 1.0,
-          "type": "P"
+          "type": "P",
+          "value": -13.0875304
         },
         {
           "node": 45,
@@ -5418,8 +5419,7 @@
           "node": 35,
           "sensor": 206,
           "sigma": 0.55,
-          "type": "U",
-          "value": 108.52631419609155
+          "type": "U"
         },
         {
           "node": 35,
@@ -5432,7 +5432,7 @@
           "sensor": 266,
           "sigma": 1.0,
           "type": "Q",
-          "value": 0.38420896837288604
+          "value": 0.384208968
         },
         {
           "node": 37,
@@ -5511,7 +5511,7 @@
           "sensor": 211,
           "sigma": 0.55,
           "type": "U",
-          "value": 106.20393907184985
+          "value": 106.203939
         },
         {
           "node": 46,
@@ -5523,7 +5523,8 @@
           "node": 46,
           "sensor": 271,
           "sigma": 1.0,
-          "type": "Q"
+          "type": "Q",
+          "value": -6.52029605
         },
         {
           "node": 21,
@@ -5577,7 +5578,8 @@
           "node": 12,
           "sensor": 274,
           "sigma": 1.0,
-          "type": "Q"
+          "type": "Q",
+          "value": -1.19899802
         },
         {
           "node": 13,
@@ -5673,14 +5675,14 @@
           "node": 3,
           "sensor": 220,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.89308572140642
+          "type": "U"
         },
         {
           "node": 3,
           "sensor": 280,
           "sigma": 1.0,
-          "type": "P"
+          "type": "P",
+          "value": -1.45700776
         },
         {
           "node": 3,
@@ -5693,7 +5695,7 @@
           "sensor": 221,
           "sigma": 0.1,
           "type": "U",
-          "value": 19.8174823415226364
+          "value": 19.8174823
         },
         {
           "node": 27,
@@ -5711,8 +5713,7 @@
           "node": 34,
           "sensor": 222,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.71075161767148
+          "type": "U"
         },
         {
           "node": 34,
@@ -5730,7 +5731,8 @@
           "node": 40,
           "sensor": 223,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 19.9665715
         },
         {
           "node": 40,
@@ -5749,7 +5751,7 @@
           "sensor": 224,
           "sigma": 0.1,
           "type": "U",
-          "value": 19.799028297412615
+          "value": 19.7990283
         },
         {
           "node": 59,
@@ -5773,7 +5775,8 @@
           "node": 29,
           "sensor": 285,
           "sigma": 1.0,
-          "type": "P"
+          "type": "P",
+          "value": -3.22891175
         },
         {
           "node": 29,
@@ -5851,15 +5854,13 @@
           "node": 7,
           "sensor": 289,
           "sigma": 1.0,
-          "type": "Q",
-          "value": 0.1618643454970755
+          "type": "Q"
         },
         {
           "node": 15,
           "sensor": 230,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.752438553239486
+          "type": "U"
         },
         {
           "node": 15,
@@ -5877,8 +5878,7 @@
           "node": 10,
           "sensor": 231,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.718960815158567
+          "type": "U"
         },
         {
           "node": 10,
@@ -5896,7 +5896,8 @@
           "node": 53,
           "sensor": 232,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 19.2506360137310017
         },
         {
           "node": 53,
@@ -5914,13 +5915,15 @@
           "node": 16,
           "sensor": 233,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 19.0784088480817204
         },
         {
           "node": 16,
           "sensor": 293,
           "sigma": 1.0,
-          "type": "P"
+          "type": "P",
+          "value": -4.35064909
         },
         {
           "node": 16,
@@ -5932,7 +5935,8 @@
           "node": 41,
           "sensor": 234,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 18.9317566826257266
         },
         {
           "node": 41,
@@ -5962,14 +5966,14 @@
           "node": 44,
           "sensor": 295,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -0.8301235662347356
+          "type": "Q"
         },
         {
           "node": 4,
           "sensor": 236,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 18.5410882947659972
         },
         {
           "node": 4,
@@ -5981,15 +5985,13 @@
           "node": 4,
           "sensor": 296,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -0.31842670458946776
+          "type": "Q"
         },
         {
           "node": 26,
           "sensor": 237,
           "sigma": 0.1,
-          "type": "U",
-          "value": 18.7159867660285761
+          "type": "U"
         },
         {
           "node": 26,
@@ -6043,8 +6045,7 @@
           "node": 58,
           "sensor": 240,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.1441070557281723
+          "type": "U"
         },
         {
           "node": 58,
@@ -6104,14 +6105,14 @@
           "node": 47,
           "sensor": 303,
           "sigma": 1.0,
-          "type": "P",
-          "value": -2.1998621829756426
+          "type": "P"
         },
         {
           "node": 47,
           "sensor": 303,
           "sigma": 1.0,
-          "type": "Q"
+          "type": "Q",
+          "value": -1.46436744
         },
         {
           "sensor": 304,
@@ -6156,8 +6157,7 @@
             "branch": 86,
             "side": "from"
           },
-          "type": "P",
-          "value": -23.124816506262416
+          "type": "P"
         },
         {
           "sensor": 309,
@@ -6256,7 +6256,8 @@
             "branch": 105,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": -35.3437859
         },
         {
           "sensor": 320,
@@ -6292,7 +6293,8 @@
             "branch": 127,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": -8.7519233
         },
         {
           "sensor": 324,
@@ -6310,8 +6312,7 @@
             "branch": 96,
             "side": "to"
           },
-          "type": "P",
-          "value": -3.0578376876492954
+          "type": "P"
         },
         {
           "sensor": 326,
@@ -6383,8 +6384,7 @@
             "branch": 82,
             "side": "to"
           },
-          "type": "P",
-          "value": -5.975099452714544
+          "type": "P"
         },
         {
           "sensor": 334,
@@ -6439,7 +6439,7 @@
             "side": "to"
           },
           "type": "P",
-          "value": 27.33773909183522
+          "value": 27.3377391
         },
         {
           "sensor": 340,
@@ -6466,7 +6466,8 @@
             "branch": 70,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": 0.393568825
         },
         {
           "sensor": 343,
@@ -6538,8 +6539,7 @@
             "branch": 83,
             "side": "from"
           },
-          "type": "P",
-          "value": -11.851976692132256
+          "type": "P"
         },
         {
           "sensor": 351,
@@ -6548,8 +6548,7 @@
             "branch": 83,
             "side": "to"
           },
-          "type": "P",
-          "value": 12.127056297459296
+          "type": "P"
         },
         {
           "sensor": 352,
@@ -6684,8 +6683,7 @@
             "branch": 101,
             "side": "from"
           },
-          "type": "P",
-          "value": 6.474860155191902
+          "type": "P"
         },
         {
           "sensor": 367,
@@ -6739,7 +6737,8 @@
             "branch": 95,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": 10.9922569
         },
         {
           "sensor": 373,
@@ -6955,8 +6954,7 @@
             "branch": 109,
             "side": "from"
           },
-          "type": "P",
-          "value": 7.348281996226141
+          "type": "P"
         },
         {
           "sensor": 397,
@@ -7064,7 +7062,8 @@
             "branch": 94,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": -1.93030278
         },
         {
           "sensor": 409,
@@ -7100,8 +7099,7 @@
             "branch": 64,
             "side": "from"
           },
-          "type": "P",
-          "value": 3.2713558524660624
+          "type": "P"
         },
         {
           "sensor": 413,
@@ -7155,7 +7153,8 @@
             "branch": 75,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": 0.969610719
         },
         {
           "sensor": 419,
@@ -7173,8 +7172,7 @@
             "branch": 120,
             "side": "from"
           },
-          "type": "P",
-          "value": 10.77298782486455
+          "type": "P"
         },
         {
           "sensor": 421,
@@ -7417,7 +7415,8 @@
             "branch": 131,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": -13.2198922
         },
         {
           "sensor": 448,
@@ -7459,7 +7458,7 @@
     },
     "meta": {
       "case_name": "sp_case60",
-      "created_by": "Sparlectra 1.2.1",
+      "created_by": "Sparlectra 1.2.2",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
@@ -7552,240 +7551,240 @@
           "vm_pu": 1.03
         },
         "10": {
-          "va_deg": -6.723935668554348,
-          "vm_pu": 0.9916895234801893
+          "va_deg": -6.72393567,
+          "vm_pu": 0.991689523
         },
         "11": {
-          "va_deg": -7.137396879140232,
-          "vm_pu": 1.0018373013120399
+          "va_deg": -7.13739688,
+          "vm_pu": 1.0018373
         },
         "12": {
-          "va_deg": -21.248278562194884,
-          "vm_pu": 1.0147585426770955
+          "va_deg": -21.2482786,
+          "vm_pu": 1.01475854
         },
         "13": {
-          "va_deg": -24.281781494030135,
-          "vm_pu": 0.9409708890048214
+          "va_deg": -24.2817815,
+          "vm_pu": 0.940970889
         },
         "14": {
-          "va_deg": -6.45299660167878,
-          "vm_pu": 1.0076164317693679
+          "va_deg": -6.4529966,
+          "vm_pu": 1.00761643
         },
         "15": {
-          "va_deg": -6.582228015986156,
-          "vm_pu": 0.9948185445210441
+          "va_deg": -6.58222802,
+          "vm_pu": 0.994818545
         },
         "16": {
-          "va_deg": -24.054570756697945,
-          "vm_pu": 0.953002417961781
+          "va_deg": -24.0545708,
+          "vm_pu": 0.953002418
         },
         "17": {
-          "va_deg": -5.153450906175068,
-          "vm_pu": 0.9895614052884227
+          "va_deg": -5.15345091,
+          "vm_pu": 0.989561405
         },
         "18": {
-          "va_deg": -6.002142992724156,
-          "vm_pu": 1.0151709148360453
+          "va_deg": -6.00214299,
+          "vm_pu": 1.01517091
         },
         "19": {
-          "va_deg": -2.886314268106798,
-          "vm_pu": 1.0160158066626814
+          "va_deg": -2.88631427,
+          "vm_pu": 1.01601581
         },
         "2": {
-          "va_deg": -9.5934111369,
-          "vm_pu": 0.9811348012326013
+          "va_deg": -9.59341114,
+          "vm_pu": 0.981134801
         },
         "20": {
-          "va_deg": -6.5754214041323475,
-          "vm_pu": 0.996764977966404
+          "va_deg": -6.5754214,
+          "vm_pu": 0.996764978
         },
         "21": {
-          "va_deg": -21.152648499226224,
-          "vm_pu": 0.9643071757307498
+          "va_deg": -21.1526485,
+          "vm_pu": 0.964307176
         },
         "22": {
-          "va_deg": -1.439444559315043,
-          "vm_pu": 1.0160970383853194
+          "va_deg": -1.43944456,
+          "vm_pu": 1.01609704
         },
         "23": {
-          "va_deg": -1.439444559315043,
-          "vm_pu": 1.0160970383853194
+          "va_deg": -1.43944456,
+          "vm_pu": 1.01609704
         },
         "24": {
-          "va_deg": 0.6308929857562015,
-          "vm_pu": 1.0159875538280545
+          "va_deg": 0.630892986,
+          "vm_pu": 1.01598755
         },
         "25": {
-          "va_deg": -18.299937338112237,
-          "vm_pu": 0.9691418341468904
+          "va_deg": -18.2999373,
+          "vm_pu": 0.969141834
         },
         "26": {
-          "va_deg": -24.73546291673534,
-          "vm_pu": 0.9317550877532852
+          "va_deg": -24.7354629,
+          "vm_pu": 0.931755088
         },
         "27": {
-          "va_deg": -6.716450585946039,
-          "vm_pu": 0.9936307617709587
+          "va_deg": -6.71645059,
+          "vm_pu": 0.993630762
         },
         "28": {
-          "va_deg": -24.91238881883782,
-          "vm_pu": 0.9287095959693763
+          "va_deg": -24.9123888,
+          "vm_pu": 0.928709596
         },
         "29": {
-          "va_deg": -6.0734807207457004,
-          "vm_pu": 1.012684759411625
+          "va_deg": -6.07348072,
+          "vm_pu": 1.01268476
         },
         "3": {
-          "va_deg": -6.501793194859716,
-          "vm_pu": 0.999299599151651
+          "va_deg": -6.50179319,
+          "vm_pu": 0.999299599
         },
         "30": {
-          "va_deg": -20.481019049672135,
-          "vm_pu": 0.9912278676172269
+          "va_deg": -20.481019,
+          "vm_pu": 0.991227868
         },
         "31": {
-          "va_deg": -0.2204900090260137,
-          "vm_pu": 1.0203283198647832
+          "va_deg": -0.220490009,
+          "vm_pu": 1.02032832
         },
         "32": {
-          "va_deg": 0.6557944198665968,
-          "vm_pu": 1.0184394974693747
+          "va_deg": 0.65579442,
+          "vm_pu": 1.0184395
         },
         "33": {
-          "va_deg": 4.631806264130784,
-          "vm_pu": 1.0155226343762418
+          "va_deg": 4.63180626,
+          "vm_pu": 1.01552263
         },
         "34": {
-          "va_deg": -6.7909228842648,
-          "vm_pu": 0.9910896459151093
+          "va_deg": -6.79092288,
+          "vm_pu": 0.991089646
         },
         "35": {
-          "va_deg": -20.282675806496,
-          "vm_pu": 0.9831562498329642
+          "va_deg": -20.2826758,
+          "vm_pu": 0.98315625
         },
         "36": {
-          "va_deg": -24.002839035115137,
-          "vm_pu": 0.9529840003771671
+          "va_deg": -24.002839,
+          "vm_pu": 0.952984
         },
         "37": {
-          "va_deg": -22.20745337650231,
-          "vm_pu": 0.998314159038885
+          "va_deg": -22.2074534,
+          "vm_pu": 0.998314159
         },
         "38": {
-          "va_deg": 8.616955387185419,
+          "va_deg": 8.61695539,
           "vm_pu": 1.02
         },
         "39": {
-          "va_deg": -23.951105356111427,
-          "vm_pu": 0.9529663597026873
+          "va_deg": -23.9511054,
+          "vm_pu": 0.95296636
         },
         "4": {
-          "va_deg": -24.613104754777613,
-          "vm_pu": 0.9347623008086392
+          "va_deg": -24.6131048,
+          "vm_pu": 0.934762301
         },
         "40": {
-          "va_deg": -6.723299463625141,
-          "vm_pu": 0.9916779305350938
+          "va_deg": -6.72329946,
+          "vm_pu": 0.991677931
         },
         "41": {
-          "va_deg": -24.35776617971927,
-          "vm_pu": 0.9438760537252323
+          "va_deg": -24.3577662,
+          "vm_pu": 0.943876054
         },
         "42": {
-          "va_deg": -6.217253003232851,
-          "vm_pu": 1.0075232782063275
+          "va_deg": -6.217253,
+          "vm_pu": 1.00752328
         },
         "43": {
-          "va_deg": -6.994630107541063,
-          "vm_pu": 1.0119839545948062
+          "va_deg": -6.99463011,
+          "vm_pu": 1.01198395
         },
         "44": {
-          "va_deg": -24.666873203899264,
-          "vm_pu": 0.9347766362380711
+          "va_deg": -24.6668732,
+          "vm_pu": 0.934776636
         },
         "45": {
-          "va_deg": -9.668571371695501,
-          "vm_pu": 0.9794165187705725
+          "va_deg": -9.66857137,
+          "vm_pu": 0.979416519
         },
         "46": {
-          "va_deg": -24.026903921885104,
-          "vm_pu": 0.9618835633000857
+          "va_deg": -24.0269039,
+          "vm_pu": 0.961883563
         },
         "47": {
-          "va_deg": -25.16113638740475,
-          "vm_pu": 0.9226312465142241
+          "va_deg": -25.1611364,
+          "vm_pu": 0.922631247
         },
         "48": {
-          "va_deg": -4.486920144201301,
-          "vm_pu": 1.0193994445277375
+          "va_deg": -4.48692014,
+          "vm_pu": 1.01939944
         },
         "49": {
-          "va_deg": -5.5872368655578715,
-          "vm_pu": 1.028393229349731
+          "va_deg": -5.58723687,
+          "vm_pu": 1.02839323
         },
         "5": {
-          "va_deg": -21.248278562194884,
-          "vm_pu": 1.0147585426770955
+          "va_deg": -21.2482786,
+          "vm_pu": 1.01475854
         },
         "50": {
-          "va_deg": -6.145289518229978,
-          "vm_pu": 1.0101895983768137
+          "va_deg": -6.14528952,
+          "vm_pu": 1.0101896
         },
         "51": {
-          "va_deg": -6.008709061307045,
-          "vm_pu": 1.0132612081185177
+          "va_deg": -6.00870906,
+          "vm_pu": 1.01326121
         },
         "52": {
-          "va_deg": -22.258765778290982,
-          "vm_pu": 0.9633573320927008
+          "va_deg": -22.2587658,
+          "vm_pu": 0.963357332
         },
         "53": {
-          "va_deg": -23.693261530368886,
-          "vm_pu": 0.9651180759411448
+          "va_deg": -23.6932615,
+          "vm_pu": 0.965118076
         },
         "54": {
-          "va_deg": -25.036354256648877,
-          "vm_pu": 0.9256682403507583
+          "va_deg": -25.0363543,
+          "vm_pu": 0.92566824
         },
         "55": {
-          "va_deg": -3.5871347480336326,
-          "vm_pu": 1.0150587821850974
+          "va_deg": -3.58713475,
+          "vm_pu": 1.01505878
         },
         "56": {
-          "va_deg": -0.2480765612300278,
-          "vm_pu": 1.0084946576920932
+          "va_deg": -0.248076561,
+          "vm_pu": 1.00849466
         },
         "57": {
-          "va_deg": 2.463295246938888,
-          "vm_pu": 1.0085269581359457
+          "va_deg": 2.46329525,
+          "vm_pu": 1.00852696
         },
         "58": {
-          "va_deg": -23.782538607215134,
-          "vm_pu": 0.9558914383722062
+          "va_deg": -23.7825386,
+          "vm_pu": 0.955891438
         },
         "59": {
-          "va_deg": -6.865908973511335,
-          "vm_pu": 0.9885389174588723
+          "va_deg": -6.86590897,
+          "vm_pu": 0.988538917
         },
         "6": {
-          "va_deg": -3.963199640403894,
+          "va_deg": -3.96319964,
           "vm_pu": 1.01
         },
         "60": {
-          "va_deg": -18.802023301812675,
+          "va_deg": -18.8020233,
           "vm_pu": 1.02
         },
         "7": {
-          "va_deg": -6.649424895662292,
-          "vm_pu": 0.9942320111953774
+          "va_deg": -6.6494249,
+          "vm_pu": 0.994232011
         },
         "8": {
-          "va_deg": -4.55882391774317,
-          "vm_pu": 0.976583344498846
+          "va_deg": -4.55882392,
+          "vm_pu": 0.976583344
         },
         "9": {
-          "va_deg": -24.281781494030138,
-          "vm_pu": 0.9409708890048212
+          "va_deg": -24.2817815,
+          "vm_pu": 0.940970889
         }
       },
       "source": "solved_power_flow"

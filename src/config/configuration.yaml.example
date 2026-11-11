@@ -995,8 +995,8 @@ output:
   csv_format: auto
   # Significant digits of the floats in exported cases (SCF, CGMES,
   # measurement tables): 0 keeps the full precision (the file reads back bit
-  # for bit), 1 to 17 rounds, so the same case exports to the same bytes on
-  # every machine.
+  # for bit), 1 to 17 rounds (and writes values below 1e-9 as 0), so the same case
+  # exports to the same bytes on every machine.
   export_significant_digits: 0
   # Allowed values: off, compact, full
   logfile_diagnostics: compact

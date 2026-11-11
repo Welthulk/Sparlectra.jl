@@ -350,21 +350,28 @@ function test_state_estimation_zero_injection_constraint()::Bool
     @test jC > 1e-3 * jM   # the check below would see constraint rows in J
     @test isapprox(r1.objectiveJ, jM; rtol = 1e-12)
 
-    # on with the sigma tending to 0 (1e-7 MW per row, the rows added under
+    # on with a small sigma (1e-5 MW per row, the rows added under
     # state_estimation.zero_injection_sigma_mva) gives the state of
-    # constraint to 1e-6 pu (measured 1.2e-7, after 43 iterations against
-    # 6), and constraint holds the balance exactly: the injection at every
-    # passive bus from the Ybus and the estimated voltages is below 1e-9 pu
-    # (measured 4.2e-13). On sp_case60 the gain matrix at 1e-7 is singular
-    # to working precision (estimate 1.9e31) and on does not converge.
+    # constraint to 1e-6 pu (measured 2.7e-11 in 6 iterations), and
+    # constraint holds the balance exactly: the injection at every passive
+    # bus from the Ybus and the estimated voltages is below 1e-9 pu
+    # (measured 4.2e-13). The sigma is chosen where the gain matrix still has
+    # digits to spare. Sweep on sp_case14 (Jacobi-scaled 1-norm
+    # condition, max |dV| against constraint): 1e-4: 2.3e11, 6.4e-11;
+    # 1e-5: 2.3e13, 2.7e-11; 1e-6: 2.2e15, 2.1e-9; 1e-7: 1.7e17, 4.8e-5
+    # after 70 iterations; 1e-8: does not converge. At 1e-7 the condition
+    # is above 1/eps (4.5e15), the gain is singular to working precision and
+    # the distance only reflects the last digits of the data (1.2e-7 to
+    # 4.8e-5 for the same case built on two machines); no bound holds there.
+    # On sp_case60 the gain at 1e-7 is singular as well (estimate 1.9e31).
     m7 = Measurement[m for m in m14 if !m.zero_injection]
-    with_state_estimation_config(zero_injection_sigma_mva = 1e-7) do
+    with_state_estimation_config(zero_injection_sigma_mva = 1e-5) do
       @test Sparlectra._add_missing_zero_injections!(m7, net14) == 2 * length(p14)
     end
-    @test all(m -> m.sigma == 1e-7, (m for m in m7 if m.zero_injection))
+    @test all(m -> m.sigma == 1e-5, (m for m in m7 if m.zero_injection))
     v7 = Dict{Symbol,Vector{ComplexF64}}()
     for mode in (:on, :constraint)
-      r7 = with_state_estimation_config(zero_injection = mode, zero_injection_sigma_mva = 1e-7, max_iter = 100) do
+      r7 = with_state_estimation_config(zero_injection = mode, zero_injection_sigma_mva = 1e-5, max_iter = 100) do
         runse!(deepcopy(net14), m7)
       end
       @test r7.converged

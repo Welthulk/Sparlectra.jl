@@ -1519,7 +1519,11 @@ function run_cgmes_importer_tests()
       @test occursin("start values taken verbatim from import", summary)
       m = match(r"start_state_residual_inf: ([0-9.eE+-]+)", summary)
       @test m !== nothing
-      @test parse(Float64, m.captures[1]) < 1e-8
+      # the fixture SV is written with 9 significant digits
+      # (tools/gen_cgmes_fixtures.jl): |dV| <= 5e-9 pu, times the largest
+      # row sum of |Y| of sp_casePST (903 pu) gives at most 4.5e-6 pu
+      # (measured 6.2e-7); a flat start leaves more than 1e-2
+      @test parse(Float64, m.captures[1]) < 5e-6
       residuals = run_csv(joinpath(out, "self_check_residuals.csv"))
       @test residuals.header == ["bus_id", "bus_name", "vn_kV", "bus_type", "vm_pu_start", "va_deg_start", "p_residual", "q_residual", "has_sv", "n_transformer_terminals", "n_shunts"]
       @test length(residuals.rows) == 9

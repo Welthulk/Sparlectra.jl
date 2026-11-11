@@ -1461,8 +1461,18 @@ end
 # from output.export_significant_digits around its exports.
 const _EXPORT_SIGNIFICANT_DIGITS = Base.ScopedValues.ScopedValue(0)
 
+# Below this magnitude a rounded export writes 0: what lies there in a solved
+# case is the residual of the solver (zero-injection flows of 1e-13 MW), and
+# its sign and digits change from machine to machine.
+const _EXPORT_ZERO_BELOW = 1.0e-9
+
 # the float a case writer prints under the current setting
-_export_float(x::Real)::Float64 = (d = _EXPORT_SIGNIFICANT_DIGITS[]; d == 0 ? Float64(x) : round(Float64(x); sigdigits = d))
+function _export_float(x::Real)::Float64
+  d = _EXPORT_SIGNIFICANT_DIGITS[]
+  v = Float64(x)
+  d == 0 && return v
+  return abs(v) < _EXPORT_ZERO_BELOW ? 0.0 : round(v; sigdigits = d)
+end
 
 function _validate_export_significant_digits(d::Int)::Int
   (d == 0 || 1 <= d <= 17) || throw(ArgumentError("output.export_significant_digits must be 0 (full precision) or between 1 and 17; got $(d)."))
@@ -1474,7 +1484,8 @@ end
 
 Run `f()` with the case writers (`exportSCF`, `writeCGMESFiles`,
 `writeMeasurementTable`, `writeMeasurementsCSV`) printing every float
-rounded to `digits` significant digits. `0` prints the shortest round-trip
+rounded to `digits` significant digits, and a value below `1e-9` in
+magnitude as `0` (solver residuals). `0` prints the shortest round-trip
 form (the default outside such a block). Rounded files do not read back
 bit for bit, but the same values give the same bytes on every machine:
 the last digits a solver leaves depend on the CPU and the linear-algebra

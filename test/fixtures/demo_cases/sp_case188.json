@@ -819,7 +819,7 @@
         "vm_pu": 0.950105
       }
     },
-    "iterations": 1,
+    "iterations": 2,
     "losses_mw": 24.689281
   },
   "provenance": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",
@@ -843,7 +843,7 @@
   "short_circuit": {
     "Lindmoor_380": {
       "ik_kA": 39.320365,
-      "sk_MVA": 25879.850312
+      "sk_MVA": 25879.8503
     },
     "Waldheim_110": {
       "ik_kA": 2.263675,
@@ -852,7 +852,7 @@
   },
   "state_estimation": {
     "dof": 189,
-    "objective": 201.795429,
+    "objective": 201.795427,
     "seed": 20260988
   }
 }

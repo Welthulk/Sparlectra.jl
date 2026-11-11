@@ -401,6 +401,14 @@ function main(args)
   return nothing
 end
 
+# The shipped files are written with 9 significant digits and values below
+# 1e-9 as 0 (with_export_significant_digits, output.export_significant_digits):
+# 9 is the most digits at which the unrounded builds of two machines
+# agree in every value after rounding; at 10 four
+# of about 13400 values split. A solver leaves different last digits on
+# another CPU or linear-algebra library.
+const SHIPPED_EXPORT_DIGITS = 9
+
 if abspath(PROGRAM_FILE) == @__FILE__
-  Base.invokelatest(main, ARGS)
+  Base.invokelatest(() -> with_export_significant_digits(() -> main(ARGS), SHIPPED_EXPORT_DIGITS))
 end
