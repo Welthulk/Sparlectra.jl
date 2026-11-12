@@ -43,6 +43,13 @@ iteration with an unchanged active set, so subsequent builds can overwrite
 `nzval` in place instead of allocating fresh triplets plus a new CSC.
 `valid` is cleared on PV↔PQ active-set changes (pattern changes) and by the
 runtime guard when a replay does not reproduce the recorded emit count.
+
+`fixed_pattern` (`power_flow.jacobian_fixed_pattern`, 1.2.3) selects the
+fixed Jacobian pattern: PV and PQ rows carry the same entries, so `valid` is
+not cleared on active-set changes and the linear context keeps its analysis.
+`factor_bus_types` holds, in fixed mode only, the bus types of the Jacobian
+of the last full factorization; a backend whose refactorization keeps the
+old pivots (KLU) factorizes afresh when the types differ from them.
 """
 mutable struct RectangularJacobianAssembly
   Iidx::Vector{Int}
@@ -52,9 +59,11 @@ mutable struct RectangularJacobianAssembly
   pos_map::Vector{Int}
   Ibuf::Vector{ComplexF64}
   valid::Bool
+  fixed_pattern::Bool
+  factor_bus_types::Vector{Symbol}
 end
 
-RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false)
+RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false, false, Symbol[])
 
 """
     UmfpackReuseNewtonContext
@@ -83,13 +92,23 @@ _newton_full_factorization(::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float
 _newton_refactorize!(ctx::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu!(ctx.fact, J)
 # the backend name a context reports (the KLU extension adds :klu)
 _newton_context_backend(::UmfpackReuseNewtonContext) = :umfpack_reuse
+# Whether the numeric refactorization of a context chooses its pivots anew.
+# UMFPACK's lu! runs threshold partial pivoting on the kept symbolic
+# analysis, so a PV/PQ switch under the fixed Jacobian pattern needs no new
+# analysis. KLU's klu! (klu_l_refactor) reuses the old pivot sequence, which
+# may be wrong for switched rows; it and any context not known to pivot get
+# false and factorize afresh after a switch.
+_newton_refactor_pivots(::AbstractNewtonSolverContext) = false
+_newton_refactor_pivots(::UmfpackReuseNewtonContext) = true
 
 """
     solve_newton_factorized!(ctx, J, rhs; pattern_changed=false) -> x
 
 Solve `J * x = rhs` through the backend of `ctx`, reusing the symbolic
 analysis stored in the context across Newton iterations. A full analyze +
-factor runs when `pattern_changed` is set (PV↔PQ active-set switch), when no
+factor runs when `pattern_changed` is set (PV↔PQ active-set switch; under the
+fixed Jacobian pattern only for a backend whose refactorization keeps the old
+pivots, see `_newton_refactor_pivots`), when no
 factorization exists yet, or when the structural fingerprint of `J` differs
 from the analyzed pattern; otherwise only the numeric refactorization runs.
 The structural guard is mandatory: silent pattern drift fed into a
@@ -131,6 +150,27 @@ function solve_newton_factorized!(ctx::AbstractNewtonSolverContext, J::SparseMat
     ctx.fallback_count += 1
     return solve_sparse_system(J, rhs; context = :powerflow)
   end
+end
+
+# Sets the fixed Jacobian pattern (power_flow.jacobian_fixed_pattern) on the
+# context of one solve. A change of the flag invalidates the recorded
+# assembly: its pos_map belongs to the other emit sequence (a power-mode net
+# solved first with and then without the flag). Without a context (linear
+# solver umfpack) there is no analysis to keep; the flag has no effect.
+function _set_jacobian_fixed_pattern!(ctx, fixed::Bool, linear_solver::Symbol, verbose::Int)
+  if ctx === nothing
+    if fixed && verbose > 0
+      println("Fixed Jacobian pattern ignored: linear_solver $(linear_solver) keeps no factorisation; use umfpack_reuse.")
+    end
+    return nothing
+  end
+  asm = ctx.assembly
+  if asm.fixed_pattern != fixed
+    asm.fixed_pattern = fixed
+    asm.valid = false
+    empty!(asm.factor_bus_types)
+  end
+  return nothing
 end
 
 """

@@ -179,6 +179,7 @@ function _resolved_q_limit_runtime_options(config::SparlectraConfig)::Dict{Strin
     "q_limit_runlog_max_rows" => config.output.console_q_limit_events === :summary || config.output.console_q_limit_events === :off ? 0 : config.output.console_max_rows,
     "q_limit_detail_artifacts" => Q_LIMIT_LOG_ARTIFACT,
     "jacobian_reuse_line" => _jacobian_reuse_runlog_line(config.powerflow),
+    "jacobian_fixed_pattern_line" => _jacobian_fixed_pattern_runlog_line(config.powerflow),
   )
 end
 
@@ -193,6 +194,15 @@ end
 
 _jacobian_reuse_number(x::Float64) = isinteger(x) ? string(Int(x)) : string(x)
 
+# fixed Jacobian pattern (1.2.3) in run.log: one line when it is on, or the
+# reason it has no effect (no factorisation without power mode under
+# linear_solver umfpack); nothing when it is off
+function _jacobian_fixed_pattern_runlog_line(pf)
+  pf.jacobian_fixed_pattern || return nothing
+  pf.linear_solver === :umfpack && !pf.power_mode && return "Fixed Jacobian pattern ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse."
+  return "Fixed Jacobian pattern: on"
+end
+
 _metadata_kwargs(metadata::AbstractDict) = (; (Symbol(key) => value for (key, value) in metadata)...)
 
 function _write_resolved_q_limit_options(io::IO, metadata::AbstractDict)
@@ -200,6 +210,8 @@ function _write_resolved_q_limit_options(io::IO, metadata::AbstractDict)
   isempty(dropped) || println(io, "Case file settings outside the case scope (written by an older Sparlectra, ignored; re-export the case file to clear this note): ", join(dropped, ", "))
   jr_line = get(metadata, "jacobian_reuse_line", nothing)
   jr_line === nothing || println(io, jr_line)
+  fp_line = get(metadata, "jacobian_fixed_pattern_line", nothing)
+  fp_line === nothing || println(io, fp_line)
   println(io, "Resolved Q-limit options")
   println(io, "------------------------")
   println(io, "Q-limit handling enabled : ", metadata["qlimits_enabled"])

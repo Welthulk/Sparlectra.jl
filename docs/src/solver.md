@@ -483,7 +483,12 @@ The reuse backend re-runs analyze plus factor after a PV/PQ switch (the
 pattern changes) and whenever the stored `colptr`/`rowval` fingerprint of
 the analyzed pattern differs from the current Jacobian; the Jacobian is
 assembled with a value-independent pattern, so the pattern depends only on
-the Ybus structure and the bus types. A factorization error (structure
+the Ybus structure and the bus types. With
+`power_flow.jacobian_fixed_pattern` both bus types share one pattern (the
+unused slots stored as zeros), so a switch keeps the analysis and UMFPACK
+only refactorizes; KLU, which refactorizes on its old pivots, still
+factorizes afresh after a switch (see
+[Fixed Jacobian pattern](@ref fixed_jacobian_pattern)). A factorization error (structure
 mismatch, bad pivots, singularity) resets the context and delegates that
 solve to the `umfpack` chain, so the `:singular_newton_step` handling and
 the QR/SVD fallbacks keep working. The context covers the main Newton solve

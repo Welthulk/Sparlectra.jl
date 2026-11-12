@@ -174,7 +174,9 @@ Between solves the network keeps its Ybus (reused while the fingerprint of
 the branch admittances, terminals and shunts is unchanged), the symbolic
 analysis of the sparse LU with its factorization object and Jacobian buffers
 (re-analysed by itself when the Jacobian pattern changes, for example after
-a bus-type or a topology change) and the Newton work arrays; the ranked
+a bus-type or a topology change; with the
+[fixed Jacobian pattern](@ref fixed_jacobian_pattern) a bus-type change
+keeps the UMFPACK analysis) and the Newton work arrays; the ranked
 mismatch diagnostics of the final status are skipped (the maxima and the
 worst row stay). Same Jacobian, same polar update, same Q-limit handling,
 same tolerance, the same solution to 1e-12 pu. `reset_power_mode!(net)`
@@ -298,6 +300,35 @@ Measured with Sparlectra 0.30.2: `runContingencies!` on the outages of
 four variants interleaved, median of three series each, after a warm-up of
 every variant (compile time not included); every variant gives the same
 per-outage results as the serial one.
+
+### [Fixed Jacobian pattern](@id fixed_jacobian_pattern)
+
+`power_flow.jacobian_fixed_pattern: true` (keyword
+`jacobian_fixed_pattern = true`; Web UI: the checkbox "Fixed Jacobian
+pattern" under Solver backend) builds the Jacobian with the entries of both
+bus types: the second row of a PV bus keeps the slots of the Q derivatives
+as zeros, the second row of a PQ bus the slots of the voltage derivatives.
+A PV/PQ switch of the Q-limit handling then leaves the sparsity pattern
+unchanged, and `umfpack_reuse` keeps its LU analysis: one analysis per solve
+(per island) instead of one per switch, plus one after a fallback. In power
+mode the analysis also survives between solves whose bus types differ (N-1
+with the warm active set, classic Q-limit passes). Off by default; the values
+of the Jacobian and the solution are the same.
+
+- `linear_solver = umfpack` keeps no factorization; the switch has no
+  effect and the status reports `jacobian_fixed_pattern = false`.
+- KLU (power mode) refactorizes on its old pivot order, which can be wrong
+  for a switched row, so it still factorizes afresh when the bus types
+  differ from those of its last analysis. With KLU the switch changes the
+  pattern, not the number of analyses.
+- The extra zeros add a few percent of fill to every factorization. The
+  switch pays where Q-limit switches are frequent and the analysis is a
+  large part of the factorization; a solve without switches only pays the
+  fill.
+
+The status field `jacobian_fixed_pattern` and the profile key
+`:jacobian_fixed_pattern` give the effective value; the analysis count is
+`linear_solver_analyze_count`.
 
 ## [Benchmark configuration](@id perf-benchmark)
 

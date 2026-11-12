@@ -562,7 +562,11 @@ function complex_newton_step_rectangular(
   # historical behavior.
   # A PV↔PQ active-set switch changes the structural pattern; the recorded
   # in-place assembly must rebuild (and the linear context re-analyzes).
-  linear_ctx !== nothing && active_set_changed && (linear_ctx.assembly.valid = false)
+  # Under the fixed Jacobian pattern (power_flow.jacobian_fixed_pattern) the
+  # pattern and the emit order do not depend on the bus types, so the
+  # assembly stays valid.
+  fixed = linear_ctx !== nothing && linear_ctx.assembly.fixed_pattern
+  linear_ctx !== nothing && active_set_changed && !fixed && (linear_ctx.assembly.valid = false)
   # Jacobian reuse (power mode, 0.30.2): the caller decided that this step
   # solves with the factorization of the previous Jacobian. No Jacobian is
   # built and nothing is refactorized; the right-hand side is the current
@@ -570,7 +574,7 @@ function complex_newton_step_rectangular(
   # with the trust region, whose dogleg needs the current Jacobian.
   reuse = reuse_factorization && !trust_region_enabled && linear_ctx !== nothing && linear_ctx.fact !== nothing && linear_ctx.nvar == m
   J = reuse ? nothing : _perf_profile_time!(performance_profile, :newton_step_jacobian) do
-    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing, assembly = linear_ctx === nothing ? nothing : linear_ctx.assembly, dslack = dslack)
+    build_rectangular_jacobian_pq_pv(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, structural_pattern = linear_ctx !== nothing, assembly = linear_ctx === nothing ? nothing : linear_ctx.assembly, dslack = dslack, fixed_pattern = fixed)
   end
 
   # Solve J * δx = -F. With a reuse context (UMFPACK lu!, the default) the
@@ -589,7 +593,21 @@ function complex_newton_step_rectangular(
       rhs = linear_ctx.rhs
       resize!(rhs, m)
       @inbounds @. rhs = -F0
-      solve_newton_factorized!(linear_ctx, J, rhs; pattern_changed = active_set_changed)
+      if fixed
+        # Fixed pattern: a backend that pivots in its refactorization (UMFPACK)
+        # keeps the analysis across switches. One that reuses the old pivots
+        # (KLU) factorizes afresh whenever the bus types differ from those of
+        # its last full factorization, inside a solve and between the solves
+        # of power mode (warm active set, classic Q-limit passes).
+        asm = linear_ctx.assembly
+        refactor_unsafe = !_newton_refactor_pivots(linear_ctx) && asm.factor_bus_types != bus_types
+        analyses_before = linear_ctx.analyze_count
+        x_fixed = solve_newton_factorized!(linear_ctx, J, rhs; pattern_changed = refactor_unsafe)
+        linear_ctx.analyze_count != analyses_before && copyto!(resize!(asm.factor_bus_types, n), bus_types)
+        x_fixed
+      else
+        solve_newton_factorized!(linear_ctx, J, rhs; pattern_changed = active_set_changed)
+      end
     end
   end
   # The lambda component of the Newton direction: staged trials evaluate

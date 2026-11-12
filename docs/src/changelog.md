@@ -1,3 +1,10 @@
+# Version 1.2.3 - 2026-11-12
+
+Faster Ybus build on large networks and a fixed Jacobian pattern for Q-limit switches.
+
+- **Faster Ybus build.** The bus admittance matrix is assembled in one sparse call; on large networks this removes most of the time spent outside the Newton steps. Same matrix bit for bit.
+- **Fixed Jacobian pattern.** `power_flow.jacobian_fixed_pattern: true` (default `false`) keeps the LU analysis when the Q-limit handling switches a bus between PV and PQ, also between the solves of power mode. Same solution. See [Fixed Jacobian pattern](@ref fixed_jacobian_pattern).
+
 # Version 1.2.2 - 2026-11-11
 
 The demo cases and CGMES fixtures are written with 9 significant digits, so every machine builds the same bytes.

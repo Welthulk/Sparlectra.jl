@@ -512,6 +512,13 @@ Base.@kwdef struct PowerFlowConfig
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS
+  # fixed Jacobian pattern (1.2.3, off by default): the Jacobian keeps the
+  # entries of both bus types (the PQ pattern, explicit zeros where a PV
+  # bus has none), so a PV/PQ switch keeps the LU analysis of the
+  # factorization-reuse backends. Same values, same solution. No effect with
+  # linear_solver umfpack; KLU still analyses after a switch, because its
+  # refactorization keeps the old pivots.
+  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN
   # Promote the strongest injection to slack when none is registered
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
@@ -589,6 +596,9 @@ const DEFAULT_POWER_MODE_LU = :auto
 const DEFAULT_JACOBIAN_REUSE = false
 const DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION = 10.0
 const DEFAULT_JACOBIAN_REUSE_MAX_STEPS = 3
+# Fixed Jacobian pattern default (1.2.3), one source for the struct, the
+# loader and the solver keyword defaults.
+const DEFAULT_JACOBIAN_FIXED_PATTERN = false
 
 # A reduction factor of 1 or less would reuse the factorization after a step
 # that did not converge at all, the case the rule is there to exclude.
@@ -2539,6 +2549,7 @@ function PowerFlowConfig(raw::AbstractDict)
     jacobian_reuse = _as_bool_cfg(_raw_get(merged, "jacobian_reuse", DEFAULT_JACOBIAN_REUSE)),
     jacobian_reuse_min_reduction = _validate_jacobian_reuse_min_reduction(_as_float_cfg(_raw_get(merged, "jacobian_reuse_min_reduction", DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION))),
     jacobian_reuse_max_steps = _validate_jacobian_reuse_max_steps(_as_int_cfg(_raw_get(merged, "jacobian_reuse_max_steps", DEFAULT_JACOBIAN_REUSE_MAX_STEPS))),
+    jacobian_fixed_pattern = _as_bool_cfg(_raw_get(merged, "jacobian_fixed_pattern", DEFAULT_JACOBIAN_FIXED_PATTERN)),
     auto_slack = _as_bool_cfg(_raw_get(merged, "auto_slack", false)),
     rescue = _as_bool_cfg(_raw_get(merged, "rescue", false)),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),
