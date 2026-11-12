@@ -120,10 +120,14 @@ function build_distributed_slack_state(
 
   rows = NamedTuple{(:bus, :gen_index, :weight, :alpha),Tuple{Int,Int,Float64,Float64}}[]
   dropped = 0
+  # De-energized buses never take part: the Jacobian pins their voltage, so
+  # a share there would be lost from the balance.
+  iso = Set{Int}(net.isoNodes)
   for (gen_index, ps) in enumerate(net.prosumpsVec)
     isGenerator(ps) || continue
     bus = getPosumerBusIndex(ps)
     (1 <= bus <= n) || continue
+    bus in iso && continue
     # Candidates live at REF or PV buses, evaluated on the bus types at
     # discovery time. Fixed injections at PQ buses (Stage-0 HVDC converters,
     # boundary equivalents) are excluded naturally by the bus-type gate.

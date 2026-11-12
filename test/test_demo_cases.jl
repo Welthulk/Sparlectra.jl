@@ -42,6 +42,11 @@ function run_demo_case_tests()
         net = Sparlectra.import_case(scf_path, _DEMO_REF_CONFIG()).net
         _, erg = runpf!(net; verbose = 0)
         @test erg == 0
+        # every Newton step factorizes a regular Jacobian (sp_case60 and
+        # sp_case188 have a closed coupler, whose second bus once stayed in
+        # the system as a zero block and sent every step to the QR fallback)
+        st = Sparlectra.rectangular_pf_status(net)
+        @test st.linear_solver === :umfpack_reuse && st.linear_solver_fallback_count == 0
 
         # 2) state estimation on the measurements the file itself carries;
         # the topology precheck advises on two of the shipped cases by design,
@@ -64,6 +69,16 @@ function run_demo_case_tests()
         end
       end)() end
     end
+
+    # the format fixture sp_casePST: its busbar coupler joins Bus_9_230 to
+    # the rest, the same regular Jacobian as above
+    @testset "sp_casePST power flow without linear-solver fallback" begin (function ()
+      net = Sparlectra.import_case(joinpath(_DEMO_CASE_DIR, "sp_casePST.scf.json"), _DEMO_REF_CONFIG()).net
+      _, erg = runpf!(net; verbose = 0)
+      @test erg == 0
+      st = Sparlectra.rectangular_pf_status(net)
+      @test st.linear_solver === :umfpack_reuse && st.linear_solver_fallback_count == 0
+    end)() end
 
     # sp_case6tap, the tap control case (diagram
     # data/scf/sp_case6tap_single_line.svg): its names, the ratio changer of

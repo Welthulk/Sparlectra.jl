@@ -30,7 +30,8 @@ usually tuned with; the rest is YAML only.
 | `power_flow.jacobian_reuse` | Bool | `false` | `true`, `false` | Dishonest Newton: the next step reuses the factorization while the mismatch falls fast; changes the iteration count, not the solution. See [Dishonest Newton](@ref dishonest_newton). |
 | `power_flow.jacobian_reuse_min_reduction` | Float | `10.0` | greater than 1 | Factor by which a step must cut the maximum mismatch for the next step to reuse the factorization. |
 | `power_flow.jacobian_reuse_max_steps` | Int | `3` | at least 1 | Reused steps in a row before a forced refactorization. |
-| `power_flow.jacobian_fixed_pattern` | Bool | `false` | `true`, `false` | The Jacobian keeps the entries of both bus types, so a PV/PQ switch keeps the LU analysis of `umfpack_reuse` and of power mode with UMFPACK. Same solution. No effect with `linear_solver = umfpack`; with KLU the analysis after a switch stays. See [Fixed Jacobian pattern](@ref fixed_jacobian_pattern). |
+| `power_flow.jacobian_fixed_pattern` | Bool/String | `auto` | `auto`, `true`, `false` | The Jacobian keeps the entries of both bus types, so a PV/PQ switch keeps the LU analysis of `umfpack_reuse` and of power mode with UMFPACK. Same solution. `auto` uses it on a solved network (island) of at least `jacobian_fixed_pattern_min_buses` buses, `true` always, `false` never. No effect with `linear_solver = umfpack`; KLU still analyses after a switch. See [Fixed Jacobian pattern](@ref fixed_jacobian_pattern). |
+| `power_flow.jacobian_fixed_pattern_min_buses` | Int | `5000` | at least 1 | Bus count of the solved network (island) from which `jacobian_fixed_pattern: auto` uses the fixed pattern. |
 
 ## [Solver selection (rectangular vs. APSLF)](@id pf-solver-selection)
 

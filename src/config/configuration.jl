@@ -512,13 +512,19 @@ Base.@kwdef struct PowerFlowConfig
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS
-  # fixed Jacobian pattern (1.2.3, off by default): the Jacobian keeps the
-  # entries of both bus types (the PQ pattern, explicit zeros where a PV
-  # bus has none), so a PV/PQ switch keeps the LU analysis of the
-  # factorization-reuse backends. Same values, same solution. No effect with
-  # linear_solver umfpack; KLU still analyses after a switch, because its
-  # refactorization keeps the old pivots.
-  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN
+  # fixed Jacobian pattern (1.2.3): the Jacobian keeps the entries of both
+  # bus types (the PQ pattern, explicit zeros where a PV bus has none), so a
+  # PV/PQ switch keeps the LU analysis of the factorization-reuse backends.
+  # Same values, same solution. `:auto` (YAML `auto`, the default) uses it
+  # on a solved network (island) of at least
+  # `jacobian_fixed_pattern_min_buses` buses, `:on` (`true`) always, `:off`
+  # (`false`) never. A Symbol, not a Bool, because of the third value; `:on`
+  # and `:off` instead of `true` and `false` because `:true` is the Bool
+  # literal in Julia (same values as rectangular_preallocate_workspace).
+  # No effect with linear_solver umfpack; KLU still analyses after a
+  # switch, because its refactorization keeps the old pivots.
+  jacobian_fixed_pattern::Symbol = DEFAULT_JACOBIAN_FIXED_PATTERN
+  jacobian_fixed_pattern_min_buses::Int = DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES
   # Promote the strongest injection to slack when none is registered
   # (ensureSlack!); off by default so data errors stay visible.
   auto_slack::Bool = false
@@ -596,9 +602,34 @@ const DEFAULT_POWER_MODE_LU = :auto
 const DEFAULT_JACOBIAN_REUSE = false
 const DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION = 10.0
 const DEFAULT_JACOBIAN_REUSE_MAX_STEPS = 3
-# Fixed Jacobian pattern default (1.2.3), one source for the struct, the
-# loader and the solver keyword defaults.
-const DEFAULT_JACOBIAN_FIXED_PATTERN = false
+# Fixed Jacobian pattern (1.2.3), one source for the struct, the loader,
+# the override validation and the solver keyword defaults. Below about 3000
+# buses the extra entries make the LU factor several percent larger, from
+# about 6500 buses on the size stays within a percent; the threshold lies
+# between the two.
+const JACOBIAN_FIXED_PATTERN_VALUES = (:auto, :on, :off)
+const DEFAULT_JACOBIAN_FIXED_PATTERN = :auto
+const DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES = 5000
+
+# power_flow.jacobian_fixed_pattern: `auto`, `true` or `false` as Bool or
+# string (also yes/no and on/off, the words as_bool reads) and the Symbols
+# :auto, :on, :off to :auto, :on or :off; anything else throws.
+function _jacobian_fixed_pattern_mode(x)::Symbol
+  x isa Symbol && x in JACOBIAN_FIXED_PATTERN_VALUES && return x
+  x isa Bool && return x ? :on : :off
+  if x isa AbstractString
+    word = lowercase(strip(x))
+    word == "auto" && return :auto
+    word == "true" && return :on
+    word == "false" && return :off
+  end
+  throw(ArgumentError("power_flow.jacobian_fixed_pattern must be auto, true or false, got $(repr(x))"))
+end
+
+function _validate_jacobian_fixed_pattern_min_buses(x::Int)::Int
+  x >= 1 || throw(ArgumentError("power_flow.jacobian_fixed_pattern_min_buses must be at least 1, got $(x)"))
+  return x
+end
 
 # A reduction factor of 1 or less would reuse the factorization after a step
 # that did not converge at all, the case the rule is there to exclude.
@@ -2549,7 +2580,8 @@ function PowerFlowConfig(raw::AbstractDict)
     jacobian_reuse = _as_bool_cfg(_raw_get(merged, "jacobian_reuse", DEFAULT_JACOBIAN_REUSE)),
     jacobian_reuse_min_reduction = _validate_jacobian_reuse_min_reduction(_as_float_cfg(_raw_get(merged, "jacobian_reuse_min_reduction", DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION))),
     jacobian_reuse_max_steps = _validate_jacobian_reuse_max_steps(_as_int_cfg(_raw_get(merged, "jacobian_reuse_max_steps", DEFAULT_JACOBIAN_REUSE_MAX_STEPS))),
-    jacobian_fixed_pattern = _as_bool_cfg(_raw_get(merged, "jacobian_fixed_pattern", DEFAULT_JACOBIAN_FIXED_PATTERN)),
+    jacobian_fixed_pattern = _jacobian_fixed_pattern_mode(_raw_get(merged, "jacobian_fixed_pattern", DEFAULT_JACOBIAN_FIXED_PATTERN)),
+    jacobian_fixed_pattern_min_buses = _validate_jacobian_fixed_pattern_min_buses(_as_int_cfg(_raw_get(merged, "jacobian_fixed_pattern_min_buses", DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES))),
     auto_slack = _as_bool_cfg(_raw_get(merged, "auto_slack", false)),
     rescue = _as_bool_cfg(_raw_get(merged, "rescue", false)),
     wrong_branch_detection = _validate_allowed_symbol("power_flow.wrong_branch_detection", _as_symbol_cfg(_raw_get(merged, "wrong_branch_detection", :warn)), WRONG_BRANCH_DETECTION_VALUES),

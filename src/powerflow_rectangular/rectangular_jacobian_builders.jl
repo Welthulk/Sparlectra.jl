@@ -59,6 +59,34 @@ end
   return nothing
 end
 
+# Rows of the distributed-slack lambda column: the non-slack buses with a
+# nonzero participation factor, in bus order (the emit order of block 4 in
+# `_assemble_rectangular_jacobian!`).
+function _record_dslack_buses!(rec::Vector{Int}, dslack, slack_idx::Int)
+  empty!(rec)
+  dslack === nothing && return rec
+  alpha = dslack.alpha
+  for i in eachindex(alpha)
+    (i == slack_idx || alpha[i] == 0.0) && continue
+    push!(rec, i)
+  end
+  return rec
+end
+
+# Whether the participant set of `dslack` equals the recorded one, without
+# allocating (called on every in-place Jacobian refresh).
+function _dslack_buses_match(rec::Vector{Int}, dslack, slack_idx::Int)::Bool
+  dslack === nothing && return isempty(rec)
+  alpha = dslack.alpha
+  k = 0
+  for i in eachindex(alpha)
+    (i == slack_idx || alpha[i] == 0.0) && continue
+    k += 1
+    (k <= length(rec) && rec[k] == i) || return false
+  end
+  return k == length(rec)
+end
+
 """
     build_rectangular_jacobian_pq_pv_sparse(
         Ybus::SparseMatrixCSC{ComplexF64},
@@ -91,6 +119,11 @@ Chain rule to rectangular:
     ∂S/∂Vi = j(∂S/∂V - ∂S/∂V*)
 
 With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
+
+A PQ bus without any Ybus entry (a de-energized bus, or a member of a
+closed-link cluster after the contraction) has zero rows and columns. It
+gets a unit entry on each of its two rows instead, so the Jacobian stays
+regular and the Newton step leaves the voltage of that bus unchanged.
 
 Keywords: `structural_pattern = true` stores every structural entry, also
 when its value is zero (needed by the factorization-reuse backends);
@@ -159,7 +192,8 @@ function build_rectangular_jacobian_pq_pv_sparse(
     row_block[i] = row - 1  # ΔP row for bus i
   end
 
-  if assembly !== nothing && assembly.valid && assembly.J !== nothing && size(assembly.J, 1) == m
+  if assembly !== nothing && assembly.valid && assembly.J !== nothing && size(assembly.J, 1) == m &&
+     _dslack_buses_match(assembly.dslack_buses, dslack, slack_idx)
     # In-place refresh: same structural pattern as the recorded build, so the
     # emit order is identical and each entry lands at its recorded nzval slot.
     Jexist = assembly.J
@@ -215,6 +249,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
       hi = colptr[c+1] - 1
       pos_map[t] = searchsortedfirst(view(rowval, lo:hi), Iidx[t]) + lo - 1
     end
+    _record_dslack_buses!(assembly.dslack_buses, dslack, slack_idx)
     assembly.J = J
     assembly.valid = true
   end
@@ -429,14 +464,17 @@ function _assemble_rectangular_jacobian!(
     # These duplicate triplets merge additively into the diagonal-column
     # entries already stored by the S-block, so pushing them unconditionally
     # in structural mode never introduces iterate-dependent pattern entries.
-    dP = dPinj_dVm[i]
+    # A bus without any Ybus entry is pinned in block 3b below; its
+    # injection derivative is left out so the pin stays a pure unit row.
+    unconnected = isempty(nzrange(Ybus, i))
+    dP = unconnected ? 0.0 : dPinj_dVm[i]
     if structural_pattern || dP != 0.0
       emit(rb, colVr, -dP * dvm_dvr)
       emit(rb, colVi, -dP * dvm_dvi)
     end
 
     if bus_types[i] == :PQ
-      dQ = dQinj_dVm[i]
+      dQ = unconnected ? 0.0 : dQinj_dVm[i]
       if structural_pattern || dQ != 0.0
         emit(rb + 1, colVr, -dQ * dvm_dvr)
         emit(rb + 1, colVi, -dQ * dvm_dvi)
@@ -445,6 +483,27 @@ function _assemble_rectangular_jacobian!(
       emit(rb + 1, colVr, 0.0)
       emit(rb + 1, colVi, 0.0)
     end
+  end
+
+  # --- 3b) Buses without any connection (empty Ybus column): de-energized
+  # buses and the members of a closed-link cluster, which the link
+  # contraction leaves in the state vector with zero injection. Their P/Q
+  # rows and Vr/Vi columns are identically zero, so the Jacobian would be
+  # singular and every step would go to the QR fallback. One unit entry per
+  # row pins delta Vr = delta Vi = 0: the bus keeps its start voltage and the
+  # rest of the system is solved exactly as without it. The coordinates are
+  # already in the structural pattern (chain-rule block above); under the
+  # fixed pattern a non-PQ bus emits them as zeros, so the emit order does
+  # not depend on the bus types.
+  for i in non_slack
+    isempty(nzrange(Ybus, i)) || continue
+    pq = bus_types[i] == :PQ
+    (pq || fixed_pattern) || continue
+    pos = pos_non_slack[i]
+    rb = row_block[i]
+    unit = pq ? 1.0 : 0.0
+    emit(rb, pos, unit)
+    emit(rb + 1, (n - 1) + pos, unit)
   end
 
   # --- 4) Distributed slack: lambda column (constant -alpha at participant P

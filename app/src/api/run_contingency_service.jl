@@ -32,8 +32,11 @@ _power_mode_kwargs(pf) = pf.power_mode ? (; power_mode = true, power_mode_lu = p
 # N-1, only when the configuration switches it on
 _jacobian_reuse_kwargs(pf) = pf.jacobian_reuse ? (; jacobian_reuse = true, jacobian_reuse_min_reduction = pf.jacobian_reuse_min_reduction, jacobian_reuse_max_steps = pf.jacobian_reuse_max_steps) : (;)
 
-# fixed Jacobian pattern (1.2.3) for the same worker solves, only when on
-_jacobian_fixed_pattern_kwargs(pf) = pf.jacobian_fixed_pattern ? (; jacobian_fixed_pattern = true) : (;)
+# fixed Jacobian pattern (1.2.3) for the same worker solves, only when the
+# configuration differs from the solver defaults (auto from 5000 buses)
+_jacobian_fixed_pattern_kwargs(pf) =
+  pf.jacobian_fixed_pattern === DEFAULT_JACOBIAN_FIXED_PATTERN && pf.jacobian_fixed_pattern_min_buses == DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES ? (;) :
+  (; jacobian_fixed_pattern = pf.jacobian_fixed_pattern, jacobian_fixed_pattern_min_buses = pf.jacobian_fixed_pattern_min_buses)
 
 # the distributed-slack model of the run configuration for the scenario
 # engine and N-1: every key of power_flow.distributed_slack, so the base

@@ -483,8 +483,9 @@ The reuse backend re-runs analyze plus factor after a PV/PQ switch (the
 pattern changes) and whenever the stored `colptr`/`rowval` fingerprint of
 the analyzed pattern differs from the current Jacobian; the Jacobian is
 assembled with a value-independent pattern, so the pattern depends only on
-the Ybus structure and the bus types. With
-`power_flow.jacobian_fixed_pattern` both bus types share one pattern (the
+the Ybus structure and the bus types. With the fixed Jacobian pattern
+(`power_flow.jacobian_fixed_pattern`, by default from 5000 buses) both bus
+types share one pattern (the
 unused slots stored as zeros), so a switch keeps the analysis and UMFPACK
 only refactorizes; KLU, which refactorizes on its old pivots, still
 factorizes afresh after a switch (see

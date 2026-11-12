@@ -1048,6 +1048,12 @@ function printACPFlowResults(
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :power_mode_lu_line)
     @printf(io, "Power-mode LU  : %s\n", String(rect_status_hdr.power_mode_lu_line))
   end
+  # fixed Jacobian pattern (1.2.3): whether the solve used it, the configured
+  # value and why (bus count against the threshold of auto, no
+  # factorisation); nothing when it is configured false
+  if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :jacobian_fixed_pattern_line) && rect_status_hdr.jacobian_fixed_pattern_mode !== :off
+    @printf(io, "Fixed pattern  : %s\n", rect_status_hdr.jacobian_fixed_pattern_line)
+  end
 
   @printf(io, "BaseMVA        :%10d\n", net.baseMVA)
   # the frequency only matters where a capacitance was converted; a pu

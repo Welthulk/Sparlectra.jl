@@ -463,15 +463,15 @@ end
 # and, for the reuse backend, its analyze/refactor/fallback counters. Merged
 # into the final status (so island statuses carry per-island counters) and
 # written into the performance profile next to the workspace metadata.
-function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx; jacobian_reuse::Bool = false, jacobian_reuse_steps::Int = 0, jacobian_reuse_refactorisations::Int = 0, jacobian_reuse_discarded::Int = 0)
+function _merge_linear_solver_diagnostics(status_build, performance_profile, linear_solver::Symbol, linear_ctx; jacobian_reuse::Bool = false, jacobian_reuse_steps::Int = 0, jacobian_reuse_refactorisations::Int = 0, jacobian_reuse_discarded::Int = 0, jacobian_fixed_pattern_mode::Symbol = :off, jacobian_fixed_pattern_reason::Symbol = :off, jacobian_fixed_pattern_line::String = "off (false)")
   # the backend the context actually is (power mode may hold the KLU
   # context of the extension while linear_solver names the configured one)
   linear_solver = linear_ctx === nothing ? linear_solver : _newton_context_backend(linear_ctx)
   analyze_count = linear_ctx === nothing ? 0 : linear_ctx.analyze_count
   refactor_count = linear_ctx === nothing ? 0 : linear_ctx.refactor_count
   fallback_count = linear_ctx === nothing ? 0 : linear_ctx.fallback_count
-  # the effective fixed Jacobian pattern: false without a context (linear
-  # solver umfpack), where the flag has no effect
+  # the fixed Jacobian pattern: whether this solve used it (false without a
+  # context, linear solver umfpack), the configured value and the reason
   fixed_pattern = linear_ctx !== nothing && linear_ctx.assembly.fixed_pattern
   if performance_profile isa AbstractDict
     performance_profile[:linear_solver_backend] = linear_solver
@@ -485,6 +485,8 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
     performance_profile[:jacobian_reuse_refactorisations] = jacobian_reuse_refactorisations
     performance_profile[:jacobian_reuse_discarded] = jacobian_reuse_discarded
     performance_profile[:jacobian_fixed_pattern] = fixed_pattern
+    performance_profile[:jacobian_fixed_pattern_mode] = jacobian_fixed_pattern_mode
+    performance_profile[:jacobian_fixed_pattern_reason] = jacobian_fixed_pattern_reason
   end
   extras = (
     linear_solver = linear_solver,
@@ -496,6 +498,9 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
     jacobian_reuse_refactorisations = jacobian_reuse_refactorisations,
     jacobian_reuse_discarded = jacobian_reuse_discarded,
     jacobian_fixed_pattern = fixed_pattern,
+    jacobian_fixed_pattern_mode = jacobian_fixed_pattern_mode,
+    jacobian_fixed_pattern_reason = jacobian_fixed_pattern_reason,
+    jacobian_fixed_pattern_line = jacobian_fixed_pattern_line,
   )
   return merge(status_build, (status = (; status_build.status..., extras...),))
 end

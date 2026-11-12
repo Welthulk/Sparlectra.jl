@@ -78,13 +78,14 @@ function run_factorized_linear_solver_tests()
   @testset "Q-limit active-set pattern change re-analyzes" begin (function ()
     net = createTest3BusNet()
     setQLimits!(net = net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
-    _, erg = runpf!(net, 20, 1e-6, 0; method = :rectangular, linear_solver = :umfpack_reuse)
+    # the old path explicitly (power_flow.jacobian_fixed_pattern: false)
+    _, erg = runpf!(net, 20, 1e-6, 0; method = :rectangular, linear_solver = :umfpack_reuse, jacobian_fixed_pattern = :off)
     @test erg == 0
     @test getNodeType(net.nodeVec[2]) == Sparlectra.PQ
     status = Sparlectra.rectangular_pf_status(net)
     @test status.linear_solver === :umfpack_reuse
     @test status.linear_solver_analyze_count >= 2
-    @test status.jacobian_fixed_pattern == false
+    @test (status.jacobian_fixed_pattern, status.jacobian_fixed_pattern_mode, status.jacobian_fixed_pattern_reason) == (false, :off, :off)
     state(n) = [b._vm_pu * cis(deg2rad(b._va_deg)) for b in n.nodeVec]
     types(n) = [getNodeType(b) for b in n.nodeVec]
 
@@ -116,33 +117,56 @@ function run_factorized_linear_solver_tests()
     J2 = build(bt_pq; assembly = asm)
     @test J2 === J1 && asm.valid
     @test nonzeros(J2) == nonzeros(Jf_pq)
+    # distributed slack: a new participant set with the same number of
+    # participants (power mode between solves) gives the same emit count; the
+    # replay must rebuild instead of writing -alpha into the old rows
+    others = [i for i in 1:nb if i != slack]
+    gt = NamedTuple{(:bus, :gen_index, :weight, :alpha),Tuple{Int,Int,Float64,Float64}}[]
+    dsl_at(bus) = Sparlectra.DistributedSlackState([i == bus ? 0.6 : (i == slack ? 0.4 : 0.0) for i in 1:nb], :pg_weighted, true, gt, 0)
+    asm_dsl = Sparlectra.RectangularJacobianAssembly()
+    asm_dsl.fixed_pattern = true
+    build(bt_pv; assembly = asm_dsl, dslack = dsl_at(others[1]))
+    J_moved = build(bt_pv; assembly = asm_dsl, dslack = dsl_at(others[2]))
+    @test Matrix(J_moved) == Matrix(build(bt_pv; fixed_pattern = true, dslack = dsl_at(others[2])))
 
     # The run: the switch of STATION1 keeps the one analysis, same result
     fixed_net = createTest3BusNet()
     setQLimits!(net = fixed_net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
-    _, erg = runpf!(fixed_net, 20, 1e-6, 0; method = :rectangular, linear_solver = :umfpack_reuse, jacobian_fixed_pattern = true)
+    _, erg = runpf!(fixed_net, 20, 1e-6, 0; method = :rectangular, linear_solver = :umfpack_reuse, jacobian_fixed_pattern = :on)
     @test erg == 0
     st = Sparlectra.rectangular_pf_status(fixed_net)
     @test st.jacobian_fixed_pattern && st.qlimit_active_set_changes > 0
+    @test (st.jacobian_fixed_pattern_reason, st.jacobian_fixed_pattern_line) == (:on, "on (true)")
     @test (st.linear_solver_analyze_count, st.linear_solver_fallback_count) == (1, 0)
     @test types(fixed_net) == types(net)
     @test maximum(abs.(state(fixed_net) .- state(net))) <= 1e-8
 
     # sp_case300 from the flat start (three PV/PQ switches), with and
-    # without distributed slack: same bus types, same state, one analysis
+    # without distributed slack. The default `auto` with the threshold
+    # lowered to the 300 buses of the case: same bus types, same state, one
+    # analysis across the switches. The default threshold (5000 buses)
+    # keeps the old path: the analysis count and the state of `false`, bit
+    # for bit.
     path300 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case300.m")
     for dsl in (false, true)
       c1 = Sparlectra.createNetFromMatPowerFile(filename = path300)
-      runpf!(c1, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl)
+      runpf!(c1, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl, jacobian_fixed_pattern = :off)
       fx = Sparlectra.createNetFromMatPowerFile(filename = path300)
-      _, erg = runpf!(fx, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl, jacobian_fixed_pattern = true)
+      _, erg = runpf!(fx, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl, jacobian_fixed_pattern_min_buses = 300)
       @test erg == 0
       st_c1 = Sparlectra.rectangular_pf_status(c1)
       st = Sparlectra.rectangular_pf_status(fx)
       @test st.qlimit_active_set_changes > 0 && st_c1.linear_solver_analyze_count > 1
       @test (st.linear_solver_analyze_count, st.linear_solver_fallback_count) == (1, 0)
+      @test (st.jacobian_fixed_pattern_mode, st.jacobian_fixed_pattern_reason, st.jacobian_fixed_pattern_line) == (:auto, :auto_threshold, "on (auto, 300 buses, threshold 300)")
       @test types(fx) == types(c1)
       @test maximum(abs.(state(fx) .- state(c1))) <= 1e-8
+      below = Sparlectra.createNetFromMatPowerFile(filename = path300)
+      runpf!(below, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl)
+      st_below = Sparlectra.rectangular_pf_status(below)
+      @test (st_below.jacobian_fixed_pattern, st_below.jacobian_fixed_pattern_reason) == (false, :auto_below_threshold)
+      @test (st_below.linear_solver_analyze_count, st_below.linear_solver_refactor_count) == (st_c1.linear_solver_analyze_count, st_c1.linear_solver_refactor_count)
+      @test state(below) == state(c1) && st_below.mismatch_history == st_c1.mismatch_history
     end
 
     # linear_solver umfpack keeps no factorisation: no effect, the status
@@ -150,7 +174,7 @@ function run_factorized_linear_solver_tests()
     um = createTest3BusNet()
     log = mktemp() do tmp, io
       redirect_stdout(io) do
-        runpf_rectangular!(um; maxiter = 20, tol = 1e-8, verbose = 1, linear_solver = :umfpack, jacobian_fixed_pattern = true)
+        runpf_rectangular!(um; maxiter = 20, tol = 1e-8, verbose = 1, linear_solver = :umfpack, jacobian_fixed_pattern = :on)
       end
       close(io)
       read(tmp, String)
@@ -158,6 +182,7 @@ function run_factorized_linear_solver_tests()
     @test occursin("Fixed Jacobian pattern ignored: linear_solver umfpack keeps no factorisation", log)
     st = Sparlectra.rectangular_pf_status(um)
     @test st.jacobian_fixed_pattern == false && st.linear_solver_analyze_count == 0
+    @test st.jacobian_fixed_pattern_reason === :no_context
   end)() end
 
   @testset "Singular system falls back to the umfpack chain" begin (function ()
@@ -305,8 +330,8 @@ function run_factorized_linear_solver_tests()
       c1 = Sparlectra.createNetFromMatPowerFile(filename = path300)
       fx = Sparlectra.createNetFromMatPowerFile(filename = path300)
       for round in 1:2
-        runpf!(c1, 30, 1e-8, 0; opt_flatstart = true, power_mode = true, power_mode_lu = lu)
-        _, erg = runpf!(fx, 30, 1e-8, 0; opt_flatstart = true, power_mode = true, power_mode_lu = lu, jacobian_fixed_pattern = true)
+        runpf!(c1, 30, 1e-8, 0; opt_flatstart = true, power_mode = true, power_mode_lu = lu, jacobian_fixed_pattern = :off)
+        _, erg = runpf!(fx, 30, 1e-8, 0; opt_flatstart = true, power_mode = true, power_mode_lu = lu, jacobian_fixed_pattern = :on)
         @test erg == 0 && lu_status(fx).qlimit_active_set_changes > 0
         @test maximum(abs.(state(fx) .- state(c1))) <= 1e-8
         @test [getNodeType(b) for b in fx.nodeVec] == [getNodeType(b) for b in c1.nodeVec]
