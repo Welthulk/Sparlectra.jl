@@ -117,6 +117,11 @@ power_flow:
   jacobian_reuse: false
   jacobian_reuse_min_reduction: 10.0
   jacobian_reuse_max_steps: 3
+  # Fixed Jacobian pattern: PV rows keep the Q entries as zeros, so a PV/PQ
+  # switch keeps the LU analysis. Same solution. No effect with
+  # linear_solver umfpack; with KLU (power mode) the analysis after a
+  # switch stays.
+  jacobian_fixed_pattern: false
   # Promote the strongest injection (external network injection preferred,
   # then largest generator) to slack when the case registers none.
   auto_slack: false

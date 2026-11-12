@@ -81,8 +81,10 @@ iteration workspace, and the `power_flow.power_mode_lu = auto` decisions of
 the network (`lu_memo`, under `lu_key`; island nets of a solve record into
 the memo of their parent network). The Ybus is reused only when the
 fingerprint matches, the context re-analyses by itself when the Jacobian
-pattern differs (bus types, bus count), so a changed topology or a changed
-branch parameter never reuses stale state; the LU decision is kept across
+pattern differs (bus types, bus count; under
+`power_flow.jacobian_fixed_pattern` the bus types do not change the pattern,
+and only KLU factorizes afresh when they changed), so a changed topology or
+a changed branch parameter never reuses stale state; the LU decision is kept across
 such changes (once per network). `lu_source` is where the LU choice of the
 last solve came from (`:decided`, `:earlier_decision`, `:configured`,
 `:klu_not_loaded`).
@@ -174,6 +176,11 @@ function _newton_full_factorization(ctx::PowerModeLuContext, J::SparseMatrixCSC{
 end
 _newton_refactorize!(ctx::PowerModeLuContext, J::SparseMatrixCSC{Float64,Int64}) = ctx.backend === :klu ? _klu_refactorize!(ctx.fact, J) : lu!(ctx.fact, J)
 _newton_context_backend(ctx::PowerModeLuContext) = ctx.backend === :klu ? :klu : :umfpack_reuse
+# UMFPACK pivots in every refactorization, KLU does not (see the
+# UmfpackReuseNewtonContext method). `backend` is stale while an `auto`
+# decision is pending; that does no harm, because the context then has no
+# factorization and the first step factorizes afresh anyway.
+_newton_refactor_pivots(ctx::PowerModeLuContext) = ctx.backend === :umfpack
 
 # The choice of `auto` from KLU's symbolic analysis of J alone (no numeric
 # factorization): KLU up to POWER_MODE_LU_KLU_MAX_FLOPS estimated flops,

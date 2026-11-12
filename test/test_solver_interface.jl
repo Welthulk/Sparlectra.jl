@@ -847,7 +847,7 @@ end)() end
       profile = Dict{Symbol,Any}()
       nondefault = (;
         damp = 0.5, autodamp = true, autodamp_min = 0.07, newton_update = :rectangular, power_mode = true, power_mode_lu = :klu,
-        jacobian_reuse = true, jacobian_reuse_min_reduction = 12.5, jacobian_reuse_max_steps = 4, qlimit_warm_clamps = Dict("G1" => :max),
+        jacobian_reuse = true, jacobian_reuse_min_reduction = 12.5, jacobian_reuse_max_steps = 4, jacobian_fixed_pattern = true, qlimit_warm_clamps = Dict("G1" => :max),
         merit_enabled = true, merit_armijo_c1 = 2.0e-4, merit_scale_p = 1.1, merit_scale_q = 1.2, merit_scale_v = 1.3, merit_fallback_max_mismatch = false,
         trust_region_enabled = true, trust_region_initial_radius = 0.9, trust_region_min_radius = 2.0e-4, trust_region_max_radius = 9.0, trust_region_eta_accept = 0.15,
         trust_region_shrink_factor = 0.4, trust_region_expand_factor = 2.5, trust_region_expand_threshold = 0.8, trust_region_step_mode = :dogleg,

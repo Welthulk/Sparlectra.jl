@@ -1292,16 +1292,26 @@ power_flow:
     @test (prof[:newton_update], prof[:qlimit_start_iter], prof[:qlimit_start_mode], prof[:qlimit_guard], prof[:qlimit_guard_min_q_range_pu], prof[:qlimit_guard_narrow_range_mode], prof[:qlimit_guard_violation_mode], prof[:qlimit_guard_max_switches], prof[:final_q_accept_pu]) ==
           (expected.newton_update, expected.start_iter, expected.start_mode, expected.guard, expected.guard_min_q_range_pu, expected.guard_narrow_range_mode, expected.guard_violation_mode, expected.guard_max_switches, expected.final_q_accept_pu)
     # 0.30.2: the three dishonest-Newton keys agree the same way (template,
-    # struct, loader fallback, solver keyword defaults)
-    jr_expected = (false, 10.0, 3)
+    # struct, loader fallback, solver keyword defaults), and since 1.2.3 the
+    # fixed Jacobian pattern with them
+    jr_expected = (false, 10.0, 3, false)
     for cfg in (tmpl_cfg, empty_cfg, Sparlectra.SparlectraConfig())
       pf = cfg.powerflow
-      @test (pf.jacobian_reuse, pf.jacobian_reuse_min_reduction, pf.jacobian_reuse_max_steps) == jr_expected
+      @test (pf.jacobian_reuse, pf.jacobian_reuse_min_reduction, pf.jacobian_reuse_max_steps, pf.jacobian_fixed_pattern) == jr_expected
     end
-    @test (Sparlectra.DEFAULT_JACOBIAN_REUSE, Sparlectra.DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, Sparlectra.DEFAULT_JACOBIAN_REUSE_MAX_STEPS) == jr_expected
-    @test (prof[:jacobian_reuse], prof[:jacobian_reuse_min_reduction], prof[:jacobian_reuse_max_steps]) == jr_expected
+    @test (Sparlectra.DEFAULT_JACOBIAN_REUSE, Sparlectra.DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, Sparlectra.DEFAULT_JACOBIAN_REUSE_MAX_STEPS, Sparlectra.DEFAULT_JACOBIAN_FIXED_PATTERN) == jr_expected
+    @test (prof[:jacobian_reuse], prof[:jacobian_reuse_min_reduction], prof[:jacobian_reuse_max_steps], prof[:jacobian_fixed_pattern]) == jr_expected
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_min_reduction" => 1.0)))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse_max_steps" => 0)))
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_fixed_pattern" => "maybe")))
+    @test Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_fixed_pattern" => true))).powerflow.jacobian_fixed_pattern
+    # the Web UI override check refuses a non-Bool value for the new switch;
+    # power_mode and the jacobian_reuse keys keep their earlier override
+    # behaviour in this patch release
+    for (key, bad) in (("power_flow.jacobian_fixed_pattern", "maybe"), ("power_flow.jacobian_fixed_pattern", 3))
+      @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}(key => bad))
+    end
+    @test Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.jacobian_fixed_pattern" => true)) == Dict{String,Any}("power_flow" => Dict{String,Any}("jacobian_fixed_pattern" => true))
     # Deliberate exception to the one-default rule above, which covers the
     # solver behaviour: output.logfile_results is log verbosity. A library run
     # without a configuration file stays quiet (off), the packaged template

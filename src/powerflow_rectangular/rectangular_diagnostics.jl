@@ -470,6 +470,9 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
   analyze_count = linear_ctx === nothing ? 0 : linear_ctx.analyze_count
   refactor_count = linear_ctx === nothing ? 0 : linear_ctx.refactor_count
   fallback_count = linear_ctx === nothing ? 0 : linear_ctx.fallback_count
+  # the effective fixed Jacobian pattern: false without a context (linear
+  # solver umfpack), where the flag has no effect
+  fixed_pattern = linear_ctx !== nothing && linear_ctx.assembly.fixed_pattern
   if performance_profile isa AbstractDict
     performance_profile[:linear_solver_backend] = linear_solver
     performance_profile[:linear_solver_analyze_count] = analyze_count
@@ -481,6 +484,7 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
     performance_profile[:jacobian_reuse_steps] = jacobian_reuse_steps
     performance_profile[:jacobian_reuse_refactorisations] = jacobian_reuse_refactorisations
     performance_profile[:jacobian_reuse_discarded] = jacobian_reuse_discarded
+    performance_profile[:jacobian_fixed_pattern] = fixed_pattern
   end
   extras = (
     linear_solver = linear_solver,
@@ -491,6 +495,7 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
     jacobian_reuse_steps = jacobian_reuse_steps,
     jacobian_reuse_refactorisations = jacobian_reuse_refactorisations,
     jacobian_reuse_discarded = jacobian_reuse_discarded,
+    jacobian_fixed_pattern = fixed_pattern,
   )
   return merge(status_build, (status = (; status_build.status..., extras...),))
 end

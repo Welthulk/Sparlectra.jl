@@ -804,19 +804,23 @@ Calculate branch flow in per unit for a given branch and voltage vector.
 end
 
 """
-    createYBUS(branchVec::Vector{Branch}, shuntVec::Vector{Shunt}, isoNodes::Vector{Int}, sparse::Bool = true, printYBUS::Bool = false)
+    createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
 
-Creates the bus admittance matrix (YBUS) of the network.
+Build the bus admittance matrix (YBUS) of `net`.
 
-# Arguments
-- `branchVec::Vector{Branch}`: The vector of branches in the network.
-- `shuntVec::Vector{Shunt}`: The vector of shunts in the network.
-- `isoNodes::Vector{Int}`: The vector of isolated nodes in the network.
-- `sparse::Bool`: A flag to indicate if the YBUS matrix should be sparse. Default is `true`.
-- `printYBUS::Bool`: A flag to indicate if the YBUS matrix should be printed. Default is `false`.
+Branches and `:Y`-model shunts in service are stamped; isolated buses
+(`net.isoNodes`) are left out and the remaining bus indices are shifted down,
+so the matrix has `length(net.nodeVec) - length(net.isoNodes)` rows. A branch
+open at one end stamps only its reduced admittance on the diagonal of the
+closed bus.
+
+# Keywords
+- `net::Net`: the network.
+- `sparse::Bool = true`: return a `SparseMatrixCSC{ComplexF64}`; `false` returns a dense `Matrix{ComplexF64}`.
+- `printYBUS::Bool = false`: print the matrix (suppressed above 30 buses).
 
 # Returns
-- `Y::Matrix{ComplexF64}`: The bus admittance matrix (YBUS).
+The bus admittance matrix, sparse or dense as requested.
 
 """
 function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
@@ -827,9 +831,7 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
   n = length(net.nodeVec) - length(net.isoNodes)
   n = max(n, 0)
 
-  Y = sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
-
-  n == 0 && return Y
+  n == 0 && return sparse ? spzeros(ComplexF64, n, n) : zeros(ComplexF64, n, n)
 
   # isolated-node bookkeeping, hoisted out of the branch/shunt loops: the
   # membership test and the index shift below were linear scans per branch
@@ -839,6 +841,31 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
   iso_sorted = sort(net.isoNodes)
   @inline is_iso(b::Int) = insorted(b, iso_sorted)
   @inline iso_shift(b::Int) = b - (searchsortedfirst(iso_sorted, b) - 1)
+
+  # The contributions are collected as (row, column, value) triplets and
+  # summed by one sparse(I, J, V) call. Writing them one by one with
+  # Y[i, j] += y into a SparseMatrixCSC inserted each new entry into the
+  # stored arrays and shifted the column pointers of all later columns, which
+  # is O(nnz * n) and dominated the solve on large nets. The triplet build
+  # gives the same matrix bit for bit:
+  # - sparse() adds duplicates in input order, the order of the old +=
+  #   sequence (parallel branches, several shunts on one bus);
+  # - each value is stored as zero + y, the value the old Y[i, j] += y wrote
+  #   on an unstored entry (a -0.0 part becomes +0.0);
+  # - a zero contribution is dropped: the old setindex! stored nothing for it
+  #   on an unstored entry and left a stored entry unchanged. Zeros from
+  #   cancellation stay stored in both versions.
+  nterm = 4 * length(net.branchVec) + length(net.shuntVec)
+  I = sizehint!(Int[], nterm)
+  J = sizehint!(Int[], nterm)
+  V = sizehint!(ComplexF64[], nterm)
+  @inline function stamp!(i::Int, j::Int, y)
+    iszero(y) && return nothing
+    push!(I, i)
+    push!(J, j)
+    push!(V, zero(ComplexF64) + y)
+    return nothing
+  end
 
   for branch in net.branchVec
     @assert branch isa AbstractBranch "branch $(branch) is not of type AbstractBranch"
@@ -859,7 +886,7 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
       closed = state == :open_to ? Int(fromNode) : Int(toNode)
       is_iso(closed) && continue
       closed = iso_shift(closed)
-      Y[closed, closed] += _open_terminal_yin(branch)
+      stamp!(closed, closed, _open_terminal_yin(branch))
       continue
     end
     # skip isolated nodes
@@ -872,10 +899,10 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     toNode = iso_shift(Int(toNode))
     # Y-Matrix
     y_11, y_12, y_21, y_22 = calcAdmittance(branch, branch.comp.cVN, net.baseMVA)
-    Y[fromNode, fromNode] += y_11
-    Y[toNode, toNode] += y_22
-    Y[fromNode, toNode] += y_12
-    Y[toNode, fromNode] += y_21
+    stamp!(fromNode, fromNode, y_11)
+    stamp!(toNode, toNode, y_22)
+    stamp!(fromNode, toNode, y_12)
+    stamp!(toNode, fromNode, y_21)
   end
 
   for sh in net.shuntVec
@@ -888,7 +915,18 @@ function createYBUS(; net::Net, sparse::Bool = true, printYBUS::Bool = false)
     bus = iso_shift(bus)
 
     # Shunt-Admittanz diagonal addieren
-    Y[bus, bus] += sh.y_pu_shunt
+    stamp!(bus, bus, sh.y_pu_shunt)
+  end
+
+  if sparse
+    Y = SparseArrays.sparse(I, J, V, n, n)
+  else
+    # the dense matrix takes the same triplets in the same order, so both
+    # paths sum identically
+    Y = zeros(ComplexF64, n, n)
+    for k in eachindex(I)
+      Y[I[k], J[k]] += V[k]
+    end
   end
 
   if printYBUS && n > 30

@@ -32,6 +32,9 @@ _power_mode_kwargs(pf) = pf.power_mode ? (; power_mode = true, power_mode_lu = p
 # N-1, only when the configuration switches it on
 _jacobian_reuse_kwargs(pf) = pf.jacobian_reuse ? (; jacobian_reuse = true, jacobian_reuse_min_reduction = pf.jacobian_reuse_min_reduction, jacobian_reuse_max_steps = pf.jacobian_reuse_max_steps) : (;)
 
+# fixed Jacobian pattern (1.2.3) for the same worker solves, only when on
+_jacobian_fixed_pattern_kwargs(pf) = pf.jacobian_fixed_pattern ? (; jacobian_fixed_pattern = true) : (;)
+
 # the distributed-slack model of the run configuration for the scenario
 # engine and N-1: every key of power_flow.distributed_slack, so the base
 # case, its rescue and every scenario share the units as configured (the
@@ -43,7 +46,7 @@ _distributed_slack_kwargs(pf) = pf.distributed_slack.enabled ? (; distributed_sl
 # cases) receive from the run configuration
 # the Q-limit keywords come from the library's one mapping (the same the
 # single run uses), so N-1 and scenarios honour power_flow.qlimits.*
-_engine_solver_kwargs(pf) = (; _distributed_slack_kwargs(pf)..., _power_mode_kwargs(pf)..., _jacobian_reuse_kwargs(pf)..., _qlimit_solver_kwargs(pf.qlimits)...)
+_engine_solver_kwargs(pf) = (; _distributed_slack_kwargs(pf)..., _power_mode_kwargs(pf)..., _jacobian_reuse_kwargs(pf)..., _jacobian_fixed_pattern_kwargs(pf)..., _qlimit_solver_kwargs(pf.qlimits)...)
 
 """
     _run_contingency_service(case_path, config_file, output_dir, run_id, kind; weights_path = nothing) -> SparlectraApiResult

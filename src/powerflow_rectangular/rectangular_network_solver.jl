@@ -306,6 +306,7 @@ function runpf_rectangular!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN,
   qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
@@ -421,6 +422,7 @@ function runpf_rectangular!(
       jacobian_reuse = jacobian_reuse,
       jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
       jacobian_reuse_max_steps = jacobian_reuse_max_steps,
+      jacobian_fixed_pattern = jacobian_fixed_pattern,
       qlimit_warm_clamps = qlimit_warm_clamps,
       merit_enabled = merit_enabled,
       merit_armijo_c1 = merit_armijo_c1,
@@ -968,6 +970,9 @@ function runpf_rectangular!(
     jr_last_reused = false
     jr_discarded_steps = 0
   end
+  # fixed Jacobian pattern (1.2.3): set on the context of this solve; a
+  # change against the previous power-mode solve invalidates the assembly
+  _set_jacobian_fixed_pattern!(linear_ctx, jacobian_fixed_pattern, linear_solver, verbose)
   # dishonest Newton in the run log: one line when it is on, one line when
   # it is on but cannot act (no factorization object, or the trust region,
   # whose dogleg needs the current Jacobian); nothing when it is off
@@ -1588,6 +1593,7 @@ function runpf_rectangular!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN,
   qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
@@ -1693,6 +1699,7 @@ function runpf_rectangular!(
     jacobian_reuse,
     jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps,
+    jacobian_fixed_pattern,
     qlimit_warm_clamps,
     merit_enabled,
     merit_armijo_c1,
@@ -1860,6 +1867,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     jacobian_reuse = config.jacobian_reuse,
     jacobian_reuse_min_reduction = config.jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = config.jacobian_reuse_max_steps,
+    jacobian_fixed_pattern = config.jacobian_fixed_pattern,
     merit_enabled = config.merit.enabled,
     merit_armijo_c1 = config.merit.armijo_c1,
     merit_scale_p = config.merit.scale_p,
@@ -2701,6 +2709,7 @@ function runpf!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
+  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN,
   qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
@@ -2870,6 +2879,7 @@ function runpf!(
     jacobian_reuse,
     jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps,
+    jacobian_fixed_pattern,
     qlimit_warm_clamps,
     merit_enabled,
     merit_armijo_c1,

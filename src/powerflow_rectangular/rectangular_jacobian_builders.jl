@@ -92,6 +92,15 @@ Chain rule to rectangular:
 
 With ΔP_i = Re(ΔS_i), ΔQ_i = Im(ΔS_i), ΔV_i = |V_i| - Vset[i].
 
+Keywords: `structural_pattern = true` stores every structural entry, also
+when its value is zero (needed by the factorization-reuse backends);
+`fixed_pattern = true` (requires `structural_pattern`) also stores the
+entries of the other bus type as explicit zeros, so the pattern and the
+emit order no longer depend on `bus_types` and a PV/PQ switch keeps both
+the LU analysis and the in-place `assembly` replay. The values are those of
+the structural build. With an `assembly`, `fixed_pattern` defaults to
+`assembly.fixed_pattern` and must agree with it.
+
 Returns:
     J :: SparseMatrixCSC{Float64} with size (2(n-1)) × (2(n-1)).
 """
@@ -107,6 +116,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   structural_pattern::Bool = false,
   assembly::Union{Nothing,RectangularJacobianAssembly} = nothing,
   dslack::Union{Nothing,DistributedSlackState} = nothing,
+  fixed_pattern::Bool = assembly !== nothing && assembly.fixed_pattern,
 )
   # vm_eps avoids unstable derivatives when |V| is very close to zero.
   # structural_pattern=true stores entries even when their current value is
@@ -122,6 +132,10 @@ function build_rectangular_jacobian_pq_pv_sparse(
   @assert length(dPinj_dVm) == n
   @assert length(dQinj_dVm) == n
   @assert assembly === nothing || structural_pattern "assembly reuse requires the structural sparsity pattern"
+  @assert !fixed_pattern || structural_pattern "the fixed pattern requires the structural sparsity pattern"
+  # the recorded pos_map belongs to one emit sequence; a replay under the
+  # other one would write values into wrong slots
+  @assert assembly === nothing || assembly.fixed_pattern == fixed_pattern "fixed_pattern differs from the assembly it replays"
 
   non_slack = non_slack_indices(n, slack_idx)
   pos_non_slack = build_pos_map(non_slack, n)
@@ -154,7 +168,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
     nz = nonzeros(Jexist)
     fill!(nz, 0.0)
     emitter = _JacobianPosMapEmitter(nz, assembly.pos_map, 0, false)
-    _assemble_rectangular_jacobian!(emitter, Ybus, V, bus_types, slack_idx, assembly.Ibuf, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, true, n, dslack)
+    _assemble_rectangular_jacobian!(emitter, Ybus, V, bus_types, slack_idx, assembly.Ibuf, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, true, fixed_pattern, n, dslack)
     if !emitter.overflow && emitter.k == length(assembly.pos_map)
       return Jexist
     end
@@ -185,7 +199,7 @@ function build_rectangular_jacobian_pq_pv_sparse(
   sizehint!(Vals, cap)
 
   emit = _JacobianTripletEmitter(Iidx, Jidx, Vals)
-  _assemble_rectangular_jacobian!(emit, Ybus, V, bus_types, slack_idx, I, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, structural_pattern, n, dslack)
+  _assemble_rectangular_jacobian!(emit, Ybus, V, bus_types, slack_idx, I, row_block, pos_non_slack, non_slack, dPinj_dVm, dQinj_dVm, vm_eps, structural_pattern, fixed_pattern, n, dslack)
 
   J = sparse(Iidx, Jidx, Vals, m, nvar)
 
@@ -212,6 +226,10 @@ end
 # triplet build and the in-place nzval refresh replay exactly this sequence;
 # any change to loop order or emit conditions must keep the two paths in sync
 # by construction (they run the same code).
+# fixed_pattern (1.2.3): PV and PQ buses emit the same coordinate sequence,
+# the entries the bus type does not use as 0.0, so the pattern and the emit
+# order are independent of bus_types. The extra zeros add nothing to the
+# values: a PQ entry becomes (a + 0.0) + b, a PV entry 0.0 + dV + 0.0.
 function _assemble_rectangular_jacobian!(
   emit::E,
   Ybus::SparseMatrixCSC{ComplexF64},
@@ -226,6 +244,7 @@ function _assemble_rectangular_jacobian!(
   dQinj_dVm::Vector{Float64},
   vm_eps::Float64,
   structural_pattern::Bool,
+  fixed_pattern::Bool,
   n::Int,
   dslack::Union{Nothing,DistributedSlackState} = nothing,
 ) where {E}
@@ -331,7 +350,12 @@ function _assemble_rectangular_jacobian!(
           emit(rowQ, colVi, ∂Q_Vi)
         end
       elseif bt == :PV
-        # nothing here, ΔV row added below
+        # nothing here, ΔV row added below; the fixed pattern keeps the Q
+        # slots of the row as zeros
+        if fixed_pattern
+          emit(rowQ, colVr, 0.0)
+          emit(rowQ, colVi, 0.0)
+        end
       else
         error("build_rectangular_jacobian_pq_pv_sparse: unsupported bus type $(bt) at bus $i")
       end
@@ -346,7 +370,7 @@ function _assemble_rectangular_jacobian!(
   #   ∂|V_i|/∂Vi_i = Vi_i / |V_i|
 
   for i = 1:n
-    if i == slack_idx || bus_types[i] != :PV
+    if i == slack_idx || (bus_types[i] != :PV && !fixed_pattern)
       continue
     end
 
@@ -355,6 +379,14 @@ function _assemble_rectangular_jacobian!(
 
     pos = pos_non_slack[i]
     if pos == 0
+      continue
+    end
+
+    if fixed_pattern && bus_types[i] != :PV
+      # a PQ bus in the fixed pattern: the ΔV slots of its second row as
+      # zeros, at the coordinates a PV bus emits here
+      emit(rowV, pos, 0.0)
+      emit(rowV, (n - 1) + pos, 0.0)
       continue
     end
 
@@ -409,6 +441,9 @@ function _assemble_rectangular_jacobian!(
         emit(rb + 1, colVr, -dQ * dvm_dvr)
         emit(rb + 1, colVi, -dQ * dvm_dvi)
       end
+    elseif fixed_pattern
+      emit(rb + 1, colVr, 0.0)
+      emit(rb + 1, colVi, 0.0)
     end
   end
 
@@ -453,7 +488,8 @@ function build_rectangular_jacobian_pq_pv(
   structural_pattern::Bool = false,
   assembly::Union{Nothing,RectangularJacobianAssembly} = nothing,
   dslack::Union{Nothing,DistributedSlackState} = nothing,
+  fixed_pattern::Bool = assembly !== nothing && assembly.fixed_pattern,
 )
   # Default rectangular solver path uses sparse Jacobians for scale and parity.
-  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern, assembly = assembly, dslack = dslack)
+  return build_rectangular_jacobian_pq_pv_sparse(Ybus, V, bus_types, Vset, slack_idx; dPinj_dVm = dPinj_dVm, dQinj_dVm = dQinj_dVm, vm_eps = vm_eps, structural_pattern = structural_pattern, assembly = assembly, dslack = dslack, fixed_pattern = fixed_pattern)
 end

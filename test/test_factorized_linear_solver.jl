@@ -84,6 +84,80 @@ function run_factorized_linear_solver_tests()
     status = Sparlectra.rectangular_pf_status(net)
     @test status.linear_solver === :umfpack_reuse
     @test status.linear_solver_analyze_count >= 2
+    @test status.jacobian_fixed_pattern == false
+    state(n) = [b._vm_pu * cis(deg2rad(b._va_deg)) for b in n.nodeVec]
+    types(n) = [getNodeType(b) for b in n.nodeVec]
+
+    # Fixed Jacobian pattern (power_flow.jacobian_fixed_pattern, 1.2.3).
+    # The builder: with fixed_pattern the PV and the all-PQ type vectors give
+    # one pattern, and the values equal the structural build of each type
+    # vector (only explicit zeros are added). Nonzero injection derivatives,
+    # so the chain-rule entries are in the comparison too.
+    ref = createTest3BusNet()
+    runpf!(ref, 20, 1e-10, 0; qlimits_enabled = false)
+    Y = createYBUS(net = ref, sparse = true)
+    V = Sparlectra.buildVoltageVector(ref)
+    nt = types(ref)
+    slack = findfirst(==(Sparlectra.Slack), nt)
+    bt_pv = [t == Sparlectra.PV ? :PV : :PQ for t in nt]
+    bt_pq = fill(:PQ, length(V))
+    @test count(==(:PV), bt_pv) >= 1   # precondition: a PV row to switch
+    nb = length(V)
+    build(bt; kw...) = Sparlectra.build_rectangular_jacobian_pq_pv(Y, V, bt, abs.(V), slack; dPinj_dVm = fill(0.3, nb), dQinj_dVm = fill(-0.2, nb), structural_pattern = true, kw...)
+    Jf_pv = build(bt_pv; fixed_pattern = true)
+    Jf_pq = build(bt_pq; fixed_pattern = true)
+    @test (Jf_pv.colptr, Jf_pv.rowval) == (Jf_pq.colptr, Jf_pq.rowval)
+    @test nnz(Jf_pv) > nnz(build(bt_pv))
+    @test Matrix(Jf_pv) == Matrix(build(bt_pv)) && Matrix(Jf_pq) == Matrix(build(bt_pq))
+    # the in-place replay survives a type flip without invalidation
+    asm = Sparlectra.RectangularJacobianAssembly()
+    asm.fixed_pattern = true
+    J1 = build(bt_pv; assembly = asm)
+    J2 = build(bt_pq; assembly = asm)
+    @test J2 === J1 && asm.valid
+    @test nonzeros(J2) == nonzeros(Jf_pq)
+
+    # The run: the switch of STATION1 keeps the one analysis, same result
+    fixed_net = createTest3BusNet()
+    setQLimits!(net = fixed_net, qmin_MVar = -1.0, qmax_MVar = 1.0, busName = "STATION1")
+    _, erg = runpf!(fixed_net, 20, 1e-6, 0; method = :rectangular, linear_solver = :umfpack_reuse, jacobian_fixed_pattern = true)
+    @test erg == 0
+    st = Sparlectra.rectangular_pf_status(fixed_net)
+    @test st.jacobian_fixed_pattern && st.qlimit_active_set_changes > 0
+    @test (st.linear_solver_analyze_count, st.linear_solver_fallback_count) == (1, 0)
+    @test types(fixed_net) == types(net)
+    @test maximum(abs.(state(fixed_net) .- state(net))) <= 1e-8
+
+    # sp_case300 from the flat start (three PV/PQ switches), with and
+    # without distributed slack: same bus types, same state, one analysis
+    path300 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case300.m")
+    for dsl in (false, true)
+      c1 = Sparlectra.createNetFromMatPowerFile(filename = path300)
+      runpf!(c1, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl)
+      fx = Sparlectra.createNetFromMatPowerFile(filename = path300)
+      _, erg = runpf!(fx, 30, 1e-8, 0; opt_flatstart = true, distributed_slack_enabled = dsl, jacobian_fixed_pattern = true)
+      @test erg == 0
+      st_c1 = Sparlectra.rectangular_pf_status(c1)
+      st = Sparlectra.rectangular_pf_status(fx)
+      @test st.qlimit_active_set_changes > 0 && st_c1.linear_solver_analyze_count > 1
+      @test (st.linear_solver_analyze_count, st.linear_solver_fallback_count) == (1, 0)
+      @test types(fx) == types(c1)
+      @test maximum(abs.(state(fx) .- state(c1))) <= 1e-8
+    end
+
+    # linear_solver umfpack keeps no factorisation: no effect, the status
+    # says so, and the verbose run log names the reason
+    um = createTest3BusNet()
+    log = mktemp() do tmp, io
+      redirect_stdout(io) do
+        runpf_rectangular!(um; maxiter = 20, tol = 1e-8, verbose = 1, linear_solver = :umfpack, jacobian_fixed_pattern = true)
+      end
+      close(io)
+      read(tmp, String)
+    end
+    @test occursin("Fixed Jacobian pattern ignored: linear_solver umfpack keeps no factorisation", log)
+    st = Sparlectra.rectangular_pf_status(um)
+    @test st.jacobian_fixed_pattern == false && st.linear_solver_analyze_count == 0
   end)() end
 
   @testset "Singular system falls back to the umfpack chain" begin (function ()
@@ -217,6 +291,35 @@ function run_factorized_linear_solver_tests()
       Sparlectra._POWER_MODE_LINEAR_CONTEXT[] = saved
     end
     @test_throws ArgumentError runpf!(Sparlectra.createNetFromMatPowerFile(filename = path), 30, 1e-10, 0; qlimits_enabled = false, power_mode = true, power_mode_lu = :pardiso)
+    # Fixed Jacobian pattern in power mode, Q limits on (sp_case300 switches
+    # three buses from the flat start). Fresh nets, because the power-mode
+    # counters add up over the solves of one net. UMFPACK pivots in every
+    # refactorization and keeps its one analysis across the switches and
+    # across solves. KLU refactorizes on its old pivots, so it factorizes
+    # afresh whenever the bus types differ from those of its last analysis,
+    # also at the start of the next solve: as many analyses as without the
+    # switch, never a fallback.
+    path300 = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case300.m")
+    # (KLU only when loadable; the line below says whether it ran)
+    for lu in (_KLU_AVAILABLE ? (:umfpack, :klu) : (:umfpack,))
+      c1 = Sparlectra.createNetFromMatPowerFile(filename = path300)
+      fx = Sparlectra.createNetFromMatPowerFile(filename = path300)
+      for round in 1:2
+        runpf!(c1, 30, 1e-8, 0; opt_flatstart = true, power_mode = true, power_mode_lu = lu)
+        _, erg = runpf!(fx, 30, 1e-8, 0; opt_flatstart = true, power_mode = true, power_mode_lu = lu, jacobian_fixed_pattern = true)
+        @test erg == 0 && lu_status(fx).qlimit_active_set_changes > 0
+        @test maximum(abs.(state(fx) .- state(c1))) <= 1e-8
+        @test [getNodeType(b) for b in fx.nodeVec] == [getNodeType(b) for b in c1.nodeVec]
+        ctx_c1 = c1._power_cache.linear_ctx
+        ctx = fx._power_cache.linear_ctx
+        @test ctx.fallback_count == 0 && lu_status(fx).jacobian_fixed_pattern
+        if lu === :umfpack
+          @test ctx.analyze_count == 1 && ctx_c1.analyze_count > round
+        else
+          @test ctx.analyze_count == ctx_c1.analyze_count && ctx.analyze_count >= 2 * round
+        end
+      end
+    end
     if !_KLU_AVAILABLE
       println("      power mode KLU extension: SKIPPED (KLU.jl not loadable in this session)")
       return nothing
