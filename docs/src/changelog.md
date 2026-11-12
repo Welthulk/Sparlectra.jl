@@ -3,7 +3,8 @@
 Faster Ybus build on large networks and a fixed Jacobian pattern for Q-limit switches.
 
 - **Faster Ybus build.** The bus admittance matrix is assembled in one sparse call; on large networks this removes most of the time spent outside the Newton steps. Same matrix bit for bit.
-- **Fixed Jacobian pattern.** `power_flow.jacobian_fixed_pattern: true` (default `false`) keeps the LU analysis when the Q-limit handling switches a bus between PV and PQ, also between the solves of power mode. Same solution. See [Fixed Jacobian pattern](@ref fixed_jacobian_pattern).
+- **Fixed Jacobian pattern.** On networks (islands) from 5000 buses the Jacobian keeps the entries of both bus types, so a Q-limit switch between PV and PQ keeps the LU analysis, also between the solves of power mode. Same solution. `power_flow.jacobian_fixed_pattern` is `auto` by default, the threshold is `power_flow.jacobian_fixed_pattern_min_buses`; `true` uses the pattern on every network, `false` switches it off. See [Fixed Jacobian pattern](@ref fixed_jacobian_pattern).
+- **Regular Newton system with couplers and de-energized buses.** The second bus of a closed bus link and a de-energized bus no longer stay in the Newton system as a zero block, which sent every step to the slower QR fallback. Same solution.
 
 # Version 1.2.2 - 2026-11-11
 

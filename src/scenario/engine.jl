@@ -494,8 +494,10 @@ function _build_screening_state(template::Net, base_converged::Bool, tol::Float6
   maximum(abs, F0) <= max(1.0e-6, 100.0 * tol) || return nothing
   non_slack = non_slack_indices(n, slack_idx)
   iso_set = Set(template.isoNodes)
+  # the builder pins the rows of the isolated buses (empty Ybus column) with
+  # unit entries, so J0 is regular and J1 - J0 cancels them again
   J0 = try
-    _screen_freeze_isolated!(build_rectangular_jacobian_pq_pv(Ybus, V0, bus_types, Vset, slack_idx; dslack = ds), non_slack, iso_set)
+    build_rectangular_jacobian_pq_pv(Ybus, V0, bus_types, Vset, slack_idx; dslack = ds)
   catch err
     _rethrow_unless_solver_failure(err)
     return nothing
@@ -539,25 +541,6 @@ function _screen_dslack_for_outage(ds, removed::AbstractVector{Int})
     end
   end
   return (DistributedSlackState(copy(ds.alpha), 0.0, 0.0, 0.0, ds.mode, ds.respect_p_limits, copy(table), ds.dropped), true)
-end
-
-# Freeze the isolated-bus rows of a screening Jacobian: an isolated bus
-# carries a zero Y-bus row, zero injections and vm = va = 0, so its P/Q
-# residual rows are identically zero and the raw Jacobian is SINGULAR
-# (found on RealGrid, 198 de-energized buses). The solver escapes through
-# the island decomposition; the full-dimension screening system instead
-# pins delta Vr = delta Vi = 0 with two unit entries per isolated bus
-# (their rows hold no stored entries, so this is a pure insertion, and
-# J1 - J0 cancels the entries again).
-function _screen_freeze_isolated!(J::SparseMatrixCSC{Float64,Int}, non_slack::Vector{Int}, iso::Set{Int})
-  isempty(iso) && return J
-  nn = length(non_slack)
-  for (k, bus) in enumerate(non_slack)
-    bus in iso || continue
-    J[2 * k - 1, k] = 1.0
-    J[2 * k, nn + k] = 1.0
-  end
-  return J
 end
 
 # Solve (J0 + ΔJ) x = b through the factorized base: ΔJ = J1 - J0 is confined
@@ -750,7 +733,7 @@ function _screen_outage(engine::ScenarioEngine, it::_ScenarioOutageItem)
   F1 = mismatch_rectangular(Yb, sc.V0, S1, types1, sc.Vset, sc.slack_idx; dslack = ds1)
   m1 = maximum(abs, F1)
   J1 = try
-    _screen_freeze_isolated!(build_rectangular_jacobian_pq_pv(Yb, sc.V0, types1, sc.Vset, sc.slack_idx; dslack = ds1), sc.non_slack, sc.iso)
+    build_rectangular_jacobian_pq_pv(Yb, sc.V0, types1, sc.Vset, sc.slack_idx; dslack = ds1)
   catch err
     _rethrow_unless_solver_failure(err)
     return _screen_unscreenable(:numeric)

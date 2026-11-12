@@ -50,6 +50,10 @@ not cleared on active-set changes and the linear context keeps its analysis.
 `factor_bus_types` holds, in fixed mode only, the bus types of the Jacobian
 of the last full factorization; a backend whose refactorization keeps the
 old pivots (KLU) factorizes afresh when the types differ from them.
+`dslack_buses` holds the non-slack buses with a nonzero participation
+factor of the recorded build (the rows of the lambda column); a replay with
+another participant set rebuilds, because the same emit count would write
+-alpha into the old slots.
 """
 mutable struct RectangularJacobianAssembly
   Iidx::Vector{Int}
@@ -61,9 +65,10 @@ mutable struct RectangularJacobianAssembly
   valid::Bool
   fixed_pattern::Bool
   factor_bus_types::Vector{Symbol}
+  dslack_buses::Vector{Int}
 end
 
-RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false, false, Symbol[])
+RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false, false, Symbol[], Int[])
 
 """
     UmfpackReuseNewtonContext
@@ -152,25 +157,54 @@ function solve_newton_factorized!(ctx::AbstractNewtonSolverContext, J::SparseMat
   end
 end
 
-# Sets the fixed Jacobian pattern (power_flow.jacobian_fixed_pattern) on the
-# context of one solve. A change of the flag invalidates the recorded
-# assembly: its pos_map belongs to the other emit sequence (a power-mode net
-# solved first with and then without the flag). Without a context (linear
-# solver umfpack) there is no analysis to keep; the flag has no effect.
-function _set_jacobian_fixed_pattern!(ctx, fixed::Bool, linear_solver::Symbol, verbose::Int)
-  if ctx === nothing
-    if fixed && verbose > 0
+# Decides and sets the fixed Jacobian pattern (power_flow.jacobian_fixed_pattern)
+# on the context of one solve of `nb` buses (one island on the island path)
+# and returns `(used, reason)`. `mode` is :auto, :on or :off; :auto uses the
+# pattern from `min_buses` buses on. Without a context (linear solver umfpack)
+# there is no analysis to keep: the pattern is not used, and only a
+# configured :on says so in the console. A change of the decision
+# invalidates the recorded assembly: its pos_map belongs to the other emit
+# sequence (a power-mode net solved first with and then without it).
+# Reasons: :off, :no_context, :on, :auto_threshold, :auto_below_threshold.
+function _set_jacobian_fixed_pattern!(ctx, mode::Symbol, min_buses::Int, nb::Int, linear_solver::Symbol, verbose::Int)
+  mode in JACOBIAN_FIXED_PATTERN_VALUES || throw(ArgumentError("jacobian_fixed_pattern must be one of $(JACOBIAN_FIXED_PATTERN_VALUES), got :$(mode)"))
+  used, reason = if mode === :off
+    false, :off
+  elseif ctx === nothing
+    if mode === :on && verbose > 0
       println("Fixed Jacobian pattern ignored: linear_solver $(linear_solver) keeps no factorisation; use umfpack_reuse.")
     end
-    return nothing
+    false, :no_context
+  elseif mode === :on
+    true, :on
+  else
+    nb >= min_buses ? (true, :auto_threshold) : (false, :auto_below_threshold)
   end
+  ctx === nothing && return used, reason
   asm = ctx.assembly
-  if asm.fixed_pattern != fixed
-    asm.fixed_pattern = fixed
+  if asm.fixed_pattern != used
+    asm.fixed_pattern = used
     asm.valid = false
     empty!(asm.factor_bus_types)
   end
-  return nothing
+  return used, reason
+end
+
+# The status and run-log text of the fixed-pattern decision: whether the
+# pattern was used, the configured value as written in the configuration
+# (auto, true, false) and the reason.
+function _jacobian_fixed_pattern_line(mode::Symbol, reason::Symbol, used::Bool, nb::Int, min_buses::Int, linear_solver::Symbol)::String
+  configured = mode === :auto ? "auto" : mode === :on ? "true" : "false"
+  why = if reason === :auto_threshold
+    ", $(nb) buses, threshold $(min_buses)"
+  elseif reason === :auto_below_threshold
+    ", $(nb) buses below threshold $(min_buses)"
+  elseif reason === :no_context
+    ", linear_solver $(linear_solver) keeps no factorisation"
+  else
+    ""
+  end
+  return string(used ? "on" : "off", " (", configured, why, ")")
 end
 
 """

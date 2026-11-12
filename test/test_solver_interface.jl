@@ -536,7 +536,9 @@ function run_solver_interface_tests()
             "merit" => Dict{String,Any}("enabled" => false), "mode" => "manual", "qlimits" => q, "rescue" => false, "solver" => "rectangular",
             "apslf_start" => Dict{String,Any}("enabled" => false), "start_current_iteration" => Dict{String,Any}("enabled" => false),
             "start_mode" => Dict{String,Any}("start_projection" => false), "tol" => 1.0e-6, "trust_region" => Dict{String,Any}("enabled" => false),
-            "wrong_branch_detection" => "off")))
+            # the old Jacobian pattern: the sp_case60 window below depends on
+            # the rounding of the linear solves, which the fixed pattern changes
+            "wrong_branch_detection" => "off", "jacobian_fixed_pattern" => false)))
       end
       stop_run(net, cfg) = @test_logs min_level = Logging.Warn redirect_stdout(() -> run_sparlectra(net = net, config = cfg), devnull)
       scf = joinpath(dirname(@__DIR__), "data", "scf")
@@ -585,16 +587,19 @@ function run_solver_interface_tests()
       # mismatch climbs to 1e+3 .. 1e+6 between the switches; a controlled
       # run keeps the solver's reason, and the net (it has a closed coupler,
       # the solve runs on a contracted copy) carries the Q-limit log of the
-      # failed solve. The active set without the guard ends falling with no
-      # switch in the last three iterations (540, 135, 33.7 against 2.3e-10
-      # in iteration 1): above the first mismatch, so :numerical_divergence
-      # (the rule without the comparison with the first mismatch gave
-      # :iteration_limit)
+      # failed solve. The active set without the guard switches until
+      # iteration 34 and then climbs in bursts that fall again by a factor
+      # of about four per step. A run that stops at the end of such a fall
+      # (no switch in the last three iterations, far above the 1.1e-7 of
+      # iteration 1) is :numerical_divergence; the rule without the
+      # comparison with the first mismatch gave :iteration_limit. Where the
+      # falls lie depends on the rounding of the linear solves of this
+      # diverging run, so the window is taken from the run itself and the
+      # run is repeated with max_iter at its end.
       c60 = joinpath(scf, "sp_case60.scf.json")
+      c60_net() = (n = redirect_stdout(() -> Sparlectra.importSCF(c60), devnull); setQLimits!(net = n, qmin_MVar = -1.0, qmax_MVar = 0.5, busName = ["Birkkamp_110", "Westtal_110"]); n)
       for (mode, guard) in (("active_set", true), ("active_set", false), ("classic_simultaneous", true), ("classic_one_at_a_time", true))
-        n = redirect_stdout(() -> Sparlectra.importSCF(c60), devnull)
-        setQLimits!(net = n, qmin_MVar = -1.0, qmax_MVar = 0.5, busName = ["Birkkamp_110", "Westtal_110"])
-        r = stop_run(n, study_cfg(mode, 80; guard = guard))
+        r = stop_run(c60_net(), study_cfg(mode, 80; guard = guard))
         st = Sparlectra.rectangular_pf_status(r.net)
         @test (mode, r.outcome, r.reason, st.status) == (mode, :pf_failed, :numerical_divergence, :not_converged)
         @test endswith(r.reason_text, "(controlled framework run)")
@@ -602,7 +607,14 @@ function run_solver_interface_tests()
         @test (mode, r.diagnostics.qlimit_stability_status, length(r.diagnostics.qlimit_stability_report)) == (mode, :last_iterate, 3)
         if !guard
           h = st.mismatch_history_pre_switch
-          @test h[end] < h[end-1] < h[end-2] && h[end] > h[1] && all(k -> k < length(h) - 2, st.type_switch_iterations)
+          k = findlast(j -> j >= 3 && h[j] < h[j-1] < h[j-2] && all(s -> s < j - 2, st.type_switch_iterations), eachindex(h))
+          @test k !== nothing && h[k] > h[1]
+          if k !== nothing
+            rk = stop_run(c60_net(), study_cfg(mode, k; guard = false))
+            stk = Sparlectra.rectangular_pf_status(rk.net)
+            @test stk.mismatch_history_pre_switch == h[1:k]
+            @test (rk.reason, stk.type_switch_iterations) == (:numerical_divergence, st.type_switch_iterations)
+          end
         end
       end
       # the same run with power_flow.dc.fallback: the net then holds the DC
@@ -847,7 +859,7 @@ end)() end
       profile = Dict{Symbol,Any}()
       nondefault = (;
         damp = 0.5, autodamp = true, autodamp_min = 0.07, newton_update = :rectangular, power_mode = true, power_mode_lu = :klu,
-        jacobian_reuse = true, jacobian_reuse_min_reduction = 12.5, jacobian_reuse_max_steps = 4, jacobian_fixed_pattern = true, qlimit_warm_clamps = Dict("G1" => :max),
+        jacobian_reuse = true, jacobian_reuse_min_reduction = 12.5, jacobian_reuse_max_steps = 4, jacobian_fixed_pattern = :on, jacobian_fixed_pattern_min_buses = 17, qlimit_warm_clamps = Dict("G1" => :max),
         merit_enabled = true, merit_armijo_c1 = 2.0e-4, merit_scale_p = 1.1, merit_scale_q = 1.2, merit_scale_v = 1.3, merit_fallback_max_mismatch = false,
         trust_region_enabled = true, trust_region_initial_radius = 0.9, trust_region_min_radius = 2.0e-4, trust_region_max_radius = 9.0, trust_region_eta_accept = 0.15,
         trust_region_shrink_factor = 0.4, trust_region_expand_factor = 2.5, trust_region_expand_threshold = 0.8, trust_region_step_mode = :dogleg,

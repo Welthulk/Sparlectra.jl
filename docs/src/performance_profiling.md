@@ -303,32 +303,44 @@ per-outage results as the serial one.
 
 ### [Fixed Jacobian pattern](@id fixed_jacobian_pattern)
 
-`power_flow.jacobian_fixed_pattern: true` (keyword
-`jacobian_fixed_pattern = true`; Web UI: the checkbox "Fixed Jacobian
-pattern" under Solver backend) builds the Jacobian with the entries of both
-bus types: the second row of a PV bus keeps the slots of the Q derivatives
-as zeros, the second row of a PQ bus the slots of the voltage derivatives.
-A PV/PQ switch of the Q-limit handling then leaves the sparsity pattern
-unchanged, and `umfpack_reuse` keeps its LU analysis: one analysis per solve
-(per island) instead of one per switch, plus one after a fallback. In power
-mode the analysis also survives between solves whose bus types differ (N-1
-with the warm active set, classic Q-limit passes). Off by default; the values
-of the Jacobian and the solution are the same.
+`power_flow.jacobian_fixed_pattern` (keyword `jacobian_fixed_pattern`;
+Web UI: "Fixed Jacobian pattern" under Solver backend) builds the Jacobian
+with the entries of both bus types: the second row of a PV bus keeps the
+slots of the Q derivatives as zeros, the second row of a PQ bus the slots of
+the voltage derivatives. A PV/PQ switch of the Q-limit handling then leaves
+the sparsity pattern unchanged, and `umfpack_reuse` keeps its LU analysis:
+one analysis per solve (per island) instead of one per switch, plus one
+after a fallback. In power mode the analysis also survives between solves
+whose bus types differ (N-1 with the warm active set, classic Q-limit
+passes). The values of the Jacobian and the solution are the same.
 
-- `linear_solver = umfpack` keeps no factorization; the switch has no
-  effect and the status reports `jacobian_fixed_pattern = false`.
+| Value | Keyword | Effect |
+|---|---|---|
+| `auto` (default) | `:auto` | On where the solve has a factorization to keep (`umfpack_reuse`, power mode) and the solved network (on the island path the island) has at least `power_flow.jacobian_fixed_pattern_min_buses` buses (default 5000); otherwise off without a message. |
+| `true` | `:on` | On whatever the size. |
+| `false` | `:off` | Off: the pattern follows the bus types, every switch analyses anew. |
+
+- The extra zeros make the LU factor of a small network a few percent
+  larger; on large networks the size stays about the same while each
+  switch saves an analysis. This is where the threshold of `auto` comes
+  from.
+- `linear_solver = umfpack` keeps no factorization; the pattern is not
+  used. With `true` the console (verbose) and `run.log` say that it is
+  ignored.
 - KLU (power mode) refactorizes on its old pivot order, which can be wrong
   for a switched row, so it still factorizes afresh when the bus types
-  differ from those of its last analysis. With KLU the switch changes the
-  pattern, not the number of analyses.
-- The extra zeros add a few percent of fill to every factorization. The
-  switch pays where Q-limit switches are frequent and the analysis is a
-  large part of the factorization; a solve without switches only pays the
-  fill.
+  differ from those of its last analysis. With KLU the pattern changes,
+  not the number of analyses.
 
-The status field `jacobian_fixed_pattern` and the profile key
-`:jacobian_fixed_pattern` give the effective value; the analysis count is
-`linear_solver_analyze_count`.
+The solver status and the profile say what a solve did:
+`jacobian_fixed_pattern` (used or not), `jacobian_fixed_pattern_mode`
+(`:auto`, `:on`, `:off` as configured) and `jacobian_fixed_pattern_reason`
+(`:auto_threshold`, `:auto_below_threshold`, `:on`, `:off`,
+`:no_context`; `:mixed` over islands with different reasons). The status
+field `jacobian_fixed_pattern_line` is the text of the result header line
+`Fixed pattern  :` in `run.log`, for example
+`on (auto, 25000 buses, threshold 5000)`; the line is left out when the
+value is `false`. The analysis count is `linear_solver_analyze_count`.
 
 ## [Benchmark configuration](@id perf-benchmark)
 

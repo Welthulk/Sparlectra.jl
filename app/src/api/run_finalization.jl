@@ -194,12 +194,17 @@ end
 
 _jacobian_reuse_number(x::Float64) = isinteger(x) ? string(Int(x)) : string(x)
 
-# fixed Jacobian pattern (1.2.3) in run.log: one line when it is on, or the
-# reason it has no effect (no factorisation without power mode under
-# linear_solver umfpack); nothing when it is off
+# fixed Jacobian pattern (1.2.3) in run.log, the configured value: auto
+# with its threshold, true, or the reason true has no effect (no
+# factorisation without power mode under linear_solver umfpack); nothing
+# when it is false. Whether a solve used it stands in the result header
+# ("Fixed pattern  :"), since auto decides by the size of the solved network.
 function _jacobian_fixed_pattern_runlog_line(pf)
-  pf.jacobian_fixed_pattern || return nothing
-  pf.linear_solver === :umfpack && !pf.power_mode && return "Fixed Jacobian pattern ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse."
+  mode = pf.jacobian_fixed_pattern
+  mode === :off && return nothing
+  no_context = pf.linear_solver === :umfpack && !pf.power_mode
+  mode === :auto && return no_context ? nothing : "Fixed Jacobian pattern: auto, from $(pf.jacobian_fixed_pattern_min_buses) buses"
+  no_context && return "Fixed Jacobian pattern ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse."
   return "Fixed Jacobian pattern: on"
 end
 

@@ -154,6 +154,7 @@ function _island_solver_settings(cfg::PowerFlowConfig)
     jacobian_reuse_min_reduction = cfg.jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = cfg.jacobian_reuse_max_steps,
     jacobian_fixed_pattern = cfg.jacobian_fixed_pattern,
+    jacobian_fixed_pattern_min_buses = cfg.jacobian_fixed_pattern_min_buses,
     angle_mode = cfg.start_mode.angle_mode,
     voltage_mode = cfg.start_mode.voltage_mode,
     start_projection = cfg.start_mode.start_projection,

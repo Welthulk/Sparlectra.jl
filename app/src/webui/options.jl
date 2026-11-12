@@ -124,7 +124,10 @@ const WEBUI_OPTION_SPECS = WebUIOptionSpec[
   WebUIOptionSpec("power_flow.jacobian_reuse", "power_flow_jacobian_reuse", Bool, :checkbox, DEFAULT_JACOBIAN_REUSE, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_min_reduction", "power_flow_jacobian_reuse_min_reduction", Float64, :number, DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION, (), :expert, :case, true),
   WebUIOptionSpec("power_flow.jacobian_reuse_max_steps", "power_flow_jacobian_reuse_max_steps", Int, :number, DEFAULT_JACOBIAN_REUSE_MAX_STEPS, (), :expert, :case, true),
-  WebUIOptionSpec("power_flow.jacobian_fixed_pattern", "power_flow_jacobian_fixed_pattern", Bool, :checkbox, DEFAULT_JACOBIAN_FIXED_PATTERN, (), :expert, :case, true),
+  # auto, true, false as written in the configuration (the struct holds
+  # :auto, :on, :off)
+  WebUIOptionSpec("power_flow.jacobian_fixed_pattern", "power_flow_jacobian_fixed_pattern", String, :select, String(DEFAULT_JACOBIAN_FIXED_PATTERN), ("auto", "true", "false"), :expert, :case, true),
+  WebUIOptionSpec("power_flow.jacobian_fixed_pattern_min_buses", "power_flow_jacobian_fixed_pattern_min_buses", Int, :number, DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES, (), :expert, :case, true),
   WebUIOptionSpec("contingency.screening.mode", "contingency_screening_mode", String, :select, "off", CONTINGENCY_SCREENING_MODE_VALUES, :expert, :case, true),
   WebUIOptionSpec("contingency.screening.margin_pct", "contingency_screening_margin_pct", Float64, :number, 10.0, (), :expert, :case, true),
   WebUIOptionSpec("contingency.max_iter", "contingency_max_iter", Int, :number, 30, (), :expert, :case, true),

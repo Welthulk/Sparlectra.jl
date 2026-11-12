@@ -306,7 +306,8 @@ function runpf_rectangular!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
-  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN,
+  jacobian_fixed_pattern::Symbol = DEFAULT_JACOBIAN_FIXED_PATTERN,
+  jacobian_fixed_pattern_min_buses::Int = DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES,
   qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
@@ -423,6 +424,7 @@ function runpf_rectangular!(
       jacobian_reuse_min_reduction = jacobian_reuse_min_reduction,
       jacobian_reuse_max_steps = jacobian_reuse_max_steps,
       jacobian_fixed_pattern = jacobian_fixed_pattern,
+      jacobian_fixed_pattern_min_buses = jacobian_fixed_pattern_min_buses,
       qlimit_warm_clamps = qlimit_warm_clamps,
       merit_enabled = merit_enabled,
       merit_armijo_c1 = merit_armijo_c1,
@@ -573,7 +575,8 @@ function runpf_rectangular!(
         bus_types[k] = :PQ
       elseif BusType == Isolated
         # Keep isolated buses in the rectangular state vector as neutral PQ rows.
-        # Their injections are forced to zero so they do not affect the solved grid.
+        # Their injections are forced to zero so they do not affect the solved grid;
+        # the Jacobian builder pins their voltage with unit rows (empty Ybus column).
         bus_types[k] = :PQ
         S[k] = 0.0 + 0.0im
         push!(isolated_rows, k)
@@ -970,9 +973,10 @@ function runpf_rectangular!(
     jr_last_reused = false
     jr_discarded_steps = 0
   end
-  # fixed Jacobian pattern (1.2.3): set on the context of this solve; a
-  # change against the previous power-mode solve invalidates the assembly
-  _set_jacobian_fixed_pattern!(linear_ctx, jacobian_fixed_pattern, linear_solver, verbose)
+  # fixed Jacobian pattern (1.2.3): decided for this solve (auto: by the
+  # bus count of the solved network) and set on its context; a change
+  # against the previous power-mode solve invalidates the assembly
+  fp_used, fp_reason = _set_jacobian_fixed_pattern!(linear_ctx, jacobian_fixed_pattern, jacobian_fixed_pattern_min_buses, nb, linear_solver, verbose)
   # dishonest Newton in the run log: one line when it is on, one line when
   # it is on but cannot act (no factorization object, or the trust region,
   # whose dogleg needs the current Jacobian); nothing when it is off
@@ -1497,7 +1501,7 @@ function runpf_rectangular!(
     status_build_ = _merge_current_iteration_diagnostics(status_build_, performance_profile)
     status_build_ = _merge_merit_linesearch_diagnostics(status_build_, performance_profile, merit_step_diagnostics, merit_enabled)
     status_build_ = _merge_trust_region_diagnostics(status_build_, performance_profile, tr_step_diagnostics, trust_region_enabled)
-    status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx; jacobian_reuse = jacobian_reuse, jacobian_reuse_steps = jr_reused_steps, jacobian_reuse_refactorisations = jr_newton_steps - jr_reused_steps, jacobian_reuse_discarded = jr_discarded_steps)
+    status_build_ = _merge_linear_solver_diagnostics(status_build_, performance_profile, linear_solver, linear_ctx; jacobian_reuse = jacobian_reuse, jacobian_reuse_steps = jr_reused_steps, jacobian_reuse_refactorisations = jr_newton_steps - jr_reused_steps, jacobian_reuse_discarded = jr_discarded_steps, jacobian_fixed_pattern_mode = jacobian_fixed_pattern, jacobian_fixed_pattern_reason = fp_reason, jacobian_fixed_pattern_line = _jacobian_fixed_pattern_line(jacobian_fixed_pattern, fp_reason, fp_used, nb, jacobian_fixed_pattern_min_buses, linear_solver))
     # a reference bus alone: converged without a Newton step, said in the
     # status so a run log and the island report can name the reason
     no_unknowns && (status_build_ = merge(status_build_, (status = (; status_build_.status..., no_unknowns = true),)))
@@ -1593,7 +1597,8 @@ function runpf_rectangular!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
-  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN,
+  jacobian_fixed_pattern::Symbol = DEFAULT_JACOBIAN_FIXED_PATTERN,
+  jacobian_fixed_pattern_min_buses::Int = DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES,
   qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
@@ -1700,6 +1705,7 @@ function runpf_rectangular!(
     jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps,
     jacobian_fixed_pattern,
+    jacobian_fixed_pattern_min_buses,
     qlimit_warm_clamps,
     merit_enabled,
     merit_armijo_c1,
@@ -1868,6 +1874,7 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
     jacobian_reuse_min_reduction = config.jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps = config.jacobian_reuse_max_steps,
     jacobian_fixed_pattern = config.jacobian_fixed_pattern,
+    jacobian_fixed_pattern_min_buses = config.jacobian_fixed_pattern_min_buses,
     merit_enabled = config.merit.enabled,
     merit_armijo_c1 = config.merit.armijo_c1,
     merit_scale_p = config.merit.scale_p,
@@ -2709,7 +2716,8 @@ function runpf!(
   jacobian_reuse::Bool = DEFAULT_JACOBIAN_REUSE,
   jacobian_reuse_min_reduction::Float64 = DEFAULT_JACOBIAN_REUSE_MIN_REDUCTION,
   jacobian_reuse_max_steps::Int = DEFAULT_JACOBIAN_REUSE_MAX_STEPS,
-  jacobian_fixed_pattern::Bool = DEFAULT_JACOBIAN_FIXED_PATTERN,
+  jacobian_fixed_pattern::Symbol = DEFAULT_JACOBIAN_FIXED_PATTERN,
+  jacobian_fixed_pattern_min_buses::Int = DEFAULT_JACOBIAN_FIXED_PATTERN_MIN_BUSES,
   qlimit_warm_clamps::Dict{String,Symbol} = Dict{String,Symbol}(),
   merit_enabled::Bool = false,
   merit_armijo_c1::Float64 = 1.0e-4,
@@ -2880,6 +2888,7 @@ function runpf!(
     jacobian_reuse_min_reduction,
     jacobian_reuse_max_steps,
     jacobian_fixed_pattern,
+    jacobian_fixed_pattern_min_buses,
     qlimit_warm_clamps,
     merit_enabled,
     merit_armijo_c1,
@@ -3262,6 +3271,26 @@ function runpf!(
           power_mode_lu_islands = [(island_id = id, choice = st.power_mode_lu_choice, source = st.power_mode_lu_source, klu_est_flops = st.power_mode_lu_klu_est_flops) for (id, st) in lu_islands],
         ),
       )
+    end
+    # fixed Jacobian pattern (1.2.3): decided per island (auto by the bus
+    # count of the island); the aggregate names every island's decision
+    fp_islands = sort([(id, st) for (id, st) in island_statuses if hasproperty(st, :jacobian_fixed_pattern_line)]; by = first)
+    if length(fp_islands) > 1
+      fp_reasons = unique(st.jacobian_fixed_pattern_reason for (_, st) in fp_islands)
+      aggregate_status = merge(
+        aggregate_status,
+        (;
+          jacobian_fixed_pattern = any(st.jacobian_fixed_pattern for (_, st) in fp_islands),
+          jacobian_fixed_pattern_reason = length(fp_reasons) == 1 ? only(fp_reasons) : :mixed,
+          jacobian_fixed_pattern_line = join(("island $(id): $(st.jacobian_fixed_pattern_line)" for (id, st) in fp_islands), "; "),
+        ),
+      )
+      # the profile holds the keys of the island solved last; the aggregate
+      # replaces them like in the status
+      if performance_profile isa AbstractDict
+        performance_profile[:jacobian_fixed_pattern] = aggregate_status.jacobian_fixed_pattern
+        performance_profile[:jacobian_fixed_pattern_reason] = aggregate_status.jacobian_fixed_pattern_reason
+      end
     end
     _set_rectangular_pf_status!(net, aggregate_status)
     if performance_profile isa AbstractDict

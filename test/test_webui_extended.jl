@@ -1805,6 +1805,7 @@ form:
       reuse_form["power_flow_jacobian_reuse_max_steps"] = "2"
       # the fixed Jacobian pattern (1.2.3) rides along the same way
       reuse_form["power_flow_jacobian_fixed_pattern"] = "true"
+      reuse_form["power_flow_jacobian_fixed_pattern_min_buses"] = "300"
       # the test form runs linear_solver umfpack, which keeps no factorisation
       reuse_form["power_flow_linear_solver"] = "umfpack_reuse"
       # the same run with power mode and a fixed power-mode LU: the choice
@@ -1820,13 +1821,18 @@ form:
       @test (reuse_cfg.powerflow.jacobian_reuse, reuse_cfg.powerflow.jacobian_reuse_min_reduction, reuse_cfg.powerflow.jacobian_reuse_max_steps) == (true, 5.0, 2)
       reuse_run_log = read(joinpath(reuse_result["output_dir"], "run.log"), String)
       @test occursin("Jacobian reuse: on, min reduction 5, max 2 steps", reuse_run_log)
-      @test reuse_cfg.powerflow.jacobian_fixed_pattern
+      @test (reuse_cfg.powerflow.jacobian_fixed_pattern, reuse_cfg.powerflow.jacobian_fixed_pattern_min_buses) == (:on, 300)
       @test occursin("Fixed Jacobian pattern: on", reuse_run_log)
+      # the result header says what the solve did
+      @test occursin("Fixed pattern  : on (true)", reuse_run_log)
+      @test occursin("Fixed pattern  : off (auto, linear_solver umfpack keeps no factorisation)", manual_run_log)
       fixed_umfpack_pf = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_fixed_pattern" => true, "linear_solver" => "umfpack"))).powerflow
       @test SparlectraApp._jacobian_fixed_pattern_runlog_line(fixed_umfpack_pf) == "Fixed Jacobian pattern ignored: linear_solver umfpack keeps no factorisation; use umfpack_reuse."
-      @test SparlectraApp._jacobian_fixed_pattern_runlog_line(Sparlectra.SparlectraConfig().powerflow) === nothing
+      @test SparlectraApp._jacobian_fixed_pattern_runlog_line(Sparlectra.SparlectraConfig().powerflow) == "Fixed Jacobian pattern: auto, from 5000 buses"
+      off_pf = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_fixed_pattern" => false))).powerflow
+      @test SparlectraApp._jacobian_fixed_pattern_runlog_line(off_pf) === nothing
       # the scenario and N-1 workers get the switch only when it is on
-      @test SparlectraApp._engine_solver_kwargs(reuse_cfg.powerflow).jacobian_fixed_pattern
+      @test (SparlectraApp._engine_solver_kwargs(reuse_cfg.powerflow).jacobian_fixed_pattern, SparlectraApp._engine_solver_kwargs(reuse_cfg.powerflow).jacobian_fixed_pattern_min_buses) == (:on, 300)
       @test !haskey(SparlectraApp._engine_solver_kwargs(Sparlectra.SparlectraConfig().powerflow), :jacobian_fixed_pattern)
       # on umfpack the service says that the switch cannot act
       umfpack_pf = Sparlectra.SparlectraConfig(Dict{String,Any}("config_version" => 1, "power_flow" => Dict{String,Any}("jacobian_reuse" => true, "linear_solver" => "umfpack"))).powerflow
@@ -1842,10 +1848,11 @@ form:
       reuse_casefile = form["casefile_manual"]
       reuse_cc = Sparlectra.load_case_config(reuse_casefile)
       @test reuse_cc["power_flow.jacobian_reuse"] == true
-      @test reuse_cc["power_flow.jacobian_fixed_pattern"] == true
+      @test string(reuse_cc["power_flow.jacobian_fixed_pattern"]) == "true" && reuse_cc["power_flow.jacobian_fixed_pattern_min_buses"] == 300
       reuse_reloaded = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/settings?casefile=$(SparlectraApp._webui_urlencode(reuse_casefile))&case_settings=1"; output_root).body)
       _webui_assert_checked(reuse_reloaded, "power_flow_jacobian_reuse", true)
-      _webui_assert_checked(reuse_reloaded, "power_flow_jacobian_fixed_pattern", true)
+      _webui_assert_selected(reuse_reloaded, "power_flow_jacobian_fixed_pattern", "true")
+      _webui_assert_value(reuse_reloaded, "power_flow_jacobian_fixed_pattern_min_buses", "300")
       _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_min_reduction", "5.0")
       _webui_assert_value(reuse_reloaded, "power_flow_jacobian_reuse_max_steps", "2")
       @test reuse_cc["power_flow.power_mode_lu"] == "umfpack"
