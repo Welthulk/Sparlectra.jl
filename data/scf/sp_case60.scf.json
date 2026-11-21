@@ -5248,8 +5248,7 @@
           "node": 14,
           "sensor": 256,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -6.62674817
+          "type": "Q"
         },
         {
           "node": 56,
@@ -5261,8 +5260,7 @@
           "node": 56,
           "sensor": 257,
           "sigma": 1.0,
-          "type": "P",
-          "value": -1.45842537
+          "type": "P"
         },
         {
           "node": 56,
@@ -5346,14 +5344,14 @@
           "node": 45,
           "sensor": 202,
           "sigma": 0.55,
-          "type": "U"
+          "type": "U",
+          "value": 108.368872
         },
         {
           "node": 45,
           "sensor": 262,
           "sigma": 1.0,
-          "type": "P",
-          "value": -13.0875304
+          "type": "P"
         },
         {
           "node": 45,
@@ -5431,8 +5429,7 @@
           "node": 35,
           "sensor": 266,
           "sigma": 1.0,
-          "type": "Q",
-          "value": 0.384208968
+          "type": "Q"
         },
         {
           "node": 37,
@@ -5510,8 +5507,7 @@
           "node": 46,
           "sensor": 211,
           "sigma": 0.55,
-          "type": "U",
-          "value": 106.203939
+          "type": "U"
         },
         {
           "node": 46,
@@ -5523,8 +5519,7 @@
           "node": 46,
           "sensor": 271,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -6.52029605
+          "type": "Q"
         },
         {
           "node": 21,
@@ -5578,8 +5573,7 @@
           "node": 12,
           "sensor": 274,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -1.19899802
+          "type": "Q"
         },
         {
           "node": 13,
@@ -5681,8 +5675,7 @@
           "node": 3,
           "sensor": 280,
           "sigma": 1.0,
-          "type": "P",
-          "value": -1.45700776
+          "type": "P"
         },
         {
           "node": 3,
@@ -5731,8 +5724,7 @@
           "node": 40,
           "sensor": 223,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.9665715
+          "type": "U"
         },
         {
           "node": 40,
@@ -5750,8 +5742,7 @@
           "node": 59,
           "sensor": 224,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.7990283
+          "type": "U"
         },
         {
           "node": 59,
@@ -5775,8 +5766,7 @@
           "node": 29,
           "sensor": 285,
           "sigma": 1.0,
-          "type": "P",
-          "value": -3.22891175
+          "type": "P"
         },
         {
           "node": 29,
@@ -5824,7 +5814,8 @@
           "node": 20,
           "sensor": 228,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 19.988742
         },
         {
           "node": 20,
@@ -5884,7 +5875,8 @@
           "node": 10,
           "sensor": 291,
           "sigma": 1.0,
-          "type": "P"
+          "type": "P",
+          "value": -2.63184679
         },
         {
           "node": 10,
@@ -5896,8 +5888,7 @@
           "node": 53,
           "sensor": 232,
           "sigma": 0.1,
-          "type": "U",
-          "value": 19.2506360137310017
+          "type": "U"
         },
         {
           "node": 53,
@@ -5916,14 +5907,13 @@
           "sensor": 233,
           "sigma": 0.1,
           "type": "U",
-          "value": 19.0784088480817204
+          "value": 19.0784088480818803
         },
         {
           "node": 16,
           "sensor": 293,
           "sigma": 1.0,
-          "type": "P",
-          "value": -4.35064909
+          "type": "P"
         },
         {
           "node": 16,
@@ -5936,7 +5926,7 @@
           "sensor": 234,
           "sigma": 0.1,
           "type": "U",
-          "value": 18.9317566826257266
+          "value": 18.9317566826259043
         },
         {
           "node": 41,
@@ -5973,7 +5963,7 @@
           "sensor": 236,
           "sigma": 0.1,
           "type": "U",
-          "value": 18.5410882947659972
+          "value": 18.5410883
         },
         {
           "node": 4,
@@ -6009,7 +5999,8 @@
           "node": 36,
           "sensor": 238,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 19.0276955
         },
         {
           "node": 36,
@@ -6063,7 +6054,8 @@
           "node": 28,
           "sensor": 241,
           "sigma": 0.1,
-          "type": "U"
+          "type": "U",
+          "value": 18.5743833
         },
         {
           "node": 28,
@@ -6075,7 +6067,8 @@
           "node": 28,
           "sensor": 301,
           "sigma": 1.0,
-          "type": "Q"
+          "type": "Q",
+          "value": -0.0623485823
         },
         {
           "node": 54,
@@ -6111,8 +6104,7 @@
           "node": 47,
           "sensor": 303,
           "sigma": 1.0,
-          "type": "Q",
-          "value": -1.46436744
+          "type": "Q"
         },
         {
           "sensor": 304,
@@ -6184,7 +6176,8 @@
             "branch": 87,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": 23.1922429
         },
         {
           "sensor": 312,
@@ -6256,8 +6249,7 @@
             "branch": 105,
             "side": "to"
           },
-          "type": "P",
-          "value": -35.3437859
+          "type": "P"
         },
         {
           "sensor": 320,
@@ -6293,8 +6285,7 @@
             "branch": 127,
             "side": "to"
           },
-          "type": "P",
-          "value": -8.7519233
+          "type": "P"
         },
         {
           "sensor": 324,
@@ -6438,8 +6429,7 @@
             "branch": 74,
             "side": "to"
           },
-          "type": "P",
-          "value": 27.3377391
+          "type": "P"
         },
         {
           "sensor": 340,
@@ -6466,8 +6456,7 @@
             "branch": 70,
             "side": "from"
           },
-          "type": "P",
-          "value": 0.393568825
+          "type": "P"
         },
         {
           "sensor": 343,
@@ -6494,7 +6483,8 @@
             "branch": 79,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": 20.4476443
         },
         {
           "sensor": 346,
@@ -6512,7 +6502,8 @@
             "branch": 123,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": -17.0035089
         },
         {
           "sensor": 348,
@@ -6548,7 +6539,8 @@
             "branch": 83,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": 12.1270563
         },
         {
           "sensor": 352,
@@ -6719,7 +6711,8 @@
             "branch": 129,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": 11.0855522
         },
         {
           "sensor": 371,
@@ -6737,8 +6730,7 @@
             "branch": 95,
             "side": "from"
           },
-          "type": "P",
-          "value": 10.9922569
+          "type": "P"
         },
         {
           "sensor": 373,
@@ -7044,7 +7036,8 @@
             "branch": 80,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": 3.21416209
         },
         {
           "sensor": 407,
@@ -7062,8 +7055,7 @@
             "branch": 94,
             "side": "from"
           },
-          "type": "P",
-          "value": -1.93030278
+          "type": "P"
         },
         {
           "sensor": 409,
@@ -7153,8 +7145,7 @@
             "branch": 75,
             "side": "from"
           },
-          "type": "P",
-          "value": 0.969610719
+          "type": "P"
         },
         {
           "sensor": 419,
@@ -7271,7 +7262,8 @@
             "branch": 76,
             "side": "to"
           },
-          "type": "P"
+          "type": "P",
+          "value": 1.46413838
         },
         {
           "sensor": 432,
@@ -7415,8 +7407,7 @@
             "branch": 131,
             "side": "to"
           },
-          "type": "P",
-          "value": -13.2198922
+          "type": "P"
         },
         {
           "sensor": 448,
@@ -7443,7 +7434,8 @@
             "branch": 133,
             "side": "from"
           },
-          "type": "P"
+          "type": "P",
+          "value": 8.61122177
         },
         {
           "sensor": 451,
@@ -7458,7 +7450,7 @@
     },
     "meta": {
       "case_name": "sp_case60",
-      "created_by": "Sparlectra 1.2.2",
+      "created_by": "Sparlectra 1.3.0",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation", "short_circuit", "contingency", "scenarios"],
       "notes": "Self-built Sparlectra demo network; the bus count in the name does not make it the IEEE case of that size, and no data was taken from MATPOWER, DTF or any other source.",

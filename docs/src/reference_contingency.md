@@ -10,6 +10,8 @@ Pages = [
   "src/contingency/events.jl",
   "src/scenario/apply.jl",
   "src/scenario/engine.jl",
+  "src/scenario/injection_batch.jl",
+  "src/scenario/process_pool.jl",
   "src/scenario/patch.jl",
   "src/sv_compare_core.jl",
 ]
@@ -27,6 +29,8 @@ Pages = [
   "src/contingency/events.jl",
   "src/scenario/apply.jl",
   "src/scenario/engine.jl",
+  "src/scenario/injection_batch.jl",
+  "src/scenario/process_pool.jl",
   "src/scenario/patch.jl",
   "src/sv_compare_core.jl",
 ]

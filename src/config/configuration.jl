@@ -123,6 +123,10 @@ Base.@kwdef struct TrustRegionConfig
   step_mode::Symbol = :scaled
 end
 
+# default of power_flow.qlimits.guard.violation_threshold_pct, shared by the
+# struct default and the loader
+const DEFAULT_QLIMIT_GUARD_VIOLATION_THRESHOLD_PCT = 1.0
+
 """
     QLimitConfig
 
@@ -155,7 +159,9 @@ Base.@kwdef struct QLimitConfig
   guard_accept_bounded_violations::Bool = false
   guard_max_remaining_violations::Int = 0
   guard_violation_mode::Symbol = :lock_pq
-  guard_violation_threshold_pu::Float64 = 1e-4
+  # overshoot beyond a limit, in percent of the bus Q band Qmax - Qmin,
+  # from which the lock_pq violation rule switches a PV bus to PQ
+  guard_violation_threshold_pct::Float64 = DEFAULT_QLIMIT_GUARD_VIOLATION_THRESHOLD_PCT
   guard_log::Bool = true
   trace_buses::Vector{Int} = Int[]
   # PV buses (internal positions) that run as PQ from the start of every
@@ -442,6 +448,34 @@ Base.@kwdef struct ApslfConfig
 end
 
 """
+    ComputeBackendConfig
+
+Where the sparse linear system of each Newton step is solved
+(`power_flow.compute_backend`):
+
+- `mode`: `:cpu` (default, the UMFPACK path of `power_flow.linear_solver`),
+  `:gpu` (NVIDIA cuDSS through the CUDA extension) or `:auto` (the GPU
+  advisor decides from the bus count, see [`gpu_advice`](@ref)).
+- `gpu_precision`: `:float64` or `:float32_mixed` (Jacobian factorized and
+  solved in Float32 on the GPU, mismatch and voltage update in Float64,
+  same convergence criterion).
+- `gpu_fallback_to_cpu`: without the extension, without a working GPU or on
+  a GPU error the step runs on the CPU and the reason is recorded; `false`
+  makes these cases an error.
+- `gpu_fast_mode`: `false` (default) runs cuDSS in its deterministic mode,
+  so two runs of one case give the same bits. `true` drops that mode:
+  refactorization and solve are faster, but the last bits of a step vary
+  from run to run, and a bus within rounding distance of its Q limit can
+  end on either side.
+"""
+Base.@kwdef struct ComputeBackendConfig
+  mode::Symbol = :cpu
+  gpu_precision::Symbol = :float64
+  gpu_fallback_to_cpu::Bool = true
+  gpu_fast_mode::Bool = false
+end
+
+"""
     ApslfStartConfig
 
 Typed configuration for using the analytic power-series solver as a start-value
@@ -468,6 +502,7 @@ Base.@kwdef struct PowerFlowConfig
   mode::Symbol = :manual
   solver::Symbol = :rectangular
   linear_solver::Symbol = :umfpack_reuse
+  compute_backend::ComputeBackendConfig = ComputeBackendConfig()
   apslf::ApslfConfig = ApslfConfig()
   apslf_start::ApslfStartConfig = ApslfStartConfig()
   # convergence bound for the LARGEST SINGLE bus mismatch (infinity norm
@@ -1391,11 +1426,35 @@ serial functions themselves, not copies). `max_tasks = "auto"` resolves to
 `Threads.nthreads()`; an integer string caps the task count (applied via
 chunking, so it caps `Threads.@threads` sites too). Work lists shorter than
 `min_work_items` run serially to avoid task overhead on tiny cases.
+`executor` picks how the batches of the scenario engine and the injection
+batch run: `"threads"` (Julia threads of this process), `"processes"` (the
+worker processes of the batch pool, one Julia thread each) or `"auto"` (the
+rule of [Parallel Execution](@ref parallel_execution_processes)).
+`max_processes = "auto"` resolves to `Sys.CPU_THREADS`, fewer when the free
+memory holds fewer workers of the size of the network; an integer string
+caps the number of worker processes.
 """
 Base.@kwdef struct ParallelRuntimeConfig
   enabled::Bool = true
   max_tasks::String = "auto"
   min_work_items::Int = 4
+  executor::String = "auto"
+  max_processes::String = "auto"
+end
+
+"""
+    GcPauseConfig
+
+Typed configuration of the GC pause of a run (`runtime.gc_pause`): with
+`enabled` the garbage collector is off while a power flow or a batch runs
+and on again when the last run of the process ends. `max_resident_gb` is
+the limit of the memory guard: `"auto"` is half of the physical memory, a
+number the limit in GB, `"0"` no guard. Above the limit the guard collects
+once and the pause goes on.
+"""
+Base.@kwdef struct GcPauseConfig
+  enabled::Bool = true
+  max_resident_gb::String = "auto"
 end
 
 """
@@ -1429,6 +1488,7 @@ Base.@kwdef struct RuntimeConfig
   case_source::String = ""
   configured_default_casefile::String = ""
   parallel::ParallelRuntimeConfig = ParallelRuntimeConfig()
+  gc_pause::GcPauseConfig = GcPauseConfig()
 end
 
 # Console/logfile output options are owned by `output.*` alone. The
@@ -1563,6 +1623,33 @@ Base.@kwdef struct WebUIConfig
   window_height::Int = 950
   window_x::Union{Nothing,Int} = nothing
   window_y::Union{Nothing,Int} = nothing
+  # Remote mode (start with --remote or start_sparlectra_webui(remote = true)).
+  # ssh: the server stays on 127.0.0.1 and the user connects through an SSH
+  # tunnel. Without a token every user with a login on the host and every
+  # local process can open 127.0.0.1:<port>; remote_ssh_require_token = true
+  # asks for the access token in this mode too. direct: the server binds
+  # remote_bind_address and asks for the access token; the traffic is plain
+  # HTTP. An empty token makes the server generate one at every start.
+  remote_mode::Symbol = :ssh
+  remote_bind_address::String = "0.0.0.0"
+  remote_port::Int = 8080
+  remote_access_token::String = ""
+  remote_ssh_require_token::Bool = false
+end
+
+const WEBUI_REMOTE_MODES = [:ssh, :direct]
+
+# A configured access token goes into a URL and a cookie, so it is limited to
+# characters both carry unescaped; 16 characters is the floor for a secret
+# that guards a server on the network. The YAML reader types an unquoted
+# scalar: a token of digits comes back as a number (leading zeros lost), so
+# anything but text is refused with the hint to quote it.
+function _validate_webui_access_token(token)::String
+  token === nothing && return ""
+  token isa AbstractString || throw(ArgumentError("webui.remote_access_token must be text, the configuration gives a value of type $(typeof(token)) (the value is not shown, it is a secret). Write the token in quotes, for example remote_access_token: \"0123456789abcdef\": unquoted digits are read as a number."))
+  isempty(token) && return ""
+  occursin(r"^[A-Za-z0-9._~-]{16,}$", token) || throw(ArgumentError("webui.remote_access_token must be empty (generated at start) or at least 16 characters of A-Z, a-z, 0-9, '.', '_', '~', '-'."))
+  return String(token)
 end
 
 """
@@ -1585,18 +1672,19 @@ canonical section `powsybl`): the PowSyBl IIDM import (see
 - `multi_slack::Bool`: one slack per synchronous component; `false` keeps
   only the component of the first slack and reports the others.
 - `remote_regulation::Symbol`: a generator whose regulated bus is not its
-  own: `:hold_local` keeps it PV at its own bus with the target in pu of
-  the regulated bus, `:pq` makes it PQ with `target_q`, `:remote` makes it
-  PQ and attaches an outer-loop `MachineVoltageControl` on the regulated
-  bus (the same machinery as `cgmes_import.machine_control`; reproduces
-  OpenLoadFlow's remote voltage control).
+  own: `:remote` (default) makes it PQ and attaches an outer-loop
+  `MachineVoltageControl` on the regulated bus (the same machinery as
+  `cgmes_import.machine_control`; reproduces OpenLoadFlow's remote voltage
+  control, and falls back to `:hold_local` where the control cannot be
+  attached), `:hold_local` keeps it PV at its own bus with the target in pu
+  of the regulated bus, `:pq` makes it PQ with `target_q`.
 """
 Base.@kwdef struct PowsyblImportConfig
   base_mva::Float64 = 100.0
   hvdc_mode::Symbol = :fixed_injection
   slack_ids::Vector{String} = String[]
   multi_slack::Bool = true
-  remote_regulation::Symbol = :hold_local
+  remote_regulation::Symbol = :remote
 end
 
 """
@@ -2066,6 +2154,15 @@ function _validate_nonnegative(name::AbstractString, value::Real)
   value >= 0 || throw(ArgumentError("$(name) must be non-negative; got $(value)."))
   return value
 end
+# finite non-negative float from a raw configuration value; a string that
+# does not parse (the YAML reader keeps .inf as text), Inf, NaN, negative
+# values and anything that is neither number nor text (true, null, a list, a
+# mapping) are refused with an error naming the key
+function _finite_nonnegative_cfg(name::AbstractString, x)::Float64
+  value = (x isa Real && !(x isa Bool)) ? Float64(x) : x isa AbstractString ? something(tryparse(Float64, strip(x)), NaN) : NaN
+  (isfinite(value) && value >= 0) || throw(ArgumentError("$(name) must be a finite number >= 0; got $(repr(x))."))
+  return value
+end
 function _validate_allowed_symbol(name::AbstractString, value::Symbol, allowed::Tuple)
   if !(value in allowed)
     guidance = name == "power_flow.start_mode.voltage_mode" && value === :bus_vm_va_blend ?
@@ -2403,6 +2500,20 @@ function TrustRegionConfig(raw::AbstractDict)
   )
 end
 
+# power_flow.compute_backend: the values the loader and the override
+# validation accept
+const COMPUTE_BACKEND_MODE_VALUES = (:cpu, :gpu, :auto)
+const GPU_PRECISION_VALUES = (:float64, :float32_mixed)
+
+function ComputeBackendConfig(raw::AbstractDict)
+  return ComputeBackendConfig(
+    mode = _validate_allowed_symbol("power_flow.compute_backend.mode", _as_symbol_cfg(_raw_get(raw, "mode", :cpu)), COMPUTE_BACKEND_MODE_VALUES),
+    gpu_precision = _validate_allowed_symbol("power_flow.compute_backend.gpu_precision", _as_symbol_cfg(_raw_get(raw, "gpu_precision", :float64)), GPU_PRECISION_VALUES),
+    gpu_fallback_to_cpu = _as_bool_cfg(_raw_get(raw, "gpu_fallback_to_cpu", true)),
+    gpu_fast_mode = _as_bool_cfg(_raw_get(raw, "gpu_fast_mode", false)),
+  )
+end
+
 function ApslfConfig(raw::AbstractDict)
   order = _as_int_cfg(_raw_get(raw, "order", 24))
   order >= 1 || throw(ArgumentError("power_flow.apslf.order must be >= 1; got $(order)."))
@@ -2478,7 +2589,7 @@ function QLimitConfig(raw::AbstractDict)
     guard_accept_bounded_violations = _as_bool_cfg(_raw_get(merged, "accept_bounded_violations", _raw_get(merged, "guard_accept_bounded_violations", _raw_get(merged, "qlimit_guard_accept_bounded_violations", false)))),
     guard_max_remaining_violations = _as_int_cfg(_raw_get(merged, "max_remaining_violations", _raw_get(merged, "guard_max_remaining_violations", _raw_get(merged, "qlimit_guard_max_remaining_violations", 0)))),
     guard_violation_mode = _validate_allowed_symbol("power_flow.qlimits.guard.violation_mode", _as_symbol_cfg(_raw_get(merged, "violation_mode", _raw_get(merged, "guard_violation_mode", _raw_get(merged, "qlimit_guard_violation_mode", :lock_pq)))), QLIMIT_GUARD_VIOLATION_MODE_VALUES),
-    guard_violation_threshold_pu = _validate_nonnegative("qlimit_guard_violation_threshold_pu", _as_float_cfg(_raw_get(merged, "violation_threshold_pu", _raw_get(merged, "guard_violation_threshold_pu", _raw_get(merged, "qlimit_guard_violation_threshold_pu", 1e-4))))),
+    guard_violation_threshold_pct = _finite_nonnegative_cfg("power_flow.qlimits.guard.violation_threshold_pct", _raw_get(merged, "violation_threshold_pct", DEFAULT_QLIMIT_GUARD_VIOLATION_THRESHOLD_PCT)),
     guard_log = _as_bool_cfg(_raw_get(merged, "log", _raw_get(merged, "guard_log", _raw_get(merged, "qlimit_guard_log", true)))),
     trace_buses = _as_int_vector_cfg(_raw_get(merged, "trace_buses", _raw_get(merged, "qlimit_trace_buses", Int[]))),
     lock_pv_to_pq_buses = _as_int_vector_cfg(_raw_get(merged, "lock_pv_to_pq_buses", Int[])),
@@ -2511,6 +2622,7 @@ function PowerFlowConfig(raw::AbstractDict)
   qlimit_raw = _raw_section(merged, "qlimits")
   islands_raw = _raw_section(merged, "islands")
   apslf_raw = _raw_section(merged, "apslf")
+  compute_backend_raw = _raw_section(merged, "compute_backend")
   apslf_start_raw = _raw_section(merged, "apslf_start")
   dc_raw = _raw_section(merged, "dc")
   distributed_slack_raw = _raw_section(merged, "distributed_slack")
@@ -2567,6 +2679,7 @@ function PowerFlowConfig(raw::AbstractDict)
     mode = _validate_allowed_symbol("power_flow.mode", _as_symbol_cfg(_raw_get(merged, "mode", :manual)), POWERFLOW_MODE_VALUES),
     solver = solver,
     linear_solver = _validate_allowed_symbol("power_flow.linear_solver", _as_symbol_cfg(_raw_get(merged, "linear_solver", :umfpack_reuse)), POWERFLOW_LINEAR_SOLVER_VALUES),
+    compute_backend = ComputeBackendConfig(compute_backend_raw),
     apslf = apslf_cfg,
     apslf_start = apslf_start_cfg,
     tol = _validate_positive("powerflow.tol", _as_float_cfg(_raw_get(merged, "tol", 1.0e-8))),
@@ -2850,7 +2963,7 @@ function PowsyblImportConfig(raw::AbstractDict)
     hvdc_mode = _validate_allowed_symbol("powsybl_import.hvdc_mode", _as_symbol_cfg(_raw_get(merged, "hvdc_mode", :fixed_injection)), POWSYBL_HVDC_MODE_VALUES),
     slack_ids = _powsybl_id_list(_raw_get(merged, "slack_ids", nothing)),
     multi_slack = _as_bool_cfg(_raw_get(merged, "multi_slack", true)),
-    remote_regulation = _validate_allowed_symbol("powsybl_import.remote_regulation", _as_symbol_cfg(_raw_get(merged, "remote_regulation", :hold_local)), POWSYBL_REMOTE_REGULATION_VALUES),
+    remote_regulation = _validate_allowed_symbol("powsybl_import.remote_regulation", _as_symbol_cfg(_raw_get(merged, "remote_regulation", :remote)), POWSYBL_REMOTE_REGULATION_VALUES),
   )
 end
 
@@ -2954,13 +3067,31 @@ function ParallelRuntimeConfig(raw::AbstractDict)
   end
   min_work_items = _as_int_cfg(_raw_get(raw, "min_work_items", 4))
   min_work_items >= 1 || throw(ArgumentError("runtime.parallel.min_work_items must be >= 1, got $(min_work_items)."))
-  return ParallelRuntimeConfig(enabled = _as_bool_cfg(_raw_get(raw, "enabled", true)), max_tasks = normalized == "auto" ? "auto" : normalized, min_work_items = min_work_items)
+  executor = lowercase(strip(_as_string_cfg(_raw_get(raw, "executor", "auto"))))
+  executor in ("auto", "threads", "processes") || throw(ArgumentError("runtime.parallel.executor must be auto, threads or processes, got $(repr(executor))."))
+  max_processes = lowercase(strip(_as_string_cfg(_raw_get(raw, "max_processes", "auto"))))
+  if max_processes != "auto"
+    parsed = tryparse(Int, max_processes)
+    (parsed !== nothing && parsed >= 1) || throw(ArgumentError("runtime.parallel.max_processes must be \"auto\" or a positive integer string, got $(repr(max_processes))."))
+  end
+  return ParallelRuntimeConfig(enabled = _as_bool_cfg(_raw_get(raw, "enabled", true)), max_tasks = normalized == "auto" ? "auto" : normalized, min_work_items = min_work_items, executor = executor, max_processes = max_processes)
+end
+
+function GcPauseConfig(raw::AbstractDict)
+  limit = lowercase(strip(_as_string_cfg(_raw_get(raw, "max_resident_gb", "auto"))))
+  if limit != "auto"
+    parsed = tryparse(Float64, limit)
+    (parsed !== nothing && isfinite(parsed) && parsed >= 0) || throw(ArgumentError("runtime.gc_pause.max_resident_gb must be \"auto\" or a number >= 0, got $(repr(limit))."))
+  end
+  return GcPauseConfig(enabled = _as_bool_cfg(_raw_get(raw, "enabled", true)), max_resident_gb = limit)
 end
 
 function RuntimeConfig(raw::AbstractDict)
   merged = _merged_section(raw, "runtime")
   parallel_raw = _raw_get(merged, "parallel", Dict{String,Any}())
-  parallel_raw isa AbstractDict || throw(ArgumentError("runtime.parallel must be a mapping (enabled/max_tasks/min_work_items)."))
+  parallel_raw isa AbstractDict || throw(ArgumentError("runtime.parallel must be a mapping (enabled/max_tasks/min_work_items/executor/max_processes)."))
+  gc_raw = _raw_get(merged, "gc_pause", Dict{String,Any}())
+  gc_raw isa AbstractDict || throw(ArgumentError("runtime.gc_pause must be a mapping (enabled/max_resident_gb)."))
   return RuntimeConfig(
     julia_threads = _as_string_cfg(_raw_get(merged, "julia_threads", "keep")),
     blas_threads = _as_string_cfg(_raw_get(merged, "blas_threads", "keep")),
@@ -2972,6 +3103,7 @@ function RuntimeConfig(raw::AbstractDict)
     case_source = _as_string_cfg(_raw_get(merged, "case_source", "")),
     configured_default_casefile = _as_string_cfg(_raw_get(merged, "configured_default_casefile", "")),
     parallel = ParallelRuntimeConfig(parallel_raw),
+    gc_pause = GcPauseConfig(gc_raw),
   )
 end
 
@@ -3164,7 +3296,30 @@ function WebUIConfig(raw::AbstractDict)
     window_height = Int(_validate_positive("webui.window_height", _as_int_cfg(_raw_get(merged, "window_height", 950)))),
     window_x = _as_optional_int_cfg(_raw_get(merged, "window_x", nothing)),
     window_y = _as_optional_int_cfg(_raw_get(merged, "window_y", nothing)),
+    remote_mode = _validate_allowed_symbol("webui.remote_mode", _as_symbol_cfg(_raw_get(merged, "remote_mode", :ssh)), WEBUI_REMOTE_MODES),
+    remote_bind_address = _validate_webui_bind_address(_raw_get(merged, "remote_bind_address", "0.0.0.0")),
+    remote_port = _validate_webui_port("webui.remote_port", _as_int_cfg(_raw_get(merged, "remote_port", 8080))),
+    remote_access_token = _validate_webui_access_token(_raw_get(merged, "remote_access_token", nothing)),
+    remote_ssh_require_token = _as_bool_cfg(_raw_get(merged, "remote_ssh_require_token", false)),
   )
+end
+
+# The address syntax is checked when the server binds (the application owns
+# the socket layer); here an empty value is refused, and a value that is not
+# text: the YAML reader takes an unquoted ::1 or :: for a Symbol (":1", ":").
+# The message shows such a Symbol as written in the file (::1), not as its
+# repr (:(:) for ::).
+function _validate_webui_bind_address(x)::String
+  shown = x isa Symbol ? string(":", x) : repr(x)
+  x === nothing || x isa AbstractString || throw(ArgumentError("webui.remote_bind_address must be text, the configuration gives a value of type $(typeof(x)) ($(shown)). Write the address in quotes, for example remote_bind_address: \"::1\": an unquoted ::1 or :: is not read as text."))
+  address = x === nothing ? "" : strip(x)
+  isempty(address) && throw(ArgumentError("webui.remote_bind_address must not be empty; use 0.0.0.0 for every interface or the address of one."))
+  return String(address)
+end
+
+function _validate_webui_port(name::AbstractString, port::Int)::Int
+  1 <= port <= 65535 || throw(ArgumentError("$(name) must be between 1 and 65535; got $(port)."))
+  return port
 end
 
 function SparlectraConfig(raw::AbstractDict)

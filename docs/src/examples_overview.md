@@ -38,6 +38,8 @@ the extended test profile.
 | `exp_contingency_n1.jl` | `others` | full branch N-1 on the shipped `sp_case1354.m`, serial vs parallel ([theory](contingency.md)) | parallel |
 | `exp_contingency_events.jl` | `others` | correlated events (double circuits, busbars, stations, couplers, name groups) and N-2 pairs on `sp_case14`/`sp_case60` ([theory](contingency.md)) | others |
 | `exp_case_scenarios.jl` | `others` | the scenarios block of a case file run alone (what the Web UI **Scenarios** button does) on a copy of `sp_case60` ([theory](contingency.md)) | others |
+| `exp_injection_batch.jl` | `others` | many load scenarios of one network on `sp_case188`: 32 random load factors per bus and a 96-step ramp, Q limits off with the share of Q-limit violations, on CPU threads and, with CUDA and CUDSS loaded, on the GPU ([theory](contingency.md)) | parallel |
+| `exp_process_batch.jl` | `others` | the injection batch and the branch N-1 batch on the shipped `sp_case1354.m` on threads and in worker processes, compared bit for bit, and the GC pause status of a run ([theory](parallel_execution.md)) | parallel |
 | `exp_scf_series.jl` | `others` | the shipped SCF time series `sp_case14_day.qsts.zip`: one step by hand, all 96 steps with the snapshot run, with and without the tap controller, the result files, and a few steps with the example controls (a tap control range and a bank behind the tap at priority 1) ([theory](qsts.md)) | others |
 | `exp_open_terminal_line.jl` | `others` | one-sided open line: charging draw and Ferranti rise ([theory](branchmodel.md)) | others |
 | `exp_current_iteration_start.jl` | `powerflow` | guarded current-iteration start pre-solve via config overrides | powerflow |

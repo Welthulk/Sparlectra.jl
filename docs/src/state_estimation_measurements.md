@@ -226,7 +226,7 @@ critical measurements are configurable in the Web UI form.
 | Passive nodes | checkbox (`state_estimation.zero_injection`, default on; `constraint` shows as checked) | passive buses get zero-injection rows (prefix `ZI`, at the configured sigma, at least `state_estimation.zero_injection_sigma_mva`) and no duplicate injection rows; see [Zero injections and coupler balances](@ref se_zero_injection) |
 | | off | explicit zero balance rows `Pinj/Qinj = 0` at the configured sigma (default 0.05 MW/MVar) |
 | | both | the checkbox is the case's `state_estimation.zero_injection`: it is seeded from the configuration, and a generation writes it into the case configuration file, so the SE runs of the case (measurement CSV, case file, measurement table) follow it; see [State-Estimation Configuration](state_estimation_configuration.md) |
-| `critical measurements` | count (0 = off) | thins the set until that many rows are critical; the set comments name the target, the rows that ended critical and the rows removed; when the target is out of reach, the message says how many were reached |
+| `critical measurements` | count (0 = off) | thins the set until that many rows are critical; a removal that would leave the set not observable (the verdict of the SE run: AC rank and the decoupled P-theta and Q-V models) is undone; the set comments name the target, the rows that ended critical and the rows removed; when the target is out of reach, the message says how many were reached |
 
 **Notes**
 

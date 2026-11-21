@@ -251,18 +251,33 @@ end
 # `nothing`) from src to dst. Component references, vectors, and dicts are
 # deliberately left alone: reassigning them would alias template-owned
 # mutable objects into the worker.
-function _scenario_copy_scalar_fields!(dst::T, src::T) where {T}
-  for f in fieldnames(T)
+# Generated per type: a loop over fieldnames reads every field as Any and
+# boxed each Float64 (3.2M allocations per scenario reset on a 70k-bus net).
+# The decision is made from the declared field type where it can be: a
+# field whose type holds only scalars is copied, one that holds no scalar
+# is skipped, and only a mixed field type (Any, Union{Nothing,Vector}) is
+# checked at run time, with the same test as before.
+const _ScenarioScalar = Union{Nothing,Number,Symbol,AbstractString,Enum}
+
+@generated function _scenario_copy_scalar_fields!(dst::T, src::T) where {T}
+  body = Expr(:block)
+  for (i, f) in enumerate(fieldnames(T))
     # the power-mode cache belongs to the worker, never to the template:
     # a template without one (`nothing`, e.g. a rescued or flat base case)
     # would otherwise wipe the worker's cache after every scenario (#457)
     f === :_power_cache && continue
-    v = getfield(src, f)
-    if v === nothing || v isa Number || v isa Symbol || v isa AbstractString || v isa Enum
-      setfield!(dst, f, v)
+    FT = fieldtype(T, i)
+    q = QuoteNode(f)
+    if FT <: _ScenarioScalar
+      push!(body.args, :(setfield!(dst, $q, getfield(src, $q))))
+    elseif typeintersect(FT, _ScenarioScalar) !== Union{}
+      push!(body.args, :(let v = getfield(src, $q)
+        v isa _ScenarioScalar && setfield!(dst, $q, v)
+      end))
     end
   end
-  return nothing
+  push!(body.args, :(return nothing))
+  return body
 end
 
 """
@@ -289,9 +304,10 @@ function _reset_scenario_worker!(work::Net, template::Net)
     wb = work.branchVec[i]
     tb = template.branchVec[i]
     _scenario_copy_scalar_fields!(wb, tb)
-    # flow objects are mutable; fresh copies keep the template unaliased
-    wb.fBranchFlow = tb.fBranchFlow === nothing ? nothing : deepcopy(tb.fBranchFlow)
-    wb.tBranchFlow = tb.tBranchFlow === nothing ? nothing : deepcopy(tb.tBranchFlow)
+    # BranchFlow is immutable: sharing the template's object aliases nothing
+    # a solve could change (a solve assigns a new one), and it costs no copy
+    wb.fBranchFlow = tb.fBranchFlow
+    wb.tBranchFlow = tb.tBranchFlow
   end
   for i in eachindex(template.prosumpsVec)
     _scenario_copy_scalar_fields!(work.prosumpsVec[i], template.prosumpsVec[i])
@@ -1300,10 +1316,18 @@ end
 # so whatever eval_one leaves on it is seen by the next item of that chunk.
 # The parallel switches resolve once here, against the active
 # runtime.parallel configuration for every keyword left at `nothing`.
-# Returns the results in item order. Both callables are @nospecialize: the
-# map compiles once, and one dynamic call per item costs nothing against a
-# power-flow solve.
-function _engine_parallel_map(@nospecialize(eval_one), @nospecialize(make_worker), n::Int; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing))::Vector{Any}
+# `workers_in_tasks = true` lets every chunk task make its own worker at its
+# start, so the copies run side by side instead of one after the other. Only
+# for a `make_worker` whose copy holds no factorization (the injection batch
+# sets the power cache and the solver status of its template aside first):
+# the serial rule above exists because copying one UMFPACK factorization
+# from several threads corrupts it. `prepare(worker)`, if given, runs once
+# on every worker before its first item, in the task of its chunk, so the
+# workers prepare side by side (the injection batch warms the power-mode
+# caches there; the workers are distinct nets). Returns the results in item
+# order. The callables are @nospecialize: the map compiles once, and one
+# dynamic call per item costs nothing against a power-flow solve.
+function _engine_parallel_map(@nospecialize(eval_one), @nospecialize(make_worker), n::Int; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing), workers_in_tasks::Bool = false, @nospecialize(prepare = nothing))::Vector{Any}
   results = Vector{Any}(undef, n)
   n == 0 && return results
   # shared by all chunks; only read and atomically incremented in the tasks
@@ -1312,13 +1336,17 @@ function _engine_parallel_map(@nospecialize(eval_one), @nospecialize(make_worker
   use_parallel = parallel_on && Threads.nthreads() > 1 && parallel_cap > 1 && n >= parallel_min_items
   if use_parallel
     chunks = collect(Iterators.partition(1:n, cld(n, parallel_cap)))
-    chunk_workers = [make_worker() for _ in chunks]
+    chunk_workers = workers_in_tasks ? Vector{Any}(nothing, length(chunks)) : Any[make_worker() for _ in chunks]
     tasks = [
       Threads.@spawn begin
+        # each task writes only its own slot
+        workers_in_tasks && (chunk_workers[ci] = make_worker())
+        prepare === nothing || prepare(chunk_workers[ci])
         for idx in chunks[ci]
           # an N-1 batch is the longest run the Web UI offers; the abort
           # token is process-wide, so it is visible inside this task
           sparlectra_check_abort()
+          _gc_pause_guard!()
           results[idx] = eval_one(chunk_workers[ci], idx)
           # no assignment here: the task body must not rebind enclosing names
           _progress_tick!(tracker)
@@ -1328,8 +1356,10 @@ function _engine_parallel_map(@nospecialize(eval_one), @nospecialize(make_worker
     foreach(wait, tasks)
   else
     serial_worker = make_worker()
+    prepare === nothing || prepare(serial_worker)
     for idx in 1:n
       sparlectra_check_abort()
+      _gc_pause_guard!()
       results[idx] = eval_one(serial_worker, idx)
       _progress_tick!(tracker)
     end
@@ -1342,14 +1372,49 @@ end
 # ScenarioWorkers, and converts the rows. With screening :off the batch
 # returns the historical Vector{ContingencyResult}; otherwise every row is a
 # ScenarioResult.
-function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing))
+# `executor` (else runtime.parallel.executor) picks threads or the worker
+# processes (_resolve_batch_executor); in processes every worker gets the
+# engine once and rebuilds the screening state from its template (a
+# factorization does not travel), the items go one by one.
+function _run_engine_batch(engine::ScenarioEngine, items::Vector{_ScenarioItem}; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, @nospecialize(progress = nothing), executor::Union{Nothing,Symbol} = nothing, max_processes::Union{Nothing,Int} = nothing)
   screening_off = engine.screening_mode === :off
   isempty(items) && return screening_off ? ContingencyResult[] : ScenarioResult[]
-  evaluate_fn = screening_off ? evaluate! : _evaluate_item
-  results = _engine_parallel_map((worker, idx) -> evaluate_fn(engine, worker, items[idx]), () -> ScenarioWorker(deepcopy(engine.template)), length(items);
-    parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
+  mode, k = _resolve_batch_executor(executor, length(items), length(engine.template.nodeVec); parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, max_processes = max_processes)
+  results = if mode === :processes
+    pids = start_batch_processes!(k)[1:k]
+    payload = _with_session_fields_aside(engine.template) do
+      _serialize_payload((engine = _engine_with_screen(engine, nothing), rebuild_screen = engine.screen !== nothing))
+    end
+    # one BLAS thread per worker: the workers already fill the cores, and
+    # the BLAS threads of the main process in every worker oversubscribed
+    # them (an N-1 batch four times slower than on threads)
+    first(_process_parallel_map(_engine_process_setup, payload, _engine_process_one, idx -> items[idx], length(items), pids; blas_threads = 1, progress = progress))
+  else
+    evaluate_fn = screening_off ? evaluate! : _evaluate_item
+    _engine_parallel_map((worker, idx) -> evaluate_fn(engine, worker, items[idx]), () -> ScenarioWorker(deepcopy(engine.template)), length(items);
+      parallel_enabled = mode === :threads, parallel_max_tasks = k, parallel_min_work_items = 1, progress = progress)
+  end
   screening_off && return ContingencyResult[results[i] for i in eachindex(items)]
   return ScenarioResult[results[i] for i in eachindex(items)]
+end
+
+# the engine with another screening state (all other fields shared)
+_engine_with_screen(e::ScenarioEngine, screen) = ScenarioEngine(Any[f === :screen ? screen : getfield(e, f) for f in fieldnames(ScenarioEngine)]...)
+
+# the process batch of the engine: one engine and one working copy per
+# worker process, the screening state rebuilt from the template exactly as
+# the ScenarioEngine constructor builds it
+function _engine_process_setup(data)
+  e = data.engine
+  if data.rebuild_screen
+    e = _engine_with_screen(e, _build_screening_state(e.template, e.base_converged, e.tol, e.pf_kwargs, e.base_loadings))
+  end
+  return (engine = e, worker = ScenarioWorker(deepcopy(e.template)))
+end
+
+function _engine_process_one(state, idx::Int, item)
+  e = state.engine
+  return e.screening_mode === :off ? evaluate!(e, state.worker, item) : _evaluate_item(e, state.worker, item)
 end
 
 # resolve ContingencyCases against the template ONCE (the old code
@@ -1420,7 +1485,8 @@ reproduces [`runContingencies!`](@ref) exactly; general patch scenarios
 (setpoint changes, load scalings, multi-op outages) run the same ladder
 and metrics on the patched working copy. `net` is never mutated. The
 keyword surface matches `runContingencies!` (`vm_min_pu`, `vm_max_pu`,
-`maxIte`, `base_maxIte`, `tol`, `rescue_ladder`, the `parallel_*` overrides); remaining
+`maxIte`, `base_maxIte`, `tol`, `rescue_ladder`, the `parallel_*` overrides, `executor`,
+`max_processes`); remaining
 keywords reach the per-scenario power-flow solves. Results are returned
 in scenario order; failures are reported in the result, never thrown.
 `progress` reports the batch progress exactly as in
@@ -1463,6 +1529,8 @@ function runScenarios!(
   parallel_enabled::Union{Nothing,Bool} = nothing,
   parallel_max_tasks::Union{Nothing,Int} = nothing,
   parallel_min_work_items::Union{Nothing,Int} = nothing,
+  executor::Union{Nothing,Symbol} = nothing,
+  max_processes::Union{Nothing,Int} = nothing,
   auto_slack::Bool = true,
   warm_active_set::Bool = true,
   warm_cold_check::Bool = false,
@@ -1481,7 +1549,7 @@ function runScenarios!(
   ladder = _validate_contingency_ladder(rescue_ladder; context = "runScenarios!: rescue_ladder")
   engine = ScenarioEngine(net; vm_min_pu = vm_min_pu, vm_max_pu = vm_max_pu, maxIte = maxIte, tol = tol, ladder = ladder, index = index, pf_kwargs = (; auto_slack = auto_slack, kwargs...), screening_mode = screening_mode, screening_margin_pct = screening_margin_pct, warm_active_set = warm_active_set, warm_note = warm_note, warm_cold_check = warm_cold_check, warm_cold_check_margin_pu = warm_cold_check_margin_pu, base_maxIte = base_maxIte, names = names)
   items = _ScenarioItem[_engine_item_from_scenario(s, index, names) for s in scenarios]
-  return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress)
+  return _run_engine_batch(engine, items; parallel_enabled = parallel_enabled, parallel_max_tasks = parallel_max_tasks, parallel_min_work_items = parallel_min_work_items, progress = progress, executor = executor, max_processes = max_processes)
 end
 
 runScenarios!(net::Net, scenarios::Vector{Scenario}; kwargs...) = runScenarios!(net, ScenarioSet(scenarios = scenarios); kwargs...)

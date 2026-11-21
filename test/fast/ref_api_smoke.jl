@@ -35,12 +35,12 @@ function run_ref_api_smoke_tests()
         @test pf.metadata["qv_characteristic_line"] == "Q-V characteristic: no non-physical generator states."
         @test occursin("Q-V characteristic: no non-physical", read(pf.logfile, String))
         # and names the buses of a non-physical end point: the Zeng/Chiang
-        # case with the voltage-side release switched off (margin 1.0) ends
-        # with three machines at Qmax above their setpoints
+        # case under the classic simultaneous switching ends on the abnormal
+        # solution of the paper, three machines at Qmax above their setpoints
         zeng = joinpath(dirname(dirname(@__DIR__)), "data", "scf", "case14_zeng_p306_activeSet_A.scf.json")
-        # (a case-scope key since 0.20.2: the Zeng case has a case
-        # configuration file, so the margin comes as an explicit override)
-        nonphys = run_sparlectra_api(casefile = zeng, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = joinpath(tmpdir, "nonphys"), config_overrides = Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0))
+        # (a case-scope key: the Zeng case has a case configuration file, so
+        # the mode comes as an explicit override)
+        nonphys = run_sparlectra_api(casefile = zeng, config_file = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, output_dir = joinpath(tmpdir, "nonphys"), config_overrides = Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "classic_simultaneous"))
         @test nonphys.converged
         @test nonphys.metadata["qv_non_physical_states"] == 3
         @test nonphys.metadata["qv_non_physical_buses"] == "2;3;6"

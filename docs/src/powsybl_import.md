@@ -147,10 +147,16 @@ Settled against the OpenLoadFlow voltages of the example files:
   0.01) keeps a unit PV inside the band. Set it small to match
   OpenLoadFlow bus by bus.
 - **Remote voltage regulation.** `powsybl_import.remote_regulation =
-  remote` attaches an outer-loop machine voltage control on the regulated
-  bus (the machinery of `cgmes_import.machine_control`), which reproduces
-  OpenLoadFlow's remote control; `hold_local` (the default) keeps the unit
-  PV at its own bus.
+  remote` (the default) attaches an outer-loop machine voltage control on
+  the regulated bus (the machinery of `cgmes_import.machine_control`),
+  which reproduces OpenLoadFlow's remote control. Its deadband is ten
+  times the power-flow tolerance, at most 1e-3 pu, so the regulated
+  voltage is held as exactly as the solve resolves it. Where the control
+  cannot be attached (the regulated bus is voltage-held or already
+  regulated by another unit, the unit has an empty reactive range) the
+  unit holds the target at its own bus and a notice names the reason.
+  `hold_local` does that for every such unit, which moves the operating
+  point (micro_grid_be: 0.05 pu at the 380 kV bus against OpenLoadFlow).
 
 ## [Configuration (`powsybl_import`)](@id powsybl-import-config)
 
@@ -163,7 +169,7 @@ The `powsybl_import` scope (canonical section `powsybl`, alias
 | `powsybl_import.hvdc_mode` | `fixed_injection` | `fixed_injection` or `paired_control`; the latter is not implemented for PowSyBl sources and is rejected with the mode named. |
 | `powsybl_import.slack_ids` | `[]` | Generator ids that override the slack choice of their synchronous component; a YAML list or one string with `;` between the ids. |
 | `powsybl_import.multi_slack` | `true` | One slack per synchronous component; `false` keeps only the component of the first slack and reports the others. |
-| `powsybl_import.remote_regulation` | `hold_local` | `hold_local`, `pq` (PQ with `target_q`) or `remote` (outer-loop machine voltage control on the regulated bus). |
+| `powsybl_import.remote_regulation` | `remote` | `remote` (outer-loop machine voltage control on the regulated bus), `hold_local` (PV at the own bus) or `pq` (PQ with `target_q`). |
 
 The import report (counts per element type, every skipped element with
 its reason, the slack decision per component, notices) is printed by

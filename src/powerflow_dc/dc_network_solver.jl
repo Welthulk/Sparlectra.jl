@@ -78,7 +78,7 @@ end
 _dc_island_local_slack(inet::Net)::Int = something(findfirst(n -> getNodeType(n) == Slack, inet.nodeVec), 0)
 
 """
-    _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose=0, performance_profile=nothing) -> (iterations::Int, erg::Int)
+    _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose=0, performance_profile=nothing, spread_imbalance=false) -> (iterations::Int, erg::Int)
 
 Solve `net`'s DC power flow (`power_flow.solver = :dc`), respecting
 `power_flow.islands`: closed busbar couplers are contracted first
@@ -90,9 +90,12 @@ its own `matpower_like` reference bus, and the result is written back via
 Sets [`dc_pf_status`](@ref) on `net`. `iterations` is always `1` (a direct
 linear solve, not an iterative process); `erg == 0` means every island
 solved (a linear solve either succeeds or throws, there is no partial
-convergence state to report).
+convergence state to report). `spread_imbalance` is forwarded to
+`solve_dc_powerflow` per island: `false` (MATPOWER `dcpf`) for the standalone
+DC power flow, `true` for the DC start of the AC solve
+(`_dc_seed_rectangular_angles!`).
 """
-function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)::Tuple{Int,Int}
+function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing, spread_imbalance::Bool = false)::Tuple{Int,Int}
   refreshBusTypesFromProsumers!(net)
   # closed busbar couplers are contracted exactly like the AC/APSLF paths
   # do it (the merged working net aggregates the members' injections onto
@@ -127,7 +130,7 @@ function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0,
   if !multi_island
     slack_idx = _dc_island_local_slack(wnet)
     slack_idx == 0 && error("DC power flow requires a Slack/REF bus; none found.")
-    theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(wnet, slack_idx; angle_reference_rad, performance_profile)
+    theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(wnet, slack_idx; angle_reference_rad, spread_imbalance, performance_profile)
     _write_dc_solution!(wnet, slack_idx, theta, Pf, Pt, slack_p_mw, terms)
     has_merges && sync_merges_back!()
     _set_dc_pf_status!(net, _dc_pf_status(true, 1))
@@ -155,7 +158,7 @@ function _run_dc_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0,
       inet = _prepare_island_net(wnet, row)
       slack_idx = _dc_island_local_slack(inet)
       slack_idx == 0 && error("AC island $(row.island_id) has no Slack/REF bus after preparation.")
-      theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(inet, slack_idx; angle_reference_rad, performance_profile)
+      theta, Pf, Pt, slack_p_mw, terms = solve_dc_powerflow(inet, slack_idx; angle_reference_rad, spread_imbalance, performance_profile)
       _write_dc_solution!(inet, slack_idx, theta, Pf, Pt, slack_p_mw, terms)
       success = _dc_pf_status(true, 1; extra = (island_id = row.island_id,))
       island_statuses[Int(row.island_id)] = success

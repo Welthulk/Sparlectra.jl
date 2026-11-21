@@ -20,6 +20,8 @@ and may change between versions.
 - [`run_sparlectra_api`](@ref): the service contract below.
 - [`runContingencies!`](@ref) / [`runScenarios!`](@ref): the N-1 and
   scenario batches ([N-1 Contingency Analysis](contingency.md)).
+- [`runInjectionBatch`](@ref): many load scenarios of one network, on CPU
+  threads or the GPU ([Injection batch](@ref contingency_injection_batch)).
 
 ## Service API: run_sparlectra_api
 

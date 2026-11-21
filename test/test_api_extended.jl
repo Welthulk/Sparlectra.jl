@@ -136,10 +136,12 @@ function run_api_extended_tests()
       @test read(technical_path, String) == "integer,decimal,negative,nan,inf,neginf\n1000000,1234.56,-1234.5,NaN,Inf,-Inf\n"
       german_path = joinpath(tmpdir, "writer_german.csv")
       Sparlectra._write_namedtuple_csv(german_path, number_rows, propertynames(only(number_rows)); delimiter = ';', format = "excel_de")
-      @test read(german_path, String) == "integer;decimal;negative;nan;inf;neginf\n1.000.000;1.234,56;-1.234,5;NaN;Inf;-Inf\n"
+      # an integer (index, id, count) is never grouped: excel_de wrote bus
+      # 1000 as 1.000 in bus_voltages_complex.csv
+      @test read(german_path, String) == "integer;decimal;negative;nan;inf;neginf\n1000000;1.234,56;-1.234,5;NaN;Inf;-Inf\n"
       us_path = joinpath(tmpdir, "writer_us.csv")
       Sparlectra._write_namedtuple_csv(us_path, number_rows, propertynames(only(number_rows)); format = "excel_us")
-      @test read(us_path, String) == "integer,decimal,negative,nan,inf,neginf\n\"1,000,000\",\"1,234.56\",\"-1,234.5\",NaN,Inf,-Inf\n"
+      @test read(us_path, String) == "integer,decimal,negative,nan,inf,neginf\n1000000,\"1,234.56\",\"-1,234.5\",NaN,Inf,-Inf\n"
       exponent_rows = [(id = "1E5", small = 1.23e-5, large = 1.23e5)]
       exponent_de_path = joinpath(tmpdir, "writer_exponent_de.csv")
       Sparlectra._write_namedtuple_csv(exponent_de_path, exponent_rows, propertynames(only(exponent_rows)); delimiter = ';', format = "excel_de")
@@ -470,6 +472,45 @@ power_flow:
       @test yaml_sources["power_flow"]["start_current_iteration"]["enabled"]["source"] == "user_yaml"
       @test yaml_sources["power_flow"]["tol"]["source"] == "user_yaml"
       @test yaml_sources["power_flow"]["islands"]["diagnostic_continue_after_failure"]["source"] == "user_yaml"
+      # a flat start switches the start projection off for the run:
+      # effective_config.yaml shows what the run used, the source entry keeps
+      # the configured value (the file showed start_projection: true before)
+      flat_result = run_sparlectra_api(casefile = casefile, config_file = yaml_override_config, output_dir = joinpath(tmpdir, "flat-effective"), config_overrides = Dict{String,Any}("power_flow.flatstart" => true), performance_timing = :off)
+      flat_effective = Sparlectra.load_yaml_dict(joinpath(flat_result.output_dir, "effective_config.yaml"))
+      @test flat_effective["power_flow"]["flatstart"] === true
+      @test flat_effective["power_flow"]["start_mode"]["start_projection"] === false
+      @test flat_effective["power_flow"]["start_mode"]["angle_mode"] == "classic"
+      flat_sources = flat_effective["_config_sources"]["power_flow"]
+      @test flat_sources["flatstart"]["source"] == "explicit_api_request"
+      @test flat_sources["start_mode"]["start_projection"]["source"] == "run_start_rule"
+      @test flat_sources["start_mode"]["start_projection"]["configured_value"] === true
+      @test haskey(flat_sources["start_mode"]["try_dc_start"], "note")
+      # without the flat start nothing is rewritten
+      @test !haskey(yaml_sources["power_flow"]["start_mode"]["start_projection"], "configured_value")
+      # a run that fails in the solve after the import shows the used start
+      # values too (the failure returned with the file written before the
+      # import, start_projection: true)
+      failed_flat = SparlectraApp._run_sparlectra_api(casefile = casefile, config_file = yaml_override_config, output_dir = joinpath(tmpdir, "flat-failed"), config_overrides = Dict{String,Any}("power_flow.flatstart" => true), run_id = "flat-failed",
+                                                      phase_callback = phase -> phase == "solving_powerflow" && error("forced failure in the solve"))
+      @test !failed_flat.success && failed_flat.reason == "execution_error" && occursin("forced failure in the solve", failed_flat.message)
+      failed_effective = Sparlectra.load_yaml_dict(joinpath(failed_flat.output_dir, "effective_config.yaml"))
+      @test failed_effective["power_flow"]["start_mode"]["start_projection"] === false
+      @test failed_effective["_config_sources"]["power_flow"]["start_mode"]["start_projection"]["configured_value"] === true
+      # a rewrite that fails as well (effective_config.yaml replaced by a
+      # directory before the solve fails, so open(..., "w") raises) is
+      # logged and the run keeps its own error
+      unwritable_dir = joinpath(tmpdir, "flat-failed-unwritable")
+      break_and_fail = phase -> begin
+        if phase == "solving_powerflow"
+          path = joinpath(unwritable_dir, "effective_config.yaml")
+          rm(path)
+          mkdir(path)
+          error("forced failure in the solve")
+        end
+      end
+      unwritable = @test_logs (:warn, r"effective_config.yaml could not be rewritten") match_mode = :any SparlectraApp._run_sparlectra_api(casefile = casefile, config_file = yaml_override_config, output_dir = unwritable_dir, config_overrides = Dict{String,Any}("power_flow.flatstart" => true), run_id = "flat-failed-unwritable", phase_callback = break_and_fail)
+      @test !unwritable.success && unwritable.reason == "execution_error" && occursin("forced failure in the solve", unwritable.message)
+      @test isdir(joinpath(unwritable_dir, "effective_config.yaml"))
 
       effective_cfg = Sparlectra.load_sparlectra_config(effective_config_path; reload = true)
       @test effective_cfg.powerflow.tol == 1.0e-9
@@ -889,10 +930,11 @@ power_flow:
         @test forced_overrides["power_flow.rescue"] === false
         # everything the self-check does not force stays the caller's choice
         @test forced_overrides["power_flow.tol"] == 1.0e-4
-        # the flat start is a GUI key and rides the override level; the one key
-        # the override allowlist does not admit travels by file
+        # the start keys are case scope and ride the override level, so a
+        # case configuration that switches the start projection on cannot
+        # outrank the self-check
         @test forced_overrides["power_flow.flatstart"] === false
-        @test !haskey(forced_overrides, "power_flow.start_mode.start_projection")
+        @test forced_overrides["power_flow.start_mode.start_projection"] === false
 
         bad_config_dir = joinpath(tmpdir, "self_check_missing_config")
         @test_throws ArgumentError run_fixed_reference_self_check(casefile = casefile, config_file = joinpath(tmpdir, "does_not_exist.yaml"), output_dir = bad_config_dir)
@@ -1407,12 +1449,14 @@ calc9_file = joinpath(tmpdir, "matpower_export_9", string("sp_case9_calc_", Date
         @test two_pass_run["metadata"]["q_limit_classic_outer_loop_stop"] == "converged"
         @test two_pass_run["metadata"]["q_limit_classic_outer_loop_passes"] == 2
         @test two_pass_run["metadata"]["final_outcome"]["converged"] === true
-        # both runs leave bus 6 (after one pass bus 3 too) failing the Q-limit
-        # stability check; the run metadata names them and the warning of the
-        # check lands in run.log
-        for (run, n, buses) in ((limit_run, 2, "3;6"), (two_pass_run, 1, "6"))
+        # the run stopped after one pass leaves bus 3 failing the Q-limit
+        # stability check: the run metadata names it and the warning of the
+        # check lands in run.log. Bus 6 ends PV inside the hysteresis over its
+        # Qmax in both runs, which the final check accepts and the stability
+        # check does not count; the converged run has no violation
+        for (run, n, buses) in ((limit_run, 1, "3"), (two_pass_run, 0, ""))
           @test (run["metadata"]["qlimit_stability_violations"], run["metadata"]["qlimit_stability_buses"]) == (n, buses)
-          @test occursin("Q-limit stability check", read(joinpath(run["output_dir"], "run.log"), String))
+          @test occursin("Q-limit stability check", read(joinpath(run["output_dir"], "run.log"), String)) == (n > 0)
         end
         @test Sparlectra.QLimitConfig().classic_max_passes == 30
         @test_throws ArgumentError Sparlectra.QLimitConfig(Dict{String,Any}("classic_max_passes" => 0))

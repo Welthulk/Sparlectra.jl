@@ -194,7 +194,8 @@ end
 # 1.0 pu at the star points the CGMES MiniGrid did not converge after the
 # round trip. At a PV bus of an unsolved net the writer takes only a nonzero
 # angle (the magnitude stays the setpoint); slack entries are not read. Empty
-# for a net without auxiliary buses at the slack angle 0, or without a slack.
+# for a net without a slack, or without auxiliary buses at the slack angle 0
+# whose PQ buses start at 1.0 pu (the mean setpoint of their island).
 function _matpower_flat_start(net::Net)::Dict{Int,Tuple{Float64,Float64}}
   out = Dict{Int,Tuple{Float64,Float64}}()
   slack_idx = findfirst(n -> getNodeType(n) == Slack, net.nodeVec)

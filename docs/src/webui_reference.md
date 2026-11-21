@@ -7,8 +7,12 @@ configuration.
 The Web UI is presentation, form parsing and route handling on top of the
 [PowerFlow service](powerflow_service.md); every calculation runs through
 `start_powerflow_run` and `run_sparlectra_api`. It binds to loopback
-(`127.0.0.1`, `localhost`, `::1`) and has no authentication; a wider
-binding would expose the run directory and the configuration editor.
+(`127.0.0.1`, `localhost`, `::1`) and has no authentication: every user
+and process on the machine can reach the port. The direct remote mode
+binds a network address and asks for an access token instead, the SSH
+remote mode asks for it with `webui.remote_ssh_require_token`
+([Remote use](@ref webui_remote)): a wider binding exposes the run
+directory and the configuration editor.
 
 ## Installation and start
 
@@ -81,7 +85,11 @@ A REPL session runs without the sysimage ([Sysimage](sysimage.md)). `start_sparl
 Chrome, Chromium or Brave) with the size and position of
 `webui.window_*` ([Configuration](configuration.md)); without one of
 them the URL `http://127.0.0.1:8080/powerflow` is logged. If the port is occupied, stop
-the old Julia process or pass another `port`.
+the old Julia process or pass another `port`. `remote = true` starts the
+remote mode (`start_webui.jl --remote`): no window, the server runs until it
+is stopped, and `webui.remote_*` decide how it is reached
+([Remote use](@ref webui_remote)). `webui_connection_info(server)` returns
+the connection data the **Info** menu shows under **Server**.
 
 ### Directories and files
 
@@ -101,7 +109,9 @@ user-writable `config/configuration.yaml` (`output_root = "..."` and
 `config_file = "..."` override the defaults; an explicit file is never
 overwritten). Next to it: `configuration.template.yaml` (a key still at
 an old template default follows a new default at start, reported, the
-previous file kept as `configuration.yaml.template-follow.bak`),
+previous file kept as `configuration.yaml.template-follow.bak`; a key
+this version no longer reads, such as
+`power_flow.qlimits.guard.violation_threshold_pu`, is removed the same way),
 `configuration.yaml.user-keys.txt` (keys the Web UI itself saved, never
 followed) and `configuration.yaml.settings-save.bak` (backup of a
 settings save). The browser cannot change the output root. The **Info**
@@ -457,8 +467,10 @@ for an import analysis.
 
 #### [Flat start](@id webui-flat-start)
 
-`power_flow.flatstart` starts the Newton-Raphson solve at 1.0 pu and the
-slack angle on every bus and ignores the imported start voltages (MATPOWER
+`power_flow.flatstart` starts the Newton-Raphson solve at the slack angle
+on every bus, PV and slack buses at their setpoints and PQ buses at the mean
+setpoint of their island (1.0 pu in an island without one), and ignores the
+imported start voltages (MATPOWER
 `VM`/`VA`, CGMES `SvVoltage`, SCF `start_state`). Off, the imported values
 seed the solve; a delivery is built around its own operating point, so
 that is the default.
@@ -993,8 +1005,14 @@ nothing. The app window runs in its own browser profile (`browser` next to
 of a new window. Under Linux with Wayland it runs through X11 (XWayland):
 Wayland windows can neither read nor set their screen position. The operation log records the save as `webui_window_geometry`.
 
+In remote mode **Stop Web UI** asks before it stops the server, because
+other users may work on it, and saves no window geometry: the remote
+browser is not the app window of the host.
+
 ## Limits
 
-Loopback only, no authentication, no public-server mode, no database.
+Loopback only, except the direct remote mode with one shared access
+token and no encryption (no TLS). No user accounts, no public-server mode,
+no database.
 No push channel: a running job reports its phase through the page
 refresh. No topology view, no plotting apart from the QSTS chart.

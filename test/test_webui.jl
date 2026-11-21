@@ -420,6 +420,21 @@ function run_webui_fast_tests()
                 SparlectraApp._webui_record_user_keys!(cfg, ("power_flow.linear_solver",))
                 @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))
                 @test Sparlectra.load_sparlectra_config(cfg; reload = true).powerflow.linear_solver === :umfpack
+                # a key this version no longer reads (an old copy still carries
+                # the absolute Q-limit threshold) is removed at the next start,
+                # also when the Web UI saved it, with the backup and one report
+                # entry; the file then loads without the unknown-key warning
+                bak = string(cfg, ".template-follow.bak")
+                rm(bak; force = true)
+                write(cfg, replace(read(cfg, String), r"^      max_switches:"m => "      violation_threshold_pu: 0.0001\n      max_switches:"; count = 1))
+                @test Sparlectra._dotted_config_value(Sparlectra.load_yaml_dict(cfg), "power_flow.qlimits.guard.violation_threshold_pu") == 0.0001
+                SparlectraApp._webui_record_user_keys!(cfg, ("power_flow.qlimits.guard.violation_threshold_pu",))
+                removed = SparlectraApp._webui_follow_template_defaults!(cfg)
+                @test [(c.key, c.old, c.new) for c in removed] == [("power_flow.qlimits.guard.violation_threshold_pu", 0.0001, nothing)]
+                @test Sparlectra._dotted_config_value(Sparlectra.load_yaml_dict(cfg), "power_flow.qlimits.guard.violation_threshold_pu") === nothing
+                @test occursin("violation_threshold_pu: 0.0001", read(bak, String))
+                @test_logs min_level = Base.CoreLogging.Warn Sparlectra.load_sparlectra_config(cfg; reload = true)
+                @test isempty(SparlectraApp._webui_follow_template_defaults!(cfg))
                 # a settings save records its keys, so a saved value survives the next start
                 general = SparlectraApp._webui_write_general_settings!(cfg, Dict{String,Any}("power_flow.max_iter" => 77))
                 @test general.ok
@@ -1085,6 +1100,44 @@ function run_webui_fast_tests()
             @test (cfg.webui.window_width, cfg.webui.window_height, cfg.webui.window_x, cfg.webui.window_y) == (1500, 950, nothing, nothing)
             @test_throws ArgumentError Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
                 overrides=Dict{String,Any}("webui" => Dict{String,Any}("window_width" => 0)))
+            # remote mode: the SSH tunnel is the default; a mode, port, token or
+            # bind address the server cannot use fails at load time
+            @test (cfg.webui.remote_mode, cfg.webui.remote_bind_address, cfg.webui.remote_port, cfg.webui.remote_access_token, cfg.webui.remote_ssh_require_token) == (:ssh, "0.0.0.0", 8080, "", false)
+            for (key, value) in (("remote_mode", "tls"), ("remote_port", 0), ("remote_port", 70000), ("remote_access_token", "too-short"), ("remote_access_token", "with space 0123456789"), ("remote_access_token", 1234567890123456), ("remote_bind_address", ""))
+                @test_throws ArgumentError Sparlectra.load_sparlectra_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH; reload=true,
+                    overrides=Dict{String,Any}("webui" => Dict{String,Any}(key => value)))
+            end
+            # an unquoted token of digits is a number for the YAML reader: it is
+            # refused with the key named (never read with its leading zero
+            # dropped), digits beyond Int64 fail at the line with the key, and
+            # the quoted token reads back unchanged
+            mktempdir() do dir
+                token_file(value) = (p = joinpath(dir, "token.yaml"); write(p, "config_version: 1\nwebui:\n  remote_access_token: $(value)\n"); p)
+                refused = try
+                    Sparlectra.load_sparlectra_config(token_file("0123456789012345"); reload=true)
+                    nothing
+                catch err
+                    err
+                end
+                @test refused isa ArgumentError && occursin("webui.remote_access_token", refused.msg) && occursin("quotes", refused.msg)
+                overflow = try
+                    Sparlectra.load_sparlectra_config(token_file("01234567890123456789012"); reload=true)
+                    nothing
+                catch err
+                    err
+                end
+                @test overflow isa ErrorException && occursin("remote_access_token", overflow.msg) && occursin("token.yaml:3", overflow.msg)
+                @test Sparlectra.load_sparlectra_config(token_file("\"0123456789012345\""); reload=true).webui.remote_access_token == "0123456789012345"
+                # an unquoted IPv6 bind address ::1 or :: is a Symbol for the
+                # YAML reader (":1", ":"): refused with the key and the hint to
+                # quote it, the quoted address reads back unchanged
+                bind_file(value) = (p = joinpath(dir, "bind.yaml"); write(p, "config_version: 1\nwebui:\n  remote_bind_address: $(value)\n"); p)
+                for unquoted in ("::1", "::")
+                    bind_refused = @test_throws ArgumentError Sparlectra.load_sparlectra_config(bind_file(unquoted); reload=true)
+                    @test occursin("webui.remote_bind_address", bind_refused.value.msg) && occursin("quotes", bind_refused.value.msg)
+                end
+                @test Sparlectra.load_sparlectra_config(bind_file("\"::1\""); reload=true).webui.remote_bind_address == "::1"
+            end
 
             mktempdir() do dir
                 file = joinpath(dir, "configuration.yaml")
@@ -1217,6 +1270,15 @@ function run_webui_fast_tests()
                 r = decide(String[]; ask = false)
                 @test r.relaunches == [img]
                 @test isfile(img) && isfile(meta)
+                # the remote switch reaches the process relaunched on the image
+                passed = Ref(String[])
+                open(joinpath(tmp, "decision.txt"), "w") do out
+                    redirect_stdout(out) do
+                        slk(:handle_sysimage, ["--remote"], "start_webui.jl", proj; image = img, ask = (_...) -> false, relaunch = (_, _, _, a) -> (passed[] = a), current_image = "")
+                    end
+                end
+                @test passed[] == ["--remote"]
+                @test slk(:remote_requested, passed[]) && !slk(:remote_requested, String[])
                 # an outdated image while the process runs on an image given from
                 # outside: a warning, nothing removed, nothing built
                 write(meta, string("julia_version = \"", VERSION, "\"\nmanifest_sha256 = \"deadbeef\"\n"))

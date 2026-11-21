@@ -21,6 +21,17 @@
 #          (build_net_from_powsybl); the converter captures that network
 #          as an SCFCase on explicit request only.
 
+# The deadband of the remote voltage controls the import attaches: ten
+# times the per-unit power-flow tolerance, at most the controller default
+# of 1e-3 pu. The inner solve leaves the regulated voltage only as exact as
+# its mismatch bound; a smaller band asks the secant for Q steps whose
+# mismatch is below the tolerance, the solve then does not move, the
+# measured slope is zero and the controller falls back to its bootstrap
+# step (micro_grid_be at tol 1e-5 with the former band of 1e-8 pu: 20 outer
+# passes without convergence). OpenLoadFlow itself holds a remote bus to
+# its per-equation bound of 1e-4.
+_powsybl_remote_deadband(tol_pu::Float64)::Float64 = min(10.0 * tol_pu, 1.0e-3)
+
 """
     PowsyblAdapterOptions
 
@@ -28,9 +39,13 @@ The adapter-scope options of the PowSyBl import, mirroring the
 `powsybl_import` configuration scope: the system base, the HVDC model
 (`:fixed_injection` or `:paired_control`), generator ids that override
 the slack choice, whether every synchronous component gets its own
-slack, how a remote voltage regulation is mapped (`:hold_local` keeps
-the unit PV at its own bus, `:pq` makes it PQ with `target_q`, `:remote`
-attaches an outer-loop machine voltage control on the regulated bus).
+slack, how a remote voltage regulation is mapped (`:remote`, the default,
+attaches an outer-loop machine voltage control on the regulated bus as
+OpenLoadFlow regulates it; `:hold_local` keeps the unit PV at its own bus
+with the target in pu of the regulated bus, `:pq` makes it PQ with
+`target_q`). `remote_deadband_vm_pu` is the deadband of those controls,
+ten times the power-flow tolerance (`power_flow.tol`, or `tol_MW` over the
+base), at most 1e-3 pu; the default follows the default tolerance.
 `f_nom` is the system frequency in Hz the conversion writes into the case
 (`model.nominal_frequency_hz`; IIDM states none).
 """
@@ -39,7 +54,8 @@ Base.@kwdef struct PowsyblAdapterOptions
   hvdc_mode::Symbol = :fixed_injection
   slack_ids::Vector{String} = String[]
   multi_slack::Bool = true
-  remote_regulation::Symbol = :hold_local
+  remote_regulation::Symbol = :remote
+  remote_deadband_vm_pu::Float64 = _powsybl_remote_deadband(PowerFlowConfig().tol)
   f_nom::Float64 = model_config().nominal_frequency_hz
 end
 
@@ -55,11 +71,14 @@ struct PowsyblAdapter <: FormatAdapter end
     powsybl_adapter_options(cfg::SparlectraConfig) -> PowsyblAdapterOptions
 
 The adapter options an effective run configuration implies (the
-`powsybl_import` scope).
+`powsybl_import` scope, and the remote-control deadband from the
+power-flow tolerance).
 """
 function powsybl_adapter_options(cfg::SparlectraConfig)::PowsyblAdapterOptions
   pw = cfg.powsybl
-  return PowsyblAdapterOptions(base_mva = pw.base_mva, hvdc_mode = pw.hvdc_mode, slack_ids = copy(pw.slack_ids), multi_slack = pw.multi_slack, remote_regulation = pw.remote_regulation, f_nom = cfg.model.nominal_frequency_hz)
+  # tol_MW wins over tol, converted with the base the import builds on
+  tol_pu = cfg.powerflow.tol_MW === nothing ? cfg.powerflow.tol : cfg.powerflow.tol_MW / pw.base_mva
+  return PowsyblAdapterOptions(base_mva = pw.base_mva, hvdc_mode = pw.hvdc_mode, slack_ids = copy(pw.slack_ids), multi_slack = pw.multi_slack, remote_regulation = pw.remote_regulation, remote_deadband_vm_pu = _powsybl_remote_deadband(tol_pu), f_nom = cfg.model.nominal_frequency_hz)
 end
 
 const _POWSYBL_FILE_EXTENSIONS = (".xiidm", ".xml")

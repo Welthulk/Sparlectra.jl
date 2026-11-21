@@ -166,8 +166,12 @@ function run_solver_interface_tests()
 
       Vflat, slack_idx = Sparlectra.initialVrect(net; flatstart = true)
       @test slack_idx == 3
-      # every non-slack bus starts at the slack angle (2 degrees)
-      @test abs(Vflat[1]) == 1.0
+      # every non-slack bus starts at the slack angle (2 degrees); the PQ bus
+      # at the mean of the setpoints the solver holds the regulated buses at
+      # (STATION1 1.027273, VERBUND 1.018182), not at the node voltages
+      # written above
+      pq_start = (1.027273 + 1.018182) / 2
+      @test isapprox(abs(Vflat[1]), pq_start; atol = 1e-12)
       @test isapprox(angle(Vflat[1]), deg2rad(2.0); atol = 1e-12)
       @test abs(Vflat[2]) == 1.04
       @test isapprox(angle(Vflat[2]), deg2rad(2.0); atol = 1e-12)
@@ -176,7 +180,7 @@ function run_solver_interface_tests()
 
       model = Sparlectra.buildPfModel(net; flatstart = true, include_limits = false, start_projection = false)
       @test model.busIdx_net == [1, 2, 3]
-      @test abs(model.V0[1]) == 1.0
+      @test isapprox(abs(model.V0[1]), pq_start; atol = 1e-12)
       @test angle(model.V0[1]) == 0.0
       @test abs(model.V0[2]) == 1.04
       @test angle(model.V0[2]) == 0.0
@@ -209,7 +213,8 @@ function run_solver_interface_tests()
       @test iso_net.isoNodes == [2]
       @test iso_model.busIdx_net == [1, 3, 4]
       @test iso_model.busType == [:PQ, :PV, :Slack]
-      @test abs.(iso_model.V0) == [1.0, 1.04, 1.06]
+      # the PQ bus B1 at the mean setpoint (1.06 + 1.04) / 2 of its island
+      @test isapprox(abs.(iso_model.V0), [1.05, 1.04, 1.06]; atol = 1e-12)
       @test all(isapprox.(rad2deg.(angle.(iso_model.V0)), [0.0, 0.0, 5.0]; atol = 1e-12))
       @test iso_model.Vset == [1.0, 1.04, 1.06]
     end)() end
@@ -426,14 +431,16 @@ function run_solver_interface_tests()
       @test isapprox(row.q_report_MVar, -1.09092; atol = 1e-5)
     end)() end
 
-    @testset "Q-limit guard: a narrow band locks only at a reached limit" begin (function ()
+    @testset "Q-limit guard: a narrow band clamps only at a reached limit" begin (function ()
       # the machine at STATION1 needs q_free to hold its setpoint; a band of
       # 1 MVAr (0.01 pu, below the 0.02 pu guard threshold) around q_free
-      # holds it, a band of 1 MVAr below q_free does not
-      solve(band, mode) = begin
-        n = createTest3BusNet()
+      # holds it, a band of 1 MVAr below q_free does not. cooldown 0 (the
+      # fixture default) allows no PQ->PV release, so the cases that judge a
+      # release run with cooldown 1
+      solve(band, mode; cooldown = 0, guard = true, kw...) = begin
+        n = createTest3BusNet(cooldown = cooldown)
         band === nothing || setQLimits!(net = n, qmin_MVar = band[1], qmax_MVar = band[2], busName = "STATION1")
-        _, erg = runpf!(n, 20, 1e-6, 0; method = :rectangular, qlimit_enforcement_mode = :active_set, qlimit_guard = true, qlimit_guard_narrow_range_mode = mode)
+        _, erg = runpf!(n, 20, 1e-6, 0; method = :rectangular, qlimit_enforcement_mode = :active_set, qlimit_guard = guard, qlimit_guard_narrow_range_mode = mode, kw...)
         (n, erg)
       end
       free, erg_free = solve(nothing, :lock_pq)
@@ -453,22 +460,41 @@ function run_solver_interface_tests()
       @test getNodeType(middle.nodeVec[2]) == Sparlectra.PQ
       @test [(e.iter, e.bus) for e in middle.qLimitLog] == [(0, 2)]
       # above the band: lock_pq clamps the machine at Qmax when the active
-      # set reaches it (an iteration after 0) and keeps it there
-      above, erg_ab = solve((q_free - 1.5, q_free - 0.5), :lock_pq)
+      # set reaches it (an iteration after 0) and keeps it there, its
+      # voltage below the setpoint, so the converged iterate releases nothing
+      above, erg_ab = solve((q_free - 1.5, q_free - 0.5), :lock_pq; cooldown = 1)
       @test erg_ab == 0
       @test getNodeType(above.nodeVec[2]) == Sparlectra.PQ
       @test isapprox(above.nodeVec[2]._qƩGen, q_free - 0.5; atol = 1e-9)
-      @test all(e -> e.iter > 0 && e.side === :max, above.qLimitLog)
+      @test all(e -> e.iter > 0 && e.side === :max && e.kind === :hit, above.qLimitLog)
+      @test above.nodeVec[2]._vm_pu < vset - 1e-4
+      # wrong side: q_free lies in the band (q_free - 0.1 .. q_free + 0.9),
+      # but the first iterate undershoots Qmin and the bus is clamped there
+      # at iteration 1. Clamped at Qmin its voltage stays below the
+      # setpoint (1.02701 pu with cooldown 0, where no release runs), so the
+      # machine needs more than Qmin and is released. With the guard the
+      # release waits for a converged iterate (iteration 5); without it the
+      # voltage rule does not wait and releases at iteration 4. Both end PV
+      # at q_free.
+      for (guard, release_iter) in ((true, 5), (false, 4))
+        wrong, erg_w = solve((q_free - 0.1, q_free + 0.9), :lock_pq; cooldown = 1, guard = guard, qlimit_start_iter = 1)
+        @test (guard, erg_w, getNodeType(wrong.nodeVec[2])) == (guard, 0, Sparlectra.PV)
+        @test (guard, [(e.iter, e.side, e.kind) for e in wrong.qLimitLog]) == (guard, [(1, :min, :hit), (release_iter, :min, :release)])
+        @test isapprox(wrong.nodeVec[2]._vm_pu, vset; atol = 1e-6)
+        @test isapprox(wrong.nodeVec[2]._qƩGen, q_free; atol = 1e-4)
+      end
 
       # Q-limit stability check on sp_case60 with a 4.0 .. 5.5 MVAr band
       # (0.015 pu, below the guard threshold) at the regulated machines of
       # Birkkamp_110 and Westtal_110 (generators 159 and 160 of the SCF
       # file). Birkkamp_110 needs 7.5 MVAr and ends at Qmax with U 1.0026
       # below U_set 1.01, (6) and (7) hold; Westtal_110 holds U_set at
-      # 5.33 MVAr inside its band. With the guard the lock at the first
-      # reached limit is named, without it the active set clamps the bus on
-      # its own: 0 violations either way. The net has a closed coupler, so Q
-      # comes from the solved voltages, and the result report gives the same
+      # 5.33 MVAr inside its band. With and without the guard the active
+      # set clamps the bus with no lock (the guard's narrow band is
+      # released on a converged iterate like any other clamp, and the
+      # voltage of this one is on the right side): 0 violations either
+      # way. The net has a closed coupler, so Q comes from the solved
+      # voltages, and the result report gives the same
       # 5.500 MVAr under every mode (before 0.60.0 it gave 7.389 MVAr under
       # classic_simultaneous: the merged solve left the bus PV on the net).
       c60 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case60.scf.json")
@@ -480,7 +506,7 @@ function run_solver_interface_tests()
         res = @test_logs min_level = Logging.Warn redirect_stdout(() -> run_sparlectra(net = n, config = cfg), devnull)
         (n, res)
       end
-      for (mode, guard, lock) in (("active_set", true, :guard_lock_pq), ("active_set", false, :none), ("classic_simultaneous", true, :none))
+      for (mode, guard, lock) in (("active_set", true, :none), ("active_set", false, :none), ("classic_simultaneous", true, :none))
         n, res = narrow_run(mode, guard)
         @test (mode, guard, res.final_converged, res.diagnostics.qlimit_stability_violations) == (mode, guard, true, 0)
         rows = Dict(r.bus_name => r for r in res.diagnostics.qlimit_stability_report)
@@ -568,14 +594,16 @@ function run_solver_interface_tests()
       # the default switching start: the active set switches buses 1, 2, 3
       # and 6 in iteration 3 at 7.5e-3, far above 10 tol, so max_iter 3 is
       # a numerical divergence; with max_iter 5 it releases 2, 3 and 6 in
-      # iteration 4 and clamps 3 and 6 again in iteration 5, the releases
-      # are in the Q-limit log
+      # iteration 4 and clamps 3 again in iteration 5 (3.4 MVAr over its
+      # 40 MVAr Qmax), the releases are in the Q-limit log. Bus 6 stays PV
+      # in iteration 5: 0.27 MVAr over Qmax is below both switching margins,
+      # 1 percent of its 30 MVAr band (0.3 MVAr) and the 1 MVAr hysteresis
       @test stop_run(zeng(), study_cfg("active_set", 3)).reason === :numerical_divergence
       r5d = stop_run(zeng(), study_cfg("active_set", 5))
       @test r5d.reason === :numerical_divergence
       @test [(e.iter, e.bus, e.kind) for e in r5d.net.qLimitLog] ==
-            [(3, 1, :hit), (3, 2, :hit), (3, 3, :hit), (3, 6, :hit), (4, 2, :release), (4, 3, :release), (4, 6, :release), (5, 3, :hit), (5, 6, :hit)]
-      @test r5d.diagnostics.pv_pq_switching_events == 6
+            [(3, 1, :hit), (3, 2, :hit), (3, 3, :hit), (3, 6, :hit), (4, 2, :release), (4, 3, :release), (4, 6, :release), (5, 3, :hit)]
+      @test r5d.diagnostics.pv_pq_switching_events == 5
       # the classic modes switch between passes; the base solve at max_iter 3
       # changes no type and falls (3.06, 0.358, 7.5e-3)
       for mode in ("classic_simultaneous", "classic_one_at_a_time")
@@ -877,7 +905,7 @@ end)() end
         qlimit_guard = !defaults.qlimit_guard, qlimit_guard_min_q_range_pu = 0.03, qlimit_guard_zero_range_mode = :prefer_pq, qlimit_guard_narrow_range_mode = :delayed_switch,
         qlimit_guard_log = false, qlimit_guard_max_switches = defaults.qlimit_guard_max_switches + 1, qlimit_guard_accept_bounded_violations = true,
         qlimit_guard_max_remaining_violations = 2, qlimit_guard_freeze_after_repeated_switching = false, qlimit_guard_violation_mode = :ignore,
-        qlimit_guard_violation_threshold_pu = 2.0e-4, qlimits_enabled = false, qlimit_enforcement_mode = :classic_simultaneous,
+        qlimit_guard_violation_threshold_pct = 7.5, qlimits_enabled = false, qlimit_enforcement_mode = :classic_simultaneous,
         wrong_branch_detection = :fail, wrong_branch_rescue = true, wrong_branch_min_vm_pu = 0.65, wrong_branch_max_vm_pu = 1.35, wrong_branch_max_angle_spread_deg = 170.0,
         wrong_branch_max_branch_angle_deg = 80.0, wrong_branch_min_low_vm_count = 2, wrong_branch_min_vn_kV = 90.0, wrong_branch_low_vm_share = 0.06,
         wrong_branch_max_bus_angle_deg = 110.0, wrong_branch_max_plain_steps = 15, wrong_branch_collapse_vm_pu = 0.45, wrong_branch_max_reference_branch_angle_deg = 85.0,

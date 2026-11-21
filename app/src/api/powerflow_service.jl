@@ -431,15 +431,14 @@ function start_powerflow_run(request::AbstractDict; case_directory::Union{Nothin
   output_dir = joinpath(root, run_id)
   if diagnose_mode
     # Diagnose mode forces the fixed-reference self-check settings (see
-    # `_self_check_forced_overrides`) on top of the requested config_file. Two
-    # of them (`power_flow.flatstart`, `power_flow.start_mode.start_projection`)
-    # are not GUI-editable and travel in this merged file, which is written into
-    # the run's own output directory both as the config Sparlectra actually runs
-    # with and as a visible, self-documenting run artifact. Everything else goes
-    # through `_self_check_effective_overrides` below, because a configuration
-    # FILE does not reach the solver at all for CASE-scope keys once a case
-    # configuration file exists next to the case, and because the Web UI form
-    # submits `power_flow.max_iter` and friends as overrides with every run.
+    # `_self_check_forced_overrides`) on top of the requested config_file. The
+    # merged file is written into the run's own output directory as the config
+    # the run starts from and as a visible, self-documenting run artifact. The
+    # forced keys also go through `_self_check_effective_overrides` below,
+    # because a configuration FILE does not reach the solver at all for
+    # CASE-scope keys once a case configuration file exists next to the case,
+    # and because the Web UI form submits `power_flow.max_iter` and friends as
+    # overrides with every run.
     mkpath(output_dir)
     config_file = try
       self_check_path = joinpath(output_dir, "diagnose_self_check_config.yaml")

@@ -52,7 +52,10 @@ end
 """
     getBusData(nodes, Sbase_MVA, flatStart; net = nothing) -> Vector{BusData}
 
-Build the per-bus solver records from the node vector.
+Build the per-bus solver records from the node vector. With `flatStart`
+every angle but the slack's is 0 and a PQ bus starts at the mean voltage
+setpoint of the slack and PV buses of its AC island (the flat start of
+`initialVrect`), 1.0 pu in an island without such a bus or without `net`.
 """
 function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Union{Nothing,Net} = nothing)
   if !isnothing(net)
@@ -60,6 +63,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Uni
   end
   angle_limit = false
   busVec = Vector{BusData}()
+  pq_vm = flatStart && !isnothing(net) ? _pq_start_magnitudes(net) : Float64[]
 
   slackIdx = 0
 
@@ -99,7 +103,7 @@ function getBusData(nodes::Vector{Node}, Sbase_MVA::Float64, flatStart; net::Uni
     va_rad = 0.0
     if flatStart
       if type == PQ
-        vm_pu = 1.0
+        vm_pu = isempty(pq_vm) ? 1.0 : pq_vm[i]
         va_rad = 0.0
       elseif type == PV
         vm_pu = n._vm_pu === nothing ? 1.0 : n._vm_pu

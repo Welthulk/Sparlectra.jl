@@ -140,7 +140,7 @@ function _classic_rectangular_autodamp_search(Ybus, V::Vector{ComplexF64}, S::Ve
     # Accept first strict improvement over current mismatch for predictable behavior.
     if isfinite(trial_mismatch) && trial_mismatch < current_mismatch
       # Return an owned vector; caller should not alias the internal scratch buffer.
-      diagnostics isa AbstractVector && push!(diagnostics, (alpha = alpha, trial_mismatch = trial_mismatch, accepted_improvement = true))
+      diagnostics isa AbstractVector && push!(diagnostics, (alpha = alpha, trial_mismatch = trial_mismatch, accepted_improvement = true, autodamp_min = autodamp_min))
       return alpha, copy(Vtrial), trial_mismatch
     end
     # Track best finite non-improving candidate as a safe fallback.
@@ -153,7 +153,7 @@ function _classic_rectangular_autodamp_search(Ybus, V::Vector{ComplexF64}, S::Ve
   end
 
   # Conservative fallback: best finite trial seen during backtracking.
-  diagnostics isa AbstractVector && push!(diagnostics, (alpha = best_alpha, trial_mismatch = best_mismatch, accepted_improvement = false))
+  diagnostics isa AbstractVector && push!(diagnostics, (alpha = best_alpha, trial_mismatch = best_mismatch, accepted_improvement = false, autodamp_min = autodamp_min))
   return best_alpha, best_V, best_mismatch
 end
 
@@ -253,7 +253,7 @@ function choose_rectangular_autodamp(
     push!(tested_alphas, alpha)
 
     if isfinite(f_trial) && f_trial <= f0 + armijo_c1 * alpha * directional_derivative
-      diagnostics isa AbstractVector && push!(diagnostics, (alpha = alpha, trial_mismatch = trial_mismatch, accepted_improvement = isfinite(trial_mismatch) && trial_mismatch < current_mismatch))
+      diagnostics isa AbstractVector && push!(diagnostics, (alpha = alpha, trial_mismatch = trial_mismatch, accepted_improvement = isfinite(trial_mismatch) && trial_mismatch < current_mismatch, autodamp_min = autodamp_min))
       merit_log isa AbstractVector && push!(merit_log, (f_before = f0, directional_derivative = directional_derivative, f_after = f_trial, tested_alphas = copy(tested_alphas), accepted_alpha = alpha, accept_reason = :armijo))
       return alpha, copy(Vtrial), trial_mismatch
     end
@@ -275,12 +275,12 @@ function choose_rectangular_autodamp(
 
   # No trial satisfied the Armijo condition.
   if fallback_max_mismatch && first_improving_alpha !== nothing
-    diagnostics isa AbstractVector && push!(diagnostics, (alpha = first_improving_alpha, trial_mismatch = first_improving_mismatch, accepted_improvement = true))
+    diagnostics isa AbstractVector && push!(diagnostics, (alpha = first_improving_alpha, trial_mismatch = first_improving_mismatch, accepted_improvement = true, autodamp_min = autodamp_min))
     merit_log isa AbstractVector && push!(merit_log, (f_before = f0, directional_derivative = directional_derivative, f_after = first_improving_f, tested_alphas = copy(tested_alphas), accepted_alpha = first_improving_alpha, accept_reason = :fallback_max_mismatch))
     return first_improving_alpha, first_improving_V, first_improving_mismatch
   end
 
-  diagnostics isa AbstractVector && push!(diagnostics, (alpha = best_alpha, trial_mismatch = best_mismatch, accepted_improvement = false))
+  diagnostics isa AbstractVector && push!(diagnostics, (alpha = best_alpha, trial_mismatch = best_mismatch, accepted_improvement = false, autodamp_min = autodamp_min))
   merit_log isa AbstractVector && push!(merit_log, (f_before = f0, directional_derivative = directional_derivative, f_after = best_f, tested_alphas = copy(tested_alphas), accepted_alpha = best_alpha, accept_reason = :fallback_conservative))
   return best_alpha, best_V, best_mismatch
 end
@@ -541,8 +541,9 @@ function complex_newton_step_rectangular(
   @assert length(dPinj_dVm) == n
   @assert length(dQinj_dVm) == n
 
-  # Non-slack bus order defines both state-vector and Jacobian block layout.
-  non_slack = non_slack_indices(n, slack_idx)
+  # Non-slack bus order defines both state-vector and Jacobian block layout
+  # (kept in the assembly of the linear context across iterations).
+  non_slack = linear_ctx === nothing ? non_slack_indices(n, slack_idx) : first(_assembly_layout!(linear_ctx.assembly, n, slack_idx))
 
   # Residual matching the FD variant. With distributed slack the state gains
   # lambda_P and the residual the REF-P row; the CURRENT iterate's residual is
@@ -652,7 +653,9 @@ function complex_newton_step_rectangular(
   # Fixed damping path: single update with validated step length.
   _validate_rectangular_damping(damp, min(autodamp_min, damp))
   Vnext = similar(V)
-  step_diagnostics isa AbstractVector && push!(step_diagnostics, (alpha = damp, trial_mismatch = NaN, accepted_improvement = true))
+  # no row in step_diagnostics: the rows are the autodamp record, and a fixed
+  # step counted every step as an autodamp step and as a floor hit (alpha
+  # 1.0 is the smallest alpha of a run that never damps)
   _dslack_set_trial!(dslack, damp)
   _dslack_accept!(dslack)
   return _apply_rectangular_delta!(Vnext, V, δx, slack_idx, non_slack, damp; update = newton_update)

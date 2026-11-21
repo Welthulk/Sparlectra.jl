@@ -338,8 +338,8 @@ line search.
 
 #### DC-angle flat-start background
 
-A flat start (magnitudes near $1.0\,\mathrm{pu}$, every angle at the
-slack angle) ignores the active-power pattern of topology, reactances, phase
+A flat start (PQ magnitudes at the mean setpoint of their island, every
+angle at the slack angle) ignores the active-power pattern of topology, reactances, phase
 shifts and injections; on a large or heavily phase-shifted case the first
 Newton step can start far from the physical angle branch. The DC-angle seed
 takes the angles from the linearized active-power model (magnitudes
@@ -353,7 +353,12 @@ B'\theta = P
 with $P$ the net active-power injections (with a DC model present
 $P - P_{\mathrm{inj}}$, the phase-shifter injections the DC power flow
 subtracts) and $B'$ assembled from the branch susceptances. The slack angle
-is the reference; the angles are clipped by
+is the reference. Before the solve the imbalance $\sum_k P_k$ (the losses
+of the schedule) is shared by the generators at slack and PV buses in
+proportion to their scheduled $P_g$, so no loss flow runs into the slack;
+an island whose slack has no scheduled $P_g$ keeps it at the slack. Only
+the fallback without a DC model (`imag(Ybus)`, an in-service branch with
+$x = 0$) keeps the slack balance and clips the angles at
 `start_projection_dc_angle_limit_deg`.
 
 Blended starts combine the DC-angle predictor with the stored MATPOWER

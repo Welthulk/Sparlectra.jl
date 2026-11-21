@@ -46,7 +46,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.qlimits.guard.narrow_range_mode",
   "power_flow.qlimits.guard.zero_range_mode",
   "power_flow.qlimits.guard.violation_mode",
-  "power_flow.qlimits.guard.violation_threshold_pu",
+  "power_flow.qlimits.guard.violation_threshold_pct",
   "power_flow.qlimits.guard.max_switches",
   "power_flow.qlimits.guard.max_remaining_violations",
   "power_flow.qlimits.guard.accept_bounded_violations",
@@ -54,6 +54,10 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.qlimits.guard.log",
   "power_flow.solver",
   "power_flow.linear_solver",
+  "power_flow.compute_backend.mode",
+  "power_flow.compute_backend.gpu_precision",
+  "power_flow.compute_backend.gpu_fallback_to_cpu",
+  "power_flow.compute_backend.gpu_fast_mode",
   "power_flow.newton_update",
   "power_flow.power_mode",
   "power_flow.power_mode_lu",
@@ -98,6 +102,25 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "power_flow.apslf_start.enabled",
   "power_flow.apslf_start.order",
   "power_flow.wrong_branch_detection",
+  # the plausibility bounds depend on the network: case_ACTIVSg70k's own
+  # stored solution has bus angles down to -174.7 deg against the slack, so
+  # its case configuration has to be able to widen the 120 deg bound
+  "power_flow.wrong_branch_min_vm_pu",
+  "power_flow.wrong_branch_max_vm_pu",
+  "power_flow.wrong_branch_max_angle_spread_deg",
+  "power_flow.wrong_branch_max_branch_angle_deg",
+  "power_flow.wrong_branch_min_low_vm_count",
+  "power_flow.wrong_branch_min_vn_kV",
+  "power_flow.wrong_branch_low_vm_share",
+  "power_flow.wrong_branch_max_bus_angle_deg",
+  "power_flow.wrong_branch_max_plain_steps",
+  "power_flow.wrong_branch_collapse_vm_pu",
+  "power_flow.wrong_branch_max_reference_branch_angle_deg",
+  # the start strategy is a property of the network like flatstart: the
+  # start projection and the candidates it tries
+  "power_flow.start_mode.start_projection",
+  "power_flow.start_mode.try_dc_start",
+  "power_flow.start_mode.try_blend_scan",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "power_flow.start_mode.dc_seed_unconditional",
@@ -195,6 +218,7 @@ const GUI_EDITABLE_CONFIG_KEYS = Set([
   "benchmark.samples",
   "benchmark.seconds",
   "runtime.parallel.enabled",
+  "runtime.parallel.executor",
   # issue #377: the estimator options behave like power_flow.solver - case
   # scope, so Save settings can pin them per case and a case sidecar value
   # actually reaches the run instead of being outranked by a form literal.
@@ -253,7 +277,7 @@ function _validate_override_type(key::String, value, expected::Type)
 end
 
 function _validate_gui_override_value(key::String, value)
-  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.start_mode.rotate_behind_pst", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.start_mode.rotate_behind_pst", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "state_estimation.tap_estimation.enabled", "state_estimation.tap_estimation.fallback", "state_estimation.tap_estimation.include_machine_transformers", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
+  if key in ("power_flow.autodamp", "power_flow.flatstart", "power_flow.start_mode.ratio_profile", "power_flow.start_mode.rotate_behind_pst", "power_flow.start_mode.start_projection", "power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan", "power_flow.start_mode.dc_seed_unconditional", "power_flow.qlimits.enabled", "power_flow.start_current_iteration.enabled", "power_flow.start_current_iteration.accept_only_if_improved", "power_flow.start_current_iteration.only_for_large_cases", "power_flow.merit.enabled", "power_flow.merit.fallback_max_mismatch", "power_flow.trust_region.enabled", "power_flow.apslf.nr_polish", "power_flow.apslf.convergence_radius", "power_flow.apslf_start.enabled", "power_flow.islands.enabled", "power_flow.islands.diagnostic_continue_after_failure", "power_flow.rescue", "power_flow.dc.fallback", "power_flow.auto_slack", "cgmes_import.require_boundary", "cgmes_import.infer_base_voltages", "cgmes_import.map_energy_source", "cgmes_import.map_power_electronics", "cgmes_import.shunt_control", "cgmes_import.read_dynamics", "cgmes_import.equivalent_injection_as_source", "powsybl_import.multi_slack", "benchmark.enabled", "matpower_import.apply_bus_names", "matpower_import.apply_branch_names", "matpower_import.apply_branch_kind", "matpower_import.import_for001_contingencies", "matpower_export.write_solution", "output.console_live", "output.console_summary", "output.startup_latency_hint", "state_estimation.flatstart", "state_estimation.start_mode.rotate_behind_pst", "state_estimation.robust", "state_estimation.topology_precheck", "state_estimation.report_residual_correlation", "state_estimation.symmetric_gain", "state_estimation.tap_estimation.enabled", "state_estimation.tap_estimation.fallback", "state_estimation.tap_estimation.include_machine_transformers", "power_flow.qlimits.guard.enabled", "power_flow.qlimits.guard.accept_bounded_violations", "power_flow.qlimits.guard.freeze_after_repeated_switching", "power_flow.qlimits.guard.log")
     _validate_override_type(key, value, Bool)
   elseif key in ("power_flow.max_iter", "contingency.max_iter", "power_flow.start_current_iteration.max_iter", "power_flow.apslf.order", "power_flow.apslf_start.order", "benchmark.samples", "output.detailed_result_csv_direct_threshold_buses", "output.detailed_result_csv_buffer_initial_bytes", "output.detailed_result_csv_buffer_max_bytes", "output.detailed_result_csv_streaming_threshold_rows", "output.console_max_rows", "output.result_table_max_rows", "output.result_table_large_case_threshold_buses")
     _validate_override_type(key, value, Int)
@@ -264,7 +288,7 @@ function _validate_gui_override_value(key::String, value)
     else
       value > 0 || throw(ArgumentError("Override $(key) must be positive; got $(value)."))
     end
-  elseif key in ("power_flow.qlimits.start_iter", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.guard.max_remaining_violations")
+  elseif key in ("power_flow.qlimits.start_iter", "power_flow.qlimits.cooldown_iters", "power_flow.qlimits.guard.max_remaining_violations", "power_flow.wrong_branch_min_low_vm_count", "power_flow.wrong_branch_max_plain_steps")
     _validate_override_type(key, value, Int)
     value >= 0 || throw(ArgumentError("Override $(key) must be non-negative; got $(value)."))
   elseif key == "power_flow.qlimits.classic_max_passes"
@@ -276,7 +300,7 @@ function _validate_gui_override_value(key::String, value)
     # so 0 would silently mean 1
     _validate_override_type(key, value, Int)
     value >= 1 || throw(ArgumentError("Override $(key) must be at least 1; got $(value)."))
-  elseif key in ("power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.reenable_v_hyst_pu", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.violation_threshold_pu")
+  elseif key in ("power_flow.qlimits.auto_q_delta_pu", "power_flow.qlimits.hysteresis_pu", "power_flow.qlimits.reenable_v_hyst_pu", "power_flow.qlimits.guard.min_q_range_pu", "power_flow.qlimits.guard.violation_threshold_pct")
     _validate_override_type(key, value, Float64)
     isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be finite and non-negative; got $(value)."))
   elseif key in ("contingency.events.enabled", "contingency.events.double_circuits", "contingency.events.busbars", "contingency.events.substations", "contingency.events.links", "contingency.events.name_groups", "contingency.pairs.enabled")
@@ -327,6 +351,11 @@ function _validate_gui_override_value(key::String, value)
   elseif key == "model.nominal_frequency_hz"
     _validate_override_type(key, value, Float64)
     isfinite(value) && value > 0 || throw(ArgumentError("Override $(key) must be finite and positive; got $(value)."))
+  elseif key in ("power_flow.wrong_branch_min_vm_pu", "power_flow.wrong_branch_max_vm_pu", "power_flow.wrong_branch_max_angle_spread_deg", "power_flow.wrong_branch_max_branch_angle_deg", "power_flow.wrong_branch_min_vn_kV", "power_flow.wrong_branch_low_vm_share", "power_flow.wrong_branch_max_bus_angle_deg", "power_flow.wrong_branch_collapse_vm_pu", "power_flow.wrong_branch_max_reference_branch_angle_deg")
+    # the type here; the ranges and the order of the vm band are checked by
+    # the typed parser on the merged configuration
+    _validate_override_type(key, value, Float64)
+    isfinite(value) && value >= 0 || throw(ArgumentError("Override $(key) must be finite and non-negative; got $(value)."))
   elseif key == "power_flow.plausibility.vmin_warn"
     # 0 switches the check off, so zero is valid here
     _validate_override_type(key, value, Float64)
@@ -375,6 +404,14 @@ function _validate_gui_override_value(key::String, value)
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_SOLVER_VALUES)
   elseif key == "power_flow.apslf.precision"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), APSLF_PRECISION_VALUES)
+  elseif key == "runtime.parallel.executor"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), (:auto, :threads, :processes))
+  elseif key == "power_flow.compute_backend.mode"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), COMPUTE_BACKEND_MODE_VALUES)
+  elseif key == "power_flow.compute_backend.gpu_precision"
+    _validate_allowed_symbol(key, _as_symbol_cfg(value), GPU_PRECISION_VALUES)
+  elseif key == "power_flow.compute_backend.gpu_fallback_to_cpu" || key == "power_flow.compute_backend.gpu_fast_mode"
+    _validate_override_type(key, value, Bool)
   elseif key == "power_flow.linear_solver"
     _validate_allowed_symbol(key, _as_symbol_cfg(value), POWERFLOW_LINEAR_SOLVER_VALUES)
   elseif key == "power_flow.newton_update"
@@ -901,10 +938,17 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "qsts.series.min_structural_overlap",
   "qsts.series.max_injection_churn",
   "qsts.series.max_gap",
+  # the start keys: the case-scope switches that pick the start strategy
+  "power_flow.flatstart",
+  "power_flow.start_mode.start_projection",
+  "power_flow.start_mode.try_dc_start",
+  "power_flow.start_mode.try_blend_scan",
+  "power_flow.start_mode.dc_seed_unconditional",
   "power_flow.start_mode.angle_mode",
   "power_flow.start_mode.voltage_mode",
   "power_flow.start_mode.ratio_profile",
   "power_flow.start_mode.rotate_behind_pst",
+  "power_flow.apslf_start.enabled",
   "power_flow.qlimits.enabled",
   "power_flow.qlimits.enforcement_mode",
   "power_flow.qlimits.start_iter",
@@ -920,6 +964,20 @@ const CONFIG_OVERRIDE_REPORT_KEYS = String[
   "power_flow.rescue",
   "power_flow.dc.fallback",
   "power_flow.auto_slack",
+  # the wrong-branch plausibility bounds, case scope like the start keys
+  "power_flow.wrong_branch_detection",
+  "power_flow.wrong_branch_min_vm_pu",
+  "power_flow.wrong_branch_max_vm_pu",
+  "power_flow.wrong_branch_max_angle_spread_deg",
+  "power_flow.wrong_branch_max_branch_angle_deg",
+  "power_flow.wrong_branch_min_low_vm_count",
+  "power_flow.wrong_branch_min_vn_kV",
+  "power_flow.wrong_branch_low_vm_share",
+  "power_flow.wrong_branch_max_bus_angle_deg",
+  "power_flow.wrong_branch_max_plain_steps",
+  "power_flow.wrong_branch_collapse_vm_pu",
+  "power_flow.wrong_branch_max_reference_branch_angle_deg",
+  "cgmes_import.start_values",
   "cgmes_import.require_boundary",
   "cgmes_import.infer_base_voltages",
   "cgmes_import.map_energy_source",
@@ -955,7 +1013,10 @@ function _set_dotted_metadata!(raw::Dict{String,Any}, key::AbstractString, value
   return raw
 end
 
-function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict; override_source::AbstractString = "explicit_api_request", auto_profile_result = nothing, explicit_overrides::AbstractDict = Dict{String,Any}(), case_config::AbstractDict = Dict{String,Any}(), scf_config::AbstractDict = Dict{String,Any}())
+# `case_scope_from_defaults` as in resolve_config: with a case configuration
+# file next to the case, the general file does not reach case-scope keys, so
+# such a key is never reported as coming from it
+function _config_source_report(config_file::String, nested_overrides::Dict{String,Any}, effective_raw::AbstractDict; override_source::AbstractString = "explicit_api_request", auto_profile_result = nothing, explicit_overrides::AbstractDict = Dict{String,Any}(), case_config::AbstractDict = Dict{String,Any}(), scf_config::AbstractDict = Dict{String,Any}(), case_scope_from_defaults::Bool = false)
   user = isfile(config_file) ? load_yaml_dict(config_file) : Dict{String,Any}()
   report = Dict{String,Any}()
   # resolve_config merges the case levels INTO the override structure
@@ -976,7 +1037,7 @@ function _config_source_report(config_file::String, nested_overrides::Dict{Strin
     elseif _dotted_config_value(nested_overrides, key) !== nothing
       # merged fallback for callers without per-level dictionaries
       String(override_source)
-    elseif _dotted_config_value(user, key) !== nothing
+    elseif _dotted_config_value(user, key) !== nothing && !(case_scope_from_defaults && scf_is_case_config_key(key))
       "user_yaml"
     else
       "default"
@@ -1003,4 +1064,60 @@ function _config_source_report(config_file::String, nested_overrides::Dict{Strin
     end
   end
   return report
+end
+
+# The start keys a run-level rule can switch for one run, with their field in
+# the typed configuration: power_flow.flatstart switches the start machines
+# off (_flatstart_profile_config), cgmes_import.start_values decides the
+# CGMES start (_cgmes_start_values_powerflow).
+const _RUN_START_KEYS = Pair{String,Function}[
+  "power_flow.flatstart" => c -> c.powerflow.start_mode.flatstart,
+  "power_flow.start_mode.start_projection" => c -> c.powerflow.start_mode.start_projection,
+  "power_flow.start_mode.dc_seed_unconditional" => c -> c.powerflow.start_mode.dc_seed_unconditional,
+  "power_flow.start_mode.angle_mode" => c -> c.powerflow.start_mode.angle_mode,
+  "power_flow.start_mode.voltage_mode" => c -> c.powerflow.start_mode.voltage_mode,
+  "power_flow.start_mode.ratio_profile" => c -> c.powerflow.start_mode.ratio_profile,
+  "power_flow.start_mode.rotate_behind_pst" => c -> c.powerflow.start_mode.rotate_behind_pst,
+  "power_flow.start_current_iteration.enabled" => c -> c.powerflow.start_current_iteration.enabled,
+  "power_flow.apslf_start.enabled" => c -> c.powerflow.apslf_start.enabled,
+]
+
+_run_start_yaml_value(v) = v isa Symbol ? String(v) : v
+
+"""
+    _record_run_start_overrides!(effective_raw, config_sources, configured, used; reason) -> Vector{String}
+
+Write the start keys the run actually used into the effective configuration.
+`configured` is the resolved configuration handed to the import, `used` the
+one the import returned for the solve (after `power_flow.flatstart` and,
+for CGMES, `cgmes_import.start_values`). Every start key whose value differs
+gets the used value in `effective_raw`; its entry in `config_sources` keeps
+the configured value as `configured_value`, gets the source `run_start_rule`
+and `reason`. With the start projection off for the run, the entries of
+`try_dc_start` and `try_blend_scan` say that they have no effect. Returns
+the changed keys.
+"""
+function _record_run_start_overrides!(effective_raw::AbstractDict, config_sources::AbstractDict, configured::SparlectraConfig, used::SparlectraConfig; reason::AbstractString)::Vector{String}
+  changed = String[]
+  for (key, field) in _RUN_START_KEYS
+    before = field(configured)
+    after = field(used)
+    isequal(before, after) && continue
+    _dotted_config_set!(effective_raw, key, _run_start_yaml_value(after))
+    entry = _dotted_config_value(config_sources, key)
+    if entry isa AbstractDict
+      entry["value"] = _run_start_yaml_value(after)
+      entry["configured_value"] = _run_start_yaml_value(before)
+      entry["source"] = "run_start_rule"
+      entry["reason"] = String(reason)
+    end
+    push!(changed, key)
+  end
+  if !used.powerflow.start_mode.start_projection
+    for key in ("power_flow.start_mode.try_dc_start", "power_flow.start_mode.try_blend_scan")
+      entry = _dotted_config_value(config_sources, key)
+      entry isa AbstractDict && (entry["note"] = "no effect in this run: the start projection is off")
+    end
+  end
+  return changed
 end

@@ -133,16 +133,18 @@ function test_matpower_flatstart_uses_generator_voltage_setpoints()::Bool
   busVec_ref, _ = Sparlectra.getBusData(net_ref.nodeVec, net_ref.baseMVA, true; net = net_ref)
   reference_override_ok = slack_ref == 1 && isapprox(abs(V0_ref[1]), 1.01; atol = 1e-12) && isapprox(angle(V0_ref[1]), deg2rad(-3.0); atol = 1e-12) && isapprox(busVec_ref[1].vm_pu, 1.01; atol = 1e-12) && isapprox(busVec_ref[1].va_rad, deg2rad(-3.0); atol = 1e-12)
 
+  # the PQ bus 2 starts at the mean setpoint (1.04 + 1.02) / 2 = 1.03 pu of
+  # the slack and the PV generator
   return slack_idx == 1 &&
          isapprox(abs(V0[1]), 1.04; atol = 1e-12) &&
          isapprox(angle(V0[1]), deg2rad(12.0); atol = 1e-12) &&
-         isapprox(abs(V0[2]), 1.0; atol = 1e-12) &&
+         isapprox(abs(V0[2]), 1.03; atol = 1e-12) &&
          isapprox(angle(V0[2]), deg2rad(12.0); atol = 1e-12) &&
          isapprox(abs(V0[3]), 1.02; atol = 1e-12) &&
          isapprox(angle(V0[3]), deg2rad(12.0); atol = 1e-12) &&
          isapprox(busVec[1].vm_pu, 1.04; atol = 1e-12) &&
          isapprox(busVec[1].va_rad, deg2rad(12.0); atol = 1e-12) &&
-         isapprox(busVec[2].vm_pu, 1.0; atol = 1e-12) &&
+         isapprox(busVec[2].vm_pu, 1.03; atol = 1e-12) &&
          isapprox(busVec[2].va_rad, 0.0; atol = 1e-12) &&
          isapprox(busVec[3].vm_pu, 1.02; atol = 1e-12) &&
          isapprox(busVec[3].va_rad, 0.0; atol = 1e-12) &&
@@ -404,7 +406,7 @@ function test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history()::B
     1,
     0.0;
     history = [239.0, 1609.0, 5.55e290, NaN],
-    step_diagnostics = [(alpha = 0.05, trial_mismatch = 1609.0, accepted_improvement = false) for _ = 1:8],
+    step_diagnostics = [(alpha = 0.05, trial_mismatch = 1609.0, accepted_improvement = false, autodamp_min = 0.05) for _ = 1:8],
     best_finite_iteration = 1,
     best_finite_voltage = V1,
     last_finite_iteration = 3,
@@ -462,7 +464,7 @@ function test_rectangular_start_projection_dc_candidate_matches_rundcpf()::Bool
 
   Vdc_model = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = 60.0, dc_model = model)
   Vdc_ybus = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = 60.0)
-  no_injection = Sparlectra._ProjectionDcModel(model.Bbus, zeros(Float64, n))
+  no_injection = Sparlectra._ProjectionDcModel(model.Bbus, zeros(Float64, n), model.weights)
   Vdc_noinj = Sparlectra._dc_angle_start_rectangular(Y, Vraw, S, bus_types, Vset, slack_idx; dc_angle_limit_deg = 60.0, dc_model = no_injection)
 
   report = rundcpf!(net)
@@ -491,6 +493,40 @@ function test_rectangular_start_projection_dc_candidate_matches_rundcpf()::Bool
          Vproj == Vdc_model &&
          summary.selected === :dc_start &&
          summary.dc_model === :dc_bbus
+end
+
+function test_rectangular_start_projection_dc_candidate_uncapped_reports_no_clipping()::Bool
+  # A net with a DC model gets an uncapped DC candidate
+  # (_dc_candidate_angle_limit returns Inf), so the summary must not count
+  # buses at the configured 60 degrees as clipped. Two buses, x = 0.5 pu,
+  # 250 MW load at 100 MVA base: theta = -P * x = -1.25 rad = -71.6 degrees.
+  net = Net(name = "dc2_wide", baseMVA = 100.0)
+  addBus!(net = net, busName = "B1", vn_kV = 110.0)
+  addBus!(net = net, busName = "B2", vn_kV = 110.0)
+  addPIModelACLine!(net = net, fromBus = "B1", toBus = "B2", r_pu = 0.0, x_pu = 0.5, b_pu = 0.0, status = 1)
+  addProsumer!(net = net, busName = "B1", type = "EXTERNALNETWORKINJECTION", vm_pu = 1.0, va_deg = 0.0, referencePri = "B1")
+  addProsumer!(net = net, busName = "B2", type = "ENERGYCONSUMER", p = 250.0, q = 0.0)
+  refreshBusTypesFromProsumers!(net)
+
+  bus_types, Vset, slack_idx = Sparlectra.extract_bus_types_and_vset(net)
+  Y = createYBUS(net = net, sparse = true, printYBUS = false)
+  S = buildComplexSVec(net)
+  Vraw = ComplexF64[Vset[k] + 0.0im for k in eachindex(Vset)]
+  summary_for(model) = begin
+    profile = Dict{Symbol,Any}(:enabled => true)
+    Sparlectra.project_rectangular_start(Y, Vraw, S, bus_types, Vset, slack_idx; enabled = true, try_dc_start = true, try_blend_scan = false, dc_angle_limit_deg = 60.0, requested_angle_mode = :dc, performance_profile = profile, dc_model = model)
+    profile[:start_projection_summary]
+  end
+  uncapped = summary_for(Sparlectra._projection_dc_model(net))
+  capped = summary_for(nothing)
+
+  return isapprox(uncapped.dc_angle_min_deg, -rad2deg(1.25); atol = 1e-9) &&
+         uncapped.dc_angle_clipped_count == 0 &&
+         ismissing(uncapped.dc_angle_clip_limit_deg) &&
+         uncapped.dc_branch_angle_violation_count == 1 &&
+         isapprox(capped.dc_angle_min_deg, -60.0; atol = 1e-9) &&
+         capped.dc_angle_clipped_count == 1 &&
+         capped.dc_angle_clip_limit_deg == 60.0
 end
 
 function test_rectangular_start_projection_keeps_raw_without_finite_improvement()::Bool
@@ -736,19 +772,24 @@ function test_run_level_flat_start_is_flat()::Bool
   function start_of(start_mode; casefile = "sp_case118.m", net = nothing)
     cfg = Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = start_mode), output = Sparlectra.OutputConfig(logfile_results = :off, startup_latency_hint = false))
     prof = Dict{Symbol,Any}(:enabled => true, :capture_initial_residual_rows => true)
+    # the PQ start magnitudes of the unsolved net, read before the solve
+    # changes its state
+    pq = Sparlectra._pq_start_magnitudes(net === nothing ? Sparlectra.createNetFromMatPowerFile(filename = joinpath(mp_dir, casefile)) : net)
     r = net === nothing ? run_sparlectra(casefile = casefile, path = mp_dir, config = cfg, performance_profile = prof) : run_sparlectra(net = net, config = cfg, performance_profile = prof)
     # the first solve's rows only (a Q-limit round would append more)
     rows = prof[:initial_residual_rows][1:length(r.net.nodeVec)]
-    return (r = r, rows = rows, summary = get(prof, :start_projection_summary, nothing), timings = get(prof, :timings, Dict{Symbol,Any}()))
+    return (r = r, rows = rows, pq = pq, summary = get(prof, :start_projection_summary, nothing), timings = get(prof, :timings, Dict{Symbol,Any}()))
   end
-  # every non-auxiliary bus flat: PQ at 1.0 pu, PV and slack at their
+  # every non-auxiliary bus flat: PQ at the mean setpoint of its island in
+  # the unsolved net (_pq_start_magnitudes, hand-checked in
+  # test_dc_powerflow.jl), PV and slack at their
   # setpoints, every angle at the slack angle (the reference angle from the
   # case, 0.99 deg on micro_grid_be); with `turned` (rotate_behind_pst) plus
   # the phase shifts of the flat-start angles
   shift_deg(net) = (th = Sparlectra._flat_start_shift_angles(net, findfirst(nd -> Sparlectra.getNodeType(nd) == Sparlectra.Slack, net.nodeVec)); th === nothing ? zeros(length(net.nodeVec)) : rad2deg.(th))
-  flat_except_aux(x, net; turned = false) = (vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net); sh = turned ? shift_deg(net) : zeros(length(net.nodeVec));
+  flat_except_aux(x, net; turned = false) = (vset = Sparlectra._bus_voltage_setpoints_from_prosumers(net); pq = x.pq; sh = turned ? shift_deg(net) : zeros(length(net.nodeVec));
                                              va_s = x.rows[findfirst(r -> r.bus_type === :Slack, x.rows)].va_deg_start;
-                                             all(k -> Sparlectra._is_aux_node(net.nodeVec[k]) || ((x.rows[k].bus_type === :Slack || isapprox(x.rows[k].va_deg_start, va_s + sh[k]; atol = 1e-12)) && x.rows[k].vm_pu_start == (x.rows[k].bus_type === :PQ ? 1.0 : vset[k])), eachindex(x.rows)))
+                                             all(k -> Sparlectra._is_aux_node(net.nodeVec[k]) || ((x.rows[k].bus_type === :Slack || isapprox(x.rows[k].va_deg_start, va_s + sh[k]; atol = 1e-12)) && x.rows[k].vm_pu_start == (x.rows[k].bus_type === :PQ ? pq[k] : vset[k])), eachindex(x.rows)))
 
   # sp_case118 from a flat start although the file carries a solved state:
   # no projection, no candidate, no projection phase in the timings
@@ -791,7 +832,10 @@ function test_run_level_flat_start_is_flat()::Bool
       start_projection_requested_voltage_mode = sm.voltage_mode, start_projection_ratio_profile = ratio,
       start_projection_accept_unmeasured_dc_start = sm.accept_unmeasured_dc_start)
     rows = prof[:initial_residual_rows][1:length(net.nodeVec)]
-    return (built = prof[:start_projection_summary].ratio_profile_built, pq_flat = all(r -> r.bus_type !== :PQ || r.vm_pu_start == 1.0, rows))
+    pq = Sparlectra._pq_start_magnitudes(c14_unsolved)
+    # isapprox: the projection candidates rebuild V from magnitude and
+    # angle, which moves the magnitude by an ulp
+    return (built = prof[:start_projection_summary].ratio_profile_built, pq_flat = all(k -> rows[k].bus_type !== :PQ || isapprox(rows[k].vm_pu_start, pq[k]; atol = 1e-12), eachindex(rows)))
   end
   run_cfg, _ = Sparlectra._flatstart_profile_config(Sparlectra.SparlectraConfig(powerflow = Sparlectra.PowerFlowConfig(start_mode = template_start(true))))
   flat_rescue = [pf.start_mode for (name, pf) in Sparlectra._rescue_config_variants(run_cfg.powerflow) if name in (:settled_qlimits, :dc_seed)]
@@ -801,7 +845,8 @@ function test_run_level_flat_start_is_flat()::Bool
 
   # auxiliary buses keep the ratio start (micro_grid_be, a three-winding
   # transformer whose star point has a 0.95 winding): the star point starts
-  # at 0.95 pu, every other bus flat
+  # at 0.95 times the flat level of its island (the PQ start magnitude,
+  # 1.047 pu here), every other bus flat
   dir = joinpath(@__DIR__, "fixtures", "powsybl", "micro_grid_be.powsybl")
   be, _ = Sparlectra.build_net_from_powsybl(Sparlectra.read_powsybl_bundle(dir), Sparlectra.PowsyblAdapterOptions(remote_regulation = :remote))
   aux = [k for k in eachindex(be.nodeVec) if Sparlectra._is_aux_node(be.nodeVec[k])]
@@ -815,7 +860,7 @@ function test_run_level_flat_start_is_flat()::Bool
   be_turn = start_of(template_start(true; rotate_behind_pst = true); net = be2)
   be_shifted = abs(be_slack_va) > 0.5 && any(br -> br.status == 1 && angle(Sparlectra.calcBranchRatio(br)) != 0.0, be2.branchVec) &&
                flat_except_aux(be_turn, be_turn.r.net; turned = true) && [(x.vm_pu_start, x.va_deg_start) for x in be_turn.rows] == [(x.vm_pu_start, x.va_deg_start) for x in be_flat.rows]
-  aux_ratio = any(k -> isapprox(be_flat.rows[k].vm_pu_start, 0.95; atol = 1e-12), aux) && flat_except_aux(be_flat, be_flat.r.net) && be_shifted && be_flat.summary === nothing
+  aux_ratio = any(k -> isapprox(be_flat.rows[k].vm_pu_start, 0.95 * be_flat.pq[k]; atol = 1e-12), aux) && flat_except_aux(be_flat, be_flat.r.net) && be_shifted && be_flat.summary === nothing
 
   return no_projection && same_start && no_seed && projected && case14_flat && rescue_flat && aux_ratio
 end
@@ -889,7 +934,7 @@ function test_flat_start_carries_phase_shift()::Bool
     Voff, _ = Sparlectra.initialVrect(net; flatstart = true)
     ok &= angle(Voff[t]) == 0.0 && angle(Voff[net.busDict["F"]]) == 0.0
     V0, _ = Sparlectra.initialVrect(net; flatstart = true, rotate_behind_pst = true)
-    ok &= isapprox(rad2deg(angle(V0[t])), -shift; atol = 1e-12) && angle(V0[net.busDict["F"]]) == 0.0 && abs(V0[t]) == 1.0
+    ok &= isapprox(rad2deg(angle(V0[t])), -shift; atol = 1e-12) && angle(V0[net.busDict["F"]]) == 0.0 && isapprox(abs(V0[t]), 1.02; atol = 1e-12)
     ite, erg = runpf!(net, 40, 1e-12, 0; method = :rectangular, opt_flatstart = true, start_rotate_behind_pst = true)
     nd = net.nodeVec[t]
     ok &= erg == 0 && ite == ite0 && isapprox(nd._vm_pu, u_high; atol = 1e-9) && isapprox(nd._va_deg, va0 - shift; atol = 1e-9) && Sparlectra.rectangular_pf_status(net).branch_quality_status === :ok
@@ -900,9 +945,10 @@ function test_flat_start_carries_phase_shift()::Bool
     _, erg_s = runpf!(sn3, 40, 1e-12, 0; method = :rectangular, start_rotate_behind_pst = true)
     nds = sn3.nodeVec[t]
     ok &= erg_s == 0 && isapprox(nds._vm_pu, u_high; atol = 1e-9) && isapprox(nds._va_deg, va0 - shift; atol = 1e-9) && Sparlectra.rectangular_pf_status(sn3).branch_quality_status === :ok
-    # model-only export: the default flat start, T not listed
+    # model-only export: the default flat start, F and T at the PQ start
+    # magnitude (the slack setpoint 1.02, the only regulated bus) and 0 deg
     fs = Sparlectra._matpower_flat_start(shifted_net(shift))
-    ok &= !haskey(fs, t) && !haskey(fs, net.busDict["F"])
+    ok &= all(k -> haskey(fs, k) && isapprox(fs[k][1], 1.02; atol = 1e-12) && fs[k][2] == 0.0, (t, net.busDict["F"]))
   end
   # wrong-branch hint: with the switch off the flat start at 30 deg ends on
   # the low root (voltage_collapse, erg 0), and the warning and the result
@@ -2374,7 +2420,8 @@ end
 # Qmin when Vm < Vset - v_hyst_pu. The reactive injection sits ON the clamp
 # in every call below, so the old Q band test would never release; a release
 # proves the voltage rule. Every case starts from a fresh clamp because the
-# one-retry guard keeps a bus clamped after its second hit.
+# one-retry guard keeps a bus clamped after its second hit. Cases 7 and 8:
+# the narrow-band machines of the Q-limit guard.
 function test_q_limit_reenable_voltage_rule()::Bool
   nb = 1
   qmin_pu = [0.0]
@@ -2400,9 +2447,10 @@ function test_q_limit_reenable_voltage_rule()::Bool
   end
   # the release call of the next iteration: the injection sits on the clamp,
   # only the voltages can free the bus
-  function release_step(net, bus_types; vm::Float64, vset::Float64 = 1.0, v_hyst_pu::Float64 = 1e-4, voltages::Bool = true, qreq::Float64 = bus_types[1] == :PQ && get(net.qLimitEvents, 1, :max) === :max ? 1.0 : 0.0)
+  function release_step(net, bus_types; vm::Float64, vset::Float64 = 1.0, v_hyst_pu::Float64 = 1e-4, voltages::Bool = true, qreq::Float64 = bus_types[1] == :PQ && get(net.qLimitEvents, 1, :max) === :max ? 1.0 : 0.0,
+    narrow::Bool = false, converged::Bool = false, it::Int = 2)
     changed, reenabled = Sparlectra.active_set_q_limits!(
-      net, 2, nb;
+      net, it, nb;
       get_qreq_pu = _ -> qreq,
       is_pv = bus -> (bus_types[bus] == :PV),
       make_pq! = (bus, _qclamp, _side) -> (bus_types[bus] = :PQ),
@@ -2412,6 +2460,8 @@ function test_q_limit_reenable_voltage_rule()::Bool
       get_vm_pu = voltages ? (_ -> vm) : nothing,
       get_vset_pu = voltages ? (_ -> vset) : nothing,
       v_hyst_pu = v_hyst_pu,
+      converged_iterate = converged,
+      narrow_band_mask = narrow ? trues(nb) : falses(nb),
     )
     return (changed = changed, reenabled = reenabled, pv = bus_types[1] == :PV, events = length(net.qLimitEvents))
   end
@@ -2440,8 +2490,36 @@ function test_q_limit_reenable_voltage_rule()::Bool
   ok6 = ok6a && held(release_step(net, bt; vm = 1.02, voltages = false, qreq = 1.0))
   net, bt, ok6b = clamped(:max)
   ok6 = ok6 && ok6b && released(release_step(net, bt; vm = 0.99, voltages = false, qreq = 0.5))
+  # 7: a narrow-band machine of the guard (narrow_range_mode lock_pq) is
+  # released like any other clamped machine when its voltage lies on the
+  # wrong side by more than the margin, but only on a converged iterate:
+  # in an unsettled iterate the clamp holds whatever the voltage says
+  net, bt, ok7a = clamped(:max)
+  ok7 = ok7a && held(release_step(net, bt; vm = 1.02, narrow = true, converged = false))
+  ok7 = ok7 && released(release_step(net, bt; vm = 1.02, narrow = true, converged = true, it = 3))
+  # bounded like any other machine: clamped again after the release it
+  # gets the one extra release of a converged iterate; a third clamp
+  # (:group_hit) keeps it PQ for the rest of the solve
+  rehit!(it) = Sparlectra.active_set_q_limits!(net, it, nb; get_qreq_pu = _ -> 1.11, is_pv = bus -> (bt[bus] == :PV), make_pq! = (bus, _q, _s) -> (bt[bus] = :PQ), make_pv! = bus -> (bt[bus] = :PV),
+    qmin_pu = qmin_pu, qmax_pu = qmax_pu, pv_orig_mask = pv_orig_mask, allow_reenable = false, q_hyst_pu = 0.0, cooldown_iters = 0, narrow_band_mask = trues(nb))
+  ok7 = ok7 && first(rehit!(4)) && bt[1] == :PQ
+  ok7 = ok7 && released(release_step(net, bt; vm = 1.02, narrow = true, converged = true, it = 5))
+  ok7 = ok7 && first(rehit!(6)) && net.qLimitLog[end].kind === :group_hit
+  ok7 = ok7 && held(release_step(net, bt; vm = 1.02, narrow = true, converged = true, it = 7))
+  net, bt, ok7b = clamped(:min)
+  ok7 = ok7 && ok7b && released(release_step(net, bt; vm = 0.98, narrow = true, converged = true))
+  # 8: a narrow-band machine with the voltage on the right side (below the
+  # setpoint at Qmax, above it at Qmin, or inside the margin) stays PQ on a
+  # converged iterate, and without the voltages it is never released
+  net, bt, ok8a = clamped(:max)
+  ok8 = ok8a && held(release_step(net, bt; vm = 0.99, narrow = true, converged = true))
+  ok8 = ok8 && held(release_step(net, bt; vm = 1.00005, narrow = true, converged = true, it = 3))
+  net, bt, ok8b = clamped(:min)
+  ok8 = ok8 && ok8b && held(release_step(net, bt; vm = 1.02, narrow = true, converged = true))
+  net, bt, ok8c = clamped(:max)
+  ok8 = ok8 && ok8c && held(release_step(net, bt; vm = 0.99, voltages = false, qreq = 0.5, narrow = true, converged = true))
 
-  return ok1 && ok2 && ok3 && ok4 && ok5 && ok6
+  return ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8
 end
 
 # Q-limit start modes on the 3-bus net: qlimit_start_iter 10 with three
@@ -2557,8 +2635,8 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
   second_reenable_blocked = !changed && !reenabled && bus_types[1] == :PQ && length(net.qLimitLog) == 3
 
   # #475: on a converged iterate the twice-clamped bus gets the joint extra
-  # release; when it violates again it goes back as a group revert (logged,
-  # but not counted as a hit), and the solve makes no further extra release
+  # release; when it violates again it is logged as :group_hit (no hit) and
+  # never released again (a group of one has no other member to revert)
   reenable_call(it; converged) = Sparlectra.active_set_q_limits!(
     net,
     it,
@@ -2592,36 +2670,115 @@ function test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot()::Bool
     q_hyst_pu = 0.10,
     cooldown_iters = 0,
   )
-  group_revert = changed && bus_types[1] == :PQ && net.qLimitLog[end].kind === :group_revert && Sparlectra.qlimit_switch_count(net, 1) == 2
+  third_hit = changed && bus_types[1] == :PQ && net.qLimitLog[end].kind === :group_hit && Sparlectra.qlimit_switch_count(net, 1) == 2
   changed, reenabled = reenable_call(8; converged = true)
   no_second_extra = !changed && !reenabled && bus_types[1] == :PQ
 
   # the guard in lock_pq mode switches an overshoot inside the hysteresis
-  # band (1.05 against Qmax 1.0 and q_hyst_pu 0.10) at once
-  guard_net = Net(name = "q_limit_violation_guard", baseMVA = 100.0)
-  guard_types = [:PV]
-  changed, reenabled = Sparlectra.active_set_q_limits!(
-    guard_net,
-    2,
-    nb;
-    get_qreq_pu = _ -> 1.05,
-    is_pv = bus -> (guard_types[bus] == :PV),
-    make_pq! = (bus, _qclamp, _side) -> (guard_types[bus] = :PQ),
-    make_pv! = bus -> (guard_types[bus] = :PV),
-    qmin_pu = [-1.0],
-    qmax_pu = [1.0],
-    pv_orig_mask = trues(nb),
-    allow_reenable = false,
-    q_hyst_pu = 0.10,
-    cooldown_iters = 0,
-    qlimit_guard_violation_mode = :lock_pq,
-    qlimit_guard_violation_threshold_pu = 1e-4,
-  )
-  guard_switch = changed && !reenabled && guard_types[1] == :PQ && length(guard_net.qLimitLog) == 1 && guard_net.qLimitLog[1].side == :max
+  # band (q_hyst_pu 0.10) once it exceeds the threshold in percent of the
+  # band Qmax - Qmin. Each row: Q, Qmin, Qmax, percent, switches?
+  #   band 2 pu, 1 %  -> 0.02 pu < overshoot 0.05: switch
+  #   band 2 pu, 5 %  -> 0.10 pu > overshoot 0.05: no switch
+  #   zero band       -> threshold 0, overshoot 1e-6: switch
+  #   Qmin = -Inf     -> no finite band, threshold Inf: no switch
+  guard_rows = [(1.05, -1.0, 1.0, 1.0, true), (1.05, -1.0, 1.0, 5.0, false), (1.0 + 1e-6, 1.0, 1.0, 50.0, true), (1.05, -Inf, 1.0, 1.0, false)]
+  guard_switch = all(guard_rows) do (q, qmin, qmax, pct, expected)
+    guard_net = Net(name = "q_limit_violation_guard", baseMVA = 100.0)
+    guard_types = [:PV]
+    changed, reenabled = Sparlectra.active_set_q_limits!(
+      guard_net,
+      2,
+      nb;
+      get_qreq_pu = _ -> q,
+      is_pv = bus -> (guard_types[bus] == :PV),
+      make_pq! = (bus, _qclamp, _side) -> (guard_types[bus] = :PQ),
+      make_pv! = bus -> (guard_types[bus] = :PV),
+      qmin_pu = [qmin],
+      qmax_pu = [qmax],
+      pv_orig_mask = trues(nb),
+      allow_reenable = false,
+      q_hyst_pu = 0.10,
+      cooldown_iters = 0,
+      qlimit_guard_violation_mode = :lock_pq,
+      qlimit_guard_violation_threshold_pct = pct,
+    )
+    switched = changed && !reenabled && guard_types[1] == :PQ && length(guard_net.qLimitLog) == 1 && guard_net.qLimitLog[1].side == :max
+    unchanged = !changed && guard_types[1] == :PV && isempty(guard_net.qLimitLog)
+    expected ? switched : unchanged
+  end
 
-  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked && converged_reenable && group_revert && no_second_extra && guard_switch
+  return delayed && first_switch && first_reenable && second_switch && second_reenable_blocked && converged_reenable && third_hit && no_second_extra && guard_switch
 end
 
+# #475, the shrinking group release of active_set_q_limits!: every bus is
+# clamped twice (Qmin 0, Qmax 1, the clamp at Qmax), the voltage of each sits
+# above its set point, so all are on the release side. On a converged
+# iterate they are released together. When some of them violate again,
+# those stay clamped (:group_hit, not a hit), the others go back with them
+# as :group_revert and are released again, without the failed ones, on the
+# next converged iterate. After QLIMIT_GROUP_RELEASE_MAX_ROUNDS failed
+# rounds no group is released any more.
+function test_q_limit_group_release_shrinks()::Bool
+  # n buses clamped twice at Qmax (hit, release, hit)
+  function twice_clamped(n)
+    net = Net(name = "q_limit_group_release", baseMVA = 100.0)
+    types = fill(:PQ, n)
+    for b = 1:n
+      Sparlectra.logQLimitHit!(net, 1, b, :max)
+      push!(net.qLimitLog, Sparlectra.QLimitEvent(iter = 2, bus = b, side = :max, kind = :release))
+      Sparlectra.logQLimitHit!(net, 3, b, :max)
+    end
+    return net, types
+  end
+  # one call of the active set; `over` are the buses whose Q lies over Qmax
+  function step!(net, types, it; over = Int[], converged = true)
+    n = length(types)
+    return Sparlectra.active_set_q_limits!(
+      net, it, n;
+      get_qreq_pu = b -> b in over ? 1.2 : 1.0,
+      is_pv = b -> types[b] == :PV,
+      make_pq! = (b, _q, _side) -> (types[b] = :PQ),
+      make_pv! = b -> (types[b] = :PV),
+      qmin_pu = zeros(n), qmax_pu = ones(n), pv_orig_mask = trues(n),
+      allow_reenable = true, q_hyst_pu = 0.01, cooldown_iters = 0,
+      get_vm_pu = _ -> 1.01, get_vset_pu = _ -> 1.0, v_hyst_pu = 1e-4,
+      converged_iterate = converged,
+    )
+  end
+  kinds_at(net, it) = [(e.bus, e.kind) for e in net.qLimitLog if e.iter == it]
+
+  # three buses: all released, bus 2 fails, 1 and 3 return with it and are
+  # released again alone, and hold
+  net, types = twice_clamped(3)
+  _, rel = step!(net, types, 4)
+  all_released = rel && all(==(:PV), types)
+  changed, _ = step!(net, types, 5; over = [2])
+  reverted = changed && all(==(:PQ), types) && kinds_at(net, 5) == [(2, :group_hit), (1, :group_revert), (3, :group_revert)]
+  # not converged: no group release
+  changed, rel = step!(net, types, 6; converged = false)
+  waits = !changed && !rel && all(==(:PQ), types)
+  _, rel = step!(net, types, 7)
+  smaller = rel && types == [:PV, :PQ, :PV]
+  changed, rel = step!(net, types, 8)
+  holds = !changed && !rel && types == [:PV, :PQ, :PV]
+
+  # seven buses, each round the lowest remaining one fails: five failed
+  # rounds, then the last two stay clamped
+  rounds = Sparlectra.QLIMIT_GROUP_RELEASE_MAX_ROUNDS
+  net, types = twice_clamped(rounds + 2)
+  it = 4
+  for k = 1:rounds
+    step!(net, types, it)
+    step!(net, types, it + 1; over = [k])
+    it += 2
+  end
+  _, rel = step!(net, types, it)
+  failed = [e.bus for e in net.qLimitLog if e.kind === :group_hit]
+  # the hit counts stay at two, so max_switches does not reject the run
+  bounded = !rel && all(==(:PQ), types) && failed == collect(1:rounds) && all(b -> Sparlectra.qlimit_switch_count(net, b) == 2, eachindex(types))
+
+  return all_released && reverted && waits && smaller && holds && bounded
+end
 
 function test_solve_sparse_system_small_and_large_backends()::Bool
   smallA = sparse([1.0 1.0; 2.0 2.0])
@@ -2993,22 +3150,29 @@ function test_active_set_voltage_side_release()::Bool
     @test rf.net.reenable_v_hyst_pu == fcfg.powerflow.qlimits.reenable_v_hyst_pu
 
     # with the voltage-side release switched off (margin 1.0) the run ends
-    # non-physical; fast/ref_api_smoke.jl checks that case. The Q-V rows of
-    # that run are the event buses of the stability report on their limit on
-    # the wrong side, so every one of them fails the stability check.
+    # on the non-physical point of the paper: buses 2, 3 and 6 at Qmax with
+    # the voltage above the set point. The stability check takes the release
+    # margin as its voltage tolerance and reports only what the solver would
+    # change, so it names no bus; the Q-V check reads the fixed tolerances
+    # and names all three, as on the classic_simultaneous run below
     cfg_a = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.reenable_v_hyst_pu" => 1.0)).config
-    ra = @test_logs (:warn, r"Q-limit stability check") match_mode = :any run_sparlectra(casefile = zeng, config = cfg_a)
-    qv_a = Set(row.bus for row in Sparlectra.qvCharacteristicViolations(ra.net) if row.significant)
-    @test !isempty(qv_a)
-    @test issubset(qv_a, Set(row.bus for row in ra.diagnostics.qlimit_stability_report if !row.ok))
-    # the classic one-at-a-time mode ends on a physical point as well
+    ra = run_sparlectra(casefile = zeng, config = cfg_a)
+    @test ra.final_converged
+    @test ra.diagnostics.qlimit_stability_violations == 0
+    qv_a = Sparlectra.qvCharacteristicViolations(ra.net)
+    @test [(row.bus, row.side, row.significant) for row in qv_a] == [(2, :max, true), (3, :max, true), (6, :max, true)]
+    @test all(row -> row.vm_pu > row.vset_pu, qv_a)
+    # the classic one-at-a-time mode ends on a physical point as well: bus 6
+    # stays PV 0.68 MVAr over its Qmax, inside the hysteresis of 1 MVAr; the
+    # final check accepts it (see below) and the stability check counts it
+    # on its limit and inside its band
     cfg_c = Sparlectra.resolve_config(Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, zeng, Dict{String,Any}("power_flow.qlimits.enforcement_mode" => "classic_one_at_a_time")).config
-    # the stability check flags bus 6, PV 0.68 MVAr over its Qmax (the final
-    # check accepts it within the hysteresis, see below)
-    rc = @test_logs (:warn, r"Q-limit stability check: 1 voltage-regulated bus\(es\).*6 \(PV outside its band, U 1\.07000 pu, U_set 1\.07000 pu, Q 24\.678 MVAr outside -6\.000 \.\. 24\.000\)") match_mode = :any run_sparlectra(casefile = zeng, config = cfg_c)
+    rc = run_sparlectra(casefile = zeng, config = cfg_c)
     @test rc.final_converged
-    @test rc.diagnostics.qlimit_stability_violations == 1
-    @test [row.bus for row in rc.diagnostics.qlimit_stability_report if !row.ok] == [6]
+    @test rc.diagnostics.qlimit_stability_violations == 0
+    r6 = only(row for row in rc.diagnostics.qlimit_stability_report if row.bus == 6)
+    @test (r6.end_type, r6.reached_limit, r6.in_band, r6.ok) == (:PV, :max, true, true)
+    @test isapprox(r6.q_MVar, 24.678; atol = 1e-3)
     # classic_simultaneous ends on the abnormal solution of the paper: buses
     # 2, 3 and 6 at Qmax with the voltage above U_set violate (7); the
     # classic modes do not switch back.
@@ -3019,6 +3183,11 @@ function test_active_set_voltage_side_release()::Bool
     bad_s = [row for row in rs.diagnostics.qlimit_stability_report if !row.ok]
     @test [(row.bus, row.reached_limit, row.check_6, row.check_7, row.locked_by) for row in bad_s] == [(2, :max, true, false, :none), (3, :max, true, false, :none), (6, :max, true, false, :none)]
     @test all(row -> row.u_pu > row.uset_pu, bad_s)
+    # the Q-V rows are the event buses of the stability report on their
+    # limit on the wrong side, so every one of them fails the check
+    qv_s = Set(row.bus for row in Sparlectra.qvCharacteristicViolations(rs.net) if row.significant)
+    @test !isempty(qv_s)
+    @test issubset(qv_s, Set(row.bus for row in bad_s))
     @test qlimit_stability_line(rs.diagnostics.qlimit_stability_status, rs.diagnostics.qlimit_stability_report) == "Q-limit stability violations: 3 (bus 2, 3, 6)"
     @test isempty(Sparlectra.qvCharacteristicViolations(rc.net))
     # The final Q-limit check judges both modes alike: the classic run keeps
@@ -3192,6 +3361,7 @@ function run_grid_fast_tests()
     @test test_jacobian_reuse_same_solution() == true
     @test test_rectangular_nonfinite_mismatch_diagnostics_use_finite_history() == true
     @test test_rectangular_start_projection_dc_candidate_matches_rundcpf() == true
+    @test test_rectangular_start_projection_dc_candidate_uncapped_reports_no_clipping() == true
     @test test_rectangular_start_projection_keeps_raw_without_finite_improvement() == true
     @test test_rectangular_start_projection_ratio_profile() == true
     @test test_run_level_flat_start_is_flat() == true
@@ -3201,6 +3371,7 @@ function run_grid_fast_tests()
     @test test_q_limit_reenable_voltage_rule() == true
     @test test_q_limit_start_iter_delays_switching() == true
     @test test_q_limit_hysteresis_delays_small_pv_to_pq_overshoot() == true
+    @test test_q_limit_group_release_shrinks() == true
     @test test_solve_sparse_system_small_and_large_backends() == true
     @test test_rectangular_jacobian_and_dc_start_matrices_are_sparse() == true
     @test test_rectangular_singular_step_returns_nonconvergence() == true

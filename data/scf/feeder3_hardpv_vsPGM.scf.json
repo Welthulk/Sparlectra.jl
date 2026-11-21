@@ -253,11 +253,6 @@
         "B2",
         "B3"
       ]
-    },
-    "config": {
-      "power_flow.qlimits.enabled": true,
-      "power_flow.qlimits.enforcement_mode": "active_set",
-      "power_flow.tol": 1e-08
     }
   }
 }

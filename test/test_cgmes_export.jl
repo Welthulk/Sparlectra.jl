@@ -145,6 +145,11 @@ function _cgmes_values_equal(tag::AbstractString, a::AbstractString, b::Abstract
   fb = tryparse(Float64, b)
   (fa === nothing || fb === nothing) && return false
   tag in ("cim:SvPowerFlow.p", "cim:SvPowerFlow.q") && return isapprox(fa, fb; atol = 1e-6)
+  # the re-import of sp_case118 reaches its state through the Q-limit
+  # switching and stops at a mismatch of 1e-8 pu, so an angle close to the
+  # slack differs from the fixture by more than its 9th digit (measured
+  # 5.2e-11 deg at -7.1e-5 deg): an absolute floor of 1e-9 deg
+  tag == "cim:SvVoltage.angle" && return isapprox(fa, fb; rtol = 1e-8, atol = 1e-9)
   # the fixtures carry 9 significant digits (tools/gen_cgmes_fixtures.jl):
   # a fixture value differs from the full-precision re-export by up to half
   # a unit of the 9th digit, at most 5e-9 relative
@@ -702,10 +707,7 @@ function run_cgmes_export_tests()
   #      (g * ratedU^2, b * ratedU^2), not dropped.
   #   3. SynchronousMachine.minQ/maxQ: the importer reads them as the hull
   #      of both sign readings (sp_case118 has asymmetric pairs) and
-  #      substitutes wide symmetric limits where the fixture has none
-  #      (sp_case14 Gen_110).
-  #   4. IdentifiedObject.name of a LinearShuntCompensator and of its
-  #      Terminal: the importer names shunts by its own bus index.
+  #      substitutes wide symmetric limits where the fixture has none.
   # Everything else (topology, lines, transformers, loads, machines,
   # regulating controls, breakers, the SSH operating point, the SV
   # voltages and flows) must compare equal object by object.
@@ -719,9 +721,8 @@ function run_cgmes_export_tests()
       dir = cgmes_fixture_dir(case)
       res = importCGMES(path = dir, name = case)
       # the SV of the re-export is the solved state: solve from the SV
-      # start with Q-limits off, as the fixture was solved (a unit that
-      # switched to a limit would legitimately change SSH q and SV)
-      @test runpf!(res.net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false)[2] == 0
+      # start with Q limits, as the fixture was solved
+      @test runpf!(res.net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = true)[2] == 0
       out = mktempdir()
       notes = String[]
       files = writeCGMESFiles(res.net; path = out, created = _EXPORT_STAMP, notices = notes)
@@ -731,13 +732,9 @@ function run_cgmes_export_tests()
       _, eq_objects = _cgmes_profile_objects(eq_fixture)
       ref_id(v) = String(last(split(v, "_"; limit = 2)))
       rtc_ends = Set(ref_id(v) for (_, (cls, attrs)) in eq_objects if cls == "cim:RatioTapChanger" for (tag, v) in attrs if tag == "cim:RatioTapChanger.TransformerEnd")
-      shunt_ids = Set(id for (id, (cls, _)) in eq_objects if cls == "cim:LinearShuntCompensator")
-      shunt_terminals = Set(id for (id, (cls, attrs)) in eq_objects if cls == "cim:Terminal" && any(tag == "cim:Terminal.ConductingEquipment" && ref_id(v) in shunt_ids for (tag, v) in attrs))
       drop_attr = (cls, id, tag) -> begin
         (cls == "cim:PowerTransformerEnd" && tag == "cim:PowerTransformerEnd.ratedU" && id in rtc_ends) ||
-          (cls == "cim:SynchronousMachine" && tag in ("cim:SynchronousMachine.minQ", "cim:SynchronousMachine.maxQ")) ||
-          (cls == "cim:LinearShuntCompensator" && tag == "cim:IdentifiedObject.name") ||
-          (cls == "cim:Terminal" && tag == "cim:IdentifiedObject.name" && id in shunt_terminals)
+          (cls == "cim:SynchronousMachine" && tag in ("cim:SynchronousMachine.minQ", "cim:SynchronousMachine.maxQ"))
       end
       counts = Int[]
       for f in files

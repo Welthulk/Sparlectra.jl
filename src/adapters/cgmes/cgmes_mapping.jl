@@ -1444,6 +1444,18 @@ function _firstTerminalMrid(topo::CGMESTopology, obj::CIMObject)::Union{Nothing,
   return ts[1].mrid
 end
 
+# The delivery's IdentifiedObject.name on the element the importer just
+# built (line, transformer, load, machine, shunt), so reports and a re-export
+# carry it; an object without a name keeps the generated one (ACL_110.0,
+# Gen_110). Branch names (B_ACL_110_1_2) stay generated: they key the result
+# tables and measurement addresses, and delivery names need not be unique.
+function _cgmesTakeName!(comp, obj::Union{Nothing,CIMObject})
+  obj === nothing && return comp
+  name = str(obj, :name)
+  (name === nothing || isempty(strip(name))) || (comp.cName = name)
+  return comp
+end
+
 # Structural-identity capture for single-terminal equipment. The (kind, bus)
 # counter is consumed for EVERY created unit of the class, also when there is
 # no mRID to record (mrid = nothing), so the export, which walks the created
@@ -1544,6 +1556,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
       r_pu, x_pu, b_pu, g_pu = pu.r_pu, pu.x_pu, pu.b_pu, pu.g_pu
       if pu.ratio === nothing
         Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
+        _cgmesTakeName!(net.linesAC[end].comp, line)
         ctx.element_by_mrid[line.mrid] = (:branch, length(net.branchVec))
         _recordBranchTerminals!(ctx, net, topo, line)
         # Identity capture (line + its two terminals) for a later CGMES
@@ -1566,6 +1579,7 @@ function _mapLines!(net, store, topo, created, svmap, baseMVA, ctx::_MapCtx)
         from = Sparlectra.geNetBusIdx(net = net, busName = b1)
         to = Sparlectra.geNetBusIdx(net = net, busName = b2)
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratio = ratio, shift_deg = 0.0, from_status = c1 ? 1 : 0, to_status = c2 ? 1 : 0)
+        _cgmesTakeName!(net.trafos[end].comp, line)
         _attachNoSETapChangers!(net.branchVec[end])
         # still a line in CGMES terms, so a branch, not a transformer
         ctx.element_by_mrid[line.mrid] = (:branch, length(net.branchVec))
@@ -1711,6 +1725,7 @@ function _mapEquivalentBranches!(net, store, topo, created, svmap, baseMVA, ctx:
     r_pu, x_pu, _, _ = Sparlectra.toPU_RXBG(r = r, x = x, v_kv = t1.vn_kV, baseMVA = baseMVA)
     if t1.vn_kV == t2.vn_kV && !stamped
       Sparlectra.addPIModelACLine!(net = net, fromBus = b1, toBus = b2, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, g_pu = 0.0, status = 1)
+      _cgmesTakeName!(net.linesAC[end].comp, eb)
       k = cgmesNextParallelIndex!(acl_parallel, b1, b2)
       eqbKey = cgmesKeyEquivalentBranch(b1, b2, k)
     else
@@ -1731,6 +1746,7 @@ function _mapEquivalentBranches!(net, store, topo, created, svmap, baseMVA, ctx:
         Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = 0.0, g_pu = 0.0, status = 1, ratio = 1.0, shift_deg = 0.0)
       end
       _attachNoSETapChangers!(net.branchVec[end])
+      _cgmesTakeName!(net.trafos[end].comp, eb)
       k = cgmesNextBusEquipmentIndex!(ctx.eqp_counters, "PT", _cgmesTrafoPairKey(b1, b2))
       eqbKey = cgmesKeyEquivalentBranchTransformer(b1, b2, k)
     end
@@ -1845,6 +1861,7 @@ function _map2WTrafo!(net, store, topo, created, svmap, svsteps, baseMVA, pt, en
   ratedS = num(e1, :ratedS)
   Sparlectra._addPIModelTrafo_by_idx!(net = net, from = from, to = to, r_pu = r_pu, x_pu = x_pu, b_pu = b_pu, g_pu = g_pu, status = status, ratedU = Uf, ratedS = ratedS, ratio = ratio, shift_deg = shift, from_status = ptc_f ? 1 : 0, to_status = ptc_t ? 1 : 0, g_from_pu = g_from_pu, b_from_pu = b_from_pu, g_to_pu = g_to_pu, b_to_pu = b_to_pu)
   ctx.element_by_mrid[pt.mrid] = (:transformer, length(net.branchVec))
+  _cgmesTakeName!(net.trafos[end].comp, pt)
   idx = net.branchVec[end].branchIdx
   tmf = get(ef.refs, :Terminal, nothing)
   tmt = get(et.refs, :Terminal, nothing)
@@ -2224,6 +2241,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     # MATPOWER-style shunt: MW/MVAr injected at 1.0 pu of the bus vn
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
     ctx.element_by_mrid[sh.mrid] = (:shunt, length(net.shuntVec))
+    _cgmesTakeName!(net.shuntVec[end].comp, sh)
     _captureBusEquipment!(net, ctx, "SH", bus, sh.mrid; children = (T1 = _firstTerminalMrid(topo, sh),))
   end
 
@@ -2249,6 +2267,7 @@ function _mapShunts!(net, store, topo, created, svmap, ctx::_MapCtx)
     bus = _ensureBus!(net, created, topo, svmap, t.tn)
     Sparlectra.addShuntMatpower!(net = net, busName = bus, Gs = g * t.vn_kV^2, Bs = b * t.vn_kV^2)
     ctx.element_by_mrid[sh.mrid] = (:shunt, length(net.shuntVec))
+    _cgmesTakeName!(net.shuntVec[end].comp, sh)
     # the aggregated characteristic re-exports as a LinearShuntCompensator,
     # keeping the original mRID
     _captureBusEquipment!(net, ctx, "SH", bus, sh.mrid; children = (T1 = _firstTerminalMrid(topo, sh),))
@@ -2339,6 +2358,7 @@ function _mapLoads!(net, store, topo, created, svmap, ctx::_MapCtx)
       bus = _ensureBus!(net, created, topo, svmap, t.tn)
       Sparlectra.addProsumer!(net = net, busName = bus, type = "ENERGYCONSUMER", p = p, q = q, defer_bus_type_refresh = true)
       ctx.element_by_mrid[load.mrid] = (:load, length(net.prosumpsVec))
+      _cgmesTakeName!(net.prosumpsVec[end].comp, load)
       # identity capture: all load classes re-export as EnergyConsumer, the
       # original mRID is what survives the roundtrip
       _captureBusEquipment!(net, ctx, "EC", bus, load.mrid; children = (T1 = _firstTerminalMrid(topo, load),))
@@ -3962,6 +3982,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     Sparlectra.addProsumer!(net = net, busName = bus, type = "ASYNCHRONOUSMACHINE", p = p, q = q, defer_bus_type_refresh = true)
     # a consumption-type prosumer (motor convention), hence a load
     ctx.element_by_mrid[am.mrid] = (:load, length(net.prosumpsVec))
+    _cgmesTakeName!(net.prosumpsVec[end].comp, am)
     # The prosumer constructor collapses the type string to a generic Load
     # component; keep the true component type on the comp so the
     # short-circuit evaluation can recognize motors (skip + lower-bound
@@ -4394,6 +4415,7 @@ function _mapInjections!(net, store, topo, created, svmap, ctx::_MapCtx; multi_s
     addr_mrid = String(something(inj_mrid, get(inj, :src_mrid, nothing)))
     addr_kind = inj.type == "EXTERNALNETWORKINJECTION" ? :external_grid : :generator
     ctx.element_by_mrid[addr_mrid] = (addr_kind, lastindex(net.prosumpsVec))
+    _cgmesTakeName!(net.prosumpsVec[end].comp, get(store.objects, addr_mrid, nothing))
     # The prosumer constructor collapses the type string to a generic
     # Generator/Load component; keep the concrete class on the comp (same
     # pattern as the AsynchronousMachine marker) so a later CGMES export can

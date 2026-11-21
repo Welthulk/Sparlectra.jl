@@ -16,22 +16,18 @@
 # purpose: fixed-reference self check (run_fixed_reference_self_check): one
 #          NR iteration from the imported voltages with all start-value
 #          machinery forced off, measuring the case's own consistency
-# The forced settings below travel on TWO levels, and both are needed:
-#
-# - as explicit `config_overrides`, the only level above a case configuration
-#   file. As soon as such a file lies next to the case, its mere EXISTENCE
-#   makes every CASE-scope key fall through from the case levels straight to
-#   the packaged defaults (resolve_config), so a configuration FILE no
-#   longer reaches the solver for them. Measured with a case
-#   configuration next to case14.m that did not even carry a `power_flow`
-#   block: the self-check ran with max_iter=80 and rescue=true instead of 1
-#   and false, and still wrote its "start values taken verbatim" line.
-# - as a merged, temporary YAML configuration file, for the forced key that
-#   is NOT in `GUI_EDITABLE_CONFIG_KEYS` (`power_flow.start_mode.start_projection`).
-#   It is not case scope either, so no case configuration file can set it
-#   and the file still reaches the solver for it. `_SELF_CHECK_FILE_ONLY_KEYS`
-#   names it, and a forced key that is in neither class raises instead of
-#   silently missing the solver.
+# The forced settings travel as explicit `config_overrides`, the only level
+# above a case configuration file. As soon as such a file lies next to the
+# case, its mere EXISTENCE makes every CASE-scope key fall through from the
+# case levels straight to the packaged defaults (resolve_config), so a
+# configuration FILE no longer reaches the solver for them. Measured with a
+# case configuration next to case14.m that did not even carry a `power_flow`
+# block: the self-check ran with max_iter=80 and rescue=true instead of 1
+# and false, and still wrote its "start values taken verbatim" line. Every
+# forced key is GUI-editable (a forced key that is not raises instead of
+# silently missing the solver). They are also merged into a temporary YAML
+# configuration file the run starts from; the Diagnose run of the service
+# keeps that file as its artifact `diagnose_self_check_config.yaml`.
 #
 # Every start-value machine is forced off so the imported bus voltages reach
 # the solver verbatim, whatever the base configuration says:
@@ -43,13 +39,6 @@
 # - start_current_iteration.enabled=false: no current-iteration pre-solve;
 # - apslf_start.enabled=false: no APSLF start preconditioner.
 
-# Forced keys that cannot ride the override level because they are not in
-# `GUI_EDITABLE_CONFIG_KEYS`. They are not case scope either, so a case
-# configuration file cannot set them and the merged file below still wins.
-const _SELF_CHECK_FILE_ONLY_KEYS = Set([
-  "power_flow.start_mode.start_projection",
-])
-
 function _flatten_forced_overrides!(flat::Dict{String,Any}, prefix::AbstractString, d::AbstractDict)
   for (k, v) in d
     key = isempty(prefix) ? String(k) : string(prefix, ".", k)
@@ -57,11 +46,11 @@ function _flatten_forced_overrides!(flat::Dict{String,Any}, prefix::AbstractStri
       _flatten_forced_overrides!(flat, key, v)
     elseif key in GUI_EDITABLE_CONFIG_KEYS
       flat[key] = v
-    elseif !(key in _SELF_CHECK_FILE_ONLY_KEYS)
+    else
       # Not a run-time condition: this can only fire when a forced setting is
-      # added without deciding how it reaches the solver, and the symptom
-      # would be a self-check that silently does not force it.
-      error("self-check forced key $(key) is neither GUI-editable nor declared in _SELF_CHECK_FILE_ONLY_KEYS")
+      # added that the override level does not accept, and the symptom would
+      # be a self-check that silently does not force it.
+      error("self-check forced key $(key) is not GUI-editable, so it cannot reach the solver above a case configuration file")
     end
   end
   return flat

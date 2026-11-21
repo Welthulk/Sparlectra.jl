@@ -15,7 +15,8 @@
 # file: tools/gen_cgmes_fixtures.jl
 # purpose: build the checked-in CGMES test deliveries under
 #          data/cgmes_demo/<case>/ from the shipped cases: import the
-#          case, solve it with the rectangular solver, export EQ+TP+SSH+SV
+#          case, give its elements unique names, solve it with the
+#          rectangular solver and the Q limits, export EQ+TP+SSH+SV
 #          with writeCGMESFiles under a FIXED header stamp. The output is
 #          byte-reproducible (deterministic uuid5 ids, pinned `created`), so
 #          rerunning the script on an unchanged case leaves git clean. No
@@ -49,6 +50,7 @@ function _load_matpower(path::AbstractString)
     matpower_shift_unit = :deg,
     matpower_ratio = :normal,
     tap_changer_model = :ideal,
+    apply_bus_names = true,
   )
 end
 
@@ -95,6 +97,103 @@ function _winding_taps_from_nameplate!(net::Net)
   return applied
 end
 
+# The importers name lines, loads and machines after their voltage level
+# (ACL_110.0, Gen_110), so an export of the plain import carries one name
+# on every line of a level. The delivery gets the names of the source case
+# instead:
+#   - a line or transformer takes the name of its branch when the case gives
+#     it one (SCF branch names); a generated branch name
+#     (B_<kind>_<kV>_<from>_<to>, bus indices) is replaced by
+#     <prefix>_<from bus>_<to bus> with the prefix of the importer's name
+#     (ACL, 2WT), with _<k> for the k-th parallel element;
+#   - a load, machine or shunt keeps its name when no other element of its
+#     class carries it, else it becomes <prefix>_<bus name> with the prefix
+#     of the importer's name (Gen, Ld, Sh), with _<k> for the k-th such
+#     element on the bus.
+# The element names leave the mRIDs alone: the exporter mints them from bus
+# names and per-bus counters. The bus names do enter them, so sp_case118,
+# built with the bus names of its MATPOWER file (apply_bus_names), carries
+# mRIDs from those names (1204 of its 1211 rdf:IDs changed when they came in).
+const _GENERATED_BRANCH_NAME = r"^B_[A-Za-z0-9]+_\d+_\d+_\d+$"
+
+function _unique_fixture_names!(net::Net)
+  busname = Sparlectra._bus_name_by_idx(net)
+  parallel = Dict{Tuple{String,String},Int}()
+  pair_count = Dict{Tuple{String,String},Int}()
+  for br in net.branchVec
+    key = (busname[br.fromBus], busname[br.toBus])
+    pair_count[key] = get(pair_count, key, 0) + 1
+  end
+  function branch_name(br, element_name)
+    source = br.comp.cName
+    !occursin(_GENERATED_BRANCH_NAME, source) && count(b -> b.comp.cName == source, net.branchVec) == 1 && return source
+    key = (busname[br.fromBus], busname[br.toBus])
+    k = parallel[key] = get(parallel, key, 0) + 1
+    base = string(first(split(element_name, '_')), "_", key[1], "_", key[2])
+    return pair_count[key] == 1 ? base : string(base, "_", k)
+  end
+  line_branch = Sparlectra.CGMESImporter._cgmesLineBranchIdx(net, busname)
+  trafo_branches = [br for br in net.branchVec if Sparlectra._branch_build_kind(br) === :transformer]
+  length(trafo_branches) == length(net.trafos) || error(string(net.name, ": ", length(net.trafos), " transformers against ", length(trafo_branches), " transformer branches"))
+  for (i, line) in enumerate(net.linesAC)
+    line.comp.cName = branch_name(net.branchVec[line_branch[i]], line.comp.cName)
+  end
+  for (tf, br) in zip(net.trafos, trafo_branches)
+    tf.comp.cName = branch_name(br, tf.comp.cName)
+  end
+  function bus_element_names!(comps, bus_of)
+    names = [c.cName for c in comps]
+    seen = Dict{Tuple{String,Int},Int}()
+    on_bus = Dict{Tuple{String,Int},Int}()
+    prefix(c) = first(split(c.cName, '_'))
+    for c in comps
+      key = (prefix(c), bus_of(c))
+      on_bus[key] = get(on_bus, key, 0) + 1
+    end
+    for c in comps
+      count(==(c.cName), names) == 1 && continue
+      key = (prefix(c), bus_of(c))
+      k = seen[key] = get(seen, key, 0) + 1
+      c.cName = on_bus[key] == 1 ? string(key[1], "_", busname[key[2]]) : string(key[1], "_", busname[key[2]], "_", k)
+    end
+  end
+  bus_element_names!([ps.comp for ps in net.prosumpsVec], c -> Int(c.cFrom_bus))
+  bus_element_names!([sh.comp for sh in net.shuntVec], c -> Int(c.cFrom_bus))
+  return nothing
+end
+
+# Every element name of a profile file once: the exporter suffixes the
+# auxiliary objects of an element (_T1, _GU, _RC, _RTC) with its name, so a
+# repeated name means two elements share one.
+function _assert_unique_names(file::AbstractString)
+  names = [m.captures[1] for m in eachmatch(r"<cim:IdentifiedObject.name>([^<]*)</cim:IdentifiedObject.name>", read(file, String))]
+  dup = sort!(unique(n for n in names if count(==(n), names) > 1))
+  isempty(dup) || error(string(basename(file), ": names used more than once: ", join(first(dup, 10), ", ")))
+  return length(names)
+end
+
+# A unit at a reactive limit in the fixture solve keeps its voltage control
+# in the delivery (RegulatingControl, target); its SSH q states the limit it
+# holds, the SV the voltage below or above the target. Several units on one
+# bus hold their own limits together. The importer reads minQ/maxQ as the
+# hull of both sign readings; a unit pinned on the narrower side of an
+# asymmetric pair would not pin after a re-import, so the build refuses it.
+function _units_at_qlimit!(net::Net)::Int
+  n = 0
+  for (bus, side) in net.qLimitEvents
+    for ps in net.prosumpsVec
+      Sparlectra.isGenerator(ps) && Sparlectra.getPosumerBusIndex(ps) == bus || continue
+      (ps.minQ === nothing || ps.maxQ === nothing) && continue
+      limit = side === :max ? ps.maxQ : ps.minQ
+      hull = side === :max ? max(ps.maxQ, -ps.minQ) : min(ps.minQ, -ps.maxQ)
+      limit == hull || error(string(net.name, ": ", ps.comp.cName, " holds its ", side, " limit ", limit, " MVAr, the import hull gives ", hull, " MVAr"))
+      ps.qVal = limit
+      n += 1
+    end
+  end
+  return n
+end
+
 function build_cgmes_fixture(case::AbstractString, loader)
   net = loader()
   windings = _winding_taps_from_nameplate!(net)
@@ -102,17 +201,15 @@ function build_cgmes_fixture(case::AbstractString, loader)
   # folder and the file prefix agree regardless of what the case file calls
   # itself
   net.name = String(case)
-  # Q-limits stay off in the fixture solve. A delivery carries voltage
-  # targets and the SSH operating point, not the solver's active set: a
-  # unit that ended Q-pinned in the source solve re-imports as a regulated
-  # PV unit at its target, the importer reads minQ/maxQ as the hull of both
-  # sign readings, and the switching path then decides which units pin
-  # again (measured on sp_case118: 14 pinned units, 0.012 pu against the SV
-  # profile even with the source limits restored). With every regulated
-  # unit holding its target, the SV profile is the solution of the
-  # delivery itself, and the tests reproduce it to floating-point noise.
-  ite, erg = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false)
+  _unique_fixture_names!(net)
+  # The SV is the solution with the Q limits the EQ file declares, so no
+  # SvPowerFlow of a machine lies outside its minQ/maxQ. A re-import solved
+  # with Q limits reaches the same active set and reproduces the SV to the
+  # rounding of the files (_units_at_qlimit! checks the limits against the
+  # importer's hull).
+  ite, erg = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = true)
   erg == 0 || error(string(case, ": power flow did not converge (erg = ", erg, ")"))
+  pinned = _units_at_qlimit!(net)
   outdir = joinpath(_FIXTURE_ROOT, case)
   mkpath(outdir)
   # start from an empty folder so a renamed or dropped profile never lingers
@@ -122,8 +219,9 @@ function build_cgmes_fixture(case::AbstractString, loader)
   notices = String[]
   files = writeCGMESFiles(net; path = outdir, created = CGMES_FIXTURE_STAMP, notices = notices)
   total = 0
-  println(case, ": ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches, solved in ", ite, " iterations, ", windings, " winding(s) with ratio-tap machinery from the branch nameplate")
+  println(case, ": ", length(net.nodeVec), " buses, ", length(net.branchVec), " branches, solved in ", ite, " iterations with Q limits, ", pinned, " unit(s) at a reactive limit, ", windings, " winding(s) with ratio-tap machinery from the branch nameplate")
   for f in files
+    _assert_unique_names(f)
     sz = filesize(f)
     total += sz
     @printf("  %-22s %9d bytes\n", basename(f), sz)

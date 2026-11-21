@@ -22,7 +22,10 @@
 #          and offers to install it (an installed copy only); only an answer
 #          y or yes installs. `--no-update-check` or SPARLECTRA_UPDATE_CHECK=0
 #          skips the check for unattended starts, and so does
-#          JULIA_PKG_OFFLINE=true.
+#          JULIA_PKG_OFFLINE=true. `--remote` starts the remote mode: no
+#          browser window on this machine, the server runs until it is
+#          stopped, and webui.remote_mode of the configuration decides
+#          between the SSH tunnel (default) and a direct bind.
 
 # --- sysimage handling ------------------------------------------------------
 # This runs BEFORE `using Sparlectra`, deliberately: the launcher module sits
@@ -30,7 +33,7 @@
 # no package load. Julia can only take an image at process start (-J), so a
 # process that wants one has to start itself again.
 include(joinpath(@__DIR__, "tools", "sysimage_launcher.jl"))
-using .SysimageLauncher: handle_sysimage, console_answer, prepare_environments, repair_environment, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
+using .SysimageLauncher: handle_sysimage, console_answer, prepare_environments, repair_environment, running_on_sysimage, warm_webui_page, remote_requested, ENV_ONLY_FLAG
 
 const _SPARLECTRA_LIBRARY_DIR = abspath(@__DIR__)
 const _SPARLECTRA_APP_DIR = abspath(joinpath(@__DIR__, "app"))
@@ -103,12 +106,16 @@ function main()
   # request, so the window's request finds everything ready) and opens the
   # window when the page is ready, a few seconds later.
   on_sysimage = running_on_sysimage()
-  server = SparlectraApp.start_sparlectra_webui(open_browser = on_sysimage)
+  # remote mode: no window on this machine; the server prints the connection
+  # lines for the user on the other machine and runs until it is stopped
+  remote = remote_requested(ARGS)
+  server = SparlectraApp.start_sparlectra_webui(open_browser = on_sysimage, remote = remote)
   # nothing = a Sparlectra Web UI already runs on the port; on a sysimage it
   # was opened in the browser already, without one it is opened here (that
   # instance compiled its pages long ago); no new server task to wait on.
   if server === nothing
-    on_sysimage || SparlectraApp._webui_open_browser("http://127.0.0.1:8080/powerflow")
+    remote && println("A Sparlectra Web UI already runs on this port; stop it first to start the remote mode.")
+    remote || on_sysimage || SparlectraApp._webui_open_browser("http://127.0.0.1:8080/powerflow")
     return nothing
   end
   # A script run ends the process on SIGINT by default: Julia prints the
@@ -120,8 +127,8 @@ function main()
     if !on_sysimage
       # the request line split into SubStrings like the server reads it, so
       # the call meets the code the package image compiled for a real GET
-      warm_webui_page(() -> SparlectraApp.route_sparlectra_webui(split("GET /powerflow")..., Dict{String,String}(); output_root = abspath(SparlectraApp.default_webui_output_root()), runtime = server.runtime).status == 200)
-      SparlectraApp._webui_open_browser(server.url)
+      warm_webui_page(() -> SparlectraApp.route_sparlectra_webui(split("GET /powerflow")..., Dict{String,String}(); output_root = abspath(SparlectraApp.default_webui_output_root()), runtime = server.runtime).status == 200; window = !remote)
+      remote || SparlectraApp._webui_open_browser(server.url)
     end
     SparlectraApp._wait_sparlectra_webui(server)
   catch err

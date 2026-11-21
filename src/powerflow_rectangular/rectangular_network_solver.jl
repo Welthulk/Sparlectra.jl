@@ -368,7 +368,7 @@ function runpf_rectangular!(
   qlimit_guard_max_remaining_violations::Int = 0,
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_violation_mode,
-  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimit_guard_violation_threshold_pct::Float64 = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pct,
   qlimits_enabled::Bool = true,
   qlimit_enforcement_mode::Symbol = :active_set,
   wrong_branch_detection::Symbol = :warn,
@@ -766,8 +766,9 @@ function runpf_rectangular!(
   # the island then converges in 9 iterations with the guard on.
 
   guarded_qlimit_buses = Int[]
-  # narrow-range PV buses under narrow_range_mode = lock_pq: they stay PV
-  # and leave the PQ->PV release below, so a limit they reach locks them
+  # narrow-range PV buses under narrow_range_mode = lock_pq: they stay PV,
+  # a limit they reach clamps them, and the active set releases them only
+  # on a converged iterate (narrow_band_mask below)
   qlimit_lock_on_hit_buses = Int[]
   if qlimits_enabled && qlimit_guard
     guarded_qlimit_buses = _perf_profile_time!(performance_profile, :qlimit_guard_preprocess) do
@@ -800,12 +801,15 @@ function runpf_rectangular!(
     @inbounds for k in eachindex(mask)
       mask[k] = (bus_types[k] == :PV)
     end
-    # a narrow-range bus of the guard (lock_pq) is clamped for good at the
-    # first limit it reaches: without PV origin the release rule skips it
-    for bus in qlimit_lock_on_hit_buses
-      mask[bus] = false
-    end
     mask
+  end
+  # the narrow-range buses of the guard (lock_pq) keep their PV origin; the
+  # active set releases them by the voltage rule on a converged iterate
+  # only, so a band they cross with every small voltage change cannot
+  # chatter in the unsettled iterates (active_set_q_limits!)
+  narrow_band_mask = falses(nb)
+  for bus in qlimit_lock_on_hit_buses
+    narrow_band_mask[bus] = true
   end
 
   # Warm active set (0.30.2, N-1 and scenario workers): the base case's
@@ -850,7 +854,7 @@ function runpf_rectangular!(
   qlimit_start_mode in (:iteration, :auto, :iteration_or_auto) || error("Unsupported qlimit_start_mode=$(qlimit_start_mode). Supported: :iteration, :auto, :iteration_or_auto.")
   qlimit_auto_q_delta_pu >= 0.0 || error("qlimit_auto_q_delta_pu must be >= 0 (got $(qlimit_auto_q_delta_pu)).")
   qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
-  qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
+  isfinite(qlimit_guard_violation_threshold_pct) && qlimit_guard_violation_threshold_pct >= 0.0 || error("qlimit_guard_violation_threshold_pct must be finite and >= 0 (got $(qlimit_guard_violation_threshold_pct)).")
 
   controllers, base_vset, adjust_counter, qlimit_trace_internal = _perf_profile_time!(performance_profile, :solver_active_set_setup) do
     controllers_ = qlimit_mode == :adjust_vset ? _build_vset_adjust_controllers(net) : Dict{Int,NamedTuple{(:prosumer_idx, :config),Tuple{Int,VoltageAdjustConfig}}}()
@@ -891,6 +895,10 @@ function runpf_rectangular!(
   last_finite_voltage = nothing
   first_nonfinite_iteration = 0
   first_nonfinite_voltage = nothing
+  # the buffers of the two finite snapshots of the host loop below, filled in
+  # place each iteration instead of a new copy of V (two per iteration)
+  last_finite_buffer = ComplexF64[]
+  best_finite_buffer = ComplexF64[]
   converged = false
   iters = 0
   rejection_reason = :nr_mismatch_not_converged
@@ -961,7 +969,7 @@ function runpf_rectangular!(
     power_cache.bus_type_fingerprint = UInt64(0)
   else
     workspace = RectangularIterationWorkspace(nb)
-    linear_ctx = newton_linear_solver_context(linear_solver)
+    linear_ctx = newton_linear_solver_context(linear_solver; nbus = nb)
     # dishonest Newton bookkeeping (0.30.2): maximum mismatch before the
     # previous Newton step, steps taken, reused steps in total and in a row,
     # and whether the last step was a reused one
@@ -1045,7 +1053,80 @@ function runpf_rectangular!(
     converged = true
     rejection_reason = :none
   end
-  for it = 1:(no_unknowns ? 0 : maxiter)
+  # GPU study: inside _with_device_newton a GPU solve runs its Newton loop
+  # on the device (rectangular_device_newton.jl). The loop below then starts
+  # at maxiter + 1 (nothing left to do), or continues from the iterate the
+  # device loop reached when a GPU error stopped it. The device loop changes
+  # the solve's arrays in place; here only names that are already assigned
+  # more than once in this function are rebound. A second assignment of a
+  # name a closure below captures (history, bus_types, ...) would box it and
+  # slow this loop for every CPU run.
+  it_first = 1
+  if !no_unknowns && _DEVICE_NEWTON[]
+    device_req = _device_newton_request(linear_ctx; power_mode = power_mode, autodamp = autodamp, merit_enabled = merit_enabled, trust_region_enabled = trust_region_enabled, start_projection = start_projection, distributed_slack = dslack !== nothing, jacobian_reuse = jacobian_reuse, qlimit_mode = qlimit_mode, isolated_rows = isolated_rows)
+    if device_req.use
+      # the arguments of _handle_rectangular_qlimit_iteration! after
+      # `history`, in call order (the CPU call is in the loop below)
+      device_qlimit_args = (
+        qmin_pu = qmin_pu,
+        qmax_pu = qmax_pu,
+        pv_orig_mask = pv_orig_mask,
+        narrow_band_mask = narrow_band_mask,
+        qlimit_mode = qlimit_mode,
+        allow_reenable = allow_reenable,
+        q_hyst_pu = q_hyst_pu,
+        cooldown_iters = cooldown_iters,
+        reenable_v_hyst_pu = reenable_v_hyst_pu,
+        lock_pv_to_pq_buses = lock_pv_to_pq_buses,
+        qlimit_start_mode = qlimit_start_mode,
+        qlimit_start_iter = qlimit_start_iter,
+        qlimit_auto_q_delta_pu = qlimit_auto_q_delta_pu,
+        qlimit_trace_enabled = qlimit_trace_enabled,
+        qlimit_trace_internal = qlimit_trace_internal,
+        qlimit_lock_reason = qlimit_lock_reason,
+        qlimit_max_outer = qlimit_max_outer,
+        controllers = controllers,
+        base_vset = base_vset,
+        adjust_counter = adjust_counter,
+        qlimit_guard_max_switches = qlimit_guard_max_switches,
+        qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
+        qlimit_guard_violation_mode = qlimit_guard_violation_mode,
+        qlimit_guard_violation_threshold_pct = qlimit_guard_violation_threshold_pct,
+        tol = tol,
+        verbose = verbose,
+        max_console_rows = pv_table_rows,
+        performance_profile = performance_profile,
+        dslack = dslack,
+      )
+      device_in = DeviceNewtonInput(net, Ybus, V, V0, S, bus_types, Vset, slack_idx, maxiter, tol, damp, autodamp_min, newton_update, has_vdep_control, isolated_rows, dPinj_dVm, dQinj_dVm, qlimits_enabled, device_qlimit_args, workspace, performance_profile, linear_ctx, check_cancel, set_phase, verbose)
+      device_out = _run_device_newton(device_in)
+      if device_out !== nothing
+        V = device_out.V
+        it_first = device_out.next_it
+        iters = device_out.iters
+        converged = device_out.converged
+        rejection_reason = device_out.rejection_reason
+        append!(history, device_out.history)
+        append!(pre_switch_history, device_out.pre_switch_history)
+        append!(type_switched, device_out.type_switched)
+        append!(step_diagnostics, device_out.step_diagnostics)
+        best_finite_mismatch = device_out.best_finite_mismatch
+        best_finite_iteration = device_out.best_finite_iteration
+        best_finite_voltage = device_out.best_finite_voltage
+        last_finite_iteration = device_out.last_finite_iteration
+        last_finite_voltage = device_out.last_finite_voltage
+        first_nonfinite_iteration = device_out.first_nonfinite_iteration
+        first_nonfinite_voltage = device_out.first_nonfinite_voltage
+        qlimit_active_set_changes = device_out.qlimit_active_set_changes
+        qlimit_reenable_events = device_out.qlimit_reenable_events
+        qlimit_switch_iterations = device_out.qlimit_switch_iterations
+        jr_newton_steps = device_out.newton_steps
+      end
+    elseif linear_ctx isa AbstractGpuNewtonContext
+      linear_ctx.note = string(linear_ctx.note, "; device Newton loop not used: ", device_req.reason)
+    end
+  end
+  for it = it_first:(no_unknowns ? 0 : maxiter)
     set_phase("newton_iteration")
     iters = it
 
@@ -1081,7 +1162,10 @@ function runpf_rectangular!(
     # long run on a large network stops within one iteration instead of
     # running to max_iter after the user pressed abort
     sparlectra_check_abort()
-    max_mis = maximum(abs.(F))
+    # the memory guard of the GC pause (runtime.gc_pause), once per iteration
+    _gc_pause_guard!()
+    # the same maximum as maximum(abs.(F)), without the temporary vector
+    max_mis = maximum(abs, F)
     push!(history, max_mis)
     push!(pre_switch_history, max_mis)
     push!(type_switched, false)
@@ -1090,11 +1174,11 @@ function runpf_rectangular!(
       # still be reported usefully ("best iterate was X at iteration k"), and
       # the rescue paths fall back on these snapshots.
       last_finite_iteration = it
-      last_finite_voltage = copy(V)
+      last_finite_voltage = copyto!(resize!(last_finite_buffer, length(V)), V)
       if max_mis < best_finite_mismatch
         best_finite_mismatch = max_mis
         best_finite_iteration = it
-        best_finite_voltage = copy(V)
+        best_finite_voltage = copyto!(resize!(best_finite_buffer, length(V)), V)
       end
     else
       # NaN/Inf mismatch: the iteration has blown up. Continuing would only
@@ -1131,6 +1215,7 @@ function runpf_rectangular!(
         qmin_pu,
         qmax_pu,
         pv_orig_mask,
+        narrow_band_mask,
         qlimit_mode,
         allow_reenable,
         q_hyst_pu,
@@ -1150,7 +1235,7 @@ function runpf_rectangular!(
         qlimit_guard_max_switches,
         qlimit_guard_freeze_after_repeated_switching,
         qlimit_guard_violation_mode,
-        qlimit_guard_violation_threshold_pu,
+        qlimit_guard_violation_threshold_pct,
         tol,
         verbose,
         pv_table_rows,
@@ -1661,7 +1746,7 @@ function runpf_rectangular!(
   qlimit_guard_max_remaining_violations::Int = 0,
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_violation_mode,
-  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimit_guard_violation_threshold_pct::Float64 = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pct,
   qlimits_enabled::Bool = true,
   qlimit_enforcement_mode::Symbol = :active_set,
   wrong_branch_detection::Symbol = :warn,
@@ -1767,7 +1852,7 @@ function runpf_rectangular!(
     qlimit_guard_max_remaining_violations,
     qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu,
+    qlimit_guard_violation_threshold_pct,
     qlimits_enabled,
     qlimit_enforcement_mode,
     wrong_branch_detection,
@@ -1838,7 +1923,7 @@ function _qlimit_solver_kwargs(qlim::QLimitConfig; qlimit_lock_reason::Symbol = 
     qlimit_guard_max_remaining_violations = qlim.guard_max_remaining_violations,
     qlimit_guard_freeze_after_repeated_switching = qlim.guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode = qlim.guard_violation_mode,
-    qlimit_guard_violation_threshold_pu = qlim.guard_violation_threshold_pu,
+    qlimit_guard_violation_threshold_pct = qlim.guard_violation_threshold_pct,
     qlimits_enabled = qlimits_enabled,
     qlimit_enforcement_mode = qlim.enforcement_mode,
   )
@@ -1854,103 +1939,108 @@ function _runpf_config_once!(net::Net, config::PowerFlowConfig; verbose::Int = 0
   # a network imported with other values, or built by hand, runs with the
   # configured ones on every enforcement mode
   _apply_qlimit_net_parameters!(net, qlim)
-  return runpf!(
-    net,
-    config.max_iter,
-    config.tol,
-    verbose;
-    method = config.method,
-    opt_flatstart = start.flatstart,
-    # every Q-limit keyword comes from the one mapping the batch engines
-    # (N-1, scenarios) use as well, see _qlimit_solver_kwargs
-    _qlimit_solver_kwargs(qlim; qlimit_lock_reason = qlimit_lock_reason)...,
-    damp = damp,
-    autodamp = config.autodamp,
-    autodamp_min = config.autodamp_min,
-    newton_update = config.newton_update,
-    power_mode = config.power_mode,
-    power_mode_lu = config.power_mode_lu,
-    jacobian_reuse = config.jacobian_reuse,
-    jacobian_reuse_min_reduction = config.jacobian_reuse_min_reduction,
-    jacobian_reuse_max_steps = config.jacobian_reuse_max_steps,
-    jacobian_fixed_pattern = config.jacobian_fixed_pattern,
-    jacobian_fixed_pattern_min_buses = config.jacobian_fixed_pattern_min_buses,
-    merit_enabled = config.merit.enabled,
-    merit_armijo_c1 = config.merit.armijo_c1,
-    merit_scale_p = config.merit.scale_p,
-    merit_scale_q = config.merit.scale_q,
-    merit_scale_v = config.merit.scale_v,
-    merit_fallback_max_mismatch = config.merit.fallback_max_mismatch,
-    trust_region_enabled = config.trust_region.enabled,
-    trust_region_initial_radius = config.trust_region.initial_radius,
-    trust_region_min_radius = config.trust_region.min_radius,
-    trust_region_max_radius = config.trust_region.max_radius,
-    trust_region_eta_accept = config.trust_region.eta_accept,
-    trust_region_shrink_factor = config.trust_region.shrink_factor,
-    trust_region_expand_factor = config.trust_region.expand_factor,
-    trust_region_expand_threshold = config.trust_region.expand_threshold,
-    trust_region_step_mode = config.trust_region.step_mode,
-    wrong_branch_detection = config.wrong_branch_detection,
-    wrong_branch_rescue = config.wrong_branch_rescue,
-    wrong_branch_min_vm_pu = config.wrong_branch_min_vm_pu,
-    wrong_branch_max_vm_pu = config.wrong_branch_max_vm_pu,
-    wrong_branch_max_angle_spread_deg = config.wrong_branch_max_angle_spread_deg,
-    wrong_branch_max_branch_angle_deg = config.wrong_branch_max_branch_angle_deg,
-    wrong_branch_min_low_vm_count = config.wrong_branch_min_low_vm_count,
-    wrong_branch_min_vn_kV = config.wrong_branch_min_vn_kV,
-    wrong_branch_low_vm_share = config.wrong_branch_low_vm_share,
-    wrong_branch_max_bus_angle_deg = config.wrong_branch_max_bus_angle_deg,
-    wrong_branch_max_plain_steps = config.wrong_branch_max_plain_steps,
-    wrong_branch_collapse_vm_pu = config.wrong_branch_collapse_vm_pu,
-    wrong_branch_max_reference_branch_angle_deg = config.wrong_branch_max_reference_branch_angle_deg,
-    wrong_branch_rescue_max_attempts = config.wrong_branch_rescue_max_attempts,
-    pv_table_rows = pv_table_rows,
-    validate_limits_after_pf = validate_limits_after_pf,
-    q_limit_violation_headroom = q_limit_violation_headroom,
-    start_projection = start.start_projection,
-    start_projection_try_dc_start = start.try_dc_start,
-    start_projection_try_blend_scan = start.try_blend_scan,
-    start_projection_branch_guard = start.branch_guard,
-    start_projection_measure_candidates = start.measure_candidates,
-    start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
-    start_projection_blend_lambdas = start.blend_lambdas,
-    start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
-    start_projection_requested_angle_mode = start.angle_mode,
-    start_projection_requested_voltage_mode = start.voltage_mode,
-    start_projection_ratio_profile = start.ratio_profile,
-    start_rotate_behind_pst = start.rotate_behind_pst,
-    start_current_iteration_enabled = start_ci.enabled,
-    start_current_iteration_max_iter = start_ci.max_iter,
-    start_current_iteration_tol = start_ci.tol,
-    start_current_iteration_damping = start_ci.damping,
-    start_current_iteration_accept_only_if_improved = start_ci.accept_only_if_improved,
-    start_current_iteration_min_improvement_factor = start_ci.min_improvement_factor,
-    start_current_iteration_vm_min_pu = start_ci.vm_min_pu,
-    start_current_iteration_vm_max_pu = start_ci.vm_max_pu,
-    start_current_iteration_max_angle_step_deg = start_ci.max_angle_step_deg,
-    start_current_iteration_only_for_large_cases = start_ci.only_for_large_cases,
-    apslf_start_enabled = start_apslf.enabled,
-    apslf_start_order = start_apslf.order,
-    rectangular_workspace_reuse = config.rectangular_workspace_reuse,
-    rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
-    rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
-    linear_solver = config.linear_solver,
-    islands_enabled = config.islands_enabled,
-    islands_mode = config.islands_mode,
-    islands_parallel_min_buses = config.islands_parallel_min_buses,
-    islands_reference_policy = config.islands_reference_policy,
-    islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
-    islands_parallel_enabled = islands_parallel_enabled,
-    islands_parallel_max_tasks = islands_parallel_max_tasks,
-    islands_parallel_min_work_items = islands_parallel_min_work_items,
-    distributed_slack_enabled = config.distributed_slack.enabled,
-    distributed_slack_p_mode = config.distributed_slack.p_mode,
-    distributed_slack_respect_p_limits = config.distributed_slack.respect_p_limits,
-    distributed_slack_fallback = config.distributed_slack.fallback,
-    distributed_slack_weights = config.distributed_slack.weights,
-    auto_slack = config.auto_slack,
-    performance_profile = performance_profile,
-  )
+  # power_flow.compute_backend reaches the Newton linear solve of every
+  # island of this run through a scoped value (see
+  # rectangular_compute_backend.jl), not through the keyword chain
+  return _with_compute_backend(config.compute_backend) do
+    runpf!(
+      net,
+      config.max_iter,
+      config.tol,
+      verbose;
+      method = config.method,
+      opt_flatstart = start.flatstart,
+      # every Q-limit keyword comes from the one mapping the batch engines
+      # (N-1, scenarios) use as well, see _qlimit_solver_kwargs
+      _qlimit_solver_kwargs(qlim; qlimit_lock_reason = qlimit_lock_reason)...,
+      damp = damp,
+      autodamp = config.autodamp,
+      autodamp_min = config.autodamp_min,
+      newton_update = config.newton_update,
+      power_mode = config.power_mode,
+      power_mode_lu = config.power_mode_lu,
+      jacobian_reuse = config.jacobian_reuse,
+      jacobian_reuse_min_reduction = config.jacobian_reuse_min_reduction,
+      jacobian_reuse_max_steps = config.jacobian_reuse_max_steps,
+      jacobian_fixed_pattern = config.jacobian_fixed_pattern,
+      jacobian_fixed_pattern_min_buses = config.jacobian_fixed_pattern_min_buses,
+      merit_enabled = config.merit.enabled,
+      merit_armijo_c1 = config.merit.armijo_c1,
+      merit_scale_p = config.merit.scale_p,
+      merit_scale_q = config.merit.scale_q,
+      merit_scale_v = config.merit.scale_v,
+      merit_fallback_max_mismatch = config.merit.fallback_max_mismatch,
+      trust_region_enabled = config.trust_region.enabled,
+      trust_region_initial_radius = config.trust_region.initial_radius,
+      trust_region_min_radius = config.trust_region.min_radius,
+      trust_region_max_radius = config.trust_region.max_radius,
+      trust_region_eta_accept = config.trust_region.eta_accept,
+      trust_region_shrink_factor = config.trust_region.shrink_factor,
+      trust_region_expand_factor = config.trust_region.expand_factor,
+      trust_region_expand_threshold = config.trust_region.expand_threshold,
+      trust_region_step_mode = config.trust_region.step_mode,
+      wrong_branch_detection = config.wrong_branch_detection,
+      wrong_branch_rescue = config.wrong_branch_rescue,
+      wrong_branch_min_vm_pu = config.wrong_branch_min_vm_pu,
+      wrong_branch_max_vm_pu = config.wrong_branch_max_vm_pu,
+      wrong_branch_max_angle_spread_deg = config.wrong_branch_max_angle_spread_deg,
+      wrong_branch_max_branch_angle_deg = config.wrong_branch_max_branch_angle_deg,
+      wrong_branch_min_low_vm_count = config.wrong_branch_min_low_vm_count,
+      wrong_branch_min_vn_kV = config.wrong_branch_min_vn_kV,
+      wrong_branch_low_vm_share = config.wrong_branch_low_vm_share,
+      wrong_branch_max_bus_angle_deg = config.wrong_branch_max_bus_angle_deg,
+      wrong_branch_max_plain_steps = config.wrong_branch_max_plain_steps,
+      wrong_branch_collapse_vm_pu = config.wrong_branch_collapse_vm_pu,
+      wrong_branch_max_reference_branch_angle_deg = config.wrong_branch_max_reference_branch_angle_deg,
+      wrong_branch_rescue_max_attempts = config.wrong_branch_rescue_max_attempts,
+      pv_table_rows = pv_table_rows,
+      validate_limits_after_pf = validate_limits_after_pf,
+      q_limit_violation_headroom = q_limit_violation_headroom,
+      start_projection = start.start_projection,
+      start_projection_try_dc_start = start.try_dc_start,
+      start_projection_try_blend_scan = start.try_blend_scan,
+      start_projection_branch_guard = start.branch_guard,
+      start_projection_measure_candidates = start.measure_candidates,
+      start_projection_accept_unmeasured_dc_start = start.accept_unmeasured_dc_start,
+      start_projection_blend_lambdas = start.blend_lambdas,
+      start_projection_dc_angle_limit_deg = start.dc_angle_limit_deg,
+      start_projection_requested_angle_mode = start.angle_mode,
+      start_projection_requested_voltage_mode = start.voltage_mode,
+      start_projection_ratio_profile = start.ratio_profile,
+      start_rotate_behind_pst = start.rotate_behind_pst,
+      start_current_iteration_enabled = start_ci.enabled,
+      start_current_iteration_max_iter = start_ci.max_iter,
+      start_current_iteration_tol = start_ci.tol,
+      start_current_iteration_damping = start_ci.damping,
+      start_current_iteration_accept_only_if_improved = start_ci.accept_only_if_improved,
+      start_current_iteration_min_improvement_factor = start_ci.min_improvement_factor,
+      start_current_iteration_vm_min_pu = start_ci.vm_min_pu,
+      start_current_iteration_vm_max_pu = start_ci.vm_max_pu,
+      start_current_iteration_max_angle_step_deg = start_ci.max_angle_step_deg,
+      start_current_iteration_only_for_large_cases = start_ci.only_for_large_cases,
+      apslf_start_enabled = start_apslf.enabled,
+      apslf_start_order = start_apslf.order,
+      rectangular_workspace_reuse = config.rectangular_workspace_reuse,
+      rectangular_preallocate_workspace = config.rectangular_preallocate_workspace,
+      rectangular_workspace_min_buses = config.rectangular_workspace_min_buses,
+      linear_solver = config.linear_solver,
+      islands_enabled = config.islands_enabled,
+      islands_mode = config.islands_mode,
+      islands_parallel_min_buses = config.islands_parallel_min_buses,
+      islands_reference_policy = config.islands_reference_policy,
+      islands_diagnostic_continue_after_failure = config.islands.diagnostic_continue_after_failure,
+      islands_parallel_enabled = islands_parallel_enabled,
+      islands_parallel_max_tasks = islands_parallel_max_tasks,
+      islands_parallel_min_work_items = islands_parallel_min_work_items,
+      distributed_slack_enabled = config.distributed_slack.enabled,
+      distributed_slack_p_mode = config.distributed_slack.p_mode,
+      distributed_slack_respect_p_limits = config.distributed_slack.respect_p_limits,
+      distributed_slack_fallback = config.distributed_slack.fallback,
+      distributed_slack_weights = config.distributed_slack.weights,
+      auto_slack = config.auto_slack,
+      performance_profile = performance_profile,
+    )
+  end
 end
 
 # --- AC rescue ladder and DC fallback (power_flow.rescue / power_flow.dc.fallback) ---
@@ -2233,7 +2323,7 @@ Without an explicit `config` the net's own imported configuration is used
 does the globally active configuration apply. A full `SparlectraConfig` also
 forwards its `runtime.parallel` switches to the island fan-out.
 """
-function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
+@_gc_paused_run function runpf!(net::Net; config::Union{Nothing,PowerFlowConfig,SparlectraConfig} = nothing, kwargs...)
   # Keep this entry strict: only runtime-only knobs are accepted as kwargs.
   # All solver-behavior options must come from config objects for consistency.
   runtime_keys = Set((:verbose, :damp, :pv_table_rows, :validate_limits_after_pf, :q_limit_violation_headroom, :qlimit_lock_reason, :performance_profile))
@@ -2701,7 +2791,7 @@ Returns:
     (iterations::Int, status::Int)
 where `status == 0` indicates convergence.
 """
-function runpf!(
+@_gc_paused_run function runpf!(
   net::Net,
   maxIte::Int,
   tolerance::Float64 = 1e-6,
@@ -2783,7 +2873,7 @@ function runpf!(
   qlimit_guard_max_remaining_violations::Int = DEFAULT_QLIMIT_CONFIG.guard_max_remaining_violations,
   qlimit_guard_freeze_after_repeated_switching::Bool = DEFAULT_QLIMIT_CONFIG.guard_freeze_after_repeated_switching,
   qlimit_guard_violation_mode::Symbol = DEFAULT_QLIMIT_CONFIG.guard_violation_mode,
-  qlimit_guard_violation_threshold_pu::Float64 = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pu,
+  qlimit_guard_violation_threshold_pct::Float64 = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pct,
   qlimits_enabled::Bool = true,
   qlimit_enforcement_mode::Symbol = DEFAULT_QLIMIT_CONFIG.enforcement_mode,
   wrong_branch_detection::Symbol = :warn,
@@ -2963,7 +3053,7 @@ function runpf!(
     qlimit_guard_max_remaining_violations,
     qlimit_guard_freeze_after_repeated_switching,
     qlimit_guard_violation_mode,
-    qlimit_guard_violation_threshold_pu,
+    qlimit_guard_violation_threshold_pct,
     qlimits_enabled,
     qlimit_enforcement_mode,
     rectangular_workspace_reuse,

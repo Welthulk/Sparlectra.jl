@@ -610,7 +610,13 @@ end
 The bus index a prosumer is attached to.
 """
 function getPosumerBusIndex(ps::ProSumer)::Int
-  c = ps.comp
+  # the component behind a function barrier: read through the abstract
+  # field, its bus fields were boxed on every call (Q-limit handling calls
+  # this per unit and iteration)
+  return _component_bus_index(ps.comp)
+end
+
+function _component_bus_index(c)::Int
   if hasproperty(c, :cFrom_bus) && getfield(c, :cFrom_bus) !== nothing
     return Int(getfield(c, :cFrom_bus))
   elseif hasproperty(c, :cTo_bus) && getfield(c, :cTo_bus) !== nothing

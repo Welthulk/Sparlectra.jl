@@ -3,3 +3,6 @@ scope: case
 case: sp_case16_islands.scf.json
 power_flow:
   tol: 1.0e-8
+state_estimation:
+  observability:
+    on_unobservable: observable_islands

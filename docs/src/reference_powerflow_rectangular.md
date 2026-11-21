@@ -7,7 +7,9 @@ Modules = [Sparlectra]
 Pages = [
   "src/powerflow_rectangular/ac_islands.jl",
   "src/powerflow_rectangular/current_iteration_start.jl",
+  "src/powerflow_rectangular/rectangular_compute_backend.jl",
   "src/powerflow_rectangular/rectangular_core_equations.jl",
+  "src/powerflow_rectangular/rectangular_device_newton.jl",
   "src/powerflow_rectangular/rectangular_diagnostics.jl",
   "src/powerflow_rectangular/rectangular_distributed_slack.jl",
   "src/powerflow_rectangular/rectangular_factorized_solver.jl",
@@ -42,7 +44,9 @@ Modules = [Sparlectra]
 Pages = [
   "src/powerflow_rectangular/ac_islands.jl",
   "src/powerflow_rectangular/current_iteration_start.jl",
+  "src/powerflow_rectangular/rectangular_compute_backend.jl",
   "src/powerflow_rectangular/rectangular_core_equations.jl",
+  "src/powerflow_rectangular/rectangular_device_newton.jl",
   "src/powerflow_rectangular/rectangular_diagnostics.jl",
   "src/powerflow_rectangular/rectangular_distributed_slack.jl",
   "src/powerflow_rectangular/rectangular_factorized_solver.jl",

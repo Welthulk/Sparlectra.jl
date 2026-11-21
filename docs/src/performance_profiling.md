@@ -12,6 +12,10 @@ Process-level settings read once at startup: the thread report, the Julia and BL
 | `runtime.parallel.enabled` | Bool | `true` | `true`, `false` | Master switch for in-process parallel execution of independent work items (island solves, short-circuit sweeps, contingency batches). `false` forces every parallel site onto its serial path (the same functions, not copies). |
 | `runtime.parallel.max_tasks` | String | `auto` | `auto` or positive integer string | Task cap for parallel sites. `auto` resolves to `Threads.nthreads()`; the cap is applied via chunking, so it also bounds `@threads` sites. |
 | `runtime.parallel.min_work_items` | Int | `4` | integer >= 1 | Work lists shorter than this run serially. |
+| `runtime.parallel.executor` | String | `auto` | `auto`, `threads`, `processes` | How N-1, scenario and injection batches run: on Julia threads, in the worker processes of the batch pool, or `auto` (processes from 2000 buses on, threads below). See [Parallel Execution](parallel_execution.md). |
+| `runtime.parallel.max_processes` | String | `auto` | `auto` or positive integer string | Cap of the worker processes of the batch pool. `auto` resolves to `Sys.CPU_THREADS`, fewer when the free memory holds fewer workers of the size of the network. |
+| `runtime.gc_pause.enabled` | Bool | `true` | `true`, `false` | The garbage collector is off while a power flow runs and on again when the last run of the process ends. |
+| `runtime.gc_pause.max_resident_gb` | String | `auto` | `auto`, a number >= 0 | Memory guard of the GC pause: above this resident size the guard collects once. `auto` is half of the physical memory, `0` no guard. A worker process of the batch pool gets its share of the limit. |
 
 In a single-threaded Julia process the parallel sites run serially even
 with `runtime.parallel.enabled: true`; the startup summary then hints at

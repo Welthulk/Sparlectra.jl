@@ -51,6 +51,7 @@ const SPARLECTRA_APP_ROOT = normpath(joinpath(@__DIR__, ".."))
 # fails at load time, never at the first click.
 import Sparlectra:
   _flatten_config_values!,
+  WebUIConfig,
   _qlimit_solver_kwargs,
   _sigma_table_type,
   qlimit_pv_to_pq_event_count,
@@ -126,6 +127,8 @@ import Sparlectra:
   OUTPUT_LOGFILE_RESULTS_VALUES,
   POWERFLOW_LINEAR_SOLVER_VALUES,
   APSLF_PRECISION_VALUES,
+  COMPUTE_BACKEND_MODE_VALUES,
+  GPU_PRECISION_VALUES,
   POWERFLOW_NEWTON_UPDATE_VALUES,
   POWER_MODE_LU_VALUES,
   DEFAULT_POWER_MODE_LU,
@@ -181,10 +184,12 @@ import Sparlectra:
   _criticality_wii_tolerance,
   _csv_field,
   _declared_slack_feeder,
+  _decoupled_deficit,
   _default0,
   _case_format_conflict,
   _detect_case_format,
   _detect_yaml_duplicate_keys,
+  _dotted_config_delete!,
   _dotted_config_set!,
   _dotted_config_value,
   _duplicate_measured_quantities,
@@ -201,6 +206,7 @@ import Sparlectra:
   _load_and_validate_config,
   _load_api_config,
   _machine_controllers,
+  _measurement_decoupled_models,
   _measurement_key_index,
   _measurement_table_comment_ids,
   _measurement_table_from_measurements,
@@ -209,6 +215,7 @@ import Sparlectra:
   _original_branch_name,
   _original_bus_name,
   _print_qlimit_active_set_summary,
+  _record_run_start_overrides!,
   _rectangular_mismatch_diagnostics,
   _residual_diagnostics,
   _resolve_detailed_csv_format,
@@ -318,7 +325,8 @@ export default_webui_output_root  # Return the user-writable default Web UI outp
 export default_webui_config_path  # Return the provisioned Web UI configuration path.
 export default_webui_case_cache_dir  # Return the user-writable Web UI case cache.
 export default_webui_operation_log_path  # Return the user-writable Web UI operation-log path.
-export start_sparlectra_webui  # Start the loopback-only local PowerFlow Web UI.
+export start_sparlectra_webui  # Start the PowerFlow Web UI, local or in remote mode.
+export webui_connection_info  # How a running Web UI is reached (host, port, mode, URL, SSH tunnel).
 export buildSysimage  # One-call sysimage build (10-20 min, see docstring).
 export to_dict  # Convert API results and artifacts to dictionaries.
 export to_namedtuple  # Convert API results to named tuples.

@@ -4246,6 +4246,32 @@ function measurement_jacobian(net::Net)
   return (H = H, rows = rows, cols = cols)
 end
 
+## The decoupled P-theta and Q-V models (`_decoupled_model`) of the active
+## rows of `net.measurements`, numbered like the rows of
+## `measurement_jacobian(net)`: `pt.rows[i]` and `qt.rows[i]` are Jacobian
+## row indices, `pt_rows` and `qt_rows` the same as sets. The verdict of
+## `evaluate_global_observability` is a null direction of these models, not
+## the rank of the AC Jacobian: a set can have a full AC rank (the P rows
+## see the magnitudes through the branch resistances) and still leave a
+## magnitude without a Q or Vm row. A caller that thins a set row by row
+## (the measurement generator's critical rows) tests row subsets with
+## `_decoupled_deficit`.
+function _measurement_decoupled_models(net::Net)
+  prep = _se_prepare(net, Measurement[m for m in net.measurements])
+  withVaOffset = _va_offset_active(prep.meas, state_estimation_config().pmu_ref_offset)
+  pt = _ptheta_model(prep.snet, prep.meas, withVaOffset)
+  qt = _qv_model(prep.snet, prep.meas)
+  return (pt = pt, qt = qt, pt_rows = Set{Int}(pt.rows), qt_rows = Set{Int}(qt.rows))
+end
+
+## Rank deficit of a decoupled model (`_measurement_decoupled_models`)
+## restricted to the Jacobian rows in `keep`, with the rank rule of the
+## verdict (`_decoupled_null`).
+function _decoupled_deficit(model, keep::AbstractSet{Int})::Int
+  sel = Int[i for i in eachindex(model.rows) if model.rows[i] in keep]
+  return _decoupled_null(model.A[sel, :], _SE_DENSE_LINALG_MAX_N).d
+end
+
 """
     evaluate_local_observability(net, measurements, stateCols; kwargs...) -> NamedTuple
 

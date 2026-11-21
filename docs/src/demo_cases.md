@@ -34,8 +34,8 @@ measurement table, a scenarios block and a start state.
 | `sp_case5` | 5 | The hand-checkable entry: two voltage levels, an external grid as slack and IEC 60909 feeder, one PV machine, ratings chosen so that line outages overload the surviving parallel path (`line_Borntal_Lindhof_out`: 122 percent) while the base keeps 32 percent reserve. |
 | `sp_case6tap` | 6 | The tap control case: three transformers, two of them regulated, see [sp_case6tap](@ref sp_case6tap_tap_control). Power flow, short circuit and state estimation on a measurement table taken from the settled controller state (no bad-data variant). |
 | `sp_case14` | 14 | The regulated feeder: a meshed 110 kV level, a radial 20 kV feeder behind a transformer with a discrete tap controller (deadband 0.01 pu, settles in 5 outer iterations), a fixed-tap transformer off neutral, and N-1 outages that island the load-only feeder. |
-| `sp_case14_islands` | 14 | `sp_case14` with a measurement set that leaves the transformer `Wehrden_110_20` and the injections at both its ends unmeasured: two observable islands, the transformer unobservable. Zero injection is off in its case configuration. The demo for the observability gap modes and the measurement placement, see [Observability](@ref se_observability_gaps). |
-| `sp_case16_islands` | 16 | `sp_case6tap` plus two attached networks on switchable ties, see [sp_case16_islands](@ref sp_case16_islands_ties). The measurement table leaves one tie unmeasured: two observable islands; the scenarios open the ties into three network islands. |
+| `sp_case14_islands` | 14 | `sp_case14` with a measurement set that leaves the transformer `Wehrden_110_20` and the injections at both its ends unmeasured: two observable islands, the transformer unobservable. Its case configuration switches zero injection off and sets `state_estimation.observability.on_unobservable = observable_islands`, so an SE run estimates the islands one by one. The demo for the observability gap modes and the measurement placement, see [Observability](@ref se_observability_gaps). |
+| `sp_case16_islands` | 16 | `sp_case6tap` plus two attached networks on switchable ties, see [sp_case16_islands](@ref sp_case16_islands_ties). The measurement table leaves one tie unmeasured: two observable islands, estimated one by one (`on_unobservable = observable_islands` in its case configuration); the scenarios open the ties into three network islands. |
 | `sp_case60` | 60 | The feature-dense operated grid: 220/110/20 kV, a PST holding its corridor flow, a combined ratio-and-phase Schraegregler, an SVC, a 40 percent series-compensated corridor, a same-name double circuit across two busbar sections joined by an impedance-less link, and a bridge branch whose outage island solves via PV promotion. No branch above 80 percent in the base case: the screening fixture. |
 | `sp_case188` | 188 | The benchmark: a 380 kV double ring with a double busbar, a steerable HVDC pair (60 MW setpoint), four parametric 110/20 kV zones, a STATCOM with a remote target, an SSSC, a PST and a series-compensated corridor. |
 
@@ -147,7 +147,12 @@ and do not ship. See [DTF legacy input format](dtf_format.md).
 `data/cgmes_demo/<case>/` holds CGMES 2.4.15 deliveries (EQ, TP, SSH, SV)
 that `tools/gen_cgmes_fixtures.jl` exports from `sp_case14`, `sp_case118`
 and `sp_casePST` with Sparlectra's own exporter; a regeneration is byte
-identical apart from the Sparlectra version in the file header. They
+identical apart from the Sparlectra version in the file header. Every
+element carries a name of its own: the branch name of the source case
+where it has one, else the bus names (`ACL_<from>_<to>`, `Gen_<bus>`),
+and `sp_case118` carries the bus names of its MATPOWER file. The SV
+profile is the power flow with the Q limits of the EQ file; a unit at a
+limit keeps its voltage control and states the limit as its SSH `q`. They
 appear in the Web UI case selector as `<case>_cgmes.zip`. The exporter
 writes bus-branch deliveries only: no node-breaker topology, boundary sets
 or DifferenceModel.

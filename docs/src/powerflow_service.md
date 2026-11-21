@@ -71,8 +71,18 @@ against the
 stability conditions of Zhao, Chiang, Li, Ju (PSCC 2008): a machine at
 $Q_{max}$ must not sit above its set point (condition (7)), one at
 $Q_{min}$ not below it (condition (6)), a PQ machine inside its band must
-hold the set point, and a PV machine is ok inside its band. Tolerances are
-fixed at 1e-3 MVAr and 1e-6 pu. The check never changes the run status and
+hold the set point, and a PV machine is ok inside its band. The tolerances
+are the decision margins of the solver, so the check names only states the
+active set would change itself: `power_flow.qlimits.reenable_v_hyst_pu` for
+the voltage against the set point, and for Q beyond a limit the switching
+margin of the bus, `hysteresis_pu` or, under `guard.violation_mode: lock_pq`
+in the active set, the smaller of it and `guard.violation_threshold_pct`
+percent of the band (at least 1e-3 MVAr and 1e-6 pu; inside a limit a
+machine within 1e-3 MVAr sits on it). A PV machine the final Q check accepts
+as `within_hysteresis` is inside its band here as well. An APSLF run is
+checked with the fixed tolerances (1e-3 MVAr, 1e-6 pu), since
+AnalyticLoadFlow applies none of these margins. The
+check never changes the run status and
 has no switch; a run without Q-limit handling is not checked. A run stopped
 at `power_flow.max_iter` (one of the three reasons below) gets the rows of
 its last iterate with the status `last_iterate` and no warning; that state is
@@ -85,7 +95,7 @@ and the run is `not_checked`.
 | `diagnostics.qlimit_stability_violations` | number of buses that fail (`Int`) |
 | `diagnostics.qlimit_stability_report` | one row per regulated bus from `qlimitStabilityReport`: `bus`, `bus_name`, `end_type`, `q_MVar`, `qmin_MVar`, `qmax_MVar`, `u_pu`, `uset_pu`, `reached_limit` (`max`, `min`, `none`), `check_6`, `check_7`, `in_band`, `ok`, `locked_by`, `q_source`, `q_report_MVar` |
 | `diagnostics.qlimit_stability_status` | `ok`, `violations`, `last_iterate` (run stopped at `max_iter`), `not_checked` (no converged solution otherwise, or DC fallback), `qlimits_disabled` |
-| `locked_by` | why the bus could not switch freely: `none`, `guard_lock_pq` (narrow or zero band under the guard), `max_switches` (kept PV by `guard.max_switches`), `lock_pv_to_pq_buses`, `oscillation` (the active-set lock after the second hit) |
+| `locked_by` | why the bus could not switch freely: `none`, `guard_lock_pq` (zero band, or narrow band under `guard.narrow_range_mode: prefer_pq`), `max_switches` (kept PV by `guard.max_switches`), `lock_pv_to_pq_buses`, `oscillation` (the active-set lock after the second hit) |
 | metadata `qlimit_stability_status`, `qlimit_stability_violations`, `qlimit_stability_buses`, `qlimit_stability_line` | the same verdict in the result metadata |
 
 Q is the bus generator Q of the result report; on a network with a closed
@@ -94,9 +104,13 @@ the solved voltages (`q_source = voltages`).
 The line `Q-limit stability violations: n`, with the failing buses when
 `n > 0`, is printed with the results, written to `run.log` and shown on the
 Web UI result page; a run with a violation also logs one warning that names
-each failing bus. The Q-V characteristic line (`qv_characteristic_line`) is
-the part of this check for the buses with a Q-limit event: on their limit
-on the wrong side of the set point. In auto mode the check uses the Q-limit
+each failing bus. The Q-V characteristic line (`qv_characteristic_line`)
+reads the rows of this check for the buses with a Q-limit event: on their
+limit on the wrong side of the set point. It does not follow the solver
+margins but keeps the fixed tolerances 1e-6 pu and 1e-3 MVAr (the
+non-physical solution of the literature), so it can name a bus the stability
+line leaves out, for example every non-physical machine of a run with
+`reenable_v_hyst_pu: 1.0`. In auto mode the stability check uses the Q-limit
 settings of the attempt that produced the result.
 
 **Reason of a run at `max_iter`.** A rectangular Newton run that uses up
@@ -119,7 +133,7 @@ before 0.60 the reason was `pf_failed` as well, and the former reason
 `nr_mismatch_not_converged_active_set_unstable` (three or more switching
 iterations over the whole run) is gone. The Q-limit log (`net.qLimitLog`,
 `q_limit_events.csv` with the column `kind`) holds the PQ->PV releases
-(`release`) beside the PV->PQ switches (`hit`, `group_revert`).
+(`release`) beside the PV->PQ switches (`hit`, `group_hit`, `group_revert`).
 
 **Notes**
 

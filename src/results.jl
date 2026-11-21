@@ -1039,6 +1039,12 @@ function printACPFlowResults(
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :apslf_diagnosis_line)
     println(io, String(rect_status_hdr.apslf_diagnosis_line))
   end
+  # power_flow.compute_backend other than cpu: which backend served the
+  # Newton steps, why, and the GPU times
+  if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :compute_backend)
+    gpu_times = hasproperty(rect_status_hdr, :gpu_solve_s) ? @sprintf(", %s, cuDSS %s, GPU %.4f s, transfer %.4f s", rect_status_hdr.gpu_precision, rect_status_hdr.gpu_cudss_mode, rect_status_hdr.gpu_solve_s, rect_status_hdr.gpu_transfer_s) : ""
+    @printf(io, "Compute backend: %s%s (%s)\n", rect_status_hdr.compute_backend, gpu_times, rect_status_hdr.compute_backend_reason)
+  end
   # dishonest Newton (0.30.2): the counts only when the switch was on
   if rect_status_hdr !== nothing && hasproperty(rect_status_hdr, :jacobian_reuse) && rect_status_hdr.jacobian_reuse
     @printf(io, "Jacobian reuse : %d reused steps, %d refactorisations, %d discarded\n", rect_status_hdr.jacobian_reuse_steps, rect_status_hdr.jacobian_reuse_refactorisations, rect_status_hdr.jacobian_reuse_discarded)

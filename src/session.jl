@@ -48,11 +48,22 @@ function sparlectra_arm_abort_token!(token)
   return nothing
 end
 
-## Clear the process-wide slot when a run finishes, so a later solver call
-## outside any job never sees a stale token.
+## Clear the process-wide slot and the task-local copy of the calling task
+## when a run finishes, so a later solver call outside any job never sees a
+## stale token. Without the task-local part a token that was set stayed in
+## the storage of the arming task, and every later solve of that task stopped
+## with PowerFlowAborted.
 function sparlectra_disarm_abort_token!()
   _SPARLECTRA_ABORT_SLOT[] = nothing
+  delete!(task_local_storage(), _SPARLECTRA_ABORT_KEY)
   return nothing
+end
+
+## The armed token of the calling task (its own, else the process-wide
+## slot), `nothing` when no run is armed.
+function _armed_abort_token()
+  token = get(task_local_storage(), _SPARLECTRA_ABORT_KEY, nothing)
+  return token === nothing ? _SPARLECTRA_ABORT_SLOT[] : token
 end
 
 """
@@ -63,8 +74,7 @@ call this once per iteration and stop with `PowerFlowAborted`. Works inside
 spawned tasks as well, which task-local storage does not.
 """
 function sparlectra_abort_requested()::Bool
-  token = get(task_local_storage(), _SPARLECTRA_ABORT_KEY, nothing)
-  token === nothing && (token = _SPARLECTRA_ABORT_SLOT[])
+  token = _armed_abort_token()
   token === nothing && return false
   return token[]
 end

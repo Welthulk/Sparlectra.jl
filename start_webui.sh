@@ -54,5 +54,6 @@ export SPARLECTRA_STARTUP_FILE
 
 # start_webui.jl checks for a usable sysimage, offers to build one when it is
 # missing or outdated, and relaunches itself through the image. Arguments are
-# passed on: --rebuild-sysimage forces a fresh build, --no-sysimage skips it.
+# passed on: --rebuild-sysimage forces a fresh build, --no-sysimage skips it,
+# --remote starts the remote mode (no browser here, see the Web UI docs).
 exec julia --startup-file="$SPARLECTRA_STARTUP_FILE" --project="$DIR" "$DIR/start_webui.jl" "$@"

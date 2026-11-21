@@ -11,6 +11,7 @@ Pages = [
   "src/result_csv.jl",
   "src/performance_profile.jl",
   "src/session.jl",
+  "src/gc_pause.jl",
 ]
 Public = true
 Private = false
@@ -27,6 +28,7 @@ Pages = [
   "src/result_csv.jl",
   "src/performance_profile.jl",
   "src/session.jl",
+  "src/gc_pause.jl",
 ]
 Public = false
 Private = true

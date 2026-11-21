@@ -135,9 +135,10 @@ function _group_csv_integer(text::AbstractString, separator::AbstractString)::St
   return sign * join(groups, separator)
 end
 
-function _format_csv_number(value::Integer, format)::String
-  return _group_csv_integer(string(value), format.thousands_separator)
-end
+# An integer cell is an index, an id or a count, never grouped in any
+# format: excel_de wrote bus 1000 as "1.000", which a reader takes for a
+# decimal or has to strip. The thousands separator is for decimal numbers.
+_format_csv_number(value::Integer, format)::String = string(value)
 
 function _format_csv_number(value::AbstractFloat, format)::String
   isnan(value) && return "NaN"
@@ -231,8 +232,7 @@ function _format_csv_value(value, format)::String
   value === missing && return ""
   value === nothing && return ""
 
-  # Bool is an Integer subtype in Julia. Format it before Integer values so
-  # Excel-oriented thousands grouping cannot turn true/false into t.rue/fa.lse.
+  # Bool is an Integer subtype in Julia; it is written as true/false
   value isa Bool && return string(value)
 
   value isa Integer && return _format_csv_number(value, format)

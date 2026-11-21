@@ -161,20 +161,28 @@ end
 
 function _rectangular_mismatch_rows(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; net = nothing, top_n::Int = 10)
   final_F = mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx)
+  # Row r belongs to the ((r + 1) ÷ 2)-th non-slack bus, the P row first.
+  # Only the top_n rows are built: the order (-abs_mismatch, row) is the
+  # order of a stable sort by -abs_mismatch, so a partial sort by it picks
+  # the same rows in the same order as sorting all rows did, without one
+  # boxed NamedTuple per row (two per bus on every solve).
+  nrows = 2 * count(!=(slack_idx), eachindex(V))
+  k = top_n < 0 ? nrows : min(top_n, nrows)
+  # the worst row is reported also when top_n is 0
+  kk = nrows == 0 ? 0 : max(k, 1)
+  key(r) = (-abs(final_F[r]), r)
+  order = kk == 0 ? Int[] : partialsort!(collect(1:nrows), 1:kk; by = key)
   rows = NamedTuple[]
-  row = 1
-  @inbounds for bus in eachindex(V)
-    bus == slack_idx && continue
+  for r in order
+    j = (r + 1) ÷ 2
+    bus = (slack_idx in eachindex(V) && j >= slack_idx) ? j + 1 : j
     bus_id = net === nothing ? bus : _qlimit_original_bus_id(net, bus)
-    push!(rows, (row = row, bus_index = bus, bus_id = bus_id, equation = :P, mismatch = final_F[row], abs_mismatch = abs(final_F[row])))
-    equation = bus_types[bus] == :PQ ? :Q : :voltage_setpoint
-    push!(rows, (row = row + 1, bus_index = bus, bus_id = bus_id, equation = equation, mismatch = final_F[row + 1], abs_mismatch = abs(final_F[row + 1])))
-    row += 2
+    equation = isodd(r) ? :P : (bus_types[bus] == :PQ ? :Q : :voltage_setpoint)
+    push!(rows, (row = r, bus_index = bus, bus_id = bus_id, equation = equation, mismatch = final_F[r], abs_mismatch = abs(final_F[r])))
   end
-  sort!(rows; by = r -> -r.abs_mismatch)
-  top = top_n < 0 ? rows : collect(Iterators.take(rows, min(top_n, length(rows))))
   worst = isempty(rows) ? (row = 0, bus_index = 0, bus_id = 0, equation = :none, mismatch = NaN, abs_mismatch = NaN) : first(rows)
-  return (rows = rows, top = top, worst = worst)
+  top = kk > k ? rows[1:k] : rows
+  return (top = top, worst = worst)
 end
 
 # Branch component objects are generic ("BranchC" with cTyp Branch); the
@@ -265,6 +273,14 @@ function _rectangular_mismatch_snapshot(label::Symbol, iteration::Int, Ybus, V::
   return (label = label, iteration = iteration, rows = rows)
 end
 
+# Autodamp statistics of a solve from the step rows of the line search
+# (alpha, trial mismatch, accepted_improvement, autodamp_min). A floor hit is
+# a step with alpha < 2 autodamp_min: the backtracking halves from damp while
+# alpha >= autodamp_min, so its last level lies in [autodamp_min,
+# 2 autodamp_min), and the fallback without an improving trial is
+# autodamp_min itself. With damp below 2 autodamp_min every step counts.
+# autodamp_failure: at least max(5, steps/2) floor hits and as many
+# non-improving steps.
 function _rectangular_step_statistics(step_diagnostics)
   step_diagnostics isa AbstractVector || return (
     autodamp_step_count = 0,
@@ -285,15 +301,19 @@ function _rectangular_step_statistics(step_diagnostics)
     autodamp_failure = false,
   )
   alphas = Float64[getproperty(row, :alpha) for row in step_diagnostics]
-  min_alpha = minimum(alphas)
+  # floor hits by the rule above. The smallest alpha of the run is no
+  # floor: a run without a damped step would count every step.
+  floor_hits = count(row -> getproperty(row, :alpha) < 2.0 * getproperty(row, :autodamp_min), step_diagnostics)
+  nonimproving = count(row -> !getproperty(row, :accepted_improvement), step_diagnostics)
+  failure_count = max(5, length(step_diagnostics) ÷ 2)
   return (
     autodamp_step_count = length(alphas),
-    autodamp_min_alpha = min_alpha,
+    autodamp_min_alpha = minimum(alphas),
     autodamp_max_alpha = maximum(alphas),
     autodamp_mean_alpha = sum(alphas) / length(alphas),
-    autodamp_floor_hits = count(a -> isapprox(a, min_alpha; atol = 1e-12, rtol = 1e-12), alphas),
-    autodamp_nonimproving_steps = count(row -> !getproperty(row, :accepted_improvement), step_diagnostics),
-    autodamp_failure = count(row -> !getproperty(row, :accepted_improvement), step_diagnostics) >= max(5, length(step_diagnostics) ÷ 2) && count(a -> isapprox(a, min_alpha; atol = 1e-12, rtol = 1e-12), alphas) >= max(5, length(step_diagnostics) ÷ 2),
+    autodamp_floor_hits = floor_hits,
+    autodamp_nonimproving_steps = nonimproving,
+    autodamp_failure = nonimproving >= failure_count && floor_hits >= failure_count,
   )
 end
 
@@ -502,6 +522,15 @@ function _merge_linear_solver_diagnostics(status_build, performance_profile, lin
     jacobian_fixed_pattern_reason = jacobian_fixed_pattern_reason,
     jacobian_fixed_pattern_line = jacobian_fixed_pattern_line,
   )
+  # power_flow.compute_backend: the backend that served the solve and why
+  # (empty for a plain CPU run), see _newton_context_extras
+  backend_extras = linear_ctx === nothing ? NamedTuple() : _newton_context_extras(linear_ctx)
+  if performance_profile isa AbstractDict
+    for (k, v) in pairs(backend_extras)
+      performance_profile[k] = v
+    end
+  end
+  extras = merge(extras, backend_extras)
   return merge(status_build, (status = (; status_build.status..., extras...),))
 end
 

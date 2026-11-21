@@ -22,6 +22,32 @@
 #          Newton loop: PV/PQ switching with hysteresis, cooldown, and guard
 #          limits on repeated switching
 
+# What the Q-limit handler reads of the iterate when V stays on the GPU (the
+# device Newton loop of the GPU study): `q[bus]` the computed injection
+# imag(S_calc) and `vm[bus]` abs(V) at the buses the decision reads, both
+# computed on the device with the CPU's arithmetic. The handler then skips
+# the CPU mismatch after a switch; the device loop computes it. Entries the
+# device loop did not send are NaN; reading one is an error, since the
+# request list then misses a value the decision needs.
+struct QLimitSample
+  q::Vector{Float64}
+  vm::Vector{Float64}
+end
+
+_qlimit_injections(Ybus, V::AbstractVector{ComplexF64}) = calc_injections(Ybus, V)
+_qlimit_injections(Ybus, sample::QLimitSample) = sample
+@inline _qcalc_at(Scalc::AbstractVector{ComplexF64}, bus::Int) = imag(Scalc[bus])
+@inline _qcalc_at(sample::QLimitSample, bus::Int) = _sample_value(sample.q, bus, "Q")
+@inline _vm_at(V::AbstractVector{ComplexF64}, bus::Int) = abs(V[bus])
+@inline _vm_at(sample::QLimitSample, bus::Int) = _sample_value(sample.vm, bus, "abs(V)")
+
+function _sample_value(v::Vector{Float64}, bus::Int, what::String)
+  x = v[bus]
+  isnan(x) && error("the Q-limit handler read $(what) of bus $(bus), which the device Newton loop did not send")
+  return x
+end
+
+# `V` is the iterate, or a QLimitSample from the device loop (no trace then).
 function _handle_rectangular_qlimit_iteration!(
   net,
   it,
@@ -37,6 +63,7 @@ function _handle_rectangular_qlimit_iteration!(
   qmin_pu,
   qmax_pu,
   pv_orig_mask,
+  narrow_band_mask,
   qlimit_mode,
   allow_reenable,
   q_hyst_pu,
@@ -56,7 +83,7 @@ function _handle_rectangular_qlimit_iteration!(
   qlimit_guard_max_switches,
   qlimit_guard_freeze_after_repeated_switching,
   qlimit_guard_violation_mode,
-  qlimit_guard_violation_threshold_pu,
+  qlimit_guard_violation_threshold_pct,
   tol,
   verbose,
   max_console_rows,
@@ -71,13 +98,13 @@ function _handle_rectangular_qlimit_iteration!(
     copyto!(workspace.qload_pu, build_qload_pu(net))
   end
   Scalc_pu = _perf_profile_time!(performance_profile, :iteration_calc_injections) do
-    calc_injections(Ybus, V)
+    _qlimit_injections(Ybus, V)
   end
   current_pv_qreq_pu = _perf_profile_time!(performance_profile, :iteration_qreq_vector) do
     fill!(workspace.current_pv_qreq_pu, NaN)
     @inbounds for bus in eachindex(workspace.current_pv_qreq_pu)
       if bus_types[bus] == :PV
-        workspace.current_pv_qreq_pu[bus] = imag(Scalc_pu[bus]) + workspace.qload_pu[bus]
+        workspace.current_pv_qreq_pu[bus] = _qcalc_at(Scalc_pu, bus) + workspace.qload_pu[bus]
       end
     end
     workspace.current_pv_qreq_pu
@@ -115,6 +142,7 @@ function _handle_rectangular_qlimit_iteration!(
   end
 
   if qlimit_trace_enabled
+    V isa QLimitSample && throw(ArgumentError("the Q-limit trace needs the iterate on the host"))
     _perf_profile_time!(performance_profile, :iteration_qlimit_trace) do
       lock_mask_trace = falses(nb)
       for bus in lock_pv_to_pq_buses
@@ -168,19 +196,21 @@ function _handle_rectangular_qlimit_iteration!(
         q_hyst_pu = q_hyst_pu,
         cooldown_iters = cooldown_iters,
         # voltage-side release (#375): the current iterate and the setpoint
-        get_vm_pu = bus -> abs(V[bus]),
+        get_vm_pu = bus -> _vm_at(V, bus),
         get_vset_pu = bus -> Vset[bus],
         v_hyst_pu = reenable_v_hyst_pu,
         # the one-retry guard gives a twice-clamped bus one more release on
         # a converged iterate (#475)
         converged_iterate = converged_this_iter,
+        # the guard's narrow-range buses: released on a converged iterate only
+        narrow_band_mask = narrow_band_mask,
         lock_pv_to_pq_buses = lock_pv_to_pq_buses,
         on_violation! = qlimit_mode == :adjust_vset ? ((bus, qreq, side, qclamp) -> _try_adjust_vset_on_q_limit!(net, bus, side, it, controllers, base_vset, Vset, adjust_counter, qlimit_max_outer, verbose)) : nothing,
         verbose = verbose,
         max_console_rows = max_console_rows,
         get_qreq_pu = bus -> begin
           (bus_types[bus] == :Slack) && return 0.0
-          return imag(Scalc_pu[bus]) + workspace.qload_pu[bus]
+          return _qcalc_at(Scalc_pu, bus) + workspace.qload_pu[bus]
         end,
         is_pv = bus -> (bus_types[bus] == :PV),
         make_pq! = (bus, qclamp_gen_pu, side) -> begin
@@ -195,19 +225,20 @@ function _handle_rectangular_qlimit_iteration!(
         qlimit_guard_max_switches = qlimit_guard_max_switches,
         qlimit_guard_freeze_after_repeated_switching = qlimit_guard_freeze_after_repeated_switching,
         qlimit_guard_violation_mode = qlimit_guard_violation_mode,
-        qlimit_guard_violation_threshold_pu = qlimit_guard_violation_threshold_pu,
+        qlimit_guard_violation_threshold_pct = qlimit_guard_violation_threshold_pct,
         lock_mask_buffer = workspace.lock_mask,
       )
     end
 
-    if changed || reenabled
+    # with a QLimitSample the device loop recomputes the mismatch
+    if (changed || reenabled) && !(V isa QLimitSample)
       # Recompute at the ACCEPTED lambda: switching changed bus_types/S, not
       # the distributed-slack state (participation is frozen per solve).
       _dslack_set_trial!(dslack, 0.0)
       F = _perf_profile_time!(performance_profile, :iteration_mismatch_after_qlimit) do
         mismatch_rectangular(Ybus, V, S, bus_types, Vset, slack_idx; dslack = dslack)
       end
-      max_mis = maximum(abs.(F))
+      max_mis = maximum(abs, F)
       history[end] = max_mis
     end
   end

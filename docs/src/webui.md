@@ -1,9 +1,10 @@
 # Web UI
 
 The Web UI is a local browser interface for Sparlectra: choose a case,
-start a calculation, read the result. It runs on your own machine, is
-reachable from that machine only and has no login. Every control, route
-and output mode: [Web UI Reference](webui_reference.md).
+start a calculation, read the result. It runs on your own machine and is
+reachable from that machine only, unless it is started in remote mode
+([Remote use](@ref webui_remote)). Every control, route and output mode:
+[Web UI Reference](webui_reference.md).
 
 ## Start
 
@@ -28,6 +29,112 @@ julia --project=. start_webui.jl
 environment once and offers to build a system image for fast later starts
 ([Sysimage](sysimage.md)). Installer questions, REPL start and
 directories: [reference](webui_reference.md#Installation-and-start).
+
+## [Remote use](@id webui_remote)
+
+The Web UI can run on another machine, for example a GPU server, and be
+used in the browser of your own machine. Start it on that host with the
+remote switch:
+
+```sh
+./start_webui.sh --remote
+julia --project=. start_webui.jl --remote
+```
+
+On a Windows host: `start_webui.bat --remote`. A remote start opens no
+browser on the host and runs until it is stopped: **Stop Web UI** (asks
+before it stops), `Ctrl+C` in its console, or the end of the process. To
+keep it running after you log out of the host, start it in `tmux` or with
+
+```sh
+(umask 077; nohup ./start_webui.sh --remote > webui.log 2>&1 &)
+```
+
+When the server asks for a token, the console prints it, so it ends up in
+`webui.log`; `umask 077` creates the log readable for you only. It applies
+to a new file only: remove an old `webui.log` first, otherwise it keeps its
+old permissions.
+
+At start the console prints the lines to connect. The **Info** menu shows
+them under **Server**: host name, bind address, port, mode and the address
+to open, in the SSH mode also the tunnel command. Where the server asks for
+a token, the address there shows `?token=<token>` as a placeholder; the
+token itself is only on the host console. The page footer names the mode
+as well.
+
+### SSH tunnel (default)
+
+The server stays on `127.0.0.1` of the host, and nothing is open to the
+network. Without a token the server does not check who connects: every
+user with a login on the host and every process on it can open
+`127.0.0.1:8080` too. On a host you share with others, set
+
+```yaml
+webui:
+  remote_ssh_require_token: true
+```
+
+and the SSH mode asks for the access token like the direct mode (see
+there), or run the server on a host only you use. On your own machine open
+a tunnel and keep it open while you work.
+
+Linux, macOS and Windows Git Bash:
+
+```sh
+ssh -N -L 8080:127.0.0.1:8080 <user>@<host>
+```
+
+Windows PowerShell (the OpenSSH client of Windows 10 and 11):
+
+```powershell
+ssh.exe -N -L 8080:127.0.0.1:8080 <user>@<host>
+```
+
+Then open `http://127.0.0.1:8080/powerflow`. `-N` opens no shell, and
+`Ctrl+C` ends the tunnel. If port 8080 is taken on your machine, use
+another local port: `-L 9000:127.0.0.1:8080` and
+`http://127.0.0.1:9000/powerflow`. If PowerShell does not find `ssh.exe`,
+add *OpenSSH Client* under Settings, System, Optional features.
+
+### Direct access
+
+In a network you trust the server can bind a network address instead. Set
+in the configuration file of the Web UI (the **Info** menu names it under
+**Config file**; keys in [Configuration](configuration.md)):
+
+```yaml
+webui:
+  remote_mode: direct
+  remote_bind_address: 0.0.0.0
+  remote_port: 8080
+  remote_access_token: ""
+```
+
+and start with `--remote`. The server then accepts a request only with its
+access token. With an empty `webui.remote_access_token` a new token is
+generated at every start; a fixed one needs at least 16 characters and is
+written in quotes (`remote_access_token: "0123456789abcdef"`), because the
+configuration reader takes unquoted digits for a number. The console prints
+the address with the token:
+
+```text
+http://<host>:8080/powerflow?token=<token>
+```
+
+Open it once: the browser keeps the token in a cookie, and the address bar
+drops it. Browsers do not separate cookies by port, so the browser also
+sends this cookie, and with it the token, to every other web service it
+opens on the same host name. Open nothing else on that host name in this
+browser that you do not trust with the token. A request without the token
+gets `401`, and the operation log records it as `webui_access_denied`. The
+traffic is plain HTTP, not encrypted: token, cases and results cross the
+network readable, which is why the SSH tunnel is the default. The firewall
+of the host must let the port through (firewalld:
+`sudo firewall-cmd --add-port=8080/tcp`).
+
+From the REPL: `start_sparlectra_webui(remote = true)` starts the remote
+mode, and `webui_connection_info(server)` returns host, bind address, port,
+mode, address and tunnel command.
 
 ## [Case formats at a glance](@id webui-case-formats)
 
@@ -133,5 +240,7 @@ and the **?** next to a control opens its help.
 
 ## Limits
 
-One user, the own machine, no login, no public-server mode, no topology
-view, no plotting apart from the QSTS chart. Technical limits: [reference](webui_reference.md#Limits).
+No user accounts and no public-server mode: the remote mode is meant for
+a host in your own network (SSH tunnel, or a direct bind with one shared
+token and no encryption). No topology view, no plotting apart from the
+QSTS chart. Technical limits: [reference](webui_reference.md#Limits).

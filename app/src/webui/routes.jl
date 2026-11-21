@@ -133,7 +133,16 @@ function _powerflow_dismiss_case_settings_notice!(config_file::AbstractString)
   return config_file
 end
 
+# The header (Info menu, Stop confirmation) and the footer show the server
+# of this request: its connection is bound for the routing and rendering of
+# this one request. A runtime stand-in without a connection (tests, the API)
+# renders without a server section.
 function route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict = Dict{String,String}(); output_root::AbstractString = "results/powerflow_service", runtime = nothing)::SparlectraWebUIResponse
+  connection = runtime isa _SparlectraWebUIRuntime ? runtime.connection : nothing
+  return Base.ScopedValues.with(() -> _route_sparlectra_webui(method, target, form; output_root, runtime), _WEBUI_REQUEST_CONNECTION => connection)
+end
+
+function _route_sparlectra_webui(method::AbstractString, target::AbstractString, form::AbstractDict; output_root::AbstractString, runtime)::SparlectraWebUIResponse
   path, query = _webui_split_target(target)
   verb = uppercase(String(method))
   log_root = runtime === nothing ? output_root : runtime.operation_log
@@ -444,7 +453,10 @@ function route_sparlectra_webui(method::AbstractString, target::AbstractString, 
     # the Stop click carries the window geometry; saved so the next start
     # opens the window where it was (one log line, with the reason when
     # nothing was saved)
-    geometry = _webui_save_window_geometry!(runtime.config_file, form)
+    # a remote browser is not the app window of the host: its geometry is
+    # not saved
+    remote_stop = runtime isa _SparlectraWebUIRuntime && runtime.connection.mode !== :local
+    geometry = remote_stop ? (status = "skipped", reason = "remote_mode") : _webui_save_window_geometry!(runtime.config_file, form)
     _webui_log_route!(log_root, "webui_window_geometry", verb, path; status = geometry.status, (k => v for (k, v) in pairs(geometry) if k != :status)...)
     @async begin
       sleep(0.05)

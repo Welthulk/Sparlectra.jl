@@ -52,6 +52,13 @@ object to the element it became (kind and index).
 | `SvVoltage`, `SvPowerFlow`, `SvTapStep` | start values and validation reference; the tap step comes from `SvTapStep`, else from the SSH `step`, and a changer with neither sits at its middle position (`neutralStep`, the band middle without one), named in a notice |
 | DY profile (`SynchronousMachineDynamics` models, `GovSteam0`, `GovSteam1`, `GovHydro1`, `GovHydro2`) | only with `read_dynamics = true`: [`DynamicData`](@ref) of the machines, read by no calculation ([Dynamic data](@ref cgmes_dynamics)) |
 
+Lines, transformers, loads, machines and shunts keep their
+`IdentifiedObject.name` in the network, so reports and a CGMES re-export show
+the delivery names; an object without a name gets the generated one
+(`ACL_110.0`, `Gen_110`). Branch names stay generated (`B_ACL_110_1_2`): they
+key the result tables and the measurement addresses, and delivery names need
+not be unique.
+
 Everything else is counted in the coverage report; `summarizeCGMES` shows
 the full class histogram. Short-circuit source data is harvested on every
 import (read, not evaluated); `shortCircuitCoverage` reports its

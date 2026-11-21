@@ -66,7 +66,7 @@ end
 # The start page of the Web UI, rendered the way the server renders it for a
 # GET request: a real runtime (a listener on a port the system picks, a case
 # directory with one shipped demo case, a copy of the template), the request
-# line split into SubStrings like `_webui_read_request` does. Runs in every
+# line split into SubStrings like `_webui_read_request_head` does. Runs in every
 # workload mode: without a sysimage the first request of the start page
 # otherwise compiles its whole render path on every start of the Web UI;
 # here it is paid once, when the package image is built. Everything lives in
@@ -82,7 +82,7 @@ function _precompile_webui_start_page()
         config = joinpath(dir, "configuration.yaml")
         cp(DEFAULT_SPARLECTRA_CONFIG_PATH, config)
         listener = Sockets.listen(Sockets.localhost, 0)
-        runtime = _SparlectraWebUIRuntime(listener, cases, config, joinpath(dir, "webui_operations.jsonl"), nothing, start_powerflow_run, false, false, 0.0, 0, nothing, devnull, ReentrantLock())
+        runtime = _SparlectraWebUIRuntime(listener, cases, config, joinpath(dir, "webui_operations.jsonl"), nothing, start_powerflow_run, false, false, 0.0, 0, nothing, devnull, ReentrantLock(), _WebUIConnection())
         method, target = split("GET /powerflow")
         Logging.with_logger(Logging.NullLogger()) do
             redirect_stdout(devnull) do

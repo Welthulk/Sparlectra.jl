@@ -82,7 +82,9 @@ loads only, 5.1 MW) on the 20 kV tie `Lindenau_Erlbach`. The measurement
 table (seed 20261116) lacks both flows of `Ostheim_Haldorf` and the P and Q
 injections at `Ostheim_110` and `Haldorf_110`: two observable islands, the
 tie unobservable. Zero injection stays on, both tie ends carry a load.
-Scenarios: `ties_out_three_islands` (both ties open, C without a source)
+The case configuration sets
+`state_estimation.observability.on_unobservable = observable_islands`, so an
+SE run estimates both islands one by one. Scenarios: `ties_out_three_islands` (both ties open, C without a source)
 and `tie_Ostheim_Haldorf_out`. No bad-data variant, no fixture.
 
 ## sp_case10_areas (10 buses, multi-area state estimation)
@@ -130,7 +132,14 @@ the intended screening fixture. 74 N-1 cases, 70 converge (in 20 of
 them an island that lost its reference solves on its strongest unit, and
 the row names the bus), the 4 others cut off load without a unit. With
 `auto_slack = false` 51 converge. Reference: 11.1 MW losses, SE J 158.8
-at dof 209.
+at dof 209 with the taps at their file steps (`runse!`, the fixture). The
+SE service estimates the five released taps by default
+(`state_estimation.tap_estimation.enabled`) and ends at J 154.1, dof 207,
+after the fixation. Three 20 kV lines (`Osttal_Westsee`,
+`Falkried_Bornwik`, `Ostsee_Westhof`) carry about 3 MW at a flow sigma of
+1 MW; where the noise puts both readings below 3 MW the topology precheck
+reports them as closed elements without flow. The table is consistent
+with the model; the note is advisory.
 
 ## sp_case188 (188 buses, the benchmark)
 
@@ -219,6 +228,7 @@ fixture; they are operating examples, not regression fixtures.
   saturation +-50 MVAr); the characteristic travels in the file.
 - `feeder3_hardpv_vsPGM`: the data part of `data/PGM/feeder3_hardpv_pgm.json`
   plus everything the Sparlectra Case Format adds (roles, names, start
-  state, scenarios, contingencies, short-circuit study buses, config).
-  Its sidecar enables the external-grid feeder (`power_flow.external_grid`),
-  like the PGM sidecar, so both files run the same study.
+  state, scenarios, contingencies, short-circuit study buses). Its
+  settings live in the case configuration `feeder3_hardpv_vsPGM.config.yaml`,
+  which enables the external-grid feeder (`power_flow.external_grid`) like
+  the PGM sidecar, so both files run the same study.
