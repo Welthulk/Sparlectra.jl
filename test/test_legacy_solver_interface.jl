@@ -301,12 +301,19 @@ function run_legacy_solver_interface_tests()
       @test isempty(qvCharacteristicViolations(net))
 
       # within the band around the setpoint the state counts, but not as
-      # significant: a converged solve may land on either side by rounding
+      # significant: a converged solve may land on either side by rounding.
+      # The check reads the fixed tolerance (1e-6 pu), not the release margin
+      # of the net: the row is there with the default margin (1e-4 pu) and
+      # with the voltage-side release switched off (1.0)
       net.nodeVec[bus]._qƩGen = 20.0
       Sparlectra.setVmVa!(node = net.nodeVec[bus], vm_pu = 1.027273 + 1.0e-5, va_deg = 0.0)
-      band_rows = qvCharacteristicViolations(net)
-      @test length(band_rows) == 1
-      @test !band_rows[1].significant
+      for margin in (1.0e-4, 1.0)
+        net.reenable_v_hyst_pu = margin
+        band_rows = qvCharacteristicViolations(net)
+        @test length(band_rows) == 1
+        @test !band_rows[1].significant
+      end
+      net.reenable_v_hyst_pu = 1.0e-4
 
       # printing: the section is always there, so a missing line can never be
       # mistaken for a clean result
@@ -642,6 +649,34 @@ function run_legacy_solver_interface_tests()
           @test !haskey(perf, :diagnostic_artifact_prefix)
         end
       end)() end
+
+    @testset "Autodamp counters: damped steps only, floor hits at autodamp_min" begin (function ()
+      # Two counting errors of the rectangular status, both fixed 2026-11:
+      # a fixed step (autodamp off) counted as an autodamp step and as a floor
+      # hit, and the floor was the smallest alpha of the run, so with autodamp
+      # on a run without a damped step counted every step as a floor hit.
+      # CIGRE converges in full steps (alpha 1.0) with autodamp on.
+      for merit in (false, true)
+        net = createCIGRE()
+        _, erg = runpf_rectangular!(net, 30, 1e-8, 0; autodamp = true, merit_enabled = merit)
+        @test erg == 0
+        st = Sparlectra.rectangular_pf_status(net)
+        @test st.autodamp_step_count >= 1 && (st.autodamp_min_alpha, st.autodamp_max_alpha) == (1.0, 1.0)
+        @test (st.autodamp_floor_hits, st.autodamp_failure) == (0, false)
+      end
+      net_fixed = createCIGRE()
+      _, erg_fixed = runpf_rectangular!(net_fixed, 30, 1e-8, 0; autodamp = false)
+      @test erg_fixed == 0
+      st_fixed = Sparlectra.rectangular_pf_status(net_fixed)
+      @test (st_fixed.autodamp_step_count, st_fixed.autodamp_floor_hits, st_fixed.autodamp_failure) == (0, 0, false)
+      @test isnan(st_fixed.autodamp_min_alpha)
+      # the backtracking halves from damp while alpha >= autodamp_min: with
+      # damp 1.0 and floor 0.05 its last level is 0.0625, the fallback without
+      # an improving trial is 0.05; both are floor hits, 0.125 and 1.0 are not
+      row(alpha) = (alpha = alpha, trial_mismatch = 1.0, accepted_improvement = true, autodamp_min = 0.05)
+      stats = Sparlectra._rectangular_step_statistics([row(1.0), row(0.125), row(0.0625), row(0.05)])
+      @test (stats.autodamp_step_count, stats.autodamp_floor_hits, stats.autodamp_min_alpha) == (4, 2, 0.05)
+    end)() end
 
   return true
 end

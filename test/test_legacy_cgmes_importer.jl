@@ -34,13 +34,11 @@ function run_legacy_cgmes_importer_tests()
       # by tools/gen_cgmes_fixtures.jl: sp_case14 (OLTC voltage controller),
       # sp_case118 (54 machines with asymmetric Q limits, synchronous
       # condensers), sp_casePST (phase-shifting transformer, bus link). Their
-      # SV profile is the source's solution with every regulated unit holding
-      # its target (Q-limits off in the fixture solve), so the profile is the
-      # solution of the delivery itself and an import that rebuilds the model
-      # reproduces it to floating-point noise. Every solve below keeps
-      # Q-limits off for the same reason; what the Q-limit switching makes of
-      # the delivery is a solver question, not an importer one.
-      solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false, kwargs...)
+      # SV profile is the source's solution with the Q limits of the EQ file,
+      # so the profile is the solution of the delivery itself and an import
+      # that rebuilds the model reproduces it to the rounding of the files.
+      # Every solve below runs with Q limits for the same reason.
+      solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = true, kwargs...)
 
       @testset "multi-valued references overflow into refsAll (#294 point 9)" begin (function ()
         island = only(objectsOf(store, :TopologicalIsland))

@@ -258,7 +258,7 @@ function run_webui_extended_tests()
       root = mktempdir()
       config_path = joinpath(root, "configuration.yaml")
       write(config_path, "power_flow:\n  start_mode:\n    voltage_mode: bus_vm_va_blend\n  qlimits:\n    enabled: true\n")
-      runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, root, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, root, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
       before_page_text = read(config_path, String)
       # rendering the pages that show the maintenance actions and the
       # notice writes nothing
@@ -1034,7 +1034,7 @@ form:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
         upload(name, text) = SparlectraApp.WebUICaseUpload(name, Vector{UInt8}(codeunits(text)))
 
         response = SparlectraApp.route_sparlectra_webui("POST", "/powerflow/import-cases", Dict("casefiles" => [upload("case_upload.m", "function mpc = case_upload\nend\n")]); output_root, runtime)
@@ -1094,14 +1094,14 @@ form:
         @test occursin("Case file not found: not_there.xiidm", missing_run["message"])
         # (the runtime of this test set names a configuration file that does
         # not exist; the generator needs a real one)
-        iidm_runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        iidm_runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
         # every other run kind goes through on the same uploaded file: the
         # N-1 sweep, the short circuit (the generators are the sources; this
         # file carries no short-circuit data, so every row is flagged and
         # the message says why) and Diagnose (its verdict on the file's
         # start state, as for any other format)
         # (a runtime with a configuration file that exists, for the page and the routes)
-        export_runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        export_runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
         iidm_kind(tag, extra) = redirect_stdout(devnull) do
           SparlectraApp.start_powerflow_run(merge(Dict{String,Any}("casefile" => "ieee14.xiidm", "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => joinpath(tmpdir, "runs_iidm_" * tag)), extra); case_directory = case_directory)
         end
@@ -1314,7 +1314,7 @@ form:
       mktempdir() do tmpdir
         case_directory = joinpath(tmpdir, "cases")
         output_root = joinpath(tmpdir, "runs")
-        runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        runtime = SparlectraApp._SparlectraWebUIRuntime(nothing, case_directory, "configuration.yaml", SparlectraApp.webui_operation_log_path(output_root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
 
         external_dir = joinpath(tmpdir, "external")
         mkpath(external_dir)
@@ -2616,6 +2616,147 @@ form:
       @test !isopen(heartbeat_server.listener)
     end
 
+    @testset "Remote mode: no browser on the host, SSH tunnel by default, direct mode only with the token" begin (function ()
+      free_port() = (probe = listen(ip"127.0.0.1", UInt16(0)); p = Int(getsockname(probe)[2]); close(probe); p)
+      remote_root = joinpath(mktempdir(), "runs")
+      opened = String[]
+      opener = url -> (push!(opened, url); nothing)
+      # the template default is the SSH tunnel: loopback only, no token; the
+      # remote switch never calls the browser opener and keeps the
+      # browser-close shutdown off, whatever the caller asks for
+      ssh_port = free_port()
+      ssh_io = IOBuffer()
+      ssh_server = start_sparlectra_webui(port = ssh_port, output_root = remote_root, remote = true, open_browser = true, auto_shutdown_on_browser_close = true, _lifecycle_io = ssh_io, _browser_opener = opener)
+      try
+        @test isempty(opened)
+        @test ssh_server.runtime.shutdown_on_browser_close == false
+        info = webui_connection_info(ssh_server)
+        @test (info.hostname, info.bind_address, info.port, info.mode, info.token_required) == (gethostname(), "127.0.0.1", ssh_port, :ssh, false)
+        @test info.ssh_command == "ssh -N -L $(ssh_port):127.0.0.1:$(ssh_port) <user>@$(gethostname())"
+        @test info.url == "http://127.0.0.1:$(ssh_port)/powerflow"
+        # the tunnel command is printed on the host console at start
+        @test occursin(info.ssh_command, String(take!(ssh_io)))
+        @test occursin("HTTP/1.1 200 OK", _webui_http_request(ssh_port, "GET", "/powerflow"))
+        # a remote browser is not the app window: Stop saves no geometry
+        stop = _webui_http_request(ssh_port, "POST", "/webui/shutdown"; body = "window_width=1234&window_height=876&window_x=12&window_y=34&window_hidden=0")
+        @test occursin("HTTP/1.1 200 OK", stop)
+        @test timedwait(() -> istaskdone(ssh_server.task), 2.0) == :ok
+        @test Sparlectra.load_sparlectra_config(ssh_server.runtime.config_file; reload = true).webui.window_width == 1500
+      finally
+        close(ssh_server)
+      end
+      # a local start reports itself as local, with the same tunnel line
+      local_port = free_port()
+      local_server = start_sparlectra_webui(port = local_port, output_root = remote_root, _lifecycle_io = IOBuffer(), _browser_opener = opener)
+      try
+        @test webui_connection_info(local_server).mode == :local
+        @test webui_connection_info(local_server).port == local_port
+      finally
+        close(local_server)
+      end
+
+      # direct mode from the configuration file, with a fixed token
+      token = "remote-token-0123456789"
+      direct_port = free_port()
+      direct_config = joinpath(dirname(remote_root), "remote_direct.yaml")
+      write(direct_config, "config_version: 1\nwebui:\n  remote_mode: direct\n  remote_bind_address: 127.0.0.1\n  remote_port: $(direct_port)\n  remote_access_token: \"$(token)\"\n")
+      direct_io = IOBuffer()
+      direct_server = @test_logs (:warn, r"not encrypted") match_mode = :any start_sparlectra_webui(output_root = remote_root, config_file = direct_config, remote = true, open_browser = true, _lifecycle_io = direct_io, _browser_opener = opener)
+      try
+        @test isempty(opened)
+        info = webui_connection_info(direct_server)
+        @test (info.bind_address, info.port, info.mode, info.token_required, info.ssh_command) == ("127.0.0.1", direct_port, :direct, true, "")
+        @test info.url == "http://127.0.0.1:$(direct_port)/powerflow"
+        # the console carries the token, the connection data does not
+        @test occursin("$(info.url)?token=$(token)", String(take!(direct_io)))
+        @test !occursin(token, info.url)
+        # without the token, or with a wrong one: refused before routing
+        @test occursin("HTTP/1.1 401", _webui_http_request(direct_port, "GET", "/powerflow"))
+        @test occursin("HTTP/1.1 401", _webui_http_request(direct_port, "GET", "/powerflow?token=remote-token-9876543210"))
+        @test occursin("HTTP/1.1 401", _webui_http_request(direct_port, "POST", "/webui/shutdown"))
+        @test isopen(direct_server.listener)
+        @test occursin("\"event\":\"webui_access_denied\"", read(direct_server.runtime.operation_log, String))
+        # the token once by URL: a redirect without it, and a cookie that keeps it
+        accepted = _webui_http_request(direct_port, "GET", "/powerflow/history?token=$(token)")
+        @test occursin("HTTP/1.1 303", accepted)
+        @test occursin("Location: /powerflow/history\r\n", accepted)
+        cookie_line = match(r"Set-Cookie: ([^;\r]+)", accepted)
+        @test cookie_line !== nothing
+        socket = connect(ip"127.0.0.1", UInt16(direct_port))
+        write(socket, "GET /powerflow HTTP/1.1\r\nHost: 127.0.0.1\r\nCookie: other=1; $(cookie_line.captures[1])\r\nConnection: close\r\n\r\n")
+        page = read(socket, String)
+        close(socket)
+        @test occursin("HTTP/1.1 200 OK", page)
+        # the pages never show the token, and the copy of the configuration
+        # a run folder carries leaves it out
+        @test !occursin(token, page)
+        # two servers in one process, requests interleaved: every page names
+        # the server that answered it (Info menu and footer), never the other
+        second_port = free_port()
+        second_server = start_sparlectra_webui(port = second_port, output_root = remote_root, _lifecycle_io = IOBuffer(), _browser_opener = opener)
+        try
+          function fetch_page(port, cookie)
+            s = connect(ip"127.0.0.1", UInt16(port))
+            write(s, "GET /powerflow HTTP/1.1\r\nHost: 127.0.0.1\r\n$(isempty(cookie) ? "" : "Cookie: $(cookie)\r\n")Connection: close\r\n\r\n")
+            text = read(s, String)
+            close(s)
+            return text
+          end
+          requests = [isodd(i) ? (direct_port, cookie_line.captures[1]) : (second_port, "") for i in 1:12]
+          pages = fetch.([@async fetch_page(p, c) for (p, c) in requests])
+          footer(server) = SparlectraApp._webui_escape(SparlectraApp._webui_footer_mode_text(server.runtime.connection))
+          for ((port, _), text) in zip(requests, pages)
+            other = port == direct_port ? second_port : direct_port
+            @test occursin("HTTP/1.1 200 OK", text)
+            @test occursin("<dt>Port</dt><dd><code>$(port)</code>", text) && !occursin("<dt>Port</dt><dd><code>$(other)</code>", text)
+            @test occursin(footer(port == direct_port ? direct_server : second_server), text)
+            @test occursin("loopback access only", text) == (port == second_port)
+            # the tunnel row belongs to the SSH mode: neither the direct nor
+            # the local server shows it
+            @test !occursin("<dt>SSH tunnel</dt>", text)
+          end
+          # a render outside a request shows no server at all
+          @test SparlectraApp._webui_server_info_html() == ""
+        finally
+          close(second_server)
+        end
+        run_raw = Dict{String,Any}("webui" => Dict{String,Any}("remote_access_token" => token, "remote_mode" => "direct"))
+        @test SparlectraApp._effective_config_with_runtime_case(run_raw, "case.m", Sparlectra.SparlectraConfig(Dict()))["webui"] == Dict{String,Any}("remote_access_token" => "", "remote_mode" => "direct")
+      finally
+        close(direct_server)
+        @test timedwait(() -> istaskdone(direct_server.task), 2.0) == :ok
+      end
+
+      # the connection a start resolves, without a server: an empty token is
+      # generated (128 bits, new per start), the SSH mode refuses a network
+      # address, the direct mode a host name
+      direct_cfg = Sparlectra.WebUIConfig(remote_mode = :direct)
+      generated = SparlectraApp._webui_resolve_connection(direct_cfg; remote = true, host = nothing, port = nothing)
+      @test occursin(r"^[0-9a-f]{32}$", generated.access_token)
+      @test generated.access_token != SparlectraApp._webui_resolve_connection(direct_cfg; remote = true, host = nothing, port = nothing).access_token
+      @test (generated.bind_address, generated.port) == ("0.0.0.0", 8080)
+      # a wildcard bind is reached through the host name
+      @test SparlectraApp._webui_connection_info(generated).url == "http://$(gethostname()):8080/powerflow"
+      @test_throws ArgumentError SparlectraApp._webui_resolve_connection(Sparlectra.WebUIConfig(); remote = true, host = "0.0.0.0", port = nothing)
+      @test_throws ArgumentError SparlectraApp._webui_resolve_connection(direct_cfg; remote = true, host = "gpu-host.example", port = nothing)
+      @test SparlectraApp._webui_resolve_connection(Sparlectra.WebUIConfig(); remote = false, host = nothing, port = 9001).access_token == ""
+      # the SSH mode asks for the token only when configured: then a request
+      # without it is refused, the URL with it passes, and the console line
+      # carries it; the connection data never does
+      @test SparlectraApp._webui_resolve_connection(Sparlectra.WebUIConfig(); remote = true, host = nothing, port = nothing).access_token == ""
+      ssh_token = SparlectraApp._webui_resolve_connection(Sparlectra.WebUIConfig(remote_ssh_require_token = true, remote_access_token = token); remote = true, host = nothing, port = nothing)
+      @test (ssh_token.mode, ssh_token.bind_address, ssh_token.access_token) == (:ssh, "127.0.0.1", token)
+      ssh_info = SparlectraApp._webui_connection_info(ssh_token)
+      @test ssh_info.token_required && !occursin(token, ssh_info.url)
+      @test any(line -> occursin("$(ssh_info.url)?token=$(token)", line), SparlectraApp._webui_connection_lines(ssh_token))
+      # the Info menu of the SSH mode shows the tunnel command, never the token
+      ssh_menu = SparlectraApp._webui_server_info_html(ssh_token)
+      @test occursin(SparlectraApp._webui_escape(ssh_info.ssh_command), ssh_menu) && !occursin(token, ssh_menu)
+      @test SparlectraApp._webui_access_check(ssh_token, "GET", "/powerflow", Dict{String,String}()).status == 401
+      @test SparlectraApp._webui_access_check(ssh_token, "GET", "/powerflow?token=$(token)", Dict{String,String}()).status == 303
+      @test occursin(r"^[0-9a-f]{32}$", SparlectraApp._webui_resolve_connection(Sparlectra.WebUIConfig(remote_ssh_require_token = true); remote = true, host = nothing, port = nothing).access_token)
+    end)() end
+
     @testset "SE settings: one source, and the value arrives" begin (function ()
       # Twice in two days a setting existed, was displayed, and did not act:
       # rankTolFactor was taken and not forwarded, and literal defaults in
@@ -2713,7 +2854,7 @@ form:
         casedir = joinpath(dir, "cases")
         mkpath(casedir)
         config_path = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
-        rt = SparlectraApp._SparlectraWebUIRuntime(nothing, casedir, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+        rt = SparlectraApp._SparlectraWebUIRuntime(nothing, casedir, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
 
         # the shipped SCF bundle in the case directory (it already carries
         # a scenarios block; the flows add their own scenario next to it)
@@ -2999,7 +3140,7 @@ function _webui_qsts_tests()
       mkpath(root)
       mkpath(casedir)
       config_path = Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH
-      rt = SparlectraApp._SparlectraWebUIRuntime(nothing, casedir, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock())
+      rt = SparlectraApp._SparlectraWebUIRuntime(nothing, casedir, config_path, SparlectraApp.webui_operation_log_path(root), nothing, SparlectraApp.start_powerflow_run, false, false, time(), 0, nothing, IOBuffer(), ReentrantLock(), SparlectraApp._WebUIConnection())
       series = "sp_case14_day.qsts.zip"
       # the case chooser offers the shipped series (by content)
       case_page = String(SparlectraApp.route_sparlectra_webui("GET", "/powerflow/case"; output_root = root, runtime = rt).body)

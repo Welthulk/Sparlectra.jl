@@ -49,12 +49,14 @@ Returns the number of sweeps run (0 when `buses` is empty).
 function _start_guarded_buses_from_fixed_injection!(V0::AbstractVector{ComplexF64}, Ybus::AbstractMatrix, S::AbstractVector{ComplexF64}, buses::Vector{Int}; max_sweeps::Int = 10, tol::Float64 = 1e-10)
   isempty(buses) && return 0
   Vprev = Vector{ComplexF64}(undef, length(buses))
+  # one current buffer for all sweeps; mul! is the kernel Ybus * V0 calls
+  I = Vector{ComplexF64}(undef, size(Ybus, 1))
   sweeps = 0
   for _ = 1:max_sweeps
     sweeps += 1
     # Jacobi: the network current of this sweep is taken from the voltages
     # of the previous sweep for every bus, guarded neighbours included
-    I = Ybus * V0
+    mul!(I, Ybus, V0)
     @inbounds for (k, b) in enumerate(buses)
       Vprev[k] = V0[b]
     end
@@ -77,8 +79,10 @@ end
 # Q. A narrow range under :prefer_pq runs as PQ at the middle of the band
 # from the start. Under :lock_pq (the default) the machine stays PV while
 # its Q lies inside the band; the bus goes into `lock_on_hit`, and the
-# caller takes it out of the PQ->PV release, so the first limit it reaches
-# in the active set clamps it at that limit for the rest of the solve. A
+# caller hands it to the active set as a narrow-band bus: a limit it
+# reaches clamps it, and it is released only on a converged iterate whose
+# voltage lies on the release side (active_set_q_limits!), not on the
+# voltage of an unsettled iterate, which a band this narrow follows. A
 # machine inside its band does not oscillate, and running it as PQ at the
 # band middle took its voltage control and changed its Q without a reason
 # (sp_case60 with two 40 MW machines in a 0.015 pu band: the active set did
@@ -120,7 +124,7 @@ function _apply_qlimit_guard_to_rectangular_active_set!(net::Net, bus_types::Vec
     @printf("Q-limit guard: locked %d narrow-range PV bus(es) as PQ before rectangular NR.\n", length(guarded))
   end
   if log && verbose > 0 && !isempty(lock_on_hit)
-    @printf("Q-limit guard: %d narrow-range PV bus(es) stay PV inside their band and lock at the first limit they reach.\n", length(lock_on_hit))
+    @printf("Q-limit guard: %d narrow-range PV bus(es) stay PV inside their band; a limit clamps them until a converged iterate releases them.\n", length(lock_on_hit))
   end
   return guarded
 end

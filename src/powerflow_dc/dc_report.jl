@@ -126,23 +126,37 @@ end
 """
     _dc_seed_rectangular_angles!(net, pf_cfg; verbose=0, performance_profile=nothing)
 
-Run the standalone DC power flow and write its bus angles into `net` as a
-Newton-Raphson start seed, without disturbing Slack/PV regulated voltage
-magnitudes. The DC model has no voltage-magnitude solution: it writes
-`vm_pu=1.0` for every bus, which is correct for a standalone DC report but
-would erase Slack/PV setpoints ahead of an AC seed (`initialVrect`'s
-non-flatstart path reads `node._vm_pu` directly, with no separate setpoint
-fallback). Snapshots those setpoints before the DC solve and restores them
-immediately after, so only the angles end up DC-seeded. Shared by
-[`rundcpf!`](@ref)'s `seed_ac_start=true` path and the config-driven
-`power_flow.start_mode.dc_seed_unconditional` path in `execution.jl`.
+Write a DC start for the Newton-Raphson solve into `net`: DC angles, Slack/PV
+buses at their regulated magnitude, PQ buses at the mean voltage setpoint of
+the slack and PV buses of their AC island (1.0 pu in an island without one,
+the PQ magnitude of the flat start, `initialVrect`).
+
+The angles come from the DC power flow with the active power imbalance of
+the schedule (the losses) shared by the generators at the slack and PV buses
+in proportion to their scheduled Pg (`spread_imbalance = true` of
+`solve_dc_powerflow`), not left at the slack as in MATPOWER `dcpf`; an
+island whose slack has no scheduled Pg keeps the imbalance at the slack.
+The DC write sets `vm_pu = 1.0` on every bus, so the Slack/PV magnitudes
+are snapshotted before the solve and restored after it (`initialVrect`'s
+non-flatstart path reads `node._vm_pu` directly). Shared by
+[`rundcpf!`](@ref)'s `seed_ac_start=true` path, the config-driven
+`power_flow.start_mode.dc_seed_unconditional` path in `execution.jl`, the
+rescue ladder and the `:dc` stage of the scenario engine.
 """
 function _dc_seed_rectangular_angles!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int = 0, performance_profile = nothing)
+  refreshBusTypesFromProsumers!(net)
   vm_regulated = [getNodeType(n) in (Slack, PV) ? n._vm_pu : nothing for n in net.nodeVec]
-  _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile)
+  # before the DC solve: the setpoint lookup falls back to node._vm_pu,
+  # which the DC write overwrites with 1.0
+  pq_vm = _pq_start_magnitudes(net)
+  _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile, spread_imbalance = true)
   @inbounds for (k, n) in enumerate(net.nodeVec)
     vm = vm_regulated[k]
-    (vm !== nothing && vm > 0.0) && (n._vm_pu = vm)
+    if vm !== nothing
+      vm > 0.0 && (n._vm_pu = vm)
+    elseif getNodeType(n) == PQ
+      n._vm_pu = pq_vm[k]
+    end
   end
   return net
 end
@@ -167,19 +181,18 @@ copied).
   exact, not approximate). The slack bus itself is fixed at this reference.
 - `seed_ac_start`: if `true`, after the DC solve succeeds, immediately runs
   the AC rectangular Newton-Raphson solve ([`runpf_rectangular!`](@ref))
-  seeded from the just-computed DC angles (`opt_flatstart=false`, so the
-  solver picks up `net`'s current `_va_deg`/`_vm_pu` as its starting point:
-  the DC step already wrote these). Slack/PV voltage-magnitude setpoints
-  (which the DC write would otherwise flatten to 1.0 pu along with every
-  other bus) are snapshotted before the DC solve and restored onto `net`
-  right before the AC call, so only the angles are DC-seeded. The AC call
+  from the DC start of `_dc_seed_rectangular_angles!` (`opt_flatstart=false`,
+  so the solver picks up `net`'s `_va_deg`/`_vm_pu` as its starting point).
+  That start is a second DC solve with the active power imbalance shared by
+  the generators in proportion to Pg, Slack/PV buses at their setpoints and
+  PQ buses at the mean setpoint of their island. The AC call
   also defaults to `damp=1.0` (full Newton steps, matching what
   `run_sparlectra`'s config-driven path uses, `runpf_rectangular!`'s own
   bare keyword default, `damp=0.2`, is deliberately conservative for
   unmediated direct calls and would waste a good start on needlessly small
   steps). On return, `net` holds the **AC-converged** solution (not the DC
   one) when this option is used; the returned `DcPowerFlowReport` still
-  reflects the DC step's own result (a useful before/after comparison
+  reflects the MATPOWER DC solution (a useful before/after comparison
   point), with the AC outcome recorded in
   `report.metadata.ac_converged`/`ac_iterations`/`ac_elapsed_s`.
 - `ac_kwargs`: extra keyword arguments forwarded to `runpf_rectangular!`
@@ -199,15 +212,20 @@ B′/injection math), but no outer loop adjusts it, which mirrors the existing
 function rundcpf!(net::Net; angle_reference_deg::Float64 = 0.0, verbose::Int = 0, performance_profile = nothing, seed_ac_start::Bool = false, ac_kwargs::NamedTuple = NamedTuple())::DcPowerFlowReport
   t0 = time()
   pf_cfg = PowerFlowConfig(dc = DcPowerFlowConfig(angle_reference_deg = angle_reference_deg))
-  if seed_ac_start
-    _dc_seed_rectangular_angles!(net, pf_cfg; verbose, performance_profile)
-  else
-    _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile)
-  end
+  # the report is always the MATPOWER dcpf solution; the AC seed below is a
+  # second DC solve with the imbalance spread (_dc_seed_rectangular_angles!).
+  # The DC write sets every magnitude to 1.0, so the seed gets the
+  # magnitudes from before it (its setpoint snapshot reads them).
+  vm_before = seed_ac_start ? [n._vm_pu for n in net.nodeVec] : nothing
+  _run_dc_powerflow!(net, pf_cfg; verbose, performance_profile)
   ct = time() - t0
   report = buildDcPowerFlowReport(net; ct = ct, converged = true)
 
   if seed_ac_start
+    for (k, n) in enumerate(net.nodeVec)
+      n._vm_pu = vm_before[k]
+    end
+    _dc_seed_rectangular_angles!(net, pf_cfg; verbose, performance_profile)
     t1 = time()
     # runpf_rectangular!'s own bare keyword default (damp=0.2) is deliberately
     # conservative for unmediated direct calls; the config-driven run_sparlectra

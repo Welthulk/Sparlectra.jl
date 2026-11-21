@@ -1,7 +1,10 @@
 # [Start strategies by case](@id start_strategies_page)
 
-A flat start sets every bus to 1 pu and the slack angle, PV and slack buses
-to their setpoint magnitudes. The file's VM and VA columns are what the case
+A flat start sets every angle to the slack angle, PV and slack buses to
+their setpoint magnitudes and PQ buses to the mean setpoint of the slack and
+PV buses of their AC island (1 pu in an island without one,
+[Start magnitude of PQ buses](@ref pf_pq_start_magnitude)). The file's VM
+and VA columns are what the case
 author stored: a solved state on some files, a rough profile on others.
 Whether plain Newton converges from a flat start depends on the distance
 between start and solution and on how the step is applied
@@ -19,8 +22,9 @@ From the cheapest to the most expensive, each with its key under
 3. **Adaptive damping**: `autodamp: true`; the step is shortened whenever
    the full step does not reduce the mismatch.
 4. **DC-seed angles**: `flatstart: false`, `start_mode.angle_mode: dc`,
-   `start_mode.dc_seed_unconditional: true`; flat magnitudes with the
-   angles of a DC power flow.
+   `start_mode.dc_seed_unconditional: true`; the magnitudes of the flat
+   start with the angles of a DC power flow whose losses the generators
+   share in proportion to their Pg.
 5. **Projection with blend scan**: `flatstart: false`,
    `start_mode.start_projection: true`, `try_dc_start: true`,
    `try_blend_scan: true`, `voltage_mode: profile_blend`; the start with
@@ -44,8 +48,9 @@ machines on top and are reported as such.
 
 Only the auxiliary buses (the star points of three-winding transformers)
 leave the flat profile: they start at the current-free value of their
-lowest-impedance winding, while PQ buses keep 1.0 pu, PV and slack buses
-their setpoints, and every angle at the slack angle. A stiff winding off nominal otherwise
+lowest-impedance winding, while PQ buses keep the mean setpoint of their
+island, PV and slack buses their setpoints, and every angle at the slack
+angle. A stiff winding off nominal otherwise
 dominates the start: on the CGMES MiniGrid the flat star point drives
 164 pu of active power on a 9 MW case and the polar update diverges; with
 the star points at their ratio the MiniGrid converges from the flat start in
@@ -104,17 +109,17 @@ mismatch evaluations (Newton steps plus one). The APSLF column is
 | case1354pegase | 1354 | converges | | 6 | converges | |
 | case2848rte | 2848 | converges to a low-voltage branch (min Vm 0.02 pu, 893.6 MW losses) | `flatstart: false` (the file's columns), or the DC seed, for the operating solution (min Vm 0.89 pu, 607.4 MW) | 10 | converges, operating solution | the wrong-branch check flags the low-voltage branch (`voltage_collapse`) |
 | case2869pegase | 2869 | converges | | 6 | converges | |
-| case3120sp | 3120 | converges | | 7 | converges | |
-| case9241pegase | 9241 | converges | | 7 | converges | with the rectangular update it diverged and needed `autodamp: true` (13 iterations) |
+| case3120sp | 3120 | converges | | 6 | converges | |
+| case9241pegase | 9241 | converges | | 6 | converges | with the rectangular update it diverged and needed `autodamp: true` (10 iterations) |
 | case1888rte | 1888 | does not converge | DC-seed angles (recipe 4) | 6 | converges, operating solution | with the rectangular update the flat start converged to a low-voltage branch (min Vm 0.06 pu, 1396.9 MW against 980.7 MW) |
-| case6495rte | 6495 | does not converge | DC-seed angles (recipe 4) | 8 | does not converge, with or without its phase shifters (all 17 set to 0 degrees: still not converged) | 2543.8 MW; the file's columns converge in 3 |
+| case6495rte | 6495 | does not converge | DC-seed angles (recipe 4) | 6 | does not converge, with or without its phase shifters (all 17 set to 0 degrees: still not converged) | 2543.8 MW; the file's columns converge in 3 |
 | case4_dist | 4 | converges | | 4 | converges | |
 | case18 | 18 | converges | | 5 | converges | |
 | case33bw | 33 | converges | | 4 | converges | |
 | mvlv1004 | 1004 | converges | | 7 | converges | |
 | mvlv10616 | 10616 | converges | | 6 | converges | |
 | mvlv29840 | 29840 | converges | | 6 | converges | |
-| case13659pegase | 13659 | does not converge | projection with blend scan (recipe 5) from the flat start, or the file's columns | 9 | does not converge: the reference bus (a 42 MW machine behind one 0.14 pu transformer) carries the file's dispatch surplus along the series path | 8737.2 MW, min Vm 0.84 pu; the undamped rungs with the DC seed land on a second root rotated by 164 degrees against the reference bus (170 degrees across the reference transformer against 6 on the operating root), which the wrong-branch check flags (`reference_branch_angle_exceeded`) |
+| case13659pegase | 13659 | converges (min Vm 0.84 pu, wrong-branch check `ok`) | | 9 | does not converge: the reference bus (a 42 MW machine behind one 0.14 pu transformer) carries the file's dispatch surplus along the series path | the DC seed (recipe 4, 7 iterations) lands on a second root rotated by 164 degrees against the reference bus (170 degrees across the reference transformer against 6 on the operating root), which the wrong-branch check flags (`reference_branch_angle_exceeded`); with the PQ buses at 1.0 pu the flat start did not converge |
 
 A converged state is not always the operating state: a low-voltage branch
 satisfies the equations to the tolerance like the operating solution, only

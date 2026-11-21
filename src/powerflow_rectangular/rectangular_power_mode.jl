@@ -170,6 +170,15 @@ end
 
 PowerModeLuContext() = PowerModeLuContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly(), :umfpack, false, 0, nothing, nothing)
 
+# power mode keeps its own backend (power_flow.power_mode_lu): a GPU or auto
+# request in power_flow.compute_backend does not act there, and the status
+# and the result header say so instead of staying silent
+function _newton_context_extras(::PowerModeLuContext)
+  cb = _COMPUTE_BACKEND[]
+  cb.mode === :cpu && return NamedTuple()
+  return (compute_backend = :cpu, compute_backend_reason = string("power_flow.power_mode is on and uses its own backend (power_mode_lu); compute_backend ", cb.mode, " does not apply there"))
+end
+
 function _newton_full_factorization(ctx::PowerModeLuContext, J::SparseMatrixCSC{Float64,Int64})
   ctx.decision_pending && return _power_mode_lu_decide!(ctx, J)
   return ctx.backend === :klu ? _klu_factorize(J) : lu(J)

@@ -70,6 +70,8 @@ struct _PowsyblBuildContext
   bus_view_vn::Dict{String,Float64}     # bus-view id to nominal voltage
   limits::Dict{String,Vector{Int}}      # element id to rows of operational_limits
   machine_plans::Vector{NamedTuple}     # remote voltage controls to attach once every prosumer exists
+  held::Dict{String,String}             # generator id to refusal reason, mapped as :hold_local in this pass
+  refused::Dict{String,String}          # generator id to refusal reason, found in this pass
 end
 
 _powsybl_vn(ctx::_PowsyblBuildContext, bus::AbstractString) = ctx.vn[bus]
@@ -97,9 +99,26 @@ synchronous component), loads, shunts, static var compensators,
 dangling and tie lines, HVDC links. The report says what was built,
 what was skipped and why, and which generator carries the reference of
 each component. `name` defaults to the manifest's case name.
+
+With `remote_regulation = :remote` a remote voltage control the control
+framework refuses is mapped as with `:hold_local`: the net is built again
+with that unit held at its own bus, so it is the net the `:hold_local`
+import builds for that unit.
 """
 function build_net_from_powsybl(tables::PowsyblTables, opts::PowsyblAdapterOptions; name::AbstractString = "")::Tuple{Net,PowsyblImportReport}
   net_name = isempty(name) ? String(get(tables.manifest, "case", "powsybl")) : String(name)
+  # generator id => reason the remote control was refused; every pass adds
+  # at least one id, so the loop ends after at most one pass per generator
+  held = Dict{String,String}()
+  while true
+    ctx = _build_powsybl_pass(tables, opts, net_name, held)
+    isempty(ctx.refused) && return (ctx.net, ctx.report)
+    merge!(held, ctx.refused)
+  end
+end
+
+# One build of the net; the units in `held` are mapped as :hold_local.
+function _build_powsybl_pass(tables::PowsyblTables, opts::PowsyblAdapterOptions, net_name::String, held::Dict{String,String})
   net = Net(name = net_name, baseMVA = opts.base_mva)
   report = PowsyblImportReport()
   vl = tables.voltage_levels
@@ -111,7 +130,7 @@ function build_net_from_powsybl(tables::PowsyblTables, opts::PowsyblAdapterOptio
   for i in eachindex(ol.element_id)
     push!(get!(limits, ol.element_id[i], Int[]), i)
   end
-  ctx = _PowsyblBuildContext(net, tables, opts, report, Dict{String,Int}(), Dict{String,Float64}(), Dict{String,Int}(), vl_nominal, bus_view_vn, limits, NamedTuple[])
+  ctx = _PowsyblBuildContext(net, tables, opts, report, Dict{String,Int}(), Dict{String,Float64}(), Dict{String,Int}(), vl_nominal, bus_view_vn, limits, NamedTuple[], held, Dict{String,String}())
   _map_powsybl_buses!(ctx)
   _map_powsybl_links!(ctx)
   _map_powsybl_lines!(ctx)
@@ -124,28 +143,46 @@ function build_net_from_powsybl(tables::PowsyblTables, opts::PowsyblAdapterOptio
   _map_powsybl_dangling_lines!(ctx)
   _map_powsybl_hvdc!(ctx)
   _attach_powsybl_machine_controls!(ctx)
-  return (net, report)
+  return ctx
 end
 
 # remote_regulation = :remote: the unit is a PQ injection with an outer-loop
 # MachineVoltageControl that drives the regulated bus onto the target, the
 # way cgmes_import.machine_control does it. Attached last, once every
-# prosumer exists and the bus types are settled; a control the framework
-# refuses (target bus already voltage-held, isolated) stays a notice and
-# the unit keeps its target_q.
+# prosumer exists and the bus types are settled. A control the framework
+# refuses (target bus not built, voltage-held or already regulated by
+# another unit, empty reactive range) goes to ctx.refused with the reason;
+# build_net_from_powsybl then builds the net again with the unit on the
+# :hold_local mapping (PV at the own bus with the target in pu of the
+# regulated bus, target_q is no operating point to keep). Holding a unit
+# only adds voltage-held buses, so a refusal of this pass stays a refusal
+# in the next one; a held unit can cause a new refusal in a later pass (a
+# unit regulating its bus is refused once that bus is voltage-held), and the
+# loop in build_net_from_powsybl runs until no new refusal appears.
 function _attach_powsybl_machine_controls!(ctx::_PowsyblBuildContext)
   refreshBusTypesFromProsumers!(ctx.net)
   for plan in ctx.machine_plans
     tidx = get(ctx.net.busDict, plan.target_bus, nothing)
-    reason = tidx === nothing ? "target bus $(plan.target_bus) not built" : ctx.net.nodeVec[tidx]._nodeType != PQ ? "target bus $(plan.target_bus) is already voltage-held" : nothing
+    # the refusals of addMachineVoltageControl! a file can produce, checked
+    # here so that each one is a notice and a fallback, not an import error
+    other = findfirst(c -> c.enabled && c.target_bus == plan.target_bus, _machine_controllers(ctx.net))
+    reason = if tidx === nothing
+      "target bus $(plan.target_bus) not built"
+    elseif ctx.net.nodeVec[tidx]._nodeType != PQ
+      "target bus $(plan.target_bus) is already voltage-held"
+    elseif other !== nothing
+      "target bus $(plan.target_bus) is already regulated by generator $(_machine_controllers(ctx.net)[other].name)"
+    elseif !(plan.qmin < plan.qmax)
+      "empty reactive range [$(plan.qmin), $(plan.qmax)] MVAr"
+    else
+      nothing
+    end
     if reason !== nothing
-      _powsybl_notice!(ctx.report, "generator $(plan.name): remote voltage control not attached ($(reason)); stays PQ with target_q")
+      ctx.refused[plan.name] = reason
       continue
     end
-    # OpenLoadFlow holds a remotely regulated bus exactly; the controller's
-    # default deadband of 1e-3 pu would leave that much slack; 1e-6 still
-    # left 2e-5 pu at the unit's own bus behind the transformer (micro_grid_be)
-    addMachineVoltageControl!(ctx.net; bus = plan.bus, target_bus = plan.target_bus, target_vm_pu = plan.target_vm_pu, qmin_mvar = plan.qmin, qmax_mvar = plan.qmax, deadband_vm_pu = 1.0e-8, prosumer_index = plan.prosumer_index, name = plan.name)
+    # the deadband follows the power-flow tolerance (_powsybl_remote_deadband)
+    addMachineVoltageControl!(ctx.net; bus = plan.bus, target_bus = plan.target_bus, target_vm_pu = plan.target_vm_pu, qmin_mvar = plan.qmin, qmax_mvar = plan.qmax, deadband_vm_pu = ctx.opts.remote_deadband_vm_pu, prosumer_index = plan.prosumer_index, name = plan.name)
     _powsybl_notice!(ctx.report, "generator $(plan.name): remote voltage control of bus $(plan.target_bus) at $(round(plan.target_vm_pu; digits = 5)) pu attached (outer loop)")
   end
   return nothing
@@ -616,10 +653,11 @@ function _map_powsybl_generators!(ctx::_PowsyblBuildContext)
       regulated = g.regulated_bus_id[i]
       own_view = ctx.report.bus_view[bus]
       remote = !isempty(regulated) && regulated != own_view
+      held_reason = get(ctx.held, id, nothing)
       if remote && ctx.opts.remote_regulation === :pq
         pv = false
         _powsybl_notice!(ctx.report, "generator $(id) regulates bus $(regulated) (own bus $(own_view)): mapped as PQ with target_q")
-      elseif remote && ctx.opts.remote_regulation === :remote
+      elseif remote && ctx.opts.remote_regulation === :remote && held_reason === nothing
         pv = false
         target_bus = g.regulated_bus_breaker_bus_id[i]
         vn_reg = get(ctx.bus_view_vn, regulated, vn)
@@ -630,7 +668,12 @@ function _map_powsybl_generators!(ctx::_PowsyblBuildContext)
         vn_reg = remote ? get(ctx.bus_view_vn, regulated, vn) : vn
         vn_reg > 0.0 || (vn_reg = vn)
         vset = g.target_v[i] / vn_reg
-        remote && _powsybl_notice!(ctx.report, "generator $(id) regulates bus $(regulated) (own bus $(own_view)): setpoint $(round(vset; digits = 5)) pu held at the own bus")
+        if held_reason !== nothing
+          # a remote control the framework refused in an earlier pass
+          _powsybl_notice!(ctx.report, "generator $(id): remote voltage control not attached ($(held_reason)); setpoint $(round(vset; digits = 5)) pu held at the own bus")
+        elseif remote
+          _powsybl_notice!(ctx.report, "generator $(id) regulates bus $(regulated) (own bus $(own_view)): setpoint $(round(vset; digits = 5)) pu held at the own bus")
+        end
       end
     end
     addProsumer!(

@@ -91,6 +91,53 @@ function run_parallel_foundation_tests()
       @test condestJacobian(copied) == kappa_copy
     end)() end
 
+    # The GC pause of a run (runtime.gc_pause): nested runs count, the GC
+    # collects again only after the last one, also after an error, and the
+    # guard collects once above its limit. "Collects" is read from the
+    # collection counter of the GC, not from the bookkeeping.
+    @testset "GC pause: nesting, error, guard" begin (function ()
+      collections() = Base.gc_num().pause
+      @test gc_pause_status().active_runs == 0
+      with_gc_paused(; enabled = true) do
+        with_gc_paused(; enabled = true) do
+          @test gc_pause_status().active_runs == 2
+        end
+        @test gc_pause_status().active_runs == 1 && gc_pause_status().paused
+        n0 = collections()
+        GC.gc()
+        @test collections() == n0
+      end
+      @test gc_pause_status().active_runs == 0 && !gc_pause_status().paused
+      n0 = collections()
+      GC.gc()
+      @test collections() > n0
+      @test_throws ErrorException with_gc_paused(() -> error("run failed"); enabled = true)
+      @test gc_pause_status().active_runs == 0
+      @test_throws ArgumentError runpf!(createTest3BusNet(); no_such_keyword = 1)
+      @test gc_pause_status().active_runs == 0
+      n0 = collections()
+      GC.gc()
+      @test collections() > n0
+      with_gc_paused(() -> (@test gc_pause_status().active_runs == 0); enabled = false)
+      before = gc_pause_status().guard_collections
+      with_gc_paused(; enabled = true, limit_bytes = 1) do
+        Sparlectra._gc_pause_guard!()
+        @test gc_pause_status().paused
+      end
+      @test gc_pause_status().guard_collections == before + 1
+      if Threads.nthreads() > 1
+        println("      GC pause on several threads: RAN ($(Threads.nthreads()) threads)")
+        seen = fetch.([Threads.@spawn with_gc_paused(() -> (sleep(0.05); gc_pause_status().active_runs); enabled = true) for _ = 1:8])
+        @test maximum(seen) >= 1
+        @test gc_pause_status().active_runs == 0 && !gc_pause_status().paused
+        n0 = collections()
+        GC.gc()
+        @test collections() > n0
+      else
+        println("      GC pause on several threads: SKIPPED (one Julia thread)")
+      end
+    end)() end
+
     run_parallel_island_tests()
   end)() end
 end

@@ -1,3 +1,13 @@
+# Version 1.3.0 - 2026-11-21
+
+Batches in worker processes and a paused garbage collector during a power flow.
+
+- **Batches in worker processes.** N-1, scenario and injection batches on large networks run in a pool of Julia worker processes instead of threads, with the same results bit for bit: threads of one process wait on each other inside the sparse LU, processes scale with the cores. The garbage collector is off while a power flow runs, with a memory guard. `runtime.parallel.executor` (default `auto`) picks processes or threads. See [Parallel Execution](@ref parallel_execution_processes) and [GC pause](@ref parallel_execution_gc_pause).
+- **Remote mode of the Web UI.** `start_webui.jl --remote` runs the Web UI on a host such as a GPU server without opening a browser there; you connect from your own machine through an SSH tunnel, and the Info menu shows the command. A direct bind with an access token can be set instead (`webui.remote_mode`, default `ssh`). See [Remote use](@ref webui_remote).
+- **Q-limit handling.** The switch threshold is relative to the Q band (`power_flow.qlimits.guard.violation_threshold_pct`, default `1`) and replaces the absolute threshold, which is no longer read; on narrow Q bands the absolute value let rounding of an early iterate decide the switch. The stability check uses the solver's release and switching margins as tolerances, so it reports only states the solver would change itself. Machines clamped twice and released together at the converged point are released again without the one that failed, and a machine with a narrow Q band is also released there when its voltage is on the wrong side. See [Q-limit Switching Strategy](q_limit_switching_strategy.md).
+- **Cold starts nearer the solution.** The flat and the DC start put PQ buses at the mean voltage setpoint of their island instead of 1.0 pu, and the DC start shares the losses among the generators by Pg instead of leaving them at the slack. On case_ACTIVSg70k the DC start converges in 13 iterations with Q limits; before, it diverged. A case configuration file can choose the start and the wrong-branch bounds of its network. See [Start magnitude of PQ buses](@ref pf_pq_start_magnitude).
+- **PowSyBl remote regulation as in OpenLoadFlow.** `powsybl_import.remote_regulation` defaults to `remote` instead of `hold_local`; results of PowSyBl imports with remote regulation change.
+
 # Version 1.2.3 - 2026-11-12
 
 Faster Ybus build on large networks and a fixed Jacobian pattern for Q-limit switches.

@@ -54,6 +54,9 @@ old pivots (KLU) factorizes afresh when the types differ from them.
 factor of the recorded build (the rows of the lambda column); a replay with
 another participant set rebuilds, because the same emit count would write
 -alpha into the old slots.
+`layout_n`, `layout_slack`, `non_slack`, `pos_non_slack` and `row_block`
+hold the state layout of the bus count and slack index last seen
+(`_assembly_layout!`), so a Newton iteration does not build them again.
 """
 mutable struct RectangularJacobianAssembly
   Iidx::Vector{Int}
@@ -66,9 +69,37 @@ mutable struct RectangularJacobianAssembly
   fixed_pattern::Bool
   factor_bus_types::Vector{Symbol}
   dslack_buses::Vector{Int}
+  layout_n::Int
+  layout_slack::Int
+  non_slack::Vector{Int}
+  pos_non_slack::Vector{Int}
+  row_block::Vector{Int}
 end
 
-RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false, false, Symbol[], Int[])
+RectangularJacobianAssembly() = RectangularJacobianAssembly(Int[], Int[], Float64[], nothing, Int[], ComplexF64[], false, false, Symbol[], Int[], -1, -1, Int[], Int[], Int[])
+
+# The non-slack bus list, its position map and the row block of each bus
+# (the index of its P row) for n buses and this slack index, the same
+# vectors non_slack_indices, build_pos_map and the row loop of the Jacobian
+# builder give. Built again only when n or the slack index differ from the
+# last call. The vectors are read only by their users.
+function _assembly_layout!(asm::RectangularJacobianAssembly, n::Int, slack_idx::Int)
+  if asm.layout_n != n || asm.layout_slack != slack_idx
+    asm.non_slack = non_slack_indices(n, slack_idx)
+    asm.pos_non_slack = build_pos_map(asm.non_slack, n)
+    row_block = zeros(Int, n)
+    row = 0
+    for i = 1:n
+      i == slack_idx && continue
+      row += 2
+      row_block[i] = row - 1
+    end
+    asm.row_block = row_block
+    asm.layout_n = n
+    asm.layout_slack = slack_idx
+  end
+  return asm.non_slack, asm.pos_non_slack, asm.row_block
+end
 
 """
     UmfpackReuseNewtonContext
@@ -89,9 +120,12 @@ mutable struct UmfpackReuseNewtonContext <: AbstractNewtonSolverContext
   rhs::Vector{Float64}
   sol::Vector{Float64}
   assembly::RectangularJacobianAssembly
+  # why this CPU context serves a solve for which power_flow.compute_backend
+  # asked for the GPU (empty when the CPU was the configured backend)
+  backend_note::String
 end
 
-UmfpackReuseNewtonContext() = UmfpackReuseNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly())
+UmfpackReuseNewtonContext() = UmfpackReuseNewtonContext(nothing, 0, Int64[], Int64[], 0, 0, 0, Float64[], Float64[], RectangularJacobianAssembly(), "")
 
 _newton_full_factorization(::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu(J)
 _newton_refactorize!(ctx::UmfpackReuseNewtonContext, J::SparseMatrixCSC{Float64,Int64}) = lu!(ctx.fact, J)
@@ -157,6 +191,11 @@ function solve_newton_factorized!(ctx::AbstractNewtonSolverContext, J::SparseMat
   end
 end
 
+# the CPU context of a validated power_flow.linear_solver value:
+# :umfpack_reuse gives an UmfpackReuseNewtonContext, :umfpack nothing (the
+# direct solve_linear path); newton_linear_solver_context adds the GPU
+_cpu_newton_linear_solver_context(linear_solver::Symbol) = linear_solver === :umfpack_reuse ? UmfpackReuseNewtonContext() : nothing
+
 # Decides and sets the fixed Jacobian pattern (power_flow.jacobian_fixed_pattern)
 # on the context of one solve of `nb` buses (one island on the island path)
 # and returns `(used, reason)`. `mode` is :auto, :on or :off; :auto uses the
@@ -207,14 +246,3 @@ function _jacobian_fixed_pattern_line(mode::Symbol, reason::Symbol, used::Bool, 
   return string(used ? "on" : "off", " (", configured, why, ")")
 end
 
-"""
-    newton_linear_solver_context(linear_solver::Symbol)
-
-Map a validated `power_flow.linear_solver` value to a fresh per-solve
-context: `:umfpack_reuse` → [`UmfpackReuseNewtonContext`](@ref),
-`:umfpack` → `nothing` (default direct `solve_linear` path).
-"""
-function newton_linear_solver_context(linear_solver::Symbol)
-  linear_solver === :umfpack_reuse && return UmfpackReuseNewtonContext()
-  return nothing
-end

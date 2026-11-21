@@ -4063,7 +4063,9 @@ stays observable, and the number of removed rows is small: every step
 removes the PARTNER of the least redundant row (largest normalized
 residual covariance), so one critical row costs about one removal, where
 the former greedy sweep removed the least redundant row itself and needed
-many removals per critical row. Protected zero-injection rows are never
+many removals per critical row. "Observable" is the verdict of the SE run
+(AC rank and the decoupled P-theta and Q-V models), also above the dense
+search caps (sp_case1354). Protected zero-injection rows are never
 removed, and the footer comments name the target, the critical rows and
 the removed rows. The invalid option combinations throw at construction
 of the options, before any case is imported. The relative sigmas of
@@ -4103,6 +4105,25 @@ function test_measurement_generator_critical_thinning()::Bool
       out2 = joinpath(d, "crit2.csv")
       SparlectraApp._se_generate_measurement_set(case, out2, SparlectraApp.MeasurementGeneratorOptions(; base..., critical_count = k))
       @test read(out, String) == read(out2, String)
+      # above the dense search caps (sp_case1354, 11k rows) the thinning
+      # removes the least redundant row; checked on the AC rank alone it
+      # took the Q and Vm rows around three buses and the run refused the
+      # set (magnitude deficit 3 with the options of this test, AC rank
+      # full; the Web UI run on case1354pegase named in
+      # se_measurement_generator.jl had deficit 2). The written set must
+      # pass the verdict of the run. The MATPOWER import prints the case
+      # name, twice here: stdout goes to devnull
+      big = joinpath(d, "sp_case1354.m")
+      cp(joinpath(dirname(@__DIR__), "data", "mpower", "sp_case1354.m"), big)
+      out3 = joinpath(d, "crit1354.csv")
+      bnet = redirect_stdout(devnull) do
+        SparlectraApp._se_generate_measurement_set(big, out3, SparlectraApp.MeasurementGeneratorOptions(; base..., critical_count = 3))
+        Sparlectra.import_case(big, Sparlectra.load_sparlectra_config()).net
+      end
+      Sparlectra.readMeasurementTable!(bnet; file = out3, zero_injection = false)
+      bobs = evaluate_global_observability(bnet)
+      @test bobs.quality != :not_observable
+      @test length(bobs.numerical_critical_measurement_indices) >= 3
     end
     # option validation happens at construction, with the user-readable texts
     @test_throws ArgumentError SparlectraApp.MeasurementGeneratorOptions(; base..., critical_count = -1)

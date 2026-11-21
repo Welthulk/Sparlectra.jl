@@ -175,12 +175,17 @@ end
 # machines beyond their band, and the run reported the limits as ok. The
 # same failure now shows as a failed limit status, as in the rectangular
 # solver (remaining PV Q-limit violations: converged_limits_failed, erg 1).
+# The rows carry the fixed tolerances only (_qlimit_stability_report_strict,
+# 1e-3 MVAr beyond a limit), not the switching margins of the active set:
+# AnalyticLoadFlow applies neither the hysteresis nor the lock_pq rule, so a
+# machine over Qmax by less than power_flow.qlimits.hysteresis_pu is outside
+# its band here.
 # `buses`, when given, restricts the check to these buses of `net` (one
 # island). Returns `extra` fields for _apslf_pf_status: empty when the run
 # did not converge, ran without Q-limits, or every machine is in its band.
 function _apslf_qband_status(net::Net, converged::Bool, include_limits::Bool; rows = nothing, buses = nothing)::NamedTuple
   (converged && include_limits) || return NamedTuple()
-  rows === nothing && (rows = qlimitStabilityReport(net))
+  rows === nothing && (rows = _qlimit_stability_report_strict(net))
   bad = [r for r in rows if !r.in_band && (buses === nothing || r.bus in buses)]
   isempty(bad) && return NamedTuple()
   text = string("APSLF solution leaves ", length(bad), " voltage-regulated machine(s) outside their reactive band: ", join((_qlimit_stability_row_text(r) for r in bad), "; "))
@@ -379,7 +384,7 @@ function _run_apslf_powerflow!(net::Net, pf_cfg::PowerFlowConfig; verbose::Int =
   # the band check on the net with the results of every island, once; each
   # island status gets the rows of its own buses (row.buses are buses of
   # the merged copy, reps maps a bus of the net onto them)
-  band_rows = include_limits ? qlimitStabilityReport(net) : NamedTuple[]
+  band_rows = include_limits ? _qlimit_stability_report_strict(net) : NamedTuple[]
   for row in island_report.rows
     id = Int(row.island_id)
     haskey(island_statuses, id) || continue

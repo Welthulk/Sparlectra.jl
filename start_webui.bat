@@ -50,6 +50,7 @@ if not defined SPARLECTRA_STARTUP_FILE set "SPARLECTRA_STARTUP_FILE=no"
 rem start_webui.jl checks for a usable sysimage, offers to build one when it
 rem is missing or outdated, and relaunches itself through the image. The same
 rem code runs on Linux, macOS and Windows. Arguments are passed on:
-rem --rebuild-sysimage forces a fresh build, --no-sysimage skips it.
+rem --rebuild-sysimage forces a fresh build, --no-sysimage skips it,
+rem --remote starts the remote mode (no browser here, see the Web UI docs).
 julia --startup-file=%SPARLECTRA_STARTUP_FILE% --project="%DIR%." "%DIR%start_webui.jl" %*
 pause

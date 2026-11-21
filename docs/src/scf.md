@@ -65,9 +65,9 @@ packaged defaults; the machine's YAML supplies machine-scope keys only
 ([Merge precedence](configuration.md#Merge-precedence)).
 `effective_config.yaml` of each run records what took effect.
 
-Case-scope keys are `matpower_import.*`, `cgmes_import.*`,
-`powsybl_import.*`, `power_flow.*`, `state_estimation.*` and
-`short_circuit.*`; `output.*`, `benchmark.*`, `runtime.*`, `webui.*` and
+Case-scope keys are the keys of `GUI_EDITABLE_CONFIG_KEYS` in
+`matpower_import.*`, `cgmes_import.*`, `powsybl_import.*`, `power_flow.*`,
+`state_estimation.*`, `short_circuit.*` and `qsts.*`; `output.*`, `benchmark.*`, `runtime.*`, `webui.*` and
 `matpower_export.*` stay in the machine configuration
 (`scf_is_case_config_key(key)` answers per key). A key outside the case
 scope is refused by name on read. The in-file block `sparlectra.config` is

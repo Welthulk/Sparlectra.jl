@@ -79,8 +79,6 @@ function _ref_olf_config()
   return SparlectraConfig(powerflow = pf, output = OutputConfig(logfile_results = :off, startup_latency_hint = false), control = ControlConfig())
 end
 
-_ref_olf_options(case) = case == "micro_grid_be" ? PowsyblAdapterOptions(remote_regulation = :remote) : PowsyblAdapterOptions()
-
 # Sparlectra's own test nets against OpenLoadFlow (0.50.0): the shared test
 # grids (createTest3BusNet, also with its reactive limit of 15 Mvar binding,
 # and createTest5BusNet), the CIGRE HV benchmark (createCIGRE) and the
@@ -153,7 +151,9 @@ function run_ref_openloadflow_tests()
       bands = Dict("ieee14" => (1e-6, 1e-4), "ieee57" => (1e-6, 1e-4), "four_substations" => (1e-5, 1e-3), "micro_grid_be" => (1e-5, 1e-3), "eurostag_tie_lines" => (1e-5, 1e-3))
       dir = _ref_powsybl_fixture(case)
       tables = read_powsybl_bundle(dir)
-      net, _ = build_net_from_powsybl(tables, _ref_olf_options(case))
+      # default options: micro_grid_be regulates remote buses, mapped as
+      # OpenLoadFlow does it (remote_regulation = remote)
+      net, _ = build_net_from_powsybl(tables, PowsyblAdapterOptions())
       res = run_sparlectra(net = net, config = _ref_olf_config())
       @test res.numerical_converged
       dev = _ref_powsybl_voltage_deviation(net, tables, dir)
@@ -186,6 +186,27 @@ function run_ref_openloadflow_tests()
       end
     end)()
   end
+
+  # micro_grid_be at the tolerance of the Web UI configuration (1e-5): the
+  # options taken from the configuration give the remote control a deadband
+  # of ten times the tolerance; with the former fixed 1e-8 pu the control
+  # stopped at control_max_outer_iterations. The deadband bounds the error
+  # at the regulated bus, so it is the band here (measured 2.5e-6 pu).
+  @testset "PowSyBl micro_grid_be: remote control at tol 1e-5 against OpenLoadFlow" begin (function ()
+    dir = _ref_powsybl_fixture("micro_grid_be")
+    tables = read_powsybl_bundle(dir)
+    base = _ref_olf_config()
+    cfg = SparlectraConfig(powerflow = PowerFlowConfig(max_iter = 60, tol = 1e-5, islands_enabled = true, qlimits = base.powerflow.qlimits, distributed_slack = base.powerflow.distributed_slack), output = base.output, control = ControlConfig())
+    opts = Sparlectra.powsybl_adapter_options(cfg)
+    @test opts.remote_regulation === :remote && opts.remote_deadband_vm_pu == 1e-4
+    net, _ = build_net_from_powsybl(tables, opts)
+    res = run_sparlectra(net = net, config = cfg)
+    @test res.numerical_converged
+    ctrl = only(net.machineControls)
+    @test ctrl.status === :converged
+    @test abs(ctrl.achieved_vm_pu - ctrl.target_vm_pu) <= 1e-4
+    @test _ref_powsybl_voltage_deviation(net, tables, dir).max_dv <= 1e-4
+  end)() end
 
   @testset "PowSyBl ieee14: line flows against the OLF columns" begin (function ()
     tables = read_powsybl_bundle(_ref_powsybl_fixture("ieee14"))

@@ -34,6 +34,7 @@ import ZipArchives                # SCF time series zips (the CGMES submodule im
 using LinearAlgebra
 using Logging
 using Printf
+import Serialization              # payload of the process batch (src/scenario/process_pool.jl)
 using SparseArrays
 using TOML
 
@@ -183,6 +184,9 @@ export
   StartModeConfig,
   QLimitConfig,
   PowerFlowConfig,
+  ComputeBackendConfig,                   # power_flow.compute_backend: Newton linear solve on CPU or GPU (cuDSS extension).
+  gpu_status,                             # Whether the CUDA extension is loaded and a GPU is usable, with the reason.
+  gpu_advice,                             # Measured verdict GPU faster/slower for a bus count and batch size.
   ControlConfig,
   ObservabilityConfig,
   TapEstimationConfig,                    # state_estimation.tap_estimation settings (enabled, fallback, impedance_correction).
@@ -193,7 +197,8 @@ export
   PerformanceConfig,
   BenchmarkConfig,
   RuntimeConfig,
-  ParallelRuntimeConfig,                  # runtime.parallel.* settings (enabled, max_tasks, min_work_items).
+  ParallelRuntimeConfig,                  # runtime.parallel.* settings (enabled, max_tasks, min_work_items, executor, max_processes).
+  GcPauseConfig,                          # runtime.gc_pause.* settings (enabled, max_resident_gb).
   parallel_max_tasks,                     # Resolve max_tasks (auto = Threads.nthreads()) to a task count.
   DiagnosticsConfig,
   OutputConfig,
@@ -489,6 +494,16 @@ export
   restore!,                               # Replay the undo log in reverse; the copy returns to the base bitwise.
   runScenarios!,                          # Evaluate a scenario set on the engine; N-1 status ops match runContingencies! exactly.
   ScenarioResult,                         # ContingencyResult surface plus screened flag and screening estimate.
+  InjectionScenarios,                     # N load-scaling scenarios of one network (factor per bus and scenario).
+  random_load_scenarios,                  # Seeded random load factors per bus, uniform in a band around 1.
+  load_ramp_scenarios,                    # One load factor for all buses, rising over N steps (QSTS stand-in).
+  runInjectionBatch,                      # Solve N injection scenarios, Q limits off, on the CPU threads or the GPU.
+  InjectionBatchResult,                   # States, convergence, iterations and Q-limit report per scenario.
+  start_batch_processes!,                 # Start the worker processes of the process batch (pool lives across batches).
+  stop_batch_processes!,                  # Stop the worker processes of the process batch.
+  batch_process_ids,                      # Process ids of the running batch workers.
+  with_gc_paused,                         # Run a function with the GC paused as a run (runtime.gc_pause).
+  gc_pause_status,                        # Active runs, guard limit and collections of the GC pause.
 
   # scf_series.jl (SCF time series for QSTS: base case plus one delta per step, one zip)
   SCFSeries,                              # A series in memory: base case, series index, steps and their patch ops.
@@ -788,6 +803,8 @@ include("performance_profile.jl")
 # session facts (abort hook, session kind) and the CSV writers: library
 # code depends on both, so they sit ahead of every consumer
 include("session.jl")
+# the GC pause of a run (runtime.gc_pause); its macro wraps runpf! below
+include("gc_pause.jl")
 include("config/yamlparams.jl")
 include("controller/control_framework.jl")
 include("config/configuration.jl")
@@ -843,6 +860,7 @@ include("acpflow/solver_core.jl")
 # The factorized backend comes first: it only depends on solve_sparse_system from
 # solver_core.jl (its fallback chain) and is referenced by the Newton step.
 include("powerflow_rectangular/rectangular_factorized_solver.jl")
+include("powerflow_rectangular/rectangular_compute_backend.jl")
 include("powerflow_rectangular/rectangular_power_mode.jl")
 include("powerflow_rectangular/rectangular_distributed_slack.jl")
 include("powerflow_rectangular/rectangular_core_equations.jl")
@@ -866,6 +884,7 @@ include("powerflow_rectangular/rectangular_finalization.jl")
 include("powerflow_rectangular/rectangular_final_status.jl")
 include("powerflow_rectangular/rectangular_diagnostics.jl")
 include("powerflow_rectangular/ac_islands.jl")
+include("powerflow_rectangular/rectangular_device_newton.jl")
 include("powerflow_rectangular/rectangular_network_solver.jl")
 # Standalone DC power flow (rundcpf!). Reuses solver_core.jl's shared
 # slack-reduction helper and powerflow_rectangular/ac_islands.jl's island
@@ -905,6 +924,9 @@ include("sv_compare_core.jl")
 include("scenario/patch.jl")
 include("scenario/apply.jl")
 include("scenario/engine.jl")
+include("scenario/process_pool.jl")
+# the injection batch (load scaling scenarios, CPU and GPU path)
+include("scenario/injection_batch.jl")
 include("adapters/scf/scf_series.jl")
 # QSTS mode A and the result format; before the adapters, whose series union holds the SV reference type
 include("qsts/qsts_snapshots.jl")

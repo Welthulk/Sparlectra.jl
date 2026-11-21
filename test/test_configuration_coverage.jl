@@ -261,6 +261,23 @@ function test_configuration_version_scope_and_case_precedence()
       @test_throws words Sparlectra.QstsConfig(Dict{String,Any}("qsts" => Dict{String,Any}(key => value)))
       @test_throws string("qsts.", key) Sparlectra.validate_gui_config_overrides(Dict{String,Any}(string("qsts.", key) => value == 0.85 ? -1.0 : value))
     end
+    # the start strategy and the wrong-branch bounds are case scope (a case
+    # file could neither switch the start projection off nor widen the bus
+    # angle bound that the stored solution of case_ACTIVSg70k exceeds): the
+    # case file beats the template, an override beats the case file
+    start_keys(r) = (r.config.powerflow.start_mode.start_projection, r.config.powerflow.start_mode.try_dc_start, r.config.powerflow.start_mode.try_blend_scan,
+                     r.config.powerflow.wrong_branch_max_bus_angle_deg, r.config.powerflow.wrong_branch_min_low_vm_count)
+    write(scf_cc, "config_version: 1\nscope: case\ncase: case57.scf.json\npower_flow:\n  wrong_branch_max_bus_angle_deg: 180.0\n  wrong_branch_min_low_vm_count: 3\n  start_mode:\n    start_projection: false\n    try_dc_start: false\n    try_blend_scan: false\n")
+    @test start_keys(Sparlectra.resolve_config(general, scf_case)) == (false, false, false, 180.0, 3)
+    @test start_keys(Sparlectra.resolve_config(general, scf_case, Dict{String,Any}("power_flow.start_mode.start_projection" => true, "power_flow.wrong_branch_max_bus_angle_deg" => 150.0))) == (true, false, false, 150.0, 3)
+    @test_throws "power_flow.wrong_branch_max_bus_angle_deg" Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.wrong_branch_max_bus_angle_deg" => -1.0))
+    # the source report of effective_config.yaml names the case file for a
+    # bound it sets, and lists every wrong-branch key
+    bound_report = Sparlectra._config_source_report("", Dict{String,Any}(), Dict{String,Any}("power_flow" => Dict{String,Any}("wrong_branch_max_bus_angle_deg" => 180.0));
+                                                    case_config = Dict{String,Any}("power_flow.wrong_branch_max_bus_angle_deg" => 180.0))
+    @test (bound_report["power_flow"]["wrong_branch_max_bus_angle_deg"]["source"], bound_report["power_flow"]["wrong_branch_max_bus_angle_deg"]["value"]) == ("case_sidecar", 180.0)
+    @test all(in(Sparlectra.CONFIG_OVERRIDE_REPORT_KEYS), filter(k -> startswith(k, "power_flow.wrong_branch"), collect(Sparlectra.GUI_EDITABLE_CONFIG_KEYS)))
+    @test_throws "power_flow.start_mode.try_dc_start" Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.start_mode.try_dc_start" => "yes"))
     rm(scf_cc)
     plain = joinpath(dir, "plain57.m")
     write(plain, "% fixture\n")
@@ -979,6 +996,15 @@ function test_configuration_every_key_arrives()
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf" => Dict("order" => 0))))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("apslf_start" => Dict("order" => -1))))
     @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "apslf", "apslf_start" => Dict("enabled" => true))))
+    # power_flow.compute_backend: cpu, float64, fallback on by default; the
+    # values of the file and the overrides are checked against the allowed
+    # ones at load
+    @test Sparlectra.SparlectraConfig(Dict("power_flow" => Dict())).powerflow.compute_backend == Sparlectra.ComputeBackendConfig(mode = :cpu, gpu_precision = :float64, gpu_fallback_to_cpu = true, gpu_fast_mode = false)
+    cb_cfg = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("compute_backend" => Dict("mode" => "auto", "gpu_precision" => "float32_mixed", "gpu_fallback_to_cpu" => false, "gpu_fast_mode" => true)))).powerflow.compute_backend
+    @test (cb_cfg.mode, cb_cfg.gpu_precision, cb_cfg.gpu_fallback_to_cpu, cb_cfg.gpu_fast_mode) == (:auto, :float32_mixed, false, true)
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("compute_backend" => Dict("mode" => "tpu"))))
+    @test_throws ArgumentError Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("compute_backend" => Dict("gpu_precision" => "float16"))))
+    @test_throws ArgumentError Sparlectra.validate_gui_config_overrides(Dict{String,Any}("power_flow.compute_backend.mode" => "tpu"))
     # output.export_significant_digits: 0 (full precision) by default, 1 to
     # 17 taken, anything else refused at load and as an override
     @test Sparlectra.SparlectraConfig(Dict("output" => Dict())).output.export_significant_digits == 0
@@ -1216,6 +1242,18 @@ power_flow:
     refused = @test_throws ArgumentError Sparlectra.QLimitConfig(Dict("enforcement_mode" => "classic"))
     @test occursin("power_flow.qlimits.enforcement_mode", sprint(showerror, refused.value))
     @test occursin("classic_simultaneous", sprint(showerror, refused.value))
+    # guard.violation_threshold_pct must be finite: the solver entry points
+    # refuse Inf, so the loader refuses it first, naming the key (.inf stays
+    # text in the YAML reader, inf parses to Inf); a list, a mapping, true or
+    # null is refused the same way, not with a MethodError of the conversion
+    for yaml_value in (".inf", "inf", "-1", "[1, 2]", "\n        a: 1", "true", "null")
+      cfgfile = test_scratch_path(".yaml")
+      write(cfgfile, "config_version: 1\npower_flow:\n  qlimits:\n    guard:\n      violation_threshold_pct: $(yaml_value)\n")
+      bad = @test_throws ArgumentError Sparlectra.load_sparlectra_config(cfgfile; reload = true)
+      @test occursin("power_flow.qlimits.guard.violation_threshold_pct", sprint(showerror, bad.value))
+    end
+    @test_throws ArgumentError Sparlectra.QLimitConfig(Dict("violation_threshold_pct" => NaN))
+    @test Sparlectra.QLimitConfig(Dict("violation_threshold_pct" => "2.5")).guard_violation_threshold_pct == 2.5
     # The Q-limit switching parameters of the run configuration reach the net
     # in run_sparlectra. The importer stamps the defaults (hysteresis 0.01 pu,
     # final bound 0.02 pu); the run used to keep them, so the classic outer
@@ -1234,10 +1272,10 @@ power_flow:
       write(cfgfile, "config_version: 1\npower_flow:\n  rescue: false\n  qlimits:\n    enforcement_mode: classic_one_at_a_time\n" * extra)
       cfg = Sparlectra.load_sparlectra_config(cfgfile; reload = true)
       run_cfg = Sparlectra.SparlectraConfig(powerflow = cfg.powerflow, output = quiet)
-      # the default run leaves bus 6 outside its band (warning captured), the
-      # clamped runs satisfy the stability conditions and warn about nothing
-      r = type6 == "PV" ? (@test_logs (:warn, r"Q-limit stability check") match_mode = :any run_sparlectra(net = Sparlectra.importSCF(zeng_a), config = run_cfg)) :
-          (@test_logs min_level = Logging.Warn run_sparlectra(net = Sparlectra.importSCF(zeng_a), config = run_cfg))
+      # the default run leaves bus 6 PV inside the hysteresis over its Qmax,
+      # the clamped runs hold it at Qmax: every run satisfies the stability
+      # conditions and warns about nothing
+      r = @test_logs min_level = Logging.Warn run_sparlectra(net = Sparlectra.importSCF(zeng_a), config = run_cfg)
       ql = cfg.powerflow.qlimits
       @test (r.net.q_hyst_pu, r.net.final_q_accept_pu, r.net.cooldown_iters, r.net.reenable_v_hyst_pu) == (ql.hysteresis_pu, ql.final_q_accept_pu, ql.cooldown_iters, ql.reenable_v_hyst_pu)
       @test r.final_converged
@@ -1601,7 +1639,16 @@ function test_configuration_webui_keys_both_directions()
       "state_estimation.sigma_by_voltage_level" => "a table, not a scalar field: the sigma table of the State Estimation section posts it (se_sigma_lvl_* fields), the run takes it as an override and Save settings writes it into the case configuration",
       "state_estimation.tap_estimation.exclude" => "a table, not a scalar field: the tap estimation table of the Case page posts it (se_tap_trafo_* fields) and Save case options writes the unchecked transformers into the case configuration",
       "state_estimation.tap_estimation.include_machine_transformers" => "set by the same Case page table: a checked machine transformer (se_tap_trafo_* fields) makes Save case options write it into the case configuration",
+      "power_flow.start_mode.start_projection" => "start strategy of the case; the flat start checkbox switches it off for the run, otherwise set via the case configuration file or the API",
+      "power_flow.start_mode.try_dc_start" => "candidate of the start projection, a start strategy of the case; set via the case configuration file or the API",
+      "power_flow.start_mode.try_blend_scan" => "candidate of the start projection, a start strategy of the case; set via the case configuration file or the API",
     )
+    # the wrong-branch bounds depend on the network: case configuration file
+    # or API, the form offers the detection mode only
+    for key in ("min_vm_pu", "max_vm_pu", "max_angle_spread_deg", "max_branch_angle_deg", "min_low_vm_count", "min_vn_kV", "low_vm_share",
+                "max_bus_angle_deg", "max_plain_steps", "collapse_vm_pu", "max_reference_branch_angle_deg")
+      fieldless_reasons["power_flow.wrong_branch_" * key] = "wrong-branch plausibility bound of the network; set via the case configuration file or the API"
+    end
     for key in sort(collect(Sparlectra.GUI_EDITABLE_CONFIG_KEYS))
       key in have && continue
       # the output.* group is console and CSV fine tuning: deliberately not

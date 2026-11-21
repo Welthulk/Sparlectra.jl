@@ -1,0 +1,8 @@
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+CUDSS = "45b445bb-4962-46a0-9369-b4df9d0f772e"
+KLU = "ef3ab10e-7fda-4108-b977-705223b18434"
+Sparlectra = "31ce9bba-fd9d-44a1-b005-f5f509afda38"
+
+[sources]
+Sparlectra = {path = "../.."}

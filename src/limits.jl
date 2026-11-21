@@ -71,7 +71,7 @@ function printQLimitLog(net::Net; sort_by::Symbol = :iter, io::IO = stdout, max_
   for i in 1:shown
     ev = logdata[i]
     kind = _qlimit_event_kind(ev)
-    change = kind === :release ? "PQ->PV" : kind === :group_revert ? "PV->PQ (group)" : "PV->PQ"
+    change = kind === :release ? "PQ->PV" : kind === :group_revert ? "PV->PQ (group)" : kind === :group_hit ? "PV->PQ (group, failed)" : "PV->PQ"
     @printf(io, " %9d │ %3d │ %-4s │ %s\n", ev.iter, ev.bus, String(ev.side), change)
   end
 
@@ -82,11 +82,15 @@ Base.@kwdef struct QLimitEvent
   iter::Int
   bus::Int
   side::Symbol   # :min | :max
-  # :hit for a limit hit; :group_revert when a jointly released group of
-  # twice-clamped buses goes back to its limits (#475). A revert is a switch
-  # but not a hit: the per-bus hit counts (one-retry guard, max_switches)
-  # leave it out. :release for a PQ->PV release, `side` is the limit the
-  # bus was clamped at; up to 0.50 the log held the PV->PQ switches only
+  # :hit for a limit hit. Two kinds for a jointly released group of
+  # twice-clamped buses (#475): :group_hit when a member violates its limit
+  # again (it stays clamped for the rest of the solve), :group_revert when a
+  # member goes back to its limit because another one violated (it stays a
+  # candidate of the next, smaller group). Both are switches but not hits:
+  # the per-bus hit counts (one-retry guard, max_switches, the oscillation
+  # verdict of the run) leave them out. :release for a PQ->PV release,
+  # `side` is the limit the bus was clamped at; up to 0.50 the log held the
+  # PV->PQ switches only
   kind::Symbol = :hit
 end
 
@@ -101,13 +105,37 @@ function logQLimitHit!(net::Net, iter::Int, bus::Int, side::Symbol; kind::Symbol
   net.qLimitEvents[bus] = side
 end
 
+# Failed group releases (#475) one solve allows: a group release that does
+# not hold for some member is retried without that member on the next
+# converged iterate, at most this many times. Every failed round removes at
+# least one member (its :group_hit), so the bound only caps the extra Newton
+# iterations of a large group whose members fail one by one.
+const QLIMIT_GROUP_RELEASE_MAX_ROUNDS = 5
+
+# One log entry in the switch-count scan of the active-set update: the last
+# clamp iteration and the hit count of its bus; a :group_hit puts its bus
+# into `group_failed` (#475, out of every later group). Returns the
+# iteration of a :group_hit entry, else 0. A function barrier: the log is a
+# Vector{Any}, and read through it the fields of every entry were boxed
+# (16 MB per Q-limit solve on a 70k-bus net).
+function _qlimit_count_event!(last_clamp::Dict{Int,Int}, switch_counts::Dict{Int,Int}, group_failed::Set{Int}, ev)::Int
+  ev.kind === :release || (last_clamp[ev.bus] = ev.iter)
+  if ev.kind === :hit
+    switch_counts[ev.bus] = get(switch_counts, ev.bus, 0) + 1
+  elseif ev.kind === :group_hit
+    push!(group_failed, ev.bus)
+    return Int(ev.iter)
+  end
+  return 0
+end
+
 # The kind of a log entry; net.qLimitLog is a Vector{Any}, and an entry
 # written by other code without a `kind` field (a test pushes a plain
 # NamedTuple) counts as a hit, as every entry did before the field existed.
 _qlimit_event_kind(ev)::Symbol = hasproperty(ev, :kind) ? ev.kind : :hit
 
-# The PV->PQ switches of the log (hits and group reverts) without the
-# releases; the run summaries report this number as "PV->PQ events".
+# The PV->PQ switches of the log (hits, group hits and group reverts)
+# without the releases; the run summaries report this number as "PV->PQ events".
 qlimit_pv_to_pq_event_count(net::Net)::Int = count(ev -> _qlimit_event_kind(ev) !== :release, net.qLimitLog)
 
 function qlimit_switch_count(net::Net, bus::Int)::Int
@@ -441,6 +469,15 @@ function _qv_effective_qgen(net::Net, bus::Int, limit_mvar::Float64 = NaN)::Floa
   return abs(q_node - limit_mvar) <= abs(q_spec - limit_mvar) ? q_node : q_spec
 end
 
+# The stability report with the fixed tolerances only (1e-6 pu off the set
+# point, 1e-3 MVAr on a limit) and none of the switching or release margins
+# of the solver. Read by the checks that judge a solution independently of
+# the switching configuration: the Q-V characteristic check (the
+# non-physical solutions of the literature) and the band verdict of an APSLF
+# run, which applies neither the hysteresis nor the lock_pq rule of the
+# active set.
+_qlimit_stability_report_strict(net::Net) = qlimitStabilityReport(net; q_hyst_pu = 0.0, v_hyst_pu = 0.0, violation_threshold_pct = nothing)
+
 """
     qvCharacteristicViolations(net; band_pu = 1e-4) -> Vector{NamedTuple}
 
@@ -457,17 +494,23 @@ this a *non-physical* solution (Zeng, Chiang, Neves, Alberto, IJEPES 147
 (2023) 108905) or an *anomalous* one (Sundaresh, Rao 2015), and it is a
 property of the PV/PQ switching strategy, not of the network.
 
-The rows are a view of [`qlimitStabilityReport`](@ref), not a check of their
-own: the buses with a Q-limit event whose report row sits on the limit of
-that event and fails the condition of that limit. Q, the set point and the
-tolerances (1e-3 MVAr on the limit, 1e-6 pu off the set point) are those of
-the stability report, so the two verdicts cannot disagree.
+The rows come from [`qlimitStabilityReport`](@ref) with its fixed tolerances
+only: 1e-3 MVAr for Q against a limit, 1e-6 pu for U against U_set. They are
+the buses with a Q-limit event whose row sits on the limit of that event and
+fails the condition of that limit. Q and the set point are those of the
+stability report, the tolerances are not: the stability check of a run
+follows the decision margins of the solver (switching margin, release margin
+`reenable_v_hyst_pu`) and reports what the solver would change itself. This
+check is the definition of the literature and does not depend on the
+configuration: a run with the voltage-side release switched off
+(`reenable_v_hyst_pu = 1.0`) can end without a stability violation and still
+with non-physical machines here.
 
 Each row carries `(bus, side, vm_pu, vset_pu, dv_pu, q_MVAr, limit_MVAr,
 significant)`. `dv_pu` is `Vm - Vset` and therefore signed; `significant` is
 `abs(dv_pu) > band_pu`. The band exists because a converged solve leaves
-voltages within its tolerance of the setpoint, so a bus close to its
-setpoint can fall to either side by rounding. Report BOTH counts: the raw one
+voltages within its tolerance of the set point, so a bus close to its set
+point can fall to either side by rounding. Report both counts: the raw one
 is the literature's definition, the significant one is what a reader can act
 on.
 
@@ -477,7 +520,7 @@ the state comes from a converged solve (`converged = false` at the call site).
 function qvCharacteristicViolations(net::Net; band_pu::Float64 = 1.0e-4)
   rows = NamedTuple[]
   isempty(net.qLimitEvents) && return rows
-  for r in qlimitStabilityReport(net)
+  for r in _qlimit_stability_report_strict(net)
     side = get(net.qLimitEvents, r.bus, nothing)
     (side === :max || side === :min) || continue
     # only a bus that really sits ON the limit of its event can be
@@ -530,8 +573,9 @@ end
 # A machine at Q_max must not sit above its set point ((7) fails), one at
 # Q_min not below it ((6) fails), and a machine inside its band must hold the
 # set point. qvCharacteristicViolations (machines with a Q-limit event, on the
-# limit, on the wrong side) is the subset of this check for the event buses,
-# read from its rows; there is one check, not two. Set points come from
+# limit, on the wrong side) reads the rows of this check for the event buses,
+# with the fixed tolerances instead of the solver margins
+# (_qlimit_stability_report_strict). Set points come from
 # _bus_voltage_setpoints_from_prosumers, bus bands from getQLimits_pu. Q is the value of the result report
 # (_bus_power_component_cache: the solver result of a PV bus, the clamp of a
 # PQ bus through _qv_effective_qgen), and the value from the solved voltages
@@ -542,26 +586,49 @@ end
 """
     QLIMIT_STABILITY_TOL_Q_MVAR
 
-Reactive power tolerance of the Q-limit stability check (1e-3 MVAr): a
-machine within this distance of a limit is on that limit, and a band is
-exceeded only beyond it. Fixed, not a configuration key: the check asks
-whether the solved machine sits on its limit, which `power_flow.tol` (a
-mismatch tolerance) does not answer.
+Reactive power tolerance of the Q-limit stability check on the inside of a
+limit (1e-3 MVAr): a machine this close below a limit sits on it. Beyond
+the limit the tolerance is the switching margin of the bus (see
+[`qlimitStabilityReport`](@ref)), at least this value, so that round-off of
+a Q computed from the solved voltages does not count as a violation.
+[`qvCharacteristicViolations`](@ref) and the band verdict of an APSLF run
+use this value alone on both sides.
 """
 const QLIMIT_STABILITY_TOL_Q_MVAR = 1.0e-3
 
 """
     QLIMIT_STABILITY_TOL_U_PU
 
-Voltage tolerance of the Q-limit stability check (1e-6 pu): a bus within
-this distance of its set point holds it. Fixed like
-`QLIMIT_STABILITY_TOL_Q_MVAR`.
+Lower bound of the voltage tolerance of the Q-limit stability check
+(1e-6 pu). The tolerance itself is the release margin
+`reenable_v_hyst_pu`; this bound applies when that margin is smaller.
+[`qvCharacteristicViolations`](@ref) and the band verdict of an APSLF run
+use this value alone.
 """
 const QLIMIT_STABILITY_TOL_U_PU = 1.0e-6
 
 # sign of x with a dead band: 0 within tol, +1 / -1 outside; an infinite
-# margin (an open limit) counts as positive, so no Inf * 0 can appear
-_qlimit_stability_sign(x::Float64, tol::Float64)::Int = abs(x) <= tol ? 0 : (x > 0.0 ? 1 : -1)
+# margin (an open limit) counts as positive, so no Inf * 0 can appear.
+# `tol_neg` widens the band on the negative side: for the distance of Q to
+# a limit (positive inside the band) a machine over the limit by less than
+# its switching margin sits on the limit, as the solver keeps it there,
+# while a machine inside the band counts as on the limit only within the
+# small `tol` (a machine 0.17 MVAr inside a 1.5 MVAr band is not on its
+# limit because the classic hysteresis is 1 MVAr).
+_qlimit_stability_sign(x::Float64, tol::Float64, tol_neg::Float64 = tol)::Int = x > tol ? 1 : (x < -tol_neg ? -1 : 0)
+
+# Q tolerance of the stability check at one bus, in pu: the margin from
+# which the active set itself switches the bus PV -> PQ. That is the
+# hysteresis q_hyst_pu, or under the lock_pq violation rule the smaller of
+# it and pct percent of the band (_qlimit_guard_violation_threshold);
+# pct = nothing when the rule does not act (classic modes, another
+# guard.violation_mode). A machine over its limit by less than this margin
+# is a state the solver keeps, and the final Q check accepts it as
+# within_hysteresis, so the stability check must not report it either.
+function _qlimit_stability_q_margin_pu(q_hyst_pu::Float64, pct::Union{Nothing,Float64}, qmin_pu::Float64, qmax_pu::Float64)::Float64
+  pct === nothing && return q_hyst_pu
+  return min(q_hyst_pu, _qlimit_guard_violation_threshold(pct, qmin_pu, qmax_pu))
+end
 
 # The buses the check judges: a generator with a voltage regulator and a set
 # point, in service, solved as PV or PQ, with no reference unit on the bus
@@ -671,7 +738,9 @@ function _qlimit_stability_qgen(net::Net, vbuses::Vector{Int}, cache, wnet::Net,
 end
 
 """
-    qlimitStabilityReport(net; locked_by = Dict{Int,Symbol}()) -> Vector{NamedTuple}
+    qlimitStabilityReport(net; locked_by = Dict{Int,Symbol}(), q_hyst_pu = net.q_hyst_pu,
+                          v_hyst_pu = net.reenable_v_hyst_pu,
+                          violation_threshold_pct = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pct) -> Vector{NamedTuple}
 
 The stability conditions of Zhao, Chiang, Li, Ju (PSCC 2008) checked on the
 solved network, one row per voltage-regulated generator bus (a generator with
@@ -686,9 +755,35 @@ without a slack), whether it ended PV or PQ, switched or locked:
 
 A bus inside its band (neither at a limit) meets both only at its set point.
 A bus that ended PV is `ok` when `Q_min <= Q <= Q_max`; a bus that ended PQ
-when (6), (7) and the band hold. Tolerances: `QLIMIT_STABILITY_TOL_Q_MVAR`
-(1e-3 MVAr) for Q against a limit, `QLIMIT_STABILITY_TOL_U_PU` (1e-6 pu) for
-U against U_set.
+when (6), (7) and the band hold.
+
+The tolerances are the decision margins of the solver, so the check reports
+only states the active set would change itself:
+
+- U against U_set: the release margin `v_hyst_pu`
+  (`power_flow.qlimits.reenable_v_hyst_pu`); a clamped machine is released
+  only beyond it;
+- Q beyond a limit: the switching margin of the bus, `q_hyst_pu`
+  (`power_flow.qlimits.hysteresis_pu`), or the smaller of it and
+  `violation_threshold_pct` percent of the band `Q_max - Q_min` when the
+  `lock_pq` violation rule acts (`violation_threshold_pct = nothing` when
+  it does not). A machine over its limit by less sits on that limit and is
+  within its band, as the final Q check accepts it (`within_hysteresis`);
+- Q inside a limit: `QLIMIT_STABILITY_TOL_Q_MVAR` (1e-3 MVAr), within which
+  a machine sits on the limit.
+
+`QLIMIT_STABILITY_TOL_U_PU` (1e-6 pu) and `QLIMIT_STABILITY_TOL_Q_MVAR`
+are lower bounds of the two margins. `q_hyst_pu` and `v_hyst_pu` default to
+the margins the last configured solve stamped onto the net (`net.q_hyst_pu`,
+`net.reenable_v_hyst_pu`). The net does not carry the enforcement mode or the
+guard settings, so `violation_threshold_pct` defaults to the value of the
+default configuration (active set with the `lock_pq` rule); on a net solved
+under a classic mode or another threshold the defaults can differ from the
+margins of that solve. A run through `run_sparlectra` passes the values of
+its configuration and enforcement mode.
+
+[`qvCharacteristicViolations`](@ref) reads this report with the lower bounds
+alone, not with the solver margins.
 
 Q is the generator Q of the bus (MVAr) as the result report shows it
 (`q_source = :report`). On a net with a closed link, and at a bus that
@@ -710,7 +805,8 @@ lookup, `:none` for a bus not in it), `q_source` and `q_report_MVar`. The rows a
 order. The caller decides whether the state is a solution; the function
 reads it as it is.
 """
-function qlimitStabilityReport(net::Net; locked_by::AbstractDict{Int,Symbol} = Dict{Int,Symbol}())
+function qlimitStabilityReport(net::Net; locked_by::AbstractDict{Int,Symbol} = Dict{Int,Symbol}(), q_hyst_pu::Float64 = net.q_hyst_pu, v_hyst_pu::Float64 = net.reenable_v_hyst_pu,
+  violation_threshold_pct::Union{Nothing,Float64} = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pct)
   rows = NamedTuple[]
   buses = _qlimit_stability_buses(net)
   isempty(buses) && return rows
@@ -741,8 +837,7 @@ function qlimitStabilityReport(net::Net; locked_by::AbstractDict{Int,Symbol} = D
   end
   q_solved = _qlimit_stability_qgen(net, vbuses, cache, wnet, wreps, vset)
   names = _bus_name_by_idx(net)
-  tol_q = QLIMIT_STABILITY_TOL_Q_MVAR
-  tol_u = QLIMIT_STABILITY_TOL_U_PU
+  tol_u = max(QLIMIT_STABILITY_TOL_U_PU, v_hyst_pu)
   for b in buses
     node = net.nodeVec[b]
     isnothing(node._vm_pu) && continue
@@ -752,9 +847,12 @@ function qlimitStabilityReport(net::Net; locked_by::AbstractDict{Int,Symbol} = D
     qmin = b <= length(qmin_pu) ? qmin_pu[b] * base : -Inf
     qmax = b <= length(qmax_pu) ? qmax_pu[b] * base : Inf
     end_type = (haskey(net.qLimitEvents, b) || getNodeType(node) == PQ) ? :PQ : :PV
+    # inside a limit the fixed tolerance, beyond it the switching margin
+    tol_q = QLIMIT_STABILITY_TOL_Q_MVAR
+    tol_over = max(tol_q, _qlimit_stability_q_margin_pu(q_hyst_pu, violation_threshold_pct, qmin / base, qmax / base) * base)
     s_u = _qlimit_stability_sign(u - us, tol_u)
-    s_max = _qlimit_stability_sign(qmax - q, tol_q)
-    s_min = _qlimit_stability_sign(q - qmin, tol_q)
+    s_max = _qlimit_stability_sign(qmax - q, tol_q, tol_over)
+    s_min = _qlimit_stability_sign(q - qmin, tol_q, tol_over)
     check_6 = s_u * s_max >= 0
     check_7 = s_u * s_min <= 0
     in_band = s_max >= 0 && s_min >= 0
@@ -783,13 +881,15 @@ end
 # the mode itself (one-sided, no release) and carries :none.
 #  - :lock_pv_to_pq_buses: listed in power_flow.qlimits.lock_pv_to_pq_buses;
 #  - :guard_lock_pq: active set with the guard, a band narrower than
-#    guard_min_q_range_pu whose mode runs the bus PQ (zero range or
-#    prefer_pq) or locks it at the first limit it reaches (lock_pq), and the
-#    bus ended clamped;
+#    guard_min_q_range_pu whose mode runs the bus PQ for the whole solve
+#    (zero range or prefer_pq), and the bus ended clamped. A narrow band
+#    under lock_pq is no lock: the active set releases such a bus on a
+#    converged iterate like any other, so the hit count below names it;
 #  - :max_switches: active set, guard_freeze_after_repeated_switching, at
 #    least guard_max_switches hits, the bus ended PV (the freeze keeps it);
 #  - :oscillation: active set, two or more hits and the bus ended clamped:
-#    the one-retry lock of active_set_q_limits! releases it no more.
+#    the one-retry lock of active_set_q_limits! releases it only in a group
+#    release of a converged iterate, and never after it failed one.
 function _qlimit_stability_locks(net::Net, qlim::QLimitConfig, mode::Symbol, buses::Vector{Int})::Dict{Int,Symbol}
   locks = Dict{Int,Symbol}()
   listed = Set{Int}(qlim.lock_pv_to_pq_buses)
@@ -805,8 +905,9 @@ function _qlimit_stability_locks(net::Net, qlim::QLimitConfig, mode::Symbol, bus
     clamped = haskey(net.qLimitEvents, b) || getNodeType(net.nodeVec[b]) == PQ
     if qlim.guard && clamped && b <= length(qmin_pu) && b <= length(qmax_pu) && isfinite(qmin_pu[b]) && isfinite(qmax_pu[b])
       width = abs(qmax_pu[b] - qmin_pu[b])
-      guard_mode = width <= eps(Float64) ? qlim.guard_zero_range_mode : qlim.guard_narrow_range_mode
-      if width < qlim.guard_min_q_range_pu && guard_mode in (:lock_pq, :prefer_pq)
+      zero_range = width <= eps(Float64)
+      guard_mode = zero_range ? qlim.guard_zero_range_mode : qlim.guard_narrow_range_mode
+      if width < qlim.guard_min_q_range_pu && (guard_mode === :prefer_pq || (zero_range && guard_mode === :lock_pq))
         locks[b] = :guard_lock_pq
         continue
       end
@@ -878,7 +979,15 @@ function _qlimit_stability_diagnostics(net::Net, qlim::QLimitConfig, numerical_c
   # strategy than the configuration names
   mode = st !== nothing && hasproperty(st, :qlimit_enforcement_mode) ? Symbol(st.qlimit_enforcement_mode) : qlim.enforcement_mode
   buses = _qlimit_stability_buses(net)
-  rows = qlimitStabilityReport(net; locked_by = _qlimit_stability_locks(net, qlim, mode, buses))
+  # the margins of the attempt: the lock_pq violation rule acts only in the
+  # active set (the classic outer loop stops at the hysteresis). An APSLF
+  # run has no margins: AnalyticLoadFlow applies neither the hysteresis nor
+  # the release margin nor the lock_pq rule, so its check reads the fixed
+  # tolerances, as the band verdict of the run (_apslf_qband_status) does
+  apslf = st !== nothing && hasproperty(st, :solver) && Symbol(st.solver) === :apslf
+  pct = (!apslf && mode === :active_set && qlim.guard_violation_mode === :lock_pq) ? qlim.guard_violation_threshold_pct : nothing
+  q_hyst, v_hyst = apslf ? (0.0, 0.0) : (qlim.hysteresis_pu, qlim.reenable_v_hyst_pu)
+  rows = qlimitStabilityReport(net; locked_by = _qlimit_stability_locks(net, qlim, mode, buses), q_hyst_pu = q_hyst, v_hyst_pu = v_hyst, violation_threshold_pct = pct)
   bad = [r for r in rows if !r.ok]
   status === :last_iterate && return (qlimit_stability_status = status, qlimit_stability_violations = length(bad), qlimit_stability_report = rows, qlimit_stability_line = qlimit_stability_line(status, rows), qlimit_stability_warning = "")
   status = isempty(bad) ? :ok : :violations
@@ -895,8 +1004,11 @@ end
 Print the line of the Q-limit stability check ([`qlimit_stability_line`](@ref))
 and return it. A run through `run_sparlectra` stores its line in the solver
 status, with the lock reasons of its configuration; on a network solved by
-`runpf!` alone the check runs here on the solved state. Part of the result
-print.
+`runpf!` alone the check runs here on the solved state, with the default
+margins of [`qlimitStabilityReport`](@ref). Part of the result print. The
+Q-V characteristic line printed before it ([`printQVCharacteristicCheck`](@ref))
+uses the fixed tolerances, not the solver margins, so a machine within the
+release margin on the wrong side of its set point appears there and not here.
 """
 function printQLimitStabilityLine(net::Net; io::IO = stdout, converged::Bool = true)
   st = rectangular_pf_status(net)
@@ -912,6 +1024,22 @@ function printQLimitStabilityLine(net::Net; io::IO = stdout, converged::Bool = t
   end
   println(io, "  ", line)
   return line
+end
+
+# Switching threshold of the lock_pq violation rule for one bus: `pct`
+# percent of its Q band Qmax - Qmin, so a narrow band switches on a small
+# overshoot and a wide band on a large one (an absolute threshold of 1e-4 pu
+# was 1 to 2 percent of the narrow bands of case_ACTIVSg70k and let the last
+# bits of an early iterate decide the active set). A zero band gives a zero
+# threshold: any overshoot switches, the band holds only one value anyway.
+# A band open on one side (one limit infinite) has no finite width, the
+# threshold is infinite and only the hysteresis rule can switch the bus;
+# pct = 0 is the plain limit test on every band.
+@inline function _qlimit_guard_violation_threshold(pct::Float64, qmin::Float64, qmax::Float64)::Float64
+  pct == 0.0 && return 0.0
+  band = qmax - qmin
+  isfinite(band) || return Inf
+  return pct / 100.0 * max(band, 0.0)
 end
 
 """
@@ -931,6 +1059,7 @@ end
         get_vset_pu=nothing,
         v_hyst_pu::Float64=1e-4,
         converged_iterate::Bool=false,
+        narrow_band_mask=falses(0),
         verbose::Int=0,
         io::IO=stdout,
     ) -> (changed::Bool, reenabled::Bool)
@@ -950,14 +1079,38 @@ both forms.
 The one-retry guard keeps a bus clamped once it has hit its limit twice,
 against chattering in unsettled iterates. On a converged iterate
 (`converged_iterate = true`) on which nothing else switched, all such buses
-whose voltage sits on the release side are released together, once: a
-clamp taken in an early iterate must not outlive the state that caused it
-(#475: seven machines stayed at Qmin with the voltage below their
-setpoint). When one of the group violates its limit again, the whole group
-goes back to its limits (logged as `kind = :group_revert`, not counted as a
-hit) and the solve makes no further extra release; released one by one or
-all without the revert, a group of mutually supporting machines diverged
-(sp_case118, outage of branch 68-81).
+whose voltage sits on the release side are released together: a clamp
+taken in an early iterate must not outlive the state that caused it (#475:
+seven machines stayed at Qmin with the voltage below their setpoint).
+The group shrinks when it does not hold. A member that violates its limit
+again stays clamped for the rest of the solve (logged as
+`kind = :group_hit`); the other members go back to their limits with it
+(`kind = :group_revert`); neither counts as a hit. Only the bus types and
+the Q clamps go back, the voltages stay those of the failed iterate. On the
+next converged iterate the remaining members are released again as a smaller group. Each failed round
+removes at least one member, a solve allows at most
+`QLIMIT_GROUP_RELEASE_MAX_ROUNDS` (5) failed rounds, and the order is the
+bus order, so the result is deterministic and cannot oscillate. Released
+one by one or all without the revert, a group of mutually supporting
+machines diverged (sp_case118, outage of branch 68-81); kept at their
+limits after the first failure, the members that would have held stayed
+clamped with the voltage on the release side (case_ACTIVSg10k).
+
+A bus set in `narrow_band_mask` (a machine of the Q-limit guard's
+narrow-range rule, band below `qlimit_guard_min_q_range_pu`, under
+`narrow_range_mode = :lock_pq`) is released by the voltage rule alone and
+only on a converged iterate. A band that narrow is crossed by small
+voltage changes, so in an unsettled iterate its voltage side says nothing
+and a release there would chatter; the converged voltage is the solution
+the clamp has to agree with. After the release the bus follows the rules
+above: one-retry, then the shrinking group of a converged iterate. Without
+the voltage callbacks such a bus is not released.
+
+Under `qlimit_guard_violation_mode = :lock_pq` a PV bus also switches when
+its Q leaves the band by more than `qlimit_guard_violation_threshold_pct`
+percent of its band width Qmax - Qmin, before the hysteresis margin is
+reached. A zero band switches on any overshoot; a band with one infinite
+limit has no finite width and switches only on the hysteresis margin.
 
 Callbacks:
 - get_qreq_pu(bus) -> Float64
@@ -994,11 +1147,12 @@ function active_set_q_limits!(
   qlimit_guard_max_switches::Int = typemax(Int),
   qlimit_guard_freeze_after_repeated_switching::Bool = true,
   qlimit_guard_violation_mode::Symbol = :delayed_switch,
-  qlimit_guard_violation_threshold_pu::Float64 = 1e-4,
+  qlimit_guard_violation_threshold_pct::Float64 = DEFAULT_QLIMIT_CONFIG.guard_violation_threshold_pct,
   lock_mask_buffer::Union{Nothing,BitVector} = nothing,
+  narrow_band_mask::AbstractVector{Bool} = falses(0),
 )
   qlimit_guard_violation_mode in (:delayed_switch, :lock_pq, :ignore) || error("Unsupported qlimit_guard_violation_mode=$(qlimit_guard_violation_mode). Supported: :delayed_switch, :lock_pq, :ignore.")
-  qlimit_guard_violation_threshold_pu >= 0.0 || error("qlimit_guard_violation_threshold_pu must be >= 0 (got $(qlimit_guard_violation_threshold_pu)).")
+  isfinite(qlimit_guard_violation_threshold_pct) && qlimit_guard_violation_threshold_pct >= 0.0 || error("qlimit_guard_violation_threshold_pct must be finite and >= 0 (got $(qlimit_guard_violation_threshold_pct)).")
   changed = false
   reenabled = false
   printed_events = 0
@@ -1021,19 +1175,30 @@ function active_set_q_limits!(
   # up front - they are carried forward from where the last lookup stopped,
   # which is exactly what the repeated scan computed, amortized to O(1).
   switch_counts = Dict{Int,Int}()
+  # the iteration of the last entry per bus that is not a release, as
+  # lastQLimitIter returns it, carried forward in the same scan
+  last_clamp = Dict{Int,Int}()
   counted_upto = 0
-  group_reverted = false
+  # failed group releases of this solve, counted once per iteration (all
+  # members that fail in one round are caught in the same call), and the
+  # members that failed
+  failed_rounds = 0
+  last_failed_iter = 0
+  group_failed = Set{Int}()
   switch_count = function (bus::Int)
     @inbounds while counted_upto < length(net.qLimitLog)
       counted_upto += 1
-      ev = net.qLimitLog[counted_upto]
-      if ev.kind === :hit
-        switch_counts[ev.bus] = get(switch_counts, ev.bus, 0) + 1
-      elseif ev.kind === :group_revert
-        group_reverted = true
+      failed_it = _qlimit_count_event!(last_clamp, switch_counts, group_failed, net.qLimitLog[counted_upto])
+      if failed_it != 0 && failed_it != last_failed_iter
+        failed_rounds += 1
+        last_failed_iter = failed_it
       end
     end
     return get(switch_counts, bus, 0)
+  end
+  last_clamp_iter = function (bus::Int)
+    switch_count(0)
+    return get(last_clamp, bus, nothing)
   end
 
   # --- PV -> PQ ------------------------------------------------------------
@@ -1073,7 +1238,7 @@ function active_set_q_limits!(
       side = :min
       qclamp = qmin_pu[bus]
     end
-    if side == :none && qlimit_guard_violation_mode == :lock_pq && physical_violation > qlimit_guard_violation_threshold_pu
+    if side == :none && qlimit_guard_violation_mode == :lock_pq && physical_violation > _qlimit_guard_violation_threshold(qlimit_guard_violation_threshold_pct, has_lo ? Float64(qmin_pu[bus]) : -Inf, has_hi ? Float64(qmax_pu[bus]) : Inf)
       side = physical_side
       qclamp = side == :max ? qmax_pu[bus] : qmin_pu[bus]
     end
@@ -1092,7 +1257,9 @@ function active_set_q_limits!(
     end
 
     # a PV bus with exactly two hits can only come from the extra release of
-    # a converged iterate (#475; the normal release stops at one hit)
+    # a converged iterate (#475; the normal release stops at one hit); its
+    # violation is logged as :group_hit, which keeps it out of every later
+    # group and is no hit
     in_group = switch_count(bus) == 2
     in_group && (extra_group_failed = true)
 
@@ -1105,7 +1272,7 @@ function active_set_q_limits!(
       changed = true
     elseif side == :max
       make_pq!(bus, qclamp, side)
-      logQLimitHit!(net, it, bus, side; kind = in_group ? :group_revert : :hit)
+      logQLimitHit!(net, it, bus, side; kind = in_group ? :group_hit : :hit)
       changed = true
       if verbose > 0
         if max_console_rows < 0 || printed_events < max_console_rows
@@ -1117,7 +1284,7 @@ function active_set_q_limits!(
       end
     else
       make_pq!(bus, qclamp, side)
-      logQLimitHit!(net, it, bus, side; kind = in_group ? :group_revert : :hit)
+      logQLimitHit!(net, it, bus, side; kind = in_group ? :group_hit : :hit)
       changed = true
       if verbose > 0
         if max_console_rows < 0 || printed_events < max_console_rows
@@ -1130,12 +1297,14 @@ function active_set_q_limits!(
     end
   end
 
-  # The extra group of #475 is released together; when one of its machines
-  # violates again, the release did not hold for the group (the machines
-  # support each other's voltage), so every machine still PV in it goes back
-  # to the limit it had before. The revert is logged as such, not as a hit,
-  # and ends the extra releases of this solve; the state is one Newton step
-  # from the converged point it came from.
+  # The extra group of #475 is released together; when some of its machines
+  # violate again (their :group_hit above), the release did not hold for the
+  # group (the machines support each other's voltage), so every machine
+  # still PV in it goes back to the limit it had before. The revert is
+  # logged as such, not as a hit: these machines stay candidates of the next
+  # group, which the next converged iterate releases without the ones that
+  # failed. The state is one Newton step from the converged point it came
+  # from.
   if extra_group_failed
     last_side = Dict{Int,Symbol}()
     for ev in net.qLimitLog
@@ -1149,7 +1318,7 @@ function active_set_q_limits!(
       logQLimitHit!(net, it, bus, side; kind = :group_revert)
       changed = true
       if verbose > 0
-        @printf(io, "PV->PQ Bus %d: back to Q%s with its group, the joint release did not hold (it=%d)\n", bus, String(side), it)
+        @printf(io, "PV->PQ Bus %d: back to Q%s with its group, the joint release did not hold; released again without the failed members (it=%d)\n", bus, String(side), it)
       end
     end
   end
@@ -1158,12 +1327,13 @@ function active_set_q_limits!(
   # the extra release of a twice-clamped bus on a converged iterate (#475):
   # every candidate together (the machines of the five ACTIVSg2000 outages
   # hold their voltage only as a group), and only when nothing else switched
-  # in this iterate; a group that does not hold is clamped back above
+  # in this iterate; a group that does not hold is clamped back above and
+  # tried again without its failed members, up to
+  # QLIMIT_GROUP_RELEASE_MAX_ROUNDS failed rounds (switch_count(0) brings
+  # the scan of the log up to date)
   extra_buses = Int[]
-  # one failed group ends the extra releases of this solve (its revert is in
-  # the log; switch_count(0) brings the scan up to date)
   switch_count(0)
-  extra_allowed = converged_iterate && !group_reverted
+  extra_allowed = converged_iterate && failed_rounds < QLIMIT_GROUP_RELEASE_MAX_ROUNDS
   release! = function (bus::Int, side::Symbol, voltage_rule::Bool, qreq::Float64, lo::Float64, hi::Float64)
     make_pv!(bus)
     delete!(net.qLimitEvents, bus)   # clear event after re-enable
@@ -1197,12 +1367,28 @@ function active_set_q_limits!(
       prior_hits = switch_count(bus)
       prior_hits > (extra_allowed ? 2 : 1) && continue
       extra = prior_hits == 2
+      # a member that failed a group release is in no later group
+      extra && bus in group_failed && continue
+
+      # The cooldown before the release rules: a bus inside it is not
+      # released, so its Q and voltage are not read. The device Newton loop
+      # of the GPU study sends only the values the handler reads.
+      if cooldown_iters > 0
+        last_it = last_clamp_iter(bus)
+        !isnothing(last_it) && (it - last_it) < cooldown_iters && continue
+      end
+
+      side = net.qLimitEvents[bus]
+      voltage_rule = get_vm_pu !== nothing && get_vset_pu !== nothing && side in (:min, :max)
+      # a narrow-band machine of the guard: the voltage rule on a converged
+      # iterate only (see the docstring); checked before Q and the voltage
+      # are read, like the cooldown
+      narrow = bus <= length(narrow_band_mask) && narrow_band_mask[bus]
+      narrow && !(voltage_rule && converged_iterate) && continue
 
       qreq = get_qreq_pu(bus)
       lo, hi = q_limit_band(qmin_pu, qmax_pu, bus, q_hyst_pu)
 
-      side = net.qLimitEvents[bus]
-      voltage_rule = get_vm_pu !== nothing && get_vset_pu !== nothing && side in (:min, :max)
       if voltage_rule
         # at Qmax the machine would need LESS than Qmax to hold its
         # setpoint when the voltage sits above it (dQ/dV < 0), so it can
@@ -1212,13 +1398,6 @@ function active_set_q_limits!(
         ready = side == :max ? (vm > vset + v_hyst_pu) : (vm < vset - v_hyst_pu)
       else
         ready = (qreq > lo) && (qreq < hi)
-      end
-
-      if ready && (cooldown_iters > 0)
-        last_it = lastQLimitIter(net, bus)
-        if !isnothing(last_it) && (it - last_it) < cooldown_iters
-          ready = false
-        end
       end
 
       if ready && extra

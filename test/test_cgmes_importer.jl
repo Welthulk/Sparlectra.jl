@@ -952,10 +952,10 @@ function run_cgmes_importer_tests()
         @test (nch.step, nch.step_assumed) == (Float64(step), true)
         @test count(==("notice: tap changer T2W/T2W_OLTC: step not transferred, middle position $(step) assumed"), nr.messages) == 1
         # the export has no mark for it: the ratio of the middle position
-        # goes out and one notice names the transformer
+        # goes out and one notice names the transformer by its delivery name
         enotes = String[]
         writeCGMESFiles(nr.net; path = mktempdir(), notices = enotes)
-        @test count(==("transformer 2WT_110: ratio step not transferred, the export writes the assumed middle position"), enotes) == 1
+        @test count(==("transformer T2W: ratio step not transferred, the export writes the assumed middle position"), enotes) == 1
       end
       @test !only(br.se_tap_changers.changers).step_assumed && !any(m -> occursin("step not transferred", m), res.messages)
       rnotes = String[]
@@ -1354,19 +1354,18 @@ function run_cgmes_importer_tests()
     # by tools/gen_cgmes_fixtures.jl: sp_case14 (OLTC voltage controller),
     # sp_case118 (54 machines with asymmetric Q limits, synchronous
     # condensers), sp_casePST (phase-shifting transformer, bus link). Their
-    # SV profile is the source's solution with every regulated unit holding
-    # its target (Q-limits off in the fixture solve), so the profile is the
-    # solution of the delivery itself and an import that rebuilds the model
-    # reproduces it to floating-point noise. Every solve below keeps
-    # Q-limits off for the same reason; what the Q-limit switching makes of
-    # the delivery is a solver question, not an importer one.
+    # SV profile is the source's solution with the Q limits of the EQ file
+    # (ten units of sp_case118 at a limit, holding it as their SSH q), so the
+    # profile is the solution of the delivery itself and an import that
+    # rebuilds the model reproduces it to the rounding of the files. Every
+    # solve below runs with Q limits for the same reason.
     fixture_cases = [
       # (case, buses, branches, links, slack, source loader)
       ("sp_case14", 14, 17, 0, "Ostheim_110", () -> importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))),
-      ("sp_case118", 118, 186, 0, "69", () -> createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"), flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal)),
+      ("sp_case118", 118, 186, 0, "Westeck_138", () -> createNetFromMatPowerFile(filename = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case118.m"), flatstart = false, enable_pq_gen_controllers = true, bus_shunt_model = :admittance, matpower_shift_sign = 1.0, matpower_shift_unit = :deg, matpower_ratio = :normal, tap_changer_model = :ideal, apply_bus_names = true)),
       ("sp_casePST", 9, 8, 1, "1", () -> importSCF(joinpath(dirname(@__DIR__), "data", "scf", "sp_casePST.scf.json"))),
     ]
-    solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = false, kwargs...)
+    solve_fixture!(net; kwargs...) = runpf!(net, 60, 1e-8, 0; method = :rectangular, qlimits_enabled = true, kwargs...)
 
     # The importer's exit criterion on its own exporter's output: the SV
     # profile and the source net's solution are reproduced to noise. Both
@@ -1377,7 +1376,10 @@ function run_cgmes_importer_tests()
         res = importCGMES(path = cgmes_fixture_dir(case), name = case)
         ite, erg = solve_fixture!(res.net)
         @test erg == 0
-        @test ite <= 2
+        # the SV state is a solution: two iterations where no unit sits at a
+        # limit; on sp_case118 the ten units at a limit start as PV units and
+        # the switching pins them (6 iterations measured)
+        @test ite <= (isempty(res.net.qLimitEvents) ? 2 : 6)
         cmp = compareWithSV(res)
         println("      ", case, ": SV comparison max |dvm| = ", cmp.max_dvm, " pu, max |dva| = ", cmp.max_dva, " deg, flows max |dp| = ", cmp.flows.max_dp, " MW")
         @test cmp.n == nbus
@@ -1868,7 +1870,7 @@ function run_cgmes_importer_tests()
         @test (ps_svc_off.pVal, ps_svc_off.qVal) == (0.0, 12.5)
         @test "notice: 1 StaticVarCompensator(s) with controlEnabled = false, no voltage regulation: SVC_TEST" in svc_off.messages
 
-        # ExternalNetworkInjection: sp_case14 has one, Gen_110 on Ostheim_110,
+        # ExternalNetworkInjection: sp_case14 has one, Gen_Ostheim_110,
         # the slack by referencePriority 1, local control target 1.02 pu equal
         # to the SV voltage, no Q limits. Flag false with the target moved to
         # 1.05 pu: still the slack, held at the SV voltage. Flag false with
@@ -1886,8 +1888,8 @@ function run_cgmes_importer_tests()
         local e_slack = importCGMES(path = s14_slack, name = "s14_eni_slack")
         @test e_slack.slack_bus == r14.slack_bus == "Ostheim_110"
         @test Sparlectra.isSlack(ps_eni(e_slack)) && ps_eni(e_slack).vm_pu == eni_sv
-        @test "notice: 1 ExternalNetworkInjection(s) with controlEnabled = false, no voltage regulation: Gen_110" in e_slack.messages
-        @test count(m -> startswith(m, "notice: slack ExternalNetworkInjection Gen_110 has controlEnabled = false"), e_slack.messages) == 1
+        @test "notice: 1 ExternalNetworkInjection(s) with controlEnabled = false, no voltage regulation: Gen_Ostheim_110" in e_slack.messages
+        @test count(m -> startswith(m, "notice: slack ExternalNetworkInjection Gen_Ostheim_110 has controlEnabled = false"), e_slack.messages) == 1
         local s14_pq = deepcopy(s14)
         s14_pq.objects[eni.mrid].attrs[:controlEnabled] = "false"
         delete!(s14_pq.objects[eni.mrid].attrs, :referencePriority)

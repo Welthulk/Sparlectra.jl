@@ -170,8 +170,6 @@ function build_rectangular_jacobian_pq_pv_sparse(
   # other one would write values into wrong slots
   @assert assembly === nothing || assembly.fixed_pattern == fixed_pattern "fixed_pattern differs from the assembly it replays"
 
-  non_slack = non_slack_indices(n, slack_idx)
-  pos_non_slack = build_pos_map(non_slack, n)
   # Distributed slack appends one state (lambda_P) and one equation (the REF
   # bus's P residual), see mismatch_rectangular. The participant set is fixed
   # per solve, so the extended pattern is as iteration-stable as the base one.
@@ -182,14 +180,21 @@ function build_rectangular_jacobian_pq_pv_sparse(
   # Row blocks follow mismatch_rectangular layout for non-slack buses.
   #   row_block[i]   = index of ΔP row for bus i
   #   row_block[i]+1 = index of ΔQ / ΔV row for bus i
-  row_block = zeros(Int, n)
-  row = 0
-  for i = 1:n
-    if i == slack_idx
-      continue
+  # With an assembly the layout is kept across iterations (_assembly_layout!).
+  if assembly === nothing
+    non_slack = non_slack_indices(n, slack_idx)
+    pos_non_slack = build_pos_map(non_slack, n)
+    row_block = zeros(Int, n)
+    row = 0
+    for i = 1:n
+      if i == slack_idx
+        continue
+      end
+      row += 2
+      row_block[i] = row - 1  # ΔP row for bus i
     end
-    row += 2
-    row_block[i] = row - 1  # ΔP row for bus i
+  else
+    non_slack, pos_non_slack, row_block = _assembly_layout!(assembly, n, slack_idx)
   end
 
   if assembly !== nothing && assembly.valid && assembly.J !== nothing && size(assembly.J, 1) == m &&

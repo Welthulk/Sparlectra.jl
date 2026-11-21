@@ -115,6 +115,7 @@ const _REFERENCE_PAGE_EXCLUDED_SRC = Set([
     "app/src/webui/help_math.jl",
     "app/src/webui/operations.jl",
     "app/src/webui/options.jl",
+    "app/src/webui/remote.jl",
     "app/src/webui/routes.jl",
     "app/src/webui/sysimage.jl",
     "app/src/webui/update.jl",

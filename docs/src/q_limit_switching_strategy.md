@@ -29,7 +29,7 @@ enforced by the switching strategy, not through the Q(U) path
 | Result field | solver status `converged_limits_failed` with reason `remaining_pv_q_limit_violations`, or with reason `max_outer_iterations` when the classic loop stopped at its pass limit (the run is then not converged, on the state of its last solve) |
 
 - `active_set`: in-iteration switching with hysteresis, cooldown,
-  narrow-range locking and repeated-switching protection; a clamped machine
+  the narrow-range rule and repeated-switching protection; a clamped machine
   is released back to PV on the voltage side
   ([Powerlimits Guide](powerlimits.md)).
 - `classic_simultaneous`: base power flow with switching disabled; if it
@@ -88,7 +88,7 @@ not describe a possible operating state.
 
 | Mode | Return PQ to PV | Fixed buses | Damping of the return | Accepted with a type change in the last iteration | Class |
 |---|---|---|---|---|---|
-| `active_set` | yes, on the voltage side: at $Q_{max}$ when $U > U_{set}$ + `reenable_v_hyst_pu`, at $Q_{min}$ when $U < U_{set}$ - `reenable_v_hyst_pu`; a released bus that violates again is clamped again | a bus with two limit hits stays PQ, apart from one joint release of all such buses on a converged iterate, undone when one of them hits again; a narrow-range bus under `guard.narrow_range_mode: lock_pq` stays PQ from its first hit; buses in `lock_pv_to_pq_buses` run PQ from the start | no factor of its own: the release only sets the bus type back to PV, and the next Newton step moves the bus with the step scale of all buses (`damp`, autodamp or trust region). The bus takes the full Newton correction toward its setpoint ($\alpha = 1$) only with `damp = 1` and neither autodamp nor trust region, the defaults of the configuration path and of `runpf_rectangular!(net, maxIte, ...)`; the keyword method `runpf_rectangular!(net; ...)` defaults to `damp = 0.2` | no, an iterate in which a bus type changed is not accepted | OL with an SL1 lock after the second hit (N = 1, N = 2 for the one joint release) |
+| `active_set` | yes, on the voltage side: at $Q_{max}$ when $U > U_{set}$ + `reenable_v_hyst_pu`, at $Q_{min}$ when $U < U_{set}$ - `reenable_v_hyst_pu`; a released bus that violates again is clamped again | a bus with two limit hits stays PQ, apart from the joint release of all such buses on a converged iterate; a bus of the group that hits again stays PQ, the others return with it and are released again without it on the next converged iterate (at most five failed rounds); a narrow-range bus under `guard.narrow_range_mode: lock_pq` is released only on a converged iterate, then under the same two-hit lock; buses in `lock_pv_to_pq_buses` run PQ from the start | no factor of its own: the release only sets the bus type back to PV, and the next Newton step moves the bus with the step scale of all buses (`damp`, autodamp or trust region). The bus takes the full Newton correction toward its setpoint ($\alpha = 1$) only with `damp = 1` and neither autodamp nor trust region, the defaults of the configuration path and of `runpf_rectangular!(net, maxIte, ...)`; the keyword method `runpf_rectangular!(net; ...)` defaults to `damp = 0.2` | no, an iterate in which a bus type changed is not accepted | OL with an SL1 lock after the second hit (N = 1, N = 2 for the joint release) |
 | `classic_simultaneous` | no | every clamped generator stays at its limit, and its bus turns PQ once no regulating generator is left on it; `lock_pv_to_pq_buses` are converted before the base solve | no return | no, every pass ends with a converged solve at fixed types, and the loop stops only when that solve leaves no violation | one-sided SL3: PV to PQ only, no return check |
 | `classic_one_at_a_time` | no | as `classic_simultaneous` | no return | as `classic_simultaneous` | one-sided SL3, one generator per pass: the one with the largest violation in the network |
 
@@ -99,10 +99,16 @@ Notes on the table:
   one-sided like the classic modes.
 - The PV to PQ switch of `active_set` uses one of two margins. Under
   `guard.violation_mode: lock_pq` (the default) a machine switches once its
-  Q exceeds a limit by `guard.violation_threshold_pu` (default `1e-4` pu),
-  so `hysteresis_pu` (default `0.01` pu) does not delay the switch; it is
-  the switching margin only under `delayed_switch`, or when it is set below
-  the threshold. Its other uses stay: it enables the return (see above), it
+  Q exceeds a limit by `guard.violation_threshold_pct` percent of its Q
+  band $Q_{max} - Q_{min}$ (default `1`), or by `hysteresis_pu` (default
+  `0.01` pu), whichever is smaller. With the defaults the threshold decides
+  for bands narrower than 1 pu. The threshold scales with the band: an absolute
+  `1e-4` pu was 1 to 2 percent of the narrow bands of case_ACTIVSg70k, and
+  rounding differences of an early iterate decided on which side of it a
+  machine landed. A zero band switches on
+  any overshoot, a band with one infinite limit only on `hysteresis_pu`.
+  `hysteresis_pu` is the only switching margin under `delayed_switch`. Its
+  other uses stay: it enables the return (see above), it
   is the within-hysteresis band of the final Q check, and the classic modes
   take `max(tol, hysteresis_pu)` as their violation tolerance.
 - `guard.max_switches` (default `3`) with
@@ -118,22 +124,33 @@ Notes on the table:
 - A fixed bus stays PQ to the end. The run status does not check it
   against (6) or (7). The Q-V characteristic check
   (`qvCharacteristicViolations`, printed with the results) lists the buses
-  at a limit on the wrong side of their setpoint, read from the stability
-  check below; it does not change the status. The release margin `reenable_v_hyst_pu` (default `1e-4` pu)
-  leaves a clamped bus up to that much on the wrong side without a
-  release.
+  at a limit on the wrong side of their setpoint, read from the rows of the
+  stability check below; it does not change the status. The release margin
+  `reenable_v_hyst_pu` (default `1e-4` pu) leaves a clamped bus up to that
+  much on the wrong side without a release. The Q-V check does not use that
+  margin: it is the non-physical solution check of the literature (Zeng,
+  Chiang; Sundaresh, Rao) and keeps the fixed tolerances 1e-6 pu and
+  1e-3 MVAr, so a run with `reenable_v_hyst_pu: 1.0` that passes the
+  stability check still shows its non-physical machines there.
 - After every converged run `run_sparlectra` checks (6) and (7) at every
   voltage-regulated bus, fixed or not, and a PV bus against its band
   (`diagnostics.qlimit_stability_report`, one warning per run with a
-  violation, see [Local PowerFlow Service](powerflow_service.md)). The
-  classic modes and a fixed bus can end on a state that fails it; the run
-  status stays as it is.
+  violation, see [Local PowerFlow Service](powerflow_service.md)). Its
+  tolerances are the margins of the switching logic: the release margin
+  `reenable_v_hyst_pu` for U against $U_{set}$, and for Q against a limit
+  the margin from which the bus switches PV to PQ (`hysteresis_pu`, or the
+  smaller `guard.violation_threshold_pct` percent of the band under
+  `lock_pq`). The check therefore reports only states the solver would
+  change itself, apart from locked buses. An APSLF run has no such margins
+  and is checked with the fixed tolerances. The classic modes and a fixed
+  bus can end on a state that fails it; the run status stays as it is.
 - The classic modes are one-sided on purpose: they follow MATPOWER, which
   converts a violating generator and does not check a return. A converged
   classic run can therefore end at $Q_{max}$ with the voltage above the
   setpoint, or at $Q_{min}$ below it; the stability check reports such end
-  states. A bus held PQ by a lock (the two-hit lock or the narrow-range
-  lock of `active_set`, `lock_pv_to_pq_buses` in every mode) that fails (6)
+  states. A bus held PQ by a lock (the two-hit lock of `active_set`, a
+  zero-range bus or a narrow-range bus under `guard.narrow_range_mode:
+  prefer_pq`, `lock_pv_to_pq_buses` in every mode) that fails (6)
   or (7) is named in the warning with the lock that holds it (`locked_by`
   in the report).
 

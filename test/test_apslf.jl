@@ -356,6 +356,39 @@ function run_apslf_tests()
                 @test r.net.nodeVec[2]._qƩGen ≈ 8.0 atol = 1e-6
             end
             @test abs(r3_ap.net.nodeVec[2]._vm_pu - r3_nr.net.nodeVec[2]._vm_pu) < 1e-6
+            # run level: the Q-limit stability check of the APSLF run (the
+            # zero-margin branch of _qlimit_stability_diagnostics) agrees
+            # with its band verdict
+            @test Sparlectra.rectangular_pf_status(r3_ap.net).solver === :apslf
+            @test r3_ap.diagnostics.qlimit_stability_violations == get(Sparlectra._apslf_qband_status(r3_ap.net, true, true), :pv_q_limit_violations, 0) == 0
+            # The band verdict reads the fixed tolerance beyond a limit
+            # (1e-3 MVAr), not the switching margin of the active set:
+            # AnalyticLoadFlow applies neither the hysteresis nor the lock_pq
+            # rule. ring3 solved without Q limits, then the bus band of B2
+            # moved so that its Q lies 0.05 MVAr over Qmax in a 10 MVAr band.
+            # The margin of the active set (lock_pq, 1 percent of the band =
+            # 0.1 MVAr, below the 1 MVAr hysteresis) keeps the machine in its
+            # band; the APSLF verdict does not.
+            cfg_noq = SparlectraConfig(powerflow=PowerFlowConfig(solver=:rectangular, rescue=false, qlimits=Sparlectra.QLimitConfig(Dict{String,Any}("enabled" => false))), output=quiet)
+            r_m = run_sparlectra(net=ring3_fixed_q(), config=cfg_noq)
+            @test r_m.final_converged
+            net_m = r_m.net
+            q2 = only(r for r in Sparlectra.qlimitStabilityReport(net_m) if r.bus == 2).q_MVar
+            qmin_m, qmax_m = Sparlectra.getQLimits_pu(net_m)
+            qmin_m[2] = (q2 - 9.95) / net_m.baseMVA
+            qmax_m[2] = (q2 - 0.05) / net_m.baseMVA
+            row_m = only(r for r in Sparlectra.qlimitStabilityReport(net_m; q_hyst_pu=0.01, violation_threshold_pct=1.0) if r.bus == 2)
+            @test (row_m.end_type, row_m.reached_limit, row_m.in_band) == (:PV, :max, true)
+            band_m = Sparlectra._apslf_qband_status(net_m, true, true)
+            @test band_m.pv_q_limit_violations == 1
+            @test occursin("B2 (PV outside its band", band_m.reason_text)
+            # the stability check of a run gives the same verdict for an
+            # APSLF status (zero margins) and keeps the machine inside with
+            # the margins of the active set
+            diag_ap = Sparlectra._qlimit_stability_diagnostics(net_m, cfg_nr.powerflow.qlimits, true, (solver=:apslf,))
+            diag_nr = Sparlectra._qlimit_stability_diagnostics(net_m, cfg_nr.powerflow.qlimits, true, (solver=:rectangular, qlimit_enforcement_mode=:active_set))
+            @test (diag_ap.qlimit_stability_status, diag_ap.qlimit_stability_violations) == (:violations, band_m.pv_q_limit_violations)
+            @test (diag_nr.qlimit_stability_status, diag_nr.qlimit_stability_violations) == (:ok, 0)
             # The Qmin side: the machine at bus 46 (Q load 21 MVAr) runs at
             # -1.26 MVAr under Newton. With its band narrowed to 5..10 MVAr
             # it falls below Qmin; both solvers clamp it at 5 MVAr, with

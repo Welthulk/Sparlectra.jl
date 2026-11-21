@@ -275,6 +275,56 @@ function run_factorized_linear_solver_tests()
     @test maximum(abs.(res.voltages .- ref.voltages)) <= 1e-9
   end)() end
 
+  @testset "compute_backend without the CUDA extension" begin (function ()
+    # power_flow.compute_backend asks for the GPU; without the extension
+    # (the test environment does not load CUDA) the Newton solve runs on
+    # UMFPACK, gives the voltages of the CPU run bit for bit, and the status
+    # names the reason. With fallback off the request is an error before
+    # any step; auto without a study measurement stays on the CPU.
+    if Sparlectra.gpu_status().status !== :unavailable
+      println("      compute_backend without the CUDA extension: SKIPPED (the extension is loaded in this process)")
+      return nothing
+    end
+    println("      compute_backend without the CUDA extension: RAN")
+    @test Sparlectra.gpu_status().reason == "CUDA extension not loaded (load CUDA and CUDSS next to Sparlectra)"
+    @test Sparlectra.gpu_advice(14).decision === :no_measurement
+    scf14 = joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json")
+    quiet = OutputConfig(logfile_results = :off, console_summary = false, startup_latency_hint = false)
+    cfg(cb) = SparlectraConfig(powerflow = PowerFlowConfig(compute_backend = cb), output = quiet)
+    solve(cb) = run_sparlectra(net = Sparlectra.importSCF(scf14), config = cfg(cb))
+    cpu = solve(Sparlectra.ComputeBackendConfig())
+    gpu = @test_logs (:warn, r"GPU not used: CUDA extension not loaded") solve(Sparlectra.ComputeBackendConfig(mode = :gpu))
+    auto = solve(Sparlectra.ComputeBackendConfig(mode = :auto))
+    V(r) = Sparlectra.buildVoltageVector(r.net)
+    @test gpu.final_converged && V(gpu) == V(cpu) && V(auto) == V(cpu)
+    st_cpu, st_gpu, st_auto = (Sparlectra.rectangular_pf_status(r.net) for r in (cpu, gpu, auto))
+    @test !hasproperty(st_cpu, :compute_backend)
+    @test (st_gpu.compute_backend, st_gpu.linear_solver) === (:cpu, :umfpack_reuse)
+    @test startswith(st_gpu.compute_backend_reason, "GPU not used: CUDA extension not loaded")
+    @test st_auto.compute_backend_reason == st_gpu.compute_backend_reason
+    # the device Newton loop of the GPU study needs the extension as well:
+    # with the switch on, the run stays on the CPU, bit for bit
+    dev = @test_logs (:warn, r"GPU not used: CUDA extension not loaded") Sparlectra._with_device_newton(() -> solve(Sparlectra.ComputeBackendConfig(mode = :gpu)))
+    @test V(dev) == V(cpu) && startswith(Sparlectra.rectangular_pf_status(dev.net).compute_backend_reason, "GPU not used: CUDA extension not loaded")
+    @test_throws ArgumentError solve(Sparlectra.ComputeBackendConfig(mode = :gpu, gpu_fallback_to_cpu = false))
+    # power mode keeps its own backend; a GPU request there is named, not
+    # silently ignored
+    pm = run_sparlectra(net = Sparlectra.importSCF(scf14), config = SparlectraConfig(powerflow = PowerFlowConfig(compute_backend = Sparlectra.ComputeBackendConfig(mode = :gpu), power_mode = true), output = quiet))
+    st_pm = Sparlectra.rectangular_pf_status(pm.net)
+    @test pm.final_converged && st_pm.compute_backend === :cpu
+    @test startswith(st_pm.compute_backend_reason, "power_flow.power_mode is on and uses its own backend")
+    # the advisor branch behind an available GPU, with a stand-in backend
+    # registered for the check and removed afterwards: no study row covers
+    # the size, so auto stays on the CPU and says why
+    Sparlectra._GPU_BACKEND[] = (status = () -> (status = :available, reason = "", device = "stand-in"), context = (p, f, fast, n) -> error("not used"))
+    try
+      @test Sparlectra._compute_backend_choice(Sparlectra.ComputeBackendConfig(mode = :auto), 14) == (use_gpu = false, reason = "auto: no GPU measurement for 14 buses, CPU")
+      @test Sparlectra._compute_backend_choice(Sparlectra.ComputeBackendConfig(mode = :gpu), 14) == (use_gpu = true, reason = "GPU requested: stand-in")
+    finally
+      Sparlectra._GPU_BACKEND[] = nothing
+    end
+  end)() end
+
   @testset "Multi-island run carries per-island counters" begin (function ()
     island_net = _reuse_two_island_net()
     profile = Dict{Symbol,Any}()

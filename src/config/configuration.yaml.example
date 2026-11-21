@@ -38,6 +38,19 @@ power_flow:
   # (A klu backend existed until 0.9.10; removed, measured no benefit on
   # power-flow Jacobians.)
   linear_solver: umfpack_reuse
+  # Where the Newton linear system is solved. mode: cpu (default), gpu
+  # (NVIDIA cuDSS, needs the CUDA extension: load CUDA and CUDSS next to
+  # Sparlectra) or auto (the GPU advisor decides from measured study values
+  # by bus count). gpu_precision: float64 or float32_mixed (Jacobian in
+  # Float32 on the GPU, mismatch in Float64). gpu_fallback_to_cpu: without a
+  # usable GPU, or on a GPU error, run on the CPU and record the reason.
+  # gpu_fast_mode: cuDSS without its deterministic mode, faster, but the last
+  # bits vary from run to run (a bus at its Q limit can end on either side).
+  compute_backend:
+    mode: cpu
+    gpu_precision: float64
+    gpu_fallback_to_cpu: true
+    gpu_fast_mode: false
   # Options for solver: apslf.
   apslf:
     # Highest power-series coefficient to compute.
@@ -61,8 +74,9 @@ power_flow:
   apslf_start:
     enabled: false
     order: 40
-  # Flat start (true = every bus at 1.0 pu and the slack angle, PV and slack
-  # at their setpoints; voltages stored in the case file are ignored;
+  # Flat start (true = every bus at the slack angle, PV and slack at their
+  # setpoints, PQ buses at the mean setpoint of the slack and PV buses of
+  # their island, 1.0 pu without one; voltages stored in the case file are ignored;
   # start_mode.rotate_behind_pst turns buses behind phase shifters). While it
   # is on, the run switches start_mode.start_projection,
   # start_mode.dc_seed_unconditional, the two start modes and
@@ -264,11 +278,11 @@ power_flow:
     measure_candidates: true
     # Accept DC start even without candidate measurements.
     accept_unmeasured_dc_start: false
-    # Unconditionally run a full standalone DC power flow first and seed the
-    # rectangular Newton-Raphson solve's start angles from it (voltage
-    # magnitudes are not affected: the DC model has no voltage-magnitude
-    # solution, so Slack/PV setpoints and the usual voltage_mode still apply).
-    # Bypasses the angle_mode/try_dc_start/measure_candidates candidate
+    # Unconditionally run a DC power flow first and seed the rectangular
+    # Newton-Raphson solve from it: DC angles with the losses shared by the
+    # generators in proportion to Pg (solver: dc keeps them at the slack),
+    # Slack/PV buses at their setpoints, PQ buses at the mean setpoint of
+    # their island. Bypasses the angle_mode/try_dc_start/measure_candidates candidate
     # selection above entirely -- no quality gate, matching rundcpf!'s
     # seed_ac_start=true behavior. Mutually exclusive with
     # power_flow.apslf_start.enabled and power_flow.solver in (apslf, dc).
@@ -297,7 +311,8 @@ power_flow:
     reuse_import_data: true
     # Candidate blend factors used when try_blend_scan=true.
     blend_lambdas: [0.25, 0.5, 0.75]
-    # Positive DC-angle clamp in degrees.
+    # Positive DC-angle clamp in degrees, used only by the DC candidate of a
+    # net without a DC model (a branch with x_pu = 0, imag(Ybus) fallback).
     dc_angle_limit_deg: 60.0
 
   # Optional guarded current-injection pre-solve after start modes and before NR.
@@ -402,14 +417,16 @@ power_flow:
       enabled: true
       min_q_range_pu: 0.02
       # Allowed values: prefer_pq, lock_pq. lock_pq: PV inside the band,
-      # clamped at the first limit reached; prefer_pq: PQ at the band
-      # middle from the start
+      # clamped at a limit it reaches, released only on a converged
+      # iterate; prefer_pq: PQ at the band middle from the start
       narrow_range_mode: lock_pq
       # Allowed values: lock_pq
       zero_range_mode: lock_pq
       # Allowed values: delayed_switch, lock_pq
       violation_mode: lock_pq
-      violation_threshold_pu: 1.0e-4
+      # overshoot beyond a limit, in percent of the bus Q band Qmax - Qmin,
+      # from which lock_pq switches a machine to PQ
+      violation_threshold_pct: 1.0
       max_switches: 3
       max_remaining_violations: 0
       accept_bounded_violations: false
@@ -692,11 +709,12 @@ powsybl_import:
   multi_slack: true
   # A generator whose regulated bus is not its own. Allowed values:
   # hold_local, pq, remote
+  # remote makes it PQ and attaches an outer-loop machine voltage control
+  # on the regulated bus (reproduces OpenLoadFlow's remote voltage control;
+  # where the control cannot be attached the unit is held as hold_local);
   # hold_local keeps it PV at its own bus with the target in pu of the
-  # regulated bus; pq makes it PQ with target_q; remote makes it PQ and
-  # attaches an outer-loop machine voltage control on the regulated bus
-  # (reproduces OpenLoadFlow's remote voltage control).
-  remote_regulation: hold_local
+  # regulated bus; pq makes it PQ with target_q.
+  remote_regulation: remote
 
 # ENTSO-E CGMES import (see docs/src/cgmes_import.md)
 cgmes_import:
@@ -941,6 +959,19 @@ runtime:
     max_tasks: auto
     # Below this many work items a parallel site runs serially.
     min_work_items: 4
+    # N-1, scenario and injection batches: threads, processes (the worker
+    # processes of the batch pool, one thread each) or auto (processes from
+    # 2000 buses on, threads below).
+    executor: auto
+    # auto = Sys.CPU_THREADS, fewer when the free memory holds fewer workers;
+    # an integer string caps the worker processes.
+    max_processes: auto
+  # The garbage collector is off while a power flow runs and on again when
+  # the last run of the process ends. Above max_resident_gb (auto = half of
+  # the physical memory, 0 = no guard) the guard collects once.
+  gc_pause:
+    enabled: true
+    max_resident_gb: auto
   # Runtime case fields are populated in API/Web UI effective_config.yaml artifacts.
   casefile: ""
   case_name: ""
@@ -992,7 +1023,8 @@ output:
   # tables, short-circuit, island diagnostics). technical = comma delimiter,
   # dot decimal; excel_de = semicolon delimiter, comma decimal, dot
   # thousands separator (opens correctly in a German-locale Excel);
-  # excel_us = comma delimiter, dot decimal, comma thousands separator;
+  # excel_us = comma delimiter, dot decimal, comma thousands separator
+  # (decimal numbers only: indices, ids and counts are never grouped);
   # auto = follow the regional settings of the machine (decimal comma gives
   # excel_de, decimal point excel_us; the C/POSIX locale gives technical).
   # Allowed values: auto, technical, excel_de, excel_us
@@ -1218,6 +1250,33 @@ webui:
   window_height: 950
   window_x: null
   window_y: null
+  # Remote mode: the Web UI runs on a host (a GPU server, a workstation) and
+  # is used from another machine. It applies only to a start with --remote
+  # (start_webui.jl --remote, start_sparlectra_webui(remote = true)); such a
+  # start opens no browser on the host and runs until it is stopped.
+  # ssh (default): the server stays on 127.0.0.1 of the host; the user opens
+  #   an SSH tunnel (ssh -N -L 8080:127.0.0.1:8080 <user>@<host>). Nothing is
+  #   exposed to the network, but every user with a login on the host and
+  #   every local process can open 127.0.0.1:8080 as well. On a host shared
+  #   with others set remote_ssh_require_token: true.
+  # direct: the server binds remote_bind_address and accepts a request only
+  #   with the access token. The traffic is plain HTTP, not encrypted: use it
+  #   only in a network you trust.
+  remote_mode: ssh
+  # Address the direct mode binds: 0.0.0.0 for every IPv4 interface, "::" for
+  # every IPv6 interface, or the address of one interface.
+  remote_bind_address: 0.0.0.0
+  # Port of the server in both remote modes.
+  remote_port: 8080
+  # Access token of the direct mode (and of the SSH mode with
+  # remote_ssh_require_token). Empty: a new token is generated at every start
+  # and printed on the host console. A fixed token needs at least 16
+  # characters of A-Z, a-z, 0-9, '.', '_', '~', '-', written in quotes
+  # ("0123456789abcdef"): unquoted digits are read as a number.
+  remote_access_token: ""
+  # true: the SSH mode asks for the access token too, so other users and
+  # processes on the host cannot use the server.
+  remote_ssh_require_token: false
 
 extensions:
   # Reserved for future extension schemas.

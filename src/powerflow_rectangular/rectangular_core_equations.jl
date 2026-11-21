@@ -92,8 +92,10 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
   @assert length(S) == n
   @assert length(bus_types) == n
   @assert length(Vset) == n
-  # Network-based injections for the current state
-  S_calc = calc_injections(Ybus, V)
+  # Network-based injections for the current state: S_calc[i] =
+  # V[i] * conj(I[i]) is formed per row below, the same product
+  # calc_injections broadcasts, without a second n-vector per call
+  I_calc = calc_currents(Ybus, V)
 
   active = dslack !== nothing
   lambda = active ? dslack.lambda_trial : 0.0
@@ -110,7 +112,7 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
       continue
     end
 
-    S_ci = S_calc[i]
+    S_ci = V[i] * conj(I_calc[i])
     S_si = S[i]
 
     if bus_types[i] == :PQ
@@ -141,7 +143,7 @@ function mismatch_rectangular(Ybus, V::Vector{ComplexF64}, S::Vector{ComplexF64}
 
   if active
     # The REF bus's P is no longer free: it participates like everyone else.
-    F[end] = real(S_calc[slack_idx]) - real(S[slack_idx]) - dslack.alpha[slack_idx] * lambda
+    F[end] = real(V[slack_idx] * conj(I_calc[slack_idx])) - real(S[slack_idx]) - dslack.alpha[slack_idx] * lambda
   end
 
   return F

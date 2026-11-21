@@ -30,9 +30,12 @@ An unknown or removed key in a file is warned about once (a removed key
 with its migration hint) and ignored, so a file from an earlier release
 keeps loading.
 
-Case-scope keys are `matpower_import.*`, `cgmes_import.*`,
-`powsybl_import.*`, `power_flow.*`, `state_estimation.*`,
-`short_circuit.*`, `qsts.*` and the contingency keys the Settings page edits
+Case-scope keys are the keys of `GUI_EDITABLE_CONFIG_KEYS` in
+`matpower_import.*`, `cgmes_import.*`, `powsybl_import.*`, `power_flow.*`,
+`state_estimation.*`, `short_circuit.*`, `qsts.*` and the contingency keys
+the Settings page edits, among them the start strategy (`power_flow.flatstart`,
+`start_mode.start_projection`, `try_dc_start`, `try_blend_scan`,
+`dc_seed_unconditional`) and the wrong-branch bounds
 (`scf_is_case_config_key(key)` answers per key; `contingency.rescue_ladder`
 and `contingency.events.name_stem_pattern` are machine scope). When
 a case ships its own configuration file, these keys skip level 2 and
@@ -321,7 +324,10 @@ The reserved `rescue` mode is not the rescue ladder for failed AC solves
 flat-start cases the mitigations are this check and the APSLF solver
 ([External Solvers](external_solvers.md)).
 
-Tuning keys (all under `power_flow.`):
+Tuning keys (all under `power_flow.`). The bounds depend on the network
+and are case scope, so a case configuration file can widen them: the stored
+solution of `case_ACTIVSg70k` has bus angles down to -175 deg against the
+slack and raises `bus_angle_exceeded` under the default 120 deg.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -478,7 +484,7 @@ built net.
 | `output.result_table_max_rows` | `200` | Row cap of the classical result tables. |
 | `output.result_table_large_case_threshold_buses` | `1000` | Bus count from which a case counts as large for result rendering. |
 | `output.result_table_large_case_mode` | `summary` | What large cases print instead of full tables: `summary`, `classic`, `full`. |
-| `output.csv_format` | `auto` | Delimiter and decimal separator of every CSV file a run writes; only the measurement table keeps its fixed layout (comma, decimal point). `auto` follows the regional settings of the machine (decimal comma gives `excel_de`, decimal point `excel_us`, the C/POSIX locale `technical`); `technical` is comma delimiter, dot decimal; `excel_de` semicolon delimiter, comma decimal, dot thousands separator; `excel_us` comma delimiter, dot decimal, comma thousands separator. The API keywords `detailed_result_csv_format`/`detailed_result_csv_semicolon` are a deprecated per-request override. |
+| `output.csv_format` | `auto` | Delimiter and decimal separator of every CSV file a run writes; only the measurement table keeps its fixed layout (comma, decimal point). `auto` follows the regional settings of the machine (decimal comma gives `excel_de`, decimal point `excel_us`, the C/POSIX locale `technical`); `technical` is comma delimiter, dot decimal; `excel_de` semicolon delimiter, comma decimal, dot thousands separator; `excel_us` comma delimiter, dot decimal, comma thousands separator. The thousands separator applies to decimal numbers; integer cells (indices, ids, counts) are never grouped. The API keywords `detailed_result_csv_format`/`detailed_result_csv_semicolon` are a deprecated per-request override. |
 | `output.export_significant_digits` | `0` | Significant digits of the floats in exported cases: SCF, CGMES, measurement tables. `0` writes the shortest round-trip form, so the file reads back bit for bit; `1` to `17` round, and a value below `1e-9` in magnitude is written as `0`, so the same case gives the same bytes on every machine (a solver leaves different last digits on another CPU). In code: `with_export_significant_digits`. |
 | `webui.operation_log_retention_days` | `10` | Int `>= 0`: days the operation log reaches back. Every Web UI start drops older entries; `0` keeps only the current session. The environment variable `SPARLECTRA_WEBUI_OPERATION_LOG_RETENTION_DAYS` wins (headless runs without a configuration file). |
 | `webui.docs_base_url` | `https://welthulk.github.io/Sparlectra.jl/` | Base URL of the published documentation that the help pages (the **?** next to a control) and the header link open; point it at a local build or a pinned version. A link only, nothing is fetched. |
@@ -486,6 +492,11 @@ built net.
 | `webui.window_height` | `950` | Height in pixels of that window. |
 | `webui.window_x` | `null` | Screen position of the window; `null` lets the browser place it. **Stop Web UI** saves size and position of the window here (not when it is minimized), and the next start opens the window there. `Ctrl+C` saves nothing. |
 | `webui.window_y` | `null` | See `webui.window_x`. |
+| `webui.remote_mode` | `ssh` | How a start with `--remote` (`start_sparlectra_webui(remote = true)`) is reached from another machine. `ssh`: the server stays on `127.0.0.1` and the user connects through an SSH tunnel; every user and process on the host can open the port too, unless `webui.remote_ssh_require_token` is set. `direct`: the server binds `webui.remote_bind_address` and accepts requests only with the access token; the traffic is not encrypted. A start without `--remote` ignores the remote keys. See [Remote use](@ref webui_remote). |
+| `webui.remote_bind_address` | `0.0.0.0` | IP address the direct mode binds: `0.0.0.0` every IPv4 interface, `"::"` every IPv6 interface, or the address of one interface. An IPv6 address is written in quotes: the reader takes an unquoted `::1` or `::` for a symbol, and the loader refuses it naming the key. |
+| `webui.remote_port` | `8080` | Port of the server in both remote modes. |
+| `webui.remote_access_token` | `""` | Access token of the direct mode, and of the SSH mode with `webui.remote_ssh_require_token`. Empty: a new token is generated at every start and printed on the host console. A fixed token needs at least 16 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, `~`, `-` and is written in quotes (`"0123456789abcdef"`); a value the reader takes for a number is refused. |
+| `webui.remote_ssh_require_token` | `false` | `true`: the SSH mode asks for the access token as well. Without it every user and process on the host can open the loopback port. |
 
 ## Migration notes
 

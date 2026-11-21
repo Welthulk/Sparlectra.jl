@@ -57,13 +57,18 @@ function _voltage_magnitude_for_projection(Vraw::Vector{ComplexF64}, bus_types::
 end
 
 """
-    _ProjectionDcModel(Bbus, Pbusinj)
+    _ProjectionDcModel(Bbus, Pbusinj, weights)
 
 The DC model the start projection's DC candidate solves when the caller
 owns a `Net`: `Bbus` and `Pbusinj` exactly as [`assemble_dc_bbus`](@ref)
 returns them (series reactance over tap magnitude, phase shift as the
-injection vector), so the candidate is the same DC power flow `rundcpf!`
-solves. Without it the candidate falls back to `imag(Ybus)` and the bus
+injection vector), and `weights`, the per-bus scheduled Pg of the
+generators at slack and PV buses (`_dc_imbalance_weights`). The candidate
+shares the active power imbalance (the losses) out by these weights before
+the angle solve (`_spread_dc_imbalance!`), the DC start of
+`_dc_seed_rectangular_angles!`; `rundcpf!` leaves it at the slack. An
+all-zero `weights` (or a slack without scheduled Pg) keeps the MATPOWER
+balance. Without a model the candidate falls back to `imag(Ybus)` and the bus
 injections alone (the unit-level callers without a net), which leaves the
 phase-shifter injections out: on case6495rte that start was wrong by 510
 and 361 pu on two shifted branches and diverged where the `rundcpf!` seed
@@ -72,6 +77,7 @@ converged.
 struct _ProjectionDcModel
   Bbus::SparseMatrixCSC{Float64,Int}
   Pbusinj::Vector{Float64}
+  weights::Vector{Float64}
 end
 
 """
@@ -92,13 +98,13 @@ function _projection_dc_model(net::Net)
     br.status == 1 && br.x_pu == 0.0 && return nothing
   end
   Bbus, Pbusinj, _ = assemble_dc_bbus(net)
-  return _ProjectionDcModel(Bbus, Pbusinj)
+  return _ProjectionDcModel(Bbus, Pbusinj, _dc_imbalance_weights(net))
 end
 
 function _projection_dc_model(net::Net, bus_idx::Vector{Int})
   model = _projection_dc_model(net)
   model === nothing && return nothing
-  return _ProjectionDcModel(model.Bbus[bus_idx, bus_idx], model.Pbusinj[bus_idx])
+  return _ProjectionDcModel(model.Bbus[bus_idx, bus_idx], model.Pbusinj[bus_idx], model.weights[bus_idx])
 end
 
 # Reduced DC matrix of the candidate: the net's Bbus (MATPOWER convention,
@@ -110,12 +116,24 @@ function _dc_candidate_matrix(Ybus, dc_model::Union{Nothing,_ProjectionDcModel},
 end
 
 # Right-hand side of the candidate: P - Pbusinj on the non-slack buses, the
-# sign rundcpf! applies (solve_dc_powerflow); P alone without a model.
-function _dc_candidate_rhs(S::Vector{ComplexF64}, dc_model::Union{Nothing,_ProjectionDcModel}, non_slack::Vector{Int})
-  P = real.(S[non_slack])
-  dc_model === nothing && return P
-  return P .- dc_model.Pbusinj[non_slack]
+# sign rundcpf! applies (solve_dc_powerflow), with the imbalance shared by
+# the generators (_spread_dc_imbalance!, the DC seed's balance); P alone
+# without a model.
+function _dc_candidate_rhs(S::Vector{ComplexF64}, dc_model::Union{Nothing,_ProjectionDcModel}, non_slack::Vector{Int}, slack_idx::Int)
+  dc_model === nothing && return real.(S[non_slack])
+  R = real.(S) .- dc_model.Pbusinj
+  _spread_dc_imbalance!(R, dc_model.weights, slack_idx)
+  return R[non_slack]
 end
+
+# Angle cap of the DC candidate in radians. The candidate of a net with a DC
+# model (generator-balanced, the DC seed's angles) is not capped: on
+# case_ACTIVSg70k its angles span -202..+39 degrees around the slack, the
+# cap at 60 degrees made the projection keep the flat seed and Newton
+# diverged, uncapped it converged in 6 iterations. The imag(Ybus) fallback
+# keeps the slack balance and the cap dc_angle_limit_deg against extreme
+# starts.
+_dc_candidate_angle_limit(dc_model::Union{Nothing,_ProjectionDcModel}, dc_angle_limit_deg::Float64)::Float64 = dc_model === nothing ? deg2rad(dc_angle_limit_deg) : Inf
 
 function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{ComplexF64}, bus_types::Vector{Symbol}, Vset::Vector{Float64}, slack_idx::Int; dc_angle_limit_deg::Float64 = 60.0, dc_model::Union{Nothing,_ProjectionDcModel} = nothing)
   # DC-angle start builds phase guesses from active-power balance on reduced B.
@@ -128,10 +146,9 @@ function _dc_angle_start_rectangular(Ybus, Vraw::Vector{ComplexF64}, S::Vector{C
 
   B = _dc_candidate_matrix(Ybus, dc_model, non_slack, pos, slack_idx, nred)
 
-  P = _dc_candidate_rhs(S, dc_model, non_slack)
+  P = _dc_candidate_rhs(S, dc_model, non_slack, slack_idx)
   θred = _solve_dc_angle_system(B, P, nothing, nred)
-  # Clamp relative angles to avoid extreme starts that can destabilize first NR steps.
-  limit = deg2rad(dc_angle_limit_deg)
+  limit = _dc_candidate_angle_limit(dc_model, dc_angle_limit_deg)
   θslack = angle(Vraw[slack_idx])
   Vdc = similar(Vraw)
 
@@ -246,11 +263,11 @@ function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S:
     _dc_candidate_matrix(Ybus, dc_model, non_slack, pos, slack_idx, nred)
   end
 
-  P = _dc_candidate_rhs(S, dc_model, non_slack)
+  P = _dc_candidate_rhs(S, dc_model, non_slack, slack_idx)
   θred = _perf_profile_time!(performance_profile, :start_projection_dc_linear_solve) do
     _solve_dc_angle_system(B, P, performance_profile, nred)
   end
-  limit = deg2rad(dc_angle_limit_deg)
+  limit = _dc_candidate_angle_limit(dc_model, dc_angle_limit_deg)
   θslack = angle(Vraw[slack_idx])
   Vdc = similar(Vraw)
 
@@ -268,12 +285,19 @@ function _dc_angle_start_rectangular_profiled(Ybus, Vraw::Vector{ComplexF64}, S:
   return Vdc
 end
 
-function _dc_start_quality_diagnostics(Ybus, Vdc::Union{Nothing,Vector{ComplexF64}}, raw_mis::Float64, dc_mis::Float64, slack_idx::Int, dc_angle_limit_deg::Float64)
+# Quality figures of the DC candidate. `clip_limit_deg` is the cap the
+# candidate actually got (Inf for a net with a DC model, see
+# _dc_candidate_angle_limit): without a cap no bus counts as clipped and the
+# reported limit is missing. The branch count compares every branch angle
+# difference with the configured dc_angle_limit_deg as a plausibility bound,
+# also when the candidate was not capped.
+function _dc_start_quality_diagnostics(Ybus, Vdc::Union{Nothing,Vector{ComplexF64}}, raw_mis::Float64, dc_mis::Float64, slack_idx::Int, dc_angle_limit_deg::Float64, clip_limit_deg::Float64)
+  reported_clip_limit = isfinite(clip_limit_deg) ? clip_limit_deg : missing
   if Vdc === nothing || isempty(Vdc)
     return (
       dc_angle_min_deg = missing, dc_angle_max_deg = missing, dc_angle_spread_deg = missing,
       dc_angle_mean_deg = missing, dc_angle_std_deg = missing, dc_angle_clipped_count = 0,
-      dc_angle_clip_limit_deg = dc_angle_limit_deg, dc_max_branch_angle_deg = missing,
+      dc_angle_clip_limit_deg = reported_clip_limit, dc_max_branch_angle_deg = missing,
       dc_branch_angle_violation_count = 0, worst_dc_branch_from_bus = missing,
       worst_dc_branch_to_bus = missing, worst_dc_branch_angle_deg = missing,
       dc_voltage_magnitude_min = missing, dc_voltage_magnitude_max = missing,
@@ -288,7 +312,7 @@ function _dc_start_quality_diagnostics(Ybus, Vdc::Union{Nothing,Vector{ComplexF6
   finite_rel = filter(isfinite, rel_angles)
   mean_angle = isempty(finite_rel) ? NaN : sum(finite_rel) / length(finite_rel)
   std_angle = isempty(finite_rel) ? NaN : sqrt(sum((a - mean_angle)^2 for a in finite_rel) / length(finite_rel))
-  clipped_count = count(a -> isfinite(a) && abs(a) >= dc_angle_limit_deg - 1.0e-8, rel_angles)
+  clipped_count = isfinite(clip_limit_deg) ? count(a -> isfinite(a) && abs(a) >= clip_limit_deg - 1.0e-8, rel_angles) : 0
   worst_from = missing
   worst_to = missing
   worst_angle = 0.0
@@ -319,7 +343,7 @@ function _dc_start_quality_diagnostics(Ybus, Vdc::Union{Nothing,Vector{ComplexF6
     dc_angle_mean_deg = isempty(finite_rel) ? missing : mean_angle,
     dc_angle_std_deg = isempty(finite_rel) ? missing : std_angle,
     dc_angle_clipped_count = clipped_count,
-    dc_angle_clip_limit_deg = dc_angle_limit_deg,
+    dc_angle_clip_limit_deg = reported_clip_limit,
     dc_max_branch_angle_deg = ismissing(worst_from) ? missing : worst_angle,
     dc_branch_angle_violation_count = violation_count,
     worst_dc_branch_from_bus = worst_from,
@@ -767,7 +791,8 @@ function project_rectangular_start(
   _perf_profile_time!(performance_profile, :start_projection_final_selection) do
     nothing
   end
-  dc_quality = _dc_start_quality_diagnostics(Ybus, Vdc, raw_mis, dc_mis, slack_idx, dc_angle_limit_deg)
+  dc_clip_limit_deg = isfinite(_dc_candidate_angle_limit(dc_model, dc_angle_limit_deg)) ? dc_angle_limit_deg : Inf
+  dc_quality = _dc_start_quality_diagnostics(Ybus, Vdc, raw_mis, dc_mis, slack_idx, dc_angle_limit_deg, dc_clip_limit_deg)
   # Which DC model the candidate solved: the net's Bbus with the phase-shift
   # injections (rundcpf!'s model) or the imag(Ybus) fallback of a net-less call.
   dc_model_name = dc_model === nothing ? :ybus_susceptance : :dc_bbus

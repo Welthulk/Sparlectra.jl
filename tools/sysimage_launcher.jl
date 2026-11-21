@@ -26,13 +26,27 @@ module SysimageLauncher
 using TOML
 using SHA
 
-export handle_sysimage, console_answer, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, running_on_sysimage, warm_webui_page, ENV_ONLY_FLAG
+export handle_sysimage, console_answer, unresolved_dependencies, compat_lower_bound, outdated_dependencies, repair_environment, prepare_environments, sysimage_source_roots, sysimage_build_script, external_sysimage, remove_stale_sysimage, running_on_sysimage, warm_webui_page, remote_requested, ENV_ONLY_FLAG, REMOTE_FLAG
 
 const REBUILD_FLAG = "--rebuild-sysimage"
 const NO_IMAGE_FLAG = "--no-sysimage"
 # prepare the environments and compile, then leave: what a fresh checkout
 # needs before the first real start, and what a test can run headless
 const ENV_ONLY_FLAG = "--env-only"
+# remote mode: the Web UI is used from another machine, no browser window
+# opens on this one and the server runs until it is stopped. The flag passes
+# through the relaunch on the sysimage like every other argument.
+const REMOTE_FLAG = "--remote"
+
+"""
+    remote_requested(args) -> Bool
+
+Whether the launcher arguments ask for the remote mode of the Web UI
+(`--remote`): no browser window on this machine, the server runs until it
+is stopped, and `webui.remote_mode` of the configuration decides between
+the SSH tunnel and a direct bind.
+"""
+remote_requested(args::AbstractVector{<:AbstractString})::Bool = REMOTE_FLAG in args
 
 "Path of the Web UI sysimage for this platform (mirrors default_webui_output_root)."
 function sysimage_path()::String
@@ -571,7 +585,7 @@ On such an image the Web UI pages are compiled already.
 running_on_sysimage(; current::AbstractString = unsafe_string(Base.JLOptions().image_file))::Bool = !isempty(current) && !startswith(basename(current), "sys.")
 
 """
-    warm_webui_page(render; io = stdout) -> Bool
+    warm_webui_page(render; io = stdout, window = true) -> Bool
 
 Run `render()` once and report it on `io`: `Preparing the first page`,
 then `ready in N s`. `render` produces the Web UI start page the way the
@@ -586,22 +600,24 @@ error on its own request.
 
 `render` runs on the calling task, which yields as usual: a render that
 logs a warning or touches the event loop needs that, a busy wait on the
-calling thread deadlocked exactly there.
+calling thread deadlocked exactly there. `window = false` (remote mode, no
+window opens here) drops the words about the window from the messages.
 """
-function warm_webui_page(render; io::IO = stdout)::Bool
+function warm_webui_page(render; io::IO = stdout, window::Bool = true)::Bool
   print(io, "Preparing the first page ... ")
   flush(io)
   started = time()
+  anyway = window ? "; opening the window anyway." : "."
   outcome = try
     render()
   catch err
     # the page itself failed to render: the window shows the same error on
     # its own request, so the start goes on and the console names the reason
-    println(io, "not prepared (", sprint(showerror, err), "); opening the window anyway.")
+    println(io, "not prepared (", sprint(showerror, err), ")", anyway)
     return false
   end
   ok = outcome === true
-  println(io, ok ? "ready in $(round(Int, time() - started)) s." : "not ready; opening the window anyway.")
+  println(io, ok ? "ready in $(round(Int, time() - started)) s." : "not ready$(anyway)")
   return ok
 end
 

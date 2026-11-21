@@ -106,6 +106,17 @@ function _write_tap_model_notices_artifact(output_path::AbstractString, net::Net
   return TAP_MODEL_NOTICES_ARTIFACT
 end
 
+# effective_config.yaml is written before the import with the configured
+# start keys; a flat start or cgmes_import.start_values switch some of them
+# for the run. As soon as the import has returned the used configuration,
+# the file is rewritten with the used values, so a run that fails or is
+# aborted in the solve shows them as well. Returns the changed keys.
+function _write_used_start_config!(effective_config::AbstractString, effective_raw::AbstractDict, config_sources::AbstractDict, configured::SparlectraConfig, used::SparlectraConfig, reason::AbstractString, case_path::AbstractString, config::SparlectraConfig)::Vector{String}
+  changed = _record_run_start_overrides!(effective_raw, config_sources, configured, used; reason)
+  isempty(changed) || _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
+  return changed
+end
+
 function _effective_config_with_runtime_case(effective_raw, case_path::AbstractString, config::SparlectraConfig; config_sources = nothing)
   raw = deepcopy(effective_raw)
   runtime = get!(raw, "runtime", Dict{String,Any}())
@@ -116,6 +127,12 @@ function _effective_config_with_runtime_case(effective_raw, case_path::AbstractS
   runtime["case_name"] = splitext(basename(case_path))[1]
   runtime["case_source"] = "webui_mpower_data"
   runtime["configured_default_casefile"] = config.runtime.case
+  # the access token of the Web UI's remote modes (direct, and SSH with
+  # webui.remote_ssh_require_token) is a secret, and a run
+  # folder is downloaded and passed on: its copy of the configuration keeps
+  # the key empty (a reload generates a new token, it never reuses this one)
+  webui = get(raw, "webui", nothing)
+  webui isa AbstractDict && haskey(webui, "remote_access_token") && (webui["remote_access_token"] = "")
   if config_sources !== nothing
     raw["_config_sources"] = config_sources
   end
@@ -603,7 +620,8 @@ function _run_sparlectra_api_body(
   try
   effective_raw = resolved.effective_raw
   nested_overrides = resolved.nested_overrides
-  config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config)
+  has_case_config = isfile(case_config_path(case_path))
+  config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config, case_scope_from_defaults = has_case_config)
   effective_config = joinpath(output_path, "effective_config.yaml")
   _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
   _write_run_metadata_artifact(output_path; case_path = case_path)
@@ -660,6 +678,13 @@ function _run_sparlectra_api_body(
   # without it).
   cgmes_export_sc_line_data = nothing
   cgmes_export_sc_source = nothing
+  # the configuration handed to the import and the one the import returned
+  # for the solve: they differ in the start keys a flat start or
+  # cgmes_import.start_values switch for this run, and effective_config.yaml
+  # is rewritten with the used values after the import
+  import_input_config = config
+  run_start_config = Ref{SparlectraConfig}(config)
+  run_start_reason = Ref("power_flow.flatstart: true switches the start projection, the DC seed, the start modes and the ratio profile off for this run (run.log names them)")
   if detected_case_format === :cgmes
     cgmes_cfg = config.cgmes
     imported_cgmes = try
@@ -710,6 +735,9 @@ function _run_sparlectra_api_body(
     effective_start_values = imported_cgmes.provenance["cgmes_effective_start_values"]::Symbol
     start_decision = imported_cgmes.provenance["cgmes_start_decision"]::String
     cgmes_run_config = imported_cgmes.config
+    run_start_config[] = cgmes_run_config
+    run_start_reason[] = "cgmes_import.start_values and power_flow.flatstart decide the start of a CGMES run (run.log and cgmes_import_report.md name the decision)"
+    _write_used_start_config!(effective_config, effective_raw, config_sources, import_input_config, run_start_config[], run_start_reason[], case_path, config)
     # Dedicated CGMES import report (Markdown, rendered by the Web UI
     # viewer): everything the importer saw and decided, next to run.log and
     # diagnose.log, so a CGMES run can be audited without digging through
@@ -842,6 +870,8 @@ function _run_sparlectra_api_body(
     end
     dtf_case = imported_dtf.provenance["dtf_case"]
     dtf_net = imported_dtf.net
+    run_start_config[] = imported_dtf.config
+    _write_used_start_config!(effective_config, effective_raw, config_sources, import_input_config, run_start_config[], run_start_reason[], case_path, config)
     raw_result = try
       open(logfile, "a") do io
         println(io, "Native DTF input (experimental/internal)")
@@ -906,6 +936,7 @@ function _run_sparlectra_api_body(
           # exactly as before, and the shared performance profile carries the
           # auto-profile records the artifact writer reads below.
           imported = import_case(case_path, config; performance_profile = api_performance_profile)
+          run_start_config[] = imported.config
           _write_flatstart_overrides(io, imported.provenance)
           haskey(imported.provenance, "powsybl_report") && (powsybl_import_report = Sparlectra.format_powsybl_report(imported.provenance["powsybl_report"]))
           raw_result = run_sparlectra(net = imported.net, config = imported.config, performance_profile = api_performance_profile)
@@ -913,6 +944,16 @@ function _run_sparlectra_api_body(
       end
     end
   catch err
+    # the import may have returned before the failure: the file shows the
+    # start keys it chose (no change when the import itself failed). A
+    # failed write (full disk, run folder removed) must not replace the
+    # error of the run: it is logged and the run error goes on
+    try
+      _write_used_start_config!(effective_config, effective_raw, config_sources, import_input_config, run_start_config[], run_start_reason[], case_path, config)
+    catch write_err
+      write_err isa Union{Base.IOError,SystemError} || rethrow()
+      @warn "effective_config.yaml could not be rewritten with the start keys of the failed run; it keeps the configured values" path = effective_config exception = write_err
+    end
     err isa PowerFlowAborted && rethrow()
     if err isa MatpowerIO.UnsupportedMatpowerDclineError
       details = Dict{String,Any}(String(key) => value for (key, value) in err.details)
@@ -952,8 +993,18 @@ function _run_sparlectra_api_body(
   if auto_profile_result !== nothing
     config = auto_profile_result.config
     _update_effective_matpower_raw!(effective_raw, config)
-    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, auto_profile_result = auto_profile_result, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config)
+    config_sources = _config_source_report(config_path, nested_overrides, effective_raw; override_source = config_override_source, auto_profile_result = auto_profile_result, explicit_overrides = config_overrides, case_config = resolved.case_config, scf_config = resolved.scf_config, case_scope_from_defaults = has_case_config)
+  end
+  # the start keys as the run used them (a flat start switches the start
+  # projection off; the file written before the import showed the
+  # configured values). The CGMES and DTF branches wrote them after their
+  # import already; this call also covers the generic branch and repeats
+  # them after the auto profile rebuilt config_sources
+  start_keys_changed = _record_run_start_overrides!(effective_raw, config_sources, import_input_config, run_start_config[]; reason = run_start_reason[])
+  if auto_profile_result !== nothing || !isempty(start_keys_changed)
     _write_yaml_file(effective_config, _effective_config_with_runtime_case(effective_raw, case_path, config; config_sources))
+  end
+  if auto_profile_result !== nothing
     _write_matpower_auto_profile_artifact(output_path, auto_profile_result, config; casefile = String(auto_profile_casefile))
     operation_callback("powerflow_effective_options"; run_id = run_id, case = basename(case_path), _metadata_kwargs(qlimit_metadata)..., _metadata_kwargs(_resolved_matpower_import_runtime_options(config))...)
   end

@@ -153,7 +153,7 @@ const TEST_GROUPS = TestGroup[
         [:run_voltage_dependent_control_tests, :run_transformer_phase_shift_tests, :run_tap_controller_tests, :run_series_reactance_control_tests, :run_upfc_control_tests, :run_hvdc_pair_control_tests, :run_tap_changer_model_tests, :run_phase_tap_changer_model_tests, :run_phase_tap_table_tests]),
     TestGroup("core_model_extended", ["testgrid.jl"], [:run_grid_extended_tests]),
     TestGroup("contingency_extended", ["test_contingency.jl"], [:run_contingency_extended_tests]),
-    TestGroup("scenario_engine", ["test_scenarios.jl"], [:run_scenario_engine_extended_tests]),
+    TestGroup("scenario_engine", ["test_scenarios.jl"], [:run_scenario_engine_extended_tests, :run_injection_batch_tests]),
     TestGroup("apslf", ["test_apslf.jl"], [:run_apslf_tests]),
     # --- se: state estimation, observability, topology
     TestGroup("state_estimation", ["test_state_estimation.jl"], [:run_state_estimation_tests]),

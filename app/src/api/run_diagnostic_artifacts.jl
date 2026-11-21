@@ -401,8 +401,9 @@ _q_limit_events_csv_wanted(net::Net)::Bool = length(net.qLimitLog) > Q_LIMIT_EVE
 
 function _write_q_limit_detail_artifacts(output_path::AbstractString, net::Net; format = "technical", events_only::Bool = false)::Vector{String}
   artifacts = String[]
-  # kind: hit (PV->PQ), group_revert (PV->PQ of a jointly released group)
-  # or release (PQ->PV, side = the limit the bus was clamped at)
+  # kind: hit (PV->PQ), group_hit (PV->PQ of a member of a jointly released
+  # group that violated again), group_revert (PV->PQ of a member returned
+  # with it) or release (PQ->PV, side = the limit the bus was clamped at)
   events = [(iteration = ev.iter, bus = ev.bus, side = String(ev.side), kind = String(ev.kind)) for ev in net.qLimitLog]
   if !isempty(events)
     _write_namedtuple_csv(joinpath(output_path, "q_limit_events.csv"), events, (:iteration, :bus, :side, :kind); format = format)

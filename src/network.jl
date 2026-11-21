@@ -2998,15 +2998,63 @@ function _start_without_angles(V0::AbstractVector{ComplexF64}, slack_idx::Int, v
   return all(no_angle, eachindex(V0))
 end
 
+# Start magnitude of the PQ buses in the flat start and the DC start, per
+# bus: the mean voltage setpoint of the regulated buses of its AC island,
+# with the setpoints the solver holds them at
+# (_bus_voltage_setpoints_from_prosumers). Islands are the connected
+# components over in-service branches and closed links
+# (electricalIslandComponents). A PQ bus in an island without a regulated
+# bus, and an isolated bus, start at 1.0 pu. Why: on case_ACTIVSg70k the
+# setpoints average 1.039 pu and every PQ bus at 1.0 pu made Newton diverge
+# even from the stored angles; at the mean setpoint the DC start converges.
+#
+# A regulated bus is one the import types slack or PV: a slack unit or a
+# voltage-regulating generator on it (refreshBusTypesFromProsumers!), or a
+# bus typed Slack or PV now. The units count, not the current type alone: a
+# PV bus that a Q limit moved to PQ stays in the mean, so a rescue rerun
+# from a flat start starts its PQ buses where the first solve did.
+function _pq_start_magnitudes(net::Net)::Vector{Float64}
+  nodes = net.nodeVec
+  n = length(nodes)
+  vm = ones(Float64, n)
+  regulated = BitVector(getNodeType(node) in (Slack, PV) for node in nodes)
+  for ps in net.prosumpsVec
+    b = getPosumerBusIndex(ps)
+    (1 <= b <= n && getNodeType(nodes[b]) != Isolated) || continue
+    (isSlack(ps) || (isGenerator(ps) && isRegulating(ps))) && (regulated[b] = true)
+  end
+  any(regulated) || return vm
+  Vset = _bus_voltage_setpoints_from_prosumers(net)
+  for island in electricalIslandComponents(net)
+    total = 0.0
+    count = 0
+    for k in island
+      regulated[k] || continue
+      v = Vset[k]
+      (isfinite(v) && v > 0.0) || continue
+      total += v
+      count += 1
+    end
+    count == 0 && continue
+    mean = total / count
+    for k in island
+      vm[k] = mean
+    end
+  end
+  return vm
+end
+
 """
     initialVrect(net; flatstart = net.flatstart, rotate_behind_pst = false) -> (V0, slack_idx)
 
 Build the initial complex voltage vector V0 from the network bus data
 (Vm, Va), and detect the slack bus index.
 
-With `flatstart = true` every PQ bus starts at 1.0 pu, PV buses at their
-stored magnitude, and the slack keeps its magnitude and angle. Every other
-bus starts at the slack angle. With `rotate_behind_pst = true`
+With `flatstart = true` every PQ bus starts at the mean voltage setpoint of
+the slack and PV buses of its AC island (connected over in-service branches
+and closed links), 1.0 pu in an island without such a bus. PV buses start
+at their stored magnitude, and the slack keeps its magnitude and angle.
+Every other bus starts at the slack angle. With `rotate_behind_pst = true`
 (`power_flow.start_mode.rotate_behind_pst`, default `false`) a bus that the reference reaches
 only across phase-shifting transformers gets the slack angle plus the sum
 of the shifts on a path with the fewest shifters
@@ -3039,6 +3087,7 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart, rotate_behind_p
   va_slack = deg2rad(slack_node._va_deg === nothing ? 0.0 : Float64(slack_node._va_deg))
   # nothing on a net without phase shift, so its start stays bit-identical
   theta = rotate_behind_pst && flatstart ? _flat_start_shift_angles(net, slack_idx) : nothing
+  pq_vm = flatstart ? _pq_start_magnitudes(net) : Float64[]
 
   V0 = Vector{ComplexF64}(undef, n)
 
@@ -3056,9 +3105,9 @@ function initialVrect(net::Net; flatstart::Bool = net.flatstart, rotate_behind_p
         V0[k] = ComplexF64(vm * cos(va_slack), vm * sin(va_slack))
       else
         # Flat start resets non-reference angles to the profile, but keeps
-        # voltage magnitude setpoints for PV buses. PQ-bus magnitudes remain
-        # the flat 1.0 pu guess.
-        mag = getNodeType(node) == PV ? vm : 1.0
+        # voltage magnitude setpoints for PV buses. PQ buses start at the
+        # mean setpoint of their island (_pq_start_magnitudes).
+        mag = getNodeType(node) == PV ? vm : pq_vm[k]
         va = theta === nothing ? va_slack : va_slack + theta[k]
         V0[k] = va == 0.0 ? ComplexF64(mag, 0.0) : ComplexF64(mag * cos(va), mag * sin(va))
       end

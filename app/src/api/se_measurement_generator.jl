@@ -453,8 +453,10 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
 
   # critical measurements on request (demo of issue #394): the set is
   # thinned until at least `critical_count` rows are critical, and the
-  # thinning never makes the set unobservable. Every step re-reads the
-  # criticality from diag(Omega) (one selected inverse, cheap since #394)
+  # thinning never makes the set unobservable (neither in the AC rank nor
+  # in the decoupled P-theta and Q-V models of the run's verdict). Every
+  # step re-reads the criticality from diag(Omega) (one selected inverse,
+  # cheap since #394)
   # and removes ONE row, chosen by a targeted partner search on the dense
   # residual covariance (see _critical_anchor_partner): the anchor row that
   # needs the fewest partner removals to become critical, and its strongest
@@ -480,6 +482,14 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     empty!(net.measurements)
     append!(net.measurements, meas)
     jac = measurement_jacobian(net)
+    # the decoupled P-theta and Q-V models of the same rows: the verdict of
+    # evaluate_global_observability (and so of the SE run) is a null
+    # direction of these, not the AC rank. Checked on the AC rank alone the
+    # thinning removed the Q and Vm rows around four buses of
+    # case1354pegase in a Web UI run: full AC rank (the P rows see the
+    # magnitudes through the resistances), magnitude deficit 2 in that run
+    # (the test on sp_case1354 with its own options: three buses, deficit 3)
+    dec = _measurement_decoupled_models(net)
     empty!(net.measurements)
     # the same rank decision the estimation run makes: column-normalized
     # Jacobian and the FD-aware tolerance (rank_tol_factor * jac_eps *
@@ -514,18 +524,30 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
     obs_prev = nothing
     last_removed = 0
     obs_c = evaluate_observability_matrix(H_all[keep, :]; tol = thin_tol)
+    # deficits of the full set (a second network island has an angle
+    # deficit from the start): a removal must not raise them
+    dec_base = (_decoupled_deficit(dec.pt, Set{Int}(keep)), _decoupled_deficit(dec.qt, Set{Int}(keep)))
+    # whether the last removal (Jacobian row `removed`) left a null
+    # direction in the decoupled model it belongs to
+    dec_broken(removed, keep) = begin
+      ks = Set{Int}(keep)
+      (removed in dec.pt_rows && _decoupled_deficit(dec.pt, ks) > dec_base[1]) || (removed in dec.qt_rows && _decoupled_deficit(dec.qt, ks) > dec_base[2])
+    end
+    broken = false
     steps = 0
     while steps <= 2 * length(row_meas) + 2
       steps += 1
-      if obs_c.quality == :not_observable
-        # the omega ratio and the rank tolerance are two different tests:
-        # undo the removal that failed the rank test and block that row
+      if obs_c.quality == :not_observable || broken
+        # the omega ratio and the rank tests are different tests: undo the
+        # removal that failed the AC rank or the decoupled models and block
+        # that row
         last_removed == 0 && break
         push!(blocked, last_removed)
         pop!(removed_ids)
         keep = keep_prev
         obs_c = obs_prev
         last_removed = 0
+        broken = false
       end
       crit_local = Set{Int}(obs_c.numerical_critical_measurement_indices)
       crit_real = [k for k in sort!(collect(crit_local)) if 1 <= k <= length(keep) && 1 <= row_meas[keep[k]] <= length(meas)]
@@ -557,6 +579,7 @@ function _se_generate_measurement_set(case_path::AbstractString, out_path::Abstr
       push!(removed_ids, ids_keep[pick])
       keep = [keep[k] for k in eachindex(keep) if k != pick]
       obs_c = evaluate_observability_matrix(H_all[keep, :]; tol = thin_tol)
+      broken = obs_c.quality != :not_observable && dec_broken(last_removed, keep)
     end
     removed_set = Set(removed_ids)
     meas = [m for m in meas if !(m.id in removed_set)]

@@ -154,6 +154,55 @@ function run_dc_powerflow_tests()
     @test dc_pf_status(net).numerical_converged
   end)() end
 
+  @testset "DC start: imbalance shared by Pg, PQ buses at the mean setpoint (sp_case9)" begin (function ()
+    # Hand calculation on the shipped sp_case9.m. Generators: bus 1 (slack)
+    # Pg 78.602 Vg 1.04, bus 2 Pg 150 Vg 1.025, bus 3 Pg 90 Vg 1.025; loads
+    # 90 + 100 + 125 = 315 MW. Imbalance D = 318.602 - 315 = 3.602 MW.
+    # Each generator bus is a stub behind one transformer (1-4 x 0.06 tap 1,
+    # 2-7 x 0.065 tap 0.98, 3-9 x 0.06 tap 1.025), so the DC flow through it
+    # is the bus injection and theta_g - theta_h = P_g * x * tap (pu).
+    # MATPOWER dcpf (rundcpf!): the slack injects 78.602 - 3.602 = 75 MW.
+    # DC start: every generator gives up D * Pg / 318.602.
+    # PQ start magnitude: (1.04 + 1.025 + 1.025) / 3 = 1.03 pu.
+    path = joinpath(dirname(@__DIR__), "data", "mpower", "sp_case9.m")
+    bus_of(net) = Dict(get(net.busOrigIdxDict, k, k) => k for k in eachindex(net.nodeVec))
+    factor = 1.0 - 3.602 / 318.602
+    dtheta(net, b, g, h) = deg2rad(net.nodeVec[b[g]]._va_deg - net.nodeVec[b[h]]._va_deg)
+
+    net_mp = createNetFromMatPowerFile(filename = path)
+    rundcpf!(net_mp)
+    b = bus_of(net_mp)
+    @test isapprox(dtheta(net_mp, b, 1, 4), 0.75 * 0.06; atol = 1e-12)
+
+    net = createNetFromMatPowerFile(filename = path)
+    Sparlectra._dc_seed_rectangular_angles!(net, PowerFlowConfig())
+    b = bus_of(net)
+    @test isapprox(dtheta(net, b, 1, 4), 0.78602 * factor * 0.06; atol = 1e-12)
+    @test isapprox(dtheta(net, b, 2, 7), 1.50 * factor * 0.065 * 0.98; atol = 1e-12)
+    @test isapprox(dtheta(net, b, 3, 9), 0.90 * factor * 0.06 * 1.025; atol = 1e-12)
+    @test [net.nodeVec[b[k]]._vm_pu for k in 1:3] == [1.04, 1.025, 1.025]
+    @test all(isapprox(net.nodeVec[b[k]]._vm_pu, 1.03; atol = 1e-12) for k in 4:9)
+
+    # the flat start puts the PQ buses at the same magnitude, angles flat
+    V0, _ = Sparlectra.initialVrect(createNetFromMatPowerFile(filename = path); flatstart = true)
+    @test all(isapprox(V0[b[k]], 1.03 + 0.0im; atol = 1e-12) for k in 4:9)
+
+    # a Q limit that moves the PV bus 2 to PQ does not move the mean: the
+    # regulating machine still counts, (1.04 + 1.025 + 1.025) / 3 = 1.03 pu
+    # before and after (the mean of the buses typed slack or PV after the
+    # switch would be (1.04 + 1.025) / 2 = 1.0325 pu)
+    net_q = createNetFromMatPowerFile(filename = path)
+    b = bus_of(net_q)
+    pq_before = Sparlectra._pq_start_magnitudes(net_q)
+    Sparlectra.setNodeType!(net_q.nodeVec[b[2]], "PQ")
+    @test Sparlectra.getNodeType(net_q.nodeVec[b[2]]) == Sparlectra.PQ
+    pq_after = Sparlectra._pq_start_magnitudes(net_q)
+    @test pq_after == pq_before
+    @test all(isapprox(pq_after[b[k]], 1.03; atol = 1e-12) for k in 4:9)
+    V0_q, _ = Sparlectra.initialVrect(net_q; flatstart = true)
+    @test all(isapprox(V0_q[b[k]], 1.03 + 0.0im; atol = 1e-12) for k in 4:9)
+  end)() end
+
   @testset "Config validation: solver=dc, dc.angle_reference_deg, dc_seed_unconditional" begin (function ()
     cfg_dc = Sparlectra.SparlectraConfig(Dict("power_flow" => Dict("solver" => "dc", "dc" => Dict("angle_reference_deg" => 3.5))))
     @test cfg_dc.powerflow.solver === :dc

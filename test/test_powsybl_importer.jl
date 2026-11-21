@@ -170,6 +170,62 @@ function run_powsybl_importer_tests()
     @test length(net.shuntVec) == length(tables.shunt_compensators.id)
   end)() end
 
+  # remote_regulation = :remote falls back to the :hold_local mapping when
+  # the framework would refuse the control: the fallback net must be the
+  # net the :hold_local import builds (bus types, node voltages and power
+  # sums, the units, the Q limits, the SCF export) and solve to the same
+  # state. Two patches of four_substations: (1) GH1 regulates S2VL1_0 at
+  # 410 kV (1.025 pu) with an empty reactive range (min_q = max_q = 10
+  # MVAr); (2) the same for GH2, moved onto the bus of GH1 (a PV bus when
+  # GH2 is added, so the unit is an additional PV unit, apu_node in the SCF
+  # export), with GH3 moved there too as a PQ unit with target_q 0 (the bus
+  # Q sum is 0.0, not nothing).
+  @testset "refused remote control falls back to the hold_local net (four_substations)" begin (function ()
+    function patched(two_units::Bool)
+      t = read_powsybl_bundle(_powsybl_fixture("four_substations"))
+      g = t.generators
+      i = findfirst(==(two_units ? "GH2" : "GH1"), g.id)
+      g.regulated_bus_id[i] = "S2VL1_0"
+      g.regulated_bus_breaker_bus_id[i] = "S2VL1_0"
+      g.target_v[i] = 410.0
+      g.min_q[i] = g.max_q[i] = g.min_q_at_target_p[i] = g.max_q_at_target_p[i] = 10.0
+      if two_units
+        bus = g.bus_breaker_bus_id[findfirst(==("GH1"), g.id)]
+        g.bus_breaker_bus_id[i] = bus
+        k = findfirst(==("GH3"), g.id)
+        g.bus_breaker_bus_id[k] = bus
+        g.voltage_regulator_on[k] = false
+        g.target_q[k] = 0.0
+      end
+      return t
+    end
+    node_state(net) = [(n._nodeType, n._vm_pu, n._va_deg, n._pƩGen, n._qƩGen) for n in net.nodeVec]
+    unit_state(net) = [(Sparlectra.getPosumerBusIndex(p), p.qVal, p.vm_pu, p.isRegulated, p.isAPUNode) for p in net.prosumpsVec]
+    scf(net) = (d = mktempdir(); read(exportSCF(net; file = joinpath(d, "c.scf.json")), String))
+    for (two_units, unit) in ((false, "GH1"), (true, "GH2"))
+      net_r, rep_r = build_net_from_powsybl(patched(two_units), PowsyblAdapterOptions(remote_regulation = :remote))
+      net_h, _ = build_net_from_powsybl(patched(two_units), PowsyblAdapterOptions(remote_regulation = :hold_local))
+      @test any(m -> occursin("$(unit): remote voltage control not attached (empty reactive range", m), rep_r.messages)
+      @test isempty(Sparlectra._machine_controllers(net_r))
+      @test node_state(net_r) == node_state(net_h)
+      @test unit_state(net_r) == unit_state(net_h)
+      @test Sparlectra.getQLimits_pu(net_r) == Sparlectra.getQLimits_pu(net_h)
+      @test scf(net_r) == scf(net_h)
+      if two_units
+        # the patch reaches the cases it is meant for
+        g = patched(true).generators
+        b = net_h.busDict[g.bus_breaker_bus_id[findfirst(==("GH1"), g.id)]]
+        @test count(p -> Sparlectra.getPosumerBusIndex(p) == b, net_h.prosumpsVec) == 3
+        @test any(p -> p.isAPUNode, net_h.prosumpsVec)
+        @test net_h.nodeVec[b]._qƩGen == 0.0
+      end
+      for net in (net_r, net_h)
+        @test runpf!(net, 30, 1e-9, 0; method = :rectangular, islands_enabled = true)[2] == 0
+      end
+      @test getfield.(net_r.nodeVec, :_vm_pu) == getfield.(net_h.nodeVec, :_vm_pu)
+    end
+  end)() end
+
   # block E.3 (0.20.0): with the magnetizing admittances on the branches a
   # measurement set drawn from the solved power flow (Gaussian noise at
   # the stated sigmas, so the objective sits inside the chi-square band)

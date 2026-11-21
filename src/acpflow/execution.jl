@@ -78,8 +78,9 @@ function _execute_sparlectra_powerflow!(net::Net, cfg::SparlectraConfig; perform
         # off for this run only, via a local pf_cfg copy, so it cannot second-guess or
         # blend away the DC seed net already carries (project_rectangular_start is a
         # pure passthrough when start_projection=false).
-        # The seed is itself a flat-magnitude start (PQ buses at 1.0 pu, PV and
-        # slack at their regulated magnitudes, DC angles), so the solve reads
+        # The seed is a complete start (PQ buses at the mean setpoint of their
+        # island, PV and slack at their regulated magnitudes, DC angles with
+        # the imbalance shared by the generators), so the solve reads
         # it from the net with flatstart = false: under a flat start the
         # solver would otherwise rebuild 1.0 pu / 0 degrees and drop the seed
         # angles. A run-level flat start switches the seed off

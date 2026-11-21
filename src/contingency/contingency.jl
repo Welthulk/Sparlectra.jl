@@ -655,6 +655,7 @@ end
                       rescue_ladder = [:warm],
                       parallel_enabled = nothing, parallel_max_tasks = nothing,
                       parallel_min_work_items = nothing,
+                      executor = nothing, max_processes = nothing,
                       progress = nothing,
                       kwargs...) -> Vector{ContingencyResult}
 
@@ -695,8 +696,10 @@ missing reference. Remaining `kwargs...` (distributed slack, Q-limit settings, .
 are forwarded to the base solve, its rescue and every ladder stage.
 
 The batch fans out over Julia threads in `runtime.parallel.max_tasks`
-chunks (gated by `runtime.parallel.*`; the three `parallel_*` keywords
-override the active configuration). Parallel and serial runs produce
+chunks or over the worker processes of [`start_batch_processes!`](@ref)
+(gated by `runtime.parallel.*`; the three `parallel_*` keywords, `executor`
+and `max_processes` override the active configuration; `executor = :auto`
+takes processes from 2000 buses on). Parallel and serial runs produce
 identical results.
 
 `progress` (default `nothing`) is an optional callable invoked as
@@ -746,6 +749,8 @@ function runContingencies!(
     parallel_enabled::Union{Nothing,Bool}=nothing,
     parallel_max_tasks::Union{Nothing,Int}=nothing,
     parallel_min_work_items::Union{Nothing,Int}=nothing,
+    executor::Union{Nothing,Symbol}=nothing,
+    max_processes::Union{Nothing,Int}=nothing,
     auto_slack::Bool=true,
     warm_active_set::Bool=true,
     warm_cold_check::Bool=false,
@@ -770,7 +775,7 @@ function runContingencies!(
     # `progress` is only passed through here (@nospecialize: this body and
     # the batch compile once, whatever the callback type); the batch wraps
     # it in a concrete struct (see _BatchProgress in src/scenario/engine.jl)
-    return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items, progress=progress)
+    return _run_engine_batch(engine, items; parallel_enabled=parallel_enabled, parallel_max_tasks=parallel_max_tasks, parallel_min_work_items=parallel_min_work_items, progress=progress, executor=executor, max_processes=max_processes)
 end
 
 """

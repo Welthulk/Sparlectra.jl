@@ -33,10 +33,15 @@ events and N-2 pairs on the shipped SCF cases.
 
 The base `net` is never mutated: the batch solves a template copy, and
 every case runs on a working copy reset to the template after each case.
-The case list fans out over `runtime.parallel.max_tasks` chunks (gated by
+On networks from 2000 buses the cases run in worker processes of the
+batch pool, below that on threads (`runtime.parallel.executor` or the
+keyword `executor`, see [Batches in worker processes](@ref parallel_execution_processes)).
+On threads the case list fans out over `runtime.parallel.max_tasks`
+chunks, one working copy per chunk; in processes every worker holds one
+working copy and takes the next case when it is free. Both are gated by
 `runtime.parallel.enabled` and `min_work_items`, overridable per call
-with the `parallel_*` keywords), one working copy per chunk; results
-come back in input order, bitwise identical to the serial run. A branch
+with the `parallel_*` keywords; results come back in input order, bitwise
+identical to the serial run. A branch
 outage takes the branch's own charging arms with it
 ([Branch model](branchmodel.md)) and a bus shunt part a MATPOWER reimport
 recorded for the branch (`mpc.sparlectra.branch_shunts`).
@@ -212,9 +217,10 @@ violations, then the lower lowest voltage, then the higher loading).
 | with the cold check on, an outage it judges less favourable cold | the cold result counts; `start_used` is `warm_cold_check` and the note names the warm result |
 
 On case_ACTIVSg2000 (3206 outages) the warm start needs fewer Newton
-steps per outage with the same convergence and violation list. Machines that clamped twice in early iterations get one
-joint release at the converged point, undone for the group if one of them
-hits its limit again, so both starts agree where they used to differ. On
+steps per outage with the same convergence and violation list. Machines that clamped twice in early iterations get a
+joint release at the converged point; one that hits its limit again stays
+clamped and the group is released again without it, so both starts agree
+where they used to differ. On
 case300 one outage converged only from the file's state and another only
 from the warm state: near the limit of solvability the start decides
 which limited solution Newton reaches, and the retry above keeps every
@@ -325,6 +331,71 @@ in `run.log`, and the weights editor writes the file names.
 The structured fields (`overloads::Vector{OverloadRecord}` with base and
 delta, `shed_load_mw`, `severity`) let a consumer rank and total without
 parsing message strings.
+
+## [Injection batch](@id contingency_injection_batch)
+
+[`runInjectionBatch`](@ref) solves many power flows of one network that
+differ only in the load: N scenarios, each with a load factor per bus
+([`InjectionScenarios`](@ref)). [`random_load_scenarios`](@ref) draws the
+factors uniformly from a band around 1 with a seed; [`load_ramp_scenarios`](@ref)
+gives one factor for all buses that rises over N steps, a stand-in for a
+day profile of 96 quarter hours. Every scenario starts from the start
+iterate of the net, or with `start = :base` from the solved base case (flat
+start and start helpers off, as in the QSTS steps; the base case is solved
+on the CPU for both backends); the net itself is not changed.
+
+```julia
+net = importSCF("data/scf/sp_case60.scf.json")
+sc = random_load_scenarios(net, 32; band = 0.2, seed = 1)
+r = runInjectionBatch(net, sc)
+count(r.converged), r.iterations, r.qlimit_violations
+```
+
+The batch runs with Q limits off and without the rescue ladder: a scenario
+that does not converge is reported, not retried. Each scenario reports
+how many PV buses would leave their reactive limits by more than
+`qlimit_tol_pu` (default `1e-4` pu), so a caller can rerun those with the
+limits on.
+
+On the CPU (`backend = :cpu`) every scenario is a `runpf!` on a working
+copy of the net, reset to the net after each scenario. On networks from
+2000 buses the scenarios run in worker processes of the batch pool, one
+working copy per worker, each worker taking the next scenario when it is
+free; below that the copies are reused within a chunk and the chunks run
+on Julia threads (`executor` and `max_processes`, `runtime.parallel`, the
+`parallel_*` keywords, see [Batches in worker processes](@ref parallel_execution_processes)).
+BLAS runs with one thread inside the batch (`blas_threads`), in the main
+process and in every worker. The result of a scenario is the same on
+every executor and equals the single `runpf!` with the same loads and
+configuration bit for bit if that `runpf!` also runs with BLAS at one
+thread. With more BLAS threads UMFPACK can round differently, and on
+larger networks the single `runpf!` then differs from the batch in the
+last bits. With `power_flow.power_mode` on, every working copy solves the
+base case once before its first scenario and keeps its Ybus and LU
+analysis across its scenarios (a chunk on threads, all scenarios of a
+worker process); every copy starts without the power-mode cache of the
+net.
+
+On the GPU (`backend = :gpu`, after `using CUDA, CUDSS`) the Ybus, the
+Jacobian pattern and one cuDSS analysis are built once, and all scenarios
+iterate side by side in device memory. `gpu_strategy = :sequential`
+(default) refactorizes and solves the scenarios one after another with
+the one analysis in cuDSS's deterministic mode, so a repeated batch gives
+the same bits. `:nonuniform` and `:uniform` use the cuDSS batch modes; the
+uniform batch exists only in the non-deterministic mode in cuDSS 1.0.0 and
+skips the converged scenarios unless `gpu_uniform_mask = false`. The
+precision follows `power_flow.compute_backend.gpu_precision`.
+`gpu_two_phase` runs the scenarios in two phases instead: Float32 on the
+device down to a mismatch of `gpu_switch_mismatch` (default `1e-5`) or
+until the steps stall, then Float64 steps with the last Float32 LU
+(`:g5`; `:g5r` refactorizes or goes to Float64 when a step reduces the
+mismatch by less than half) or a Float64 Newton on the CPU (`:g6`).
+A network the GPU path does not cover (links, more than one island,
+Q(U) or P(U) controllers with a voltage-dependent characteristic,
+distributed slack, damping or start helpers), or a device error such as
+running out of GPU memory, runs the batch on the CPU, and the result's
+`note` names the reason. With `power_flow.compute_backend.gpu_fallback_to_cpu
+= false` a refusal throws and a device error is passed on.
 
 ## Web UI
 

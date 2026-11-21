@@ -46,6 +46,7 @@ The Web UI server and the build tools live outside the reference page set
 
 ```@docs
 SparlectraApp.start_sparlectra_webui
+SparlectraApp.webui_connection_info
 SparlectraApp.default_webui_output_root
 SparlectraApp.default_webui_config_path
 SparlectraApp.default_webui_case_cache_dir

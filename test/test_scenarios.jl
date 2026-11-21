@@ -745,3 +745,233 @@ function run_scenario_engine_extended_tests()
 
   return nothing
 end
+
+# The injection batch (runInjectionBatch) on the shipped sp_case14: the CPU
+# batch gives every scenario the voltages, convergence and iteration count
+# of a single runpf! on a copy with the scaled loads (bit for bit), serial
+# and threaded alike, also with the warm start from the solved base case
+# (solved on the CPU also for a GPU configuration);
+# power mode with warmed workers gives the same states; the scenario
+# generators are reproducible; a GPU request without the CUDA extension runs
+# on the CPU with the reason, or throws with gpu_fallback_to_cpu off; with
+# the extension loaded (GPU environment) the GPU batch matches the CPU batch,
+# also in its float32_mixed and two-phase variants.
+function run_injection_batch_tests()
+  @testset "injection batch on sp_case14" begin (function ()
+    scf14 = abspath(joinpath(dirname(@__DIR__), "data", "scf", "sp_case14.scf.json"))
+    net = Sparlectra.importSCF(scf14)
+    n = length(net.nodeVec)
+
+    sc = random_load_scenarios(net, 6; band = 0.2, seed = 3)
+    @test sc.load_scale == random_load_scenarios(net, 6; band = 0.2, seed = 3).load_scale
+    @test sc.seed == 3 && size(sc.load_scale) == (n, 6)
+    @test all(0.8 .<= sc.load_scale .<= 1.2)
+    ramp = load_ramp_scenarios(net, 5; low = 0.9, high = 1.1)
+    @test ramp.load_scale[:, 1] == fill(0.9, n) && ramp.load_scale[:, 5] == fill(1.1, n) && ramp.seed === nothing
+
+    serial = runInjectionBatch(net, sc; parallel_enabled = false)
+    @test serial.backend === :cpu && all(serial.converged)
+    @test all(>=(0), serial.qlimit_violations)
+    cfg = Sparlectra._injection_batch_config(net, nothing)
+    @test cfg.qlimits.ignore_q_limits && !cfg.rescue
+    for s in axes(sc.load_scale, 2)
+      w = deepcopy(net)
+      Sparlectra._apply_load_scale!(w, sc.load_scale[:, s])
+      runpf!(w; config = cfg)
+      @test [nd._vm_pu for nd in w.nodeVec] == serial.vm[:, s]
+      @test [nd._va_deg for nd in w.nodeVec] == serial.va_deg[:, s]
+      @test length(Sparlectra.rectangular_pf_status(w).mismatch_history) == serial.iterations[s]
+    end
+    # the loads do change the state, and the net itself is not touched
+    @test maximum(abs.(serial.vm[:, 1] .- serial.vm[:, 2])) > 1e-6
+    @test net._rectangular_pf_status === nothing
+
+    # warm start: every scenario equals runpf! on a copy that starts from
+    # the solved base case with the warm configuration
+    warm = runInjectionBatch(net, sc; start = :base, parallel_enabled = false)
+    tmpl, wcfg, _, _ = Sparlectra._injection_warm_template(net, cfg)
+    @test warm.stats[:start] === :base && all(warm.converged) && !wcfg.start_mode.flatstart
+    for s in (1, 2)
+      w = deepcopy(tmpl)
+      Sparlectra._apply_load_scale!(w, sc.load_scale[:, s])
+      runpf!(w; config = wcfg)
+      @test [nd._vm_pu for nd in w.nodeVec] == warm.vm[:, s] && [nd._va_deg for nd in w.nodeVec] == warm.va_deg[:, s]
+    end
+    @test maximum(abs.(warm.vm .- serial.vm)) <= 1e-9
+    @test net._rectangular_pf_status === nothing
+    # a configuration with compute_backend.mode = :gpu (the GPU variants of
+    # the study) solves the base case on the CPU as well: the same start
+    # bits, and no GPU fallback warning of the single-run path
+    gcfg = Sparlectra._copy_powerflow_with(cfg; compute_backend = Sparlectra.ComputeBackendConfig(mode = :gpu))
+    gtmpl = run_with_expected_warnings(() -> Sparlectra._injection_warm_template(net, gcfg)[1], String[])
+    @test Sparlectra._snapshot_start_voltages(gtmpl) == Sparlectra._snapshot_start_voltages(tmpl)
+
+    # power mode: the workers solve the base case before the scenarios
+    pm = runInjectionBatch(net, sc; config = Sparlectra._copy_powerflow_with(cfg; power_mode = true), parallel_enabled = false)
+    @test pm.stats[:worker_warm_s] > 0 && pm.converged == serial.converged
+    @test maximum(abs.(pm.vm .- serial.vm)) <= 1e-9 && maximum(abs.(pm.va_deg .- serial.va_deg)) <= 1e-6
+
+    # threaded against serial, repeated (threads rule: single-shot
+    # comparisons can pass by chance)
+    if Threads.nthreads() > 1
+      println("      injection batch threaded against serial: RAN ($(Threads.nthreads()) threads)")
+      for _ = 1:5
+        par = runInjectionBatch(net, sc; parallel_enabled = true, parallel_max_tasks = Threads.nthreads(), parallel_min_work_items = 1)
+        @test par.vm == serial.vm && par.va_deg == serial.va_deg && par.iterations == serial.iterations
+      end
+    else
+      println("      injection batch threaded against serial: SKIPPED (one Julia thread)")
+    end
+
+    # the executor rule: auto takes processes on large networks, threads
+    # (or serial with one thread) on small ones; parallel off is serial
+    @test Sparlectra._resolve_batch_executor(:auto, 8, 9241; max_processes = 4) == (:processes, 4)
+    @test first(Sparlectra._resolve_batch_executor(:auto, 8, 14)) === (Threads.nthreads() > 1 ? :threads : :serial)
+    @test Sparlectra._resolve_batch_executor(:processes, 8, 14; parallel_enabled = false) == (:serial, 1)
+    @test Sparlectra._resolve_batch_executor(:processes, 3, 14; max_processes = 8, parallel_min_work_items = 1) == (:processes, 3)
+    # a net too large for two workers in the free memory: auto falls back
+    # to threads (serial with one thread), an explicit processes request
+    # runs serially
+    @test Sparlectra._process_memory_cap(10^9) == 1
+    @test first(Sparlectra._resolve_batch_executor(:auto, 8, 10^9)) === (Threads.nthreads() > 1 ? :threads : :serial)
+    @test Sparlectra._resolve_batch_executor(:processes, 8, 10^9) == (:serial, 1)
+
+    # the process batch (worker processes of the batch pool) against the
+    # serial batch, twice on the same pool, and the N-1 batch of the engine
+    # in processes, with and without screening, against its serial run;
+    # the pool is stopped in any case
+    plain(x) = x isa Union{Number,AbstractString,Symbol,Nothing,Missing,Function}
+    same(x, y) = typeof(x) == typeof(y) && (
+      plain(x) ? isequal(x, y) :
+      x isa Union{AbstractArray,Tuple,NamedTuple} ? (length(x) == length(y) && all(same(a, b) for (a, b) in zip(x, y))) :
+      x isa AbstractDict ? (keys(x) == keys(y) && all(same(x[k], y[k]) for k in keys(x))) :
+      all(f -> same(getfield(x, f), getfield(y, f)), fieldnames(typeof(x))))
+    same_rows(a, b) = length(a) == length(b) && all(same(a[i], b[i]) for i in eachindex(a))
+    try
+      println("      injection batch and N-1 in processes against serial: RAN (2 worker processes)")
+      for rep = 1:2
+        pr = runInjectionBatch(net, sc; executor = :processes, max_processes = 2, parallel_min_work_items = 1)
+        @test pr.stats[:executor] === :processes && pr.stats[:workers] == 2
+        # the second batch on the same net sends nothing: the workers kept their state
+        @test pr.stats[:workers_reused] == (rep == 1 ? 0 : 2)
+        @test pr.vm == serial.vm && pr.va_deg == serial.va_deg && pr.iterations == serial.iterations
+        @test pr.converged == serial.converged && pr.final_mismatch == serial.final_mismatch && pr.qlimit_violations == serial.qlimit_violations
+      end
+      # the warm start sends the template with the base voltages, and in
+      # power mode every worker warms its copy when it loads the batch: both
+      # equal their serial batch bit for bit
+      wp = runInjectionBatch(net, sc; start = :base, executor = :processes, max_processes = 2, parallel_min_work_items = 1)
+      @test wp.stats[:executor] === :processes && wp.vm == warm.vm && wp.va_deg == warm.va_deg && wp.iterations == warm.iterations
+      pmp = runInjectionBatch(net, sc; config = Sparlectra._copy_powerflow_with(cfg; power_mode = true), executor = :processes, max_processes = 2, parallel_min_work_items = 1)
+      @test pmp.stats[:executor] === :processes && pmp.stats[:workers_reused] == 0
+      @test pmp.vm == pm.vm && pmp.va_deg == pm.va_deg && pmp.iterations == pm.iterations
+      @test length(batch_process_ids()) == 2
+      cases = generateN1Branches(net)
+      for mode in (:off, :flag)
+        n1s = runContingencies!(net, cases; screening_mode = mode, parallel_enabled = false)
+        n1p = runContingencies!(net, cases; screening_mode = mode, executor = :processes, max_processes = 2, parallel_min_work_items = 1)
+        @test same_rows(n1p, n1s)
+      end
+      # an abort set while items run on the workers stops them inside the
+      # item (the solver loop checks the token per iteration) and the batch
+      # throws PowerFlowAborted; the probe item loops on the abort check up
+      # to 60 s, so a worker that never sees the abort shows as a timeout
+      probe = quote
+        _sp_abort_probe_setup(data) = data
+        function _sp_abort_probe_item(state, idx, arg)
+          t0 = time()
+          while time() - t0 < 60.0
+            $(Sparlectra.sparlectra_check_abort)()
+            sleep(0.01)
+          end
+          return :timeout
+        end
+      end
+      pids = batch_process_ids()
+      Core.eval(Main, probe)
+      Sparlectra._dcall(:remotecall_eval, Main, pids, probe)
+      psetup = Base.invokelatest(getglobal, Main, :_sp_abort_probe_setup)
+      pitem = Base.invokelatest(getglobal, Main, :_sp_abort_probe_item)
+      token = Threads.Atomic{Bool}(false)
+      Sparlectra.sparlectra_arm_abort_token!(token)
+      t0 = time()
+      aborted = try
+        run = @async try
+          Sparlectra._process_parallel_map(psetup, Sparlectra._serialize_payload(0), pitem, identity, 2, pids)
+        catch err
+          err
+        end
+        sleep(2.0)
+        token[] = true
+        fetch(run)
+      finally
+        Sparlectra.sparlectra_disarm_abort_token!()
+      end
+      @test aborted isa Sparlectra.PowerFlowAborted
+      # disarming clears the token of the arming task as well: the set token
+      # must not stop the later solves of this task
+      @test !Sparlectra.sparlectra_abort_requested()
+      @test time() - t0 < 20.0
+      # a worker that has left (here removed outside the pool, a killed
+      # worker is the same for Distributed) leaves batch_process_ids
+      gone = pids[1]
+      Sparlectra._dcall(:rmprocs, gone; waitfor = 30.0)
+      t_exit = time()
+      while gone in batch_process_ids() && time() - t_exit < 30.0
+        sleep(0.1)
+      end
+      @test batch_process_ids() == pids[2:end]
+    finally
+      stop_batch_processes!()
+    end
+    @test isempty(batch_process_ids())
+
+    if Sparlectra.gpu_status().status === :unavailable
+      println("      injection batch GPU request without the CUDA extension: RAN")
+      r = @test_logs (:warn, r"GPU batch not used") runInjectionBatch(net, sc; backend = :gpu)
+      @test r.backend === :cpu && occursin("CUDA extension is not loaded", r.note) && r.vm == serial.vm
+      nofb = Sparlectra._copy_powerflow_with(cfg; compute_backend = Sparlectra.ComputeBackendConfig(mode = :gpu, gpu_fallback_to_cpu = false))
+      @test_throws ArgumentError runInjectionBatch(net, sc; backend = :gpu, config = nofb)
+      println("      injection batch on the GPU: SKIPPED (the CUDA extension is not loaded)")
+    elseif Sparlectra.gpu_status().status === :available
+      println("      injection batch on the GPU: RAN")
+      for strategy in (:sequential, :nonuniform, :uniform)
+        g = runInjectionBatch(net, sc; backend = :gpu, gpu_strategy = strategy)
+        @test g.backend === :gpu && g.converged == serial.converged && g.iterations == serial.iterations
+        @test maximum(abs.(g.vm .- serial.vm)) <= 1e-9 && maximum(abs.(g.va_deg .- serial.va_deg)) <= 1e-6
+        @test g.qlimit_violations == serial.qlimit_violations
+      end
+      # the uniform batch without the mask, float32_mixed, the warm start
+      g = runInjectionBatch(net, sc; backend = :gpu, gpu_strategy = :uniform, gpu_uniform_mask = false)
+      @test g.backend === :gpu && !g.stats[:gpu_uniform_mask] && maximum(abs.(g.vm .- serial.vm)) <= 1e-9
+      f32 = Sparlectra._copy_powerflow_with(cfg; compute_backend = Sparlectra.ComputeBackendConfig(mode = :gpu, gpu_precision = :float32_mixed))
+      g = runInjectionBatch(net, sc; backend = :gpu, config = f32)
+      @test g.backend === :gpu && g.stats[:gpu_precision] === :float32_mixed && g.converged == serial.converged
+      @test maximum(abs.(g.vm .- serial.vm)) <= 1e-9 && maximum(g.final_mismatch) <= g.stats[:tol]
+      g = runInjectionBatch(net, sc; backend = :gpu, start = :base, config = gcfg)
+      @test g.backend === :gpu && g.iterations == warm.iterations && maximum(abs.(g.vm .- warm.vm)) <= 1e-9
+      # the two-phase variants reach the batch tolerance in Float64 from the
+      # Float32 phase 1. Their last steps end far below the tolerance, the
+      # CPU batch just below it (up to 6.9e-9 here), so the CPU state is the
+      # less exact one: 3.6e-9 pu apart measured, while :g5 and :g5r agree
+      # with :g6 (mismatch 2.7e-13) to 1.4e-10.
+      g6 = runInjectionBatch(net, sc; backend = :gpu, gpu_two_phase = :g6)
+      for v in (:g5, :g5r, :g6)
+        g = v === :g6 ? g6 : runInjectionBatch(net, sc; backend = :gpu, gpu_two_phase = v)
+        @test g.backend === :gpu && g.converged == serial.converged && maximum(g.final_mismatch) <= g.stats[:tol]
+        @test maximum(abs.(g.vm .- serial.vm)) <= 1e-8 && maximum(abs.(g.vm .- g6.vm)) <= 1e-9
+        @test all(r -> r in (:tol, :stagnation), g.stats[:tp_switch_reason])
+      end
+      # the default (deterministic) repeats bit for bit
+      g1 = runInjectionBatch(net, sc; backend = :gpu)
+      g2 = runInjectionBatch(net, sc; backend = :gpu)
+      @test g1.vm == g2.vm && g1.va_deg == g2.va_deg
+    else
+      println("      injection batch on the GPU: SKIPPED (", Sparlectra.gpu_status().reason, ")")
+    end
+    @test_throws ArgumentError runInjectionBatch(net, sc; backend = :tpu)
+    @test_throws ArgumentError runInjectionBatch(net, sc; gpu_two_phase = :g5)
+    @test_throws ArgumentError runInjectionBatch(net, InjectionScenarios(ones(n + 1, 2)))
+  end)() end
+  return nothing
+end

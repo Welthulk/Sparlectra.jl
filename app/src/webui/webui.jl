@@ -18,6 +18,24 @@
 #          shutdown handling
 using Sockets
 
+"""
+    _WebUIConnection
+
+How a running Web UI server is reached. `mode` is `:local` (a start on the
+user's own machine), `:ssh` (remote mode through an SSH tunnel, the server
+stays on a loopback address) or `:direct` (remote mode on a network
+address). `bind_address` and `port` are what the server listens on,
+`hostname` is the host the connection lines name, and `access_token` is the
+token every request must carry (`""` = no check; only `:direct` sets one).
+"""
+Base.@kwdef struct _WebUIConnection
+  mode::Symbol = :local
+  bind_address::String = "127.0.0.1"
+  port::Int = 8080
+  hostname::String = ""
+  access_token::String = ""
+end
+
 mutable struct _SparlectraWebUIRuntime
   listener::Union{Sockets.TCPServer,Nothing}
   case_directory::String
@@ -32,6 +50,7 @@ mutable struct _SparlectraWebUIRuntime
   shutdown_reason::Union{Symbol,Nothing}
   lifecycle_io::IO
   lock::ReentrantLock
+  connection::_WebUIConnection
 end
 
 """
@@ -166,11 +185,16 @@ mutable struct SparlectraWebUIServer
   browser_monitor_task::Union{Task,Nothing}
 end
 
+include("remote.jl")
+
 function _webui_status_text(status::Int)
-  return get(Dict(200 => "OK", 204 => "No Content", 303 => "See Other", 400 => "Bad Request", 404 => "Not Found", 500 => "Internal Server Error"), status, "OK")
+  return get(Dict(200 => "OK", 204 => "No Content", 303 => "See Other", 400 => "Bad Request", 401 => "Unauthorized", 404 => "Not Found", 500 => "Internal Server Error"), status, "OK")
 end
 
-function _webui_read_request(socket::Sockets.TCPSocket)
+# The request line and the headers. The body is read separately
+# (_webui_read_request_body), after the access check: a request without the
+# token of the direct mode is refused before its body is read.
+function _webui_read_request_head(socket::Sockets.TCPSocket)
   request_line = chomp(readline(socket))
   parts = split(request_line)
   length(parts) >= 2 || throw(ArgumentError("Invalid HTTP request line."))
@@ -182,10 +206,14 @@ function _webui_read_request(socket::Sockets.TCPSocket)
     header = split(line, ':'; limit = 2)
     length(header) == 2 && (headers[lowercase(strip(header[1]))] = strip(header[2]))
   end
+  return method, target, headers
+end
+
+function _webui_read_request_body(socket::Sockets.TCPSocket, headers::AbstractDict)
   length_bytes = parse(Int, get(headers, "content-length", "0"))
   content_type_raw = get(headers, "content-type", "")
   if length_bytes > WEBUI_CASE_IMPORT_MAX_REQUEST_BYTES && occursin("multipart/form-data", lowercase(content_type_raw))
-    return method, target, Dict{String,Any}("casefiles" => WebUICaseUpload[], "case_import_request_oversized" => "true")
+    return Dict{String,Any}("casefiles" => WebUICaseUpload[], "case_import_request_oversized" => "true")
   end
   body_bytes = length_bytes > 0 ? read(socket, length_bytes) : UInt8[]
   content_type = lowercase(content_type_raw)
@@ -196,7 +224,7 @@ function _webui_read_request(socket::Sockets.TCPSocket)
   else
     Dict{String,String}()
   end
-  return method, target, form
+  return form
 end
 
 function _webui_parse_multipart_form(body::Vector{UInt8}, content_type::AbstractString)
@@ -242,13 +270,22 @@ end
 function _webui_serve_client(socket::Sockets.TCPSocket, output_root::String, runtime::_SparlectraWebUIRuntime)
   _webui_begin_request!(runtime)
   try
-    method, target, form = _webui_read_request(socket)
+    method, target, headers = _webui_read_request_head(socket)
+    refused = _webui_access_check(runtime.connection, method, target, headers)
+    if refused !== nothing
+      refused.status == 401 && record_webui_operation!(runtime.operation_log, "webui_access_denied"; method = String(method), route = String(first(split(target, '?'; limit = 2))), status = 401, user_action = false, peer = _webui_peer_text(socket))
+      _webui_write_response(socket, refused)
+      return nothing
+    end
+    form = _webui_read_request_body(socket, headers)
     response = route_sparlectra_webui(method, target, form; output_root, runtime)
     _webui_write_response(socket, response)
   catch err
     record_webui_operation!(output_root, "internal_error"; method = "UNKNOWN", route = "request", status = 500, message = sprint(showerror, err), user_action = false)
     try
-      _webui_write_response(socket, _webui_html(render_webui_error(500, sprint(showerror, err)); status = 500))
+      # outside route_sparlectra_webui: bind the connection for the header
+      page = Base.ScopedValues.with(() -> render_webui_error(500, sprint(showerror, err)), _WEBUI_REQUEST_CONNECTION => runtime.connection)
+      _webui_write_response(socket, _webui_html(page; status = 500))
     catch
     end
   finally
@@ -666,6 +703,14 @@ const _WEBUI_DEFAULT_MIGRATIONS = [("power_flow.linear_solver", "umfpack", "umfp
 # in `<file>.resets.txt`; a value the user sets afterwards stays.
 const _WEBUI_ONE_TIME_RESETS = [("0.32.0", "output.csv_format", "auto")]
 
+# Keys this version no longer reads: removed from the provisioned file
+# whatever they hold, a value the user saved included, because the loader
+# warns about an unknown key on every run (power_flow.qlimits.guard.
+# violation_threshold_pu gave way to violation_threshold_pct). Template
+# follow-up and default migrations never remove a key, so a key the
+# template dropped stays in an old copy until it is listed here.
+const _WEBUI_REMOVED_KEYS = ["power_flow.qlimits.guard.violation_threshold_pu"]
+
 """
     _webui_follow_template_defaults!(configuration) -> Vector{String}
 
@@ -684,10 +729,12 @@ outside the Web UI and equal to the old default cannot be told apart and
 follows. Keys the template gained are added. The template copy is then
 replaced by the current template. Without a copy (a file provisioned
 before this existed) only the known default migrations apply, under the
-same user-key rule. Last, every one-time reset of `_WEBUI_ONE_TIME_RESETS`
+same user-key rule. Every one-time reset of `_WEBUI_ONE_TIME_RESETS`
 not yet recorded in `<file>.resets.txt` sets its key regardless of the
 value or the user-key record, and is recorded, so it never applies twice.
-Returns one `(key, old, new)` entry per changed key;
+Last, every key of `_WEBUI_REMOVED_KEYS` the file still holds is removed
+(entry with `new = nothing`). Returns one `(key, old, new)` entry per
+changed key;
 a change writes a backup `<file>.template-follow.bak` first, and the
 caller reports the entries at start.
 """
@@ -744,6 +791,12 @@ function _webui_follow_template_defaults!(configuration::AbstractString)::Vector
     _dotted_config_set!(user, key, value)
     filter!(c -> c.key != key, changed)
     push!(changed, (key = key, old = old_value, new = value))
+  end
+  for key in _WEBUI_REMOVED_KEYS
+    old_value = _dotted_config_value(user, key)
+    old_value === nothing && continue
+    _dotted_config_delete!(user, key)
+    push!(changed, (key = key, old = old_value, new = nothing))
   end
   if !isempty(changed)
     cp(configuration, string(configuration, ".template-follow.bak"); force = true)
@@ -831,27 +884,55 @@ function _webui_validate_startup_config(configuration::AbstractString)
 end
 
 """
-    start_sparlectra_webui(; host="127.0.0.1", port=8080,
+    start_sparlectra_webui(; host=nothing, port=nothing,
+                            remote=false,
                             output_root=nothing,
                             config_file=DEFAULT_SPARLECTRA_CONFIG_PATH,
                             open_browser=false,
                             shutdown_on_browser_close=false) -> Union{Nothing,SparlectraWebUIServer}
 
-Start the loopback-only PowerFlow interface and load its persistent run registry
-before accepting requests. The returned handle can be stopped with
-`close(server)` or the browser's **Stop Web UI** button. When the requested
-port is already held by another **Sparlectra** Web UI (probed via its
-`/powerflow` page), no error is raised: the running instance is opened in
-the browser (with `open_browser = true`) and `nothing` is returned: stop
-that instance first to actually restart. A foreign process on the port
-still raises the explicit `ArgumentError`. Browser-process
+Start the PowerFlow interface and load its persistent run registry before
+accepting requests. The returned handle can be stopped with
+`close(server)` or the browser's **Stop Web UI** button.
+
+Without `remote` the server listens on a loopback host (`host`, default
+`127.0.0.1`) and `port` (default 8080). `remote = true` starts the remote
+mode for use from another machine: no browser opens on the host
+(`open_browser` is ignored), the browser-close shutdown stays off, and the
+configuration file decides how the server is reached. `webui.remote_mode =
+ssh` (default) keeps it on `127.0.0.1` for an SSH tunnel; `direct` binds
+`webui.remote_bind_address` and accepts a request only with the access token
+(`webui.remote_access_token`, generated at start when empty, printed on the
+console). With `webui.remote_ssh_require_token` the SSH mode asks for the
+token too. Both remote modes listen on `webui.remote_port`; explicit `host` and
+`port` keywords win. The connection lines are printed at start and shown in
+the Info menu, see `webui_connection_info`.
+
+When the requested port is already held by another **Sparlectra** Web UI
+(probed via its `/powerflow` page), no error is raised: the running
+instance is opened in the browser (with `open_browser = true`) and `nothing`
+is returned: stop that instance first to actually restart. A foreign process
+on the port still raises the explicit `ArgumentError`, as do a host that is
+not loopback outside the direct mode and an invalid port. Browser-process
 lifetime is not used for automatic shutdown by default because common browsers
 may return a short-lived launcher process instead of a reliably owned window.
 """
-function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Integer = 8080, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser, _refresh_shipped_cases::Bool = true)::Union{Nothing,SparlectraWebUIServer}
-  host_string = String(host)
-  host_string in ("127.0.0.1", "localhost", "::1") || (err = ArgumentError("Sparlectra Web UI only accepts loopback hosts: 127.0.0.1, localhost, or ::1."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
-  1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
+function start_sparlectra_webui(; host::Union{Nothing,AbstractString} = nothing, port::Union{Nothing,Integer} = nothing, remote::Bool = false, output_root::Union{Nothing,AbstractString} = nothing, config_file::Union{Nothing,AbstractString} = nothing, open_browser::Bool = false, shutdown_on_browser_close::Bool = false, auto_shutdown_on_browser_close::Union{Nothing,Bool} = nothing, browser_heartbeat_timeout_seconds::Real = 15.0, _test_runner = start_powerflow_run, _lifecycle_io::IO = stdout, _browser_opener = _webui_open_browser, _refresh_shipped_cases::Bool = true)::Union{Nothing,SparlectraWebUIServer}
+  # a local start is checked before anything is provisioned; the remote
+  # modes need the configuration file and are checked after provisioning
+  if !remote
+    try
+      _webui_resolve_connection(nothing; remote = false, host, port = nothing, hostname = "")
+    catch err
+      err isa ArgumentError || rethrow()
+      _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments")
+      rethrow()
+    end
+  end
+  port === nothing || 1 <= port <= 65535 || (err = ArgumentError("Web UI port must be between 1 and 65535."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
+  # the remote mode is used from another machine: no window on the host, and
+  # the server runs until it is stopped, never on a browser close
+  open_browser = open_browser && !remote
   timeout = Float64(browser_heartbeat_timeout_seconds)
   isfinite(timeout) && timeout > 0 || (err = ArgumentError("Browser heartbeat timeout must be a positive finite number."); _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); phase = "validate_arguments"); throw(err))
   root = abspath(output_root === nothing ? default_webui_output_root() : String(output_root))
@@ -892,8 +973,20 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   catch err
     @warn "Could not prune Web UI operation log during startup" exception = (err, catch_backtrace())
   end
-  _webui_startup_log(_lifecycle_io, "webui_start_requested"; operation_log = paths.operation_log, host = host_string, port = Int(port))
   config_error = _webui_validate_startup_config(paths.config_file)
+  # a broken configuration file starts a remote mode as ssh: the safe mode,
+  # nothing is exposed to the network (the error is shown on every page)
+  remote && config_error !== nothing && @warn "Remote mode: the configuration file cannot be loaded, so the SSH tunnel mode is used" config_error
+  connection = try
+    _webui_resolve_connection(remote && config_error === nothing ? load_sparlectra_config(paths.config_file; reload = true).webui : WebUIConfig(); remote, host, port)
+  catch err
+    err isa ArgumentError || rethrow()
+    _webui_startup_failure!(_lifecycle_io, err, catch_backtrace(); operation_log = paths.operation_log, phase = "validate_arguments")
+    rethrow()
+  end
+  host_string = connection.bind_address
+  port = connection.port
+  _webui_startup_log(_lifecycle_io, "webui_start_requested"; operation_log = paths.operation_log, host = host_string, port = Int(port), mode = string(connection.mode))
   _webui_startup_log(_lifecycle_io, "webui_config_loaded"; operation_log = paths.operation_log, status = config_error === nothing ? "loaded" : "error_visible", config_file = paths.config_file, message = config_error)
   recovery = refresh_powerflow_run_registry!(root)
   _webui_startup_log(_lifecycle_io, "webui_routes_registered"; operation_log = paths.operation_log, status = "registered")
@@ -902,6 +995,8 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     record_webui_operation!(paths.operation_log, "webui_stale_active_run_recovered"; route = "/powerflow", method = "START", status = "interrupted_unknown", user_action = false, run_id = result.run_id, last_known_phase = get(result.metadata, "last_phase", nothing))
   end
   address = host_string == "localhost" ? ip"127.0.0.1" : parse(Sockets.IPAddr, host_string)
+  # a wildcard bind is probed through the loopback address of its family
+  probe_host = host_string == "0.0.0.0" ? "127.0.0.1" : host_string == "::" ? "::1" : host_string
   listener = try
     Sockets.listen(address, UInt16(port))
   catch err
@@ -911,8 +1006,8 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       # UI already running (an earlier start in this session, or another
       # Julia process), probe for it and, instead of aborting, hand the
       # user the running instance.
-      if _webui_port_holds_sparlectra(host_string, port)
-        url = "http://$(host_string == "localhost" ? "127.0.0.1" : host_string):$(Int(port))/powerflow"
+      if _webui_port_holds_sparlectra(probe_host, port)
+        url = "http://$(probe_host == "localhost" ? "127.0.0.1" : _webui_url_host(probe_host)):$(Int(port))/powerflow"
         @info "Sparlectra Web UI is already running at $(url), opening it instead of starting a second instance. To restart it, stop the running server first (close(server), the Stop Web UI button, or end its Julia process)."
         _webui_startup_log(_lifecycle_io, "webui_existing_instance_opened"; operation_log = paths.operation_log, status = "reused", host = host_string, port = Int(port))
         open_browser && _browser_opener(url)
@@ -951,8 +1046,8 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       end
     end
   end
-  effective_shutdown_on_browser_close = auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close)
-  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock())
+  effective_shutdown_on_browser_close = !remote && (auto_shutdown_on_browser_close === nothing ? shutdown_on_browser_close : Bool(auto_shutdown_on_browser_close))
+  runtime = _SparlectraWebUIRuntime(listener, paths.case_directory, paths.config_file, paths.operation_log, config_error, _test_runner, effective_shutdown_on_browser_close, false, 0.0, 0, nothing, _lifecycle_io, ReentrantLock(), connection)
   task = @async begin
     try
       while isopen(listener)
@@ -979,8 +1074,9 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
       _webui_lifecycle_println(runtime, "Sparlectra Web UI stopped$(_webui_shutdown_reason_text(reason)).")
     end
   end
-  url_host = host_string == "::1" ? "[::1]" : host_string
-  url = "http://$(url_host):$(port)/powerflow"
+  # the direct mode names the address another machine opens (the host name
+  # for a wildcard bind); local and SSH mode the loopback address
+  url = connection.mode === :direct ? _webui_connection_info(connection).url : "http://$(_webui_url_host(host_string)):$(port)/powerflow"
   # Pre-warm the case-selector scan in the background: the first form render
   # otherwise pays the content classification of the whole case directory
   # (large CGMES ZIPs make that seconds). The memo cache in forms.jl keeps
@@ -1005,8 +1101,12 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
     end
   end
   server = SparlectraWebUIServer(listener, task, url, runtime, browser_monitor_task)
-  record_webui_operation!(paths.operation_log, "webui_started"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log)
+  record_webui_operation!(paths.operation_log, "webui_started"; route = "/powerflow", method = "START", status = "started", user_action = false, output_root = root, config_file = paths.config_file, case_cache_dir = paths.case_directory, operation_log = paths.operation_log, mode = string(connection.mode), host = host_string, port = Int(port))
   _webui_lifecycle_println(runtime, "Sparlectra Web UI is available at ", url)
+  for line in _webui_connection_lines(connection)
+    _webui_lifecycle_println(runtime, line)
+  end
+  connection.mode === :direct && @warn "Sparlectra Web UI direct mode: the server listens on $(host_string):$(port) and the traffic is not encrypted (plain HTTP). Runs, case files and Stop Web UI are reachable for everyone who has the access token; use this mode only in a network you trust, or use the SSH tunnel mode (webui.remote_mode: ssh)."
   _webui_lifecycle_println(runtime, "Stop: use Stop Web UI in the browser, close(server), or Ctrl+C here.")
   _webui_lifecycle_println(runtime, "Operation log: ", paths.operation_log)
   for r in refreshed
@@ -1016,7 +1116,11 @@ function start_sparlectra_webui(; host::AbstractString = "127.0.0.1", port::Inte
   # tells nobody that something moved
   if !isempty(paths.template_followed)
     for c in paths.template_followed
-      _webui_lifecycle_println(runtime, "Configuration follows the template: ", c.key, ": ", c.old === nothing ? "unset" : string(c.old), " -> ", string(c.new))
+      if c.new === nothing
+        _webui_lifecycle_println(runtime, "Configuration key removed (no longer read): ", c.key, ": ", string(c.old))
+      else
+        _webui_lifecycle_println(runtime, "Configuration follows the template: ", c.key, ": ", c.old === nothing ? "unset" : string(c.old), " -> ", string(c.new))
+      end
     end
     _webui_lifecycle_println(runtime, "Configuration backup: ", string(paths.config_file, ".template-follow.bak"))
     record_webui_operation!(paths.operation_log, "configuration_template_followed"; route = "/powerflow", method = "START", status = "changed", user_action = false, config_file = paths.config_file, keys = join((c.key for c in paths.template_followed), ","))

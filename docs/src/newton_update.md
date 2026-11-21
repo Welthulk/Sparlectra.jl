@@ -33,14 +33,14 @@ once (case9241pegase: -61 to +70 degrees). After that one step:
 
 | case | rectangular update | polar update |
 |---|---|---|
-| case9241pegase | 9226 of 9241 buses above 1.1 pu, the worst at 7 pu, PV buses up to 5.9 pu off their setpoints | every bus between 0.91 and 1.21 pu, PV buses on their setpoints |
-| case3120sp | 3088 buses above 1.1 pu, the worst at 2.25 pu | 0.90 to 1.13 pu |
-| case2869pegase | 2444 buses above 1.1 pu, the worst at 2.37 pu | 0.97 to 1.15 pu |
+| case9241pegase | 8185 of 9241 buses above 1.1 pu, the worst at 3.9 pu, PV buses up to 2.9 pu off their setpoints | every bus between 0.91 and 1.19 pu, PV buses on their setpoints |
+| case3120sp | 697 buses above 1.1 pu, the worst at 1.18 pu | 0.92 to 1.12 pu |
+| case2869pegase | 699 buses above 1.1 pu, the worst at 1.76 pu | 0.98 to 1.14 pu |
 
-From thousands of buses at 2 to 7 pu Newton does not come back on
-case9241pegase (mismatch 533, 10900, 1.4e6, 9.6e10, non-finite after 16
-steps); on case3120sp and case2869pegase it comes back at the price of two
-to three extra steps. From the file's stored voltages the corrections are
+From 8185 buses above 1.1 pu Newton does not come back on case9241pegase
+(mismatch 701, 3220, 3610, 7720, 1.2e5, 4.9e8, not converged after 19
+steps); case3120sp converges in 6 iterations with either update,
+case2869pegase in 7 with the rectangular and 6 with the polar one. From the file's stored voltages the corrections are
 small and both updates behave alike.
 
 ## What changes for the user
@@ -55,9 +55,9 @@ Jacobian reproduces MATPOWER's `newtonpf` iterates step for step.
 - From the file's stored voltages both updates reach the same state in the
   same number of steps.
 - From a flat start `polar` converges where `rectangular` diverged
-  (case9241pegase in 7 iterations without damping) and saves one to three
-  iterations on transmission cases; on distribution feeders, whose angles
-  are a few degrees, it costs at most one.
+  (case9241pegase in 6 iterations without damping) and saves up to one
+  iteration on the other transmission cases measured; on distribution
+  feeders, whose angles are a few degrees, it costs at most one.
 - Damping (`autodamp`, the merit line search, the trust region) scales the
   correction before it is applied, so every start machine and step control
   works with either update

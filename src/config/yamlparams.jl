@@ -290,7 +290,15 @@ function load_yaml_dict(path::AbstractString)::Dict{String,Any}
           end
         end
       else
-        parent[key] = parse_yaml_scalar(value_raw)
+        parent[key] = try
+          parse_yaml_scalar(value_raw)
+        catch err
+          # expected failure: an unquoted run of digits beyond Int64 (a token
+          # or an id meant as text); name the key, not the value, which may
+          # be a secret
+          err isa OverflowError || rethrow()
+          error("Number out of range at $(path):$(lineno): key `$(key)`; write the value in quotes if it is text")
+        end
         for k in collect(keys(stack))
           if k > level
             delete!(stack, k)

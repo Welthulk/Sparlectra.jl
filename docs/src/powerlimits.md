@@ -28,7 +28,8 @@ Base.@kwdef struct QLimitEvent
   iter::Int
   bus::Int
   side::Symbol         # :min | :max
-  kind::Symbol = :hit  # :group_revert when a jointly released group returns to its limits,
+  kind::Symbol = :hit  # :group_hit when a member of a jointly released group hits its
+                       # limit again, :group_revert when another member returns with it,
                        # :release for a PQ->PV release (side = the limit the bus was clamped at)
 end
 ```
@@ -36,7 +37,9 @@ end
 * `logQLimitHit!(net, iter, bus, side)`: appends a `QLimitEvent` to
   `net.qLimitLog` and sets `net.qLimitEvents[bus] = side`.
 * PQ->PV releases of the active set are logged with `kind = :release`; a
-  reader that wants the hits only filters on `kind`.
+  reader that wants the hits only filters on `kind`. `:group_hit` and
+  `:group_revert` are PV->PQ switches but not hits: they do not count
+  towards `guard.max_switches`.
 * `lastQLimitIter(net, bus)`: last iteration in which `bus` hit a limit.
 * `resetQLimitLog!(net)`: clears both.
 * `pv_hit_q_limit(net, ["B3", "B10"])`: `true` if any listed bus appears
@@ -62,9 +65,12 @@ In every Newton-Raphson iteration of the rectangular solver:
 
    Under `power_flow.qlimits.guard.violation_mode: lock_pq` (the default)
    the bus also switches once the overshoot exceeds
-   `guard.violation_threshold_pu` (default `1e-4` pu). With the defaults
-   that threshold decides, and `hysteresis_pu` delays the switch only under
-   `delayed_switch`.
+   `guard.violation_threshold_pct` percent of its Q band
+   $Qmax_b - Qmin_b$ (default `1`). With the defaults this threshold
+   decides for a band narrower than 1 pu (100 MVAr on a 100 MVA base), the
+   hysteresis margin for a wider one. A zero band switches on any
+   overshoot; a band with one infinite limit switches on the hysteresis
+   margin only.
 
 4. **Clip Q and switch the bus type**: set the generator's Q to the
    violated limit (`Q_b := Qmin_b` or `Q_b := Qmax_b`), then
@@ -101,8 +107,18 @@ In every Newton-Raphson iteration of the rectangular solver:
    Cooldown and the one-retry guard apply: a machine flipping between the
    clamp and the voltage constraint is held after its first retry. At the
    converged point the machines held this way whose voltage is on the
-   release side get one joint release; if one of them hits its limit again,
-   the whole group goes back to its limits and stays there.
+   release side are released together. A machine of the group that hits its
+   limit again stays clamped for the rest of the solve; the others go back
+   to their limits with it and are released again, without it, at the next
+   converged point. A solve allows at most five such failed rounds, in bus
+   order; after that the remaining machines stay clamped.
+   A machine with a narrow Q band (below `guard.min_q_range_pu` under
+   `guard.narrow_range_mode: lock_pq`) is released by the same voltage
+   rule, but only at a converged point. Such a band is crossed by small
+   voltage changes, so the voltage of an unsettled iterate would release
+   and clamp it in turn; the converged voltage is the one the clamp must
+   agree with. After that release the one-retry guard and the group
+   release apply to it as to every other machine.
    `examples/powerflow/example_qlimit_reenable_voltage_rule.jl` shows the
    difference on the Zeng/Chiang 14-bus case.
 
