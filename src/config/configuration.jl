@@ -1140,7 +1140,7 @@ Base.@kwdef struct StateEstimationConfig
   # the status-contradiction check looks at them.
   topology_precheck::Bool = true
   topology_open_flow_k::Float64 = 4.0
-  topology_dead_flow_k::Float64 = 3.0
+  topology_dead_flow_k::Float64 = 4.0
   topology_voltage_k::Float64 = 4.0
   topology_kcl_k::Float64 = 4.0
   topology_cluster_min::Int = 3
@@ -2908,7 +2908,7 @@ function StateEstimationConfig(raw::AbstractDict)
     ia_current_floor_A = Float64(_validate_positive("state_estimation.ia_current_floor_A", _as_float_cfg(_raw_get(merged, "ia_current_floor_A", 10.0)))),
     topology_precheck = _as_bool_cfg(_raw_get(merged, "topology_precheck", true)),
     topology_open_flow_k = Float64(_validate_positive("state_estimation.topology_open_flow_k", _as_float_cfg(_raw_get(merged, "topology_open_flow_k", 4.0)))),
-    topology_dead_flow_k = Float64(_validate_positive("state_estimation.topology_dead_flow_k", _as_float_cfg(_raw_get(merged, "topology_dead_flow_k", 3.0)))),
+    topology_dead_flow_k = Float64(_validate_positive("state_estimation.topology_dead_flow_k", _as_float_cfg(_raw_get(merged, "topology_dead_flow_k", 4.0)))),
     topology_voltage_k = Float64(_validate_positive("state_estimation.topology_voltage_k", _as_float_cfg(_raw_get(merged, "topology_voltage_k", 4.0)))),
     topology_kcl_k = Float64(_validate_positive("state_estimation.topology_kcl_k", _as_float_cfg(_raw_get(merged, "topology_kcl_k", 4.0)))),
     topology_cluster_min = Int(_validate_positive("state_estimation.topology_cluster_min", _as_int_cfg(_raw_get(merged, "topology_cluster_min", 3)))),

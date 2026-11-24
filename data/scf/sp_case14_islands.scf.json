@@ -2151,7 +2151,7 @@
     },
     "meta": {
       "case_name": "sp_case14_islands",
-      "created_by": "Sparlectra 1.3.0",
+      "created_by": "Sparlectra 1.3.1",
       "f_nom": 50.0,
       "intended_calculations": ["power_flow", "state_estimation"],
       "notes": "Self-built Sparlectra demo network (sp_case14) with a measurement set that does not cover the transformer Wehrden_110_20: its flows and the injections at Wehrden_20 and Wehrden_110 are left out. The state estimation finds two observable islands (Wehrden_20 alone and the rest) and the transformer unobservable; the Web UI offers to estimate the islands one by one, to close the gap with a scheduled value, or to suggest a measurement place. Zero injection is off in the case configuration, because the balance of the passive bus Wehrden_110 would otherwise tie both parts together. The bus count in the name does not make it the IEEE case of that size; no data was taken from MATPOWER, DTF or any other source.",

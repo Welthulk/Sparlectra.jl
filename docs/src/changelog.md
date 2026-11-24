@@ -1,3 +1,11 @@
+# Version 1.3.1 - 2026-11-24
+
+Batch executor rule and two fixes.
+
+- **Worker processes from 1000 buses.** With `runtime.parallel.executor = auto` (default) batches run in worker processes from 1000 buses (before 2000) when the worker pool already runs or the batch is large enough to pay its start; otherwise on threads. See [Parallel Execution](@ref parallel_execution_processes).
+- **Case settings keep their comments.** Saving case settings from the Web UI keeps the comment lines of the case configuration file and leaves an unchanged file untouched.
+- **Topology precheck at 4 sigma.** The state estimation precheck reports a closed branch without flow from 4 sigma on (`state_estimation.topology_dead_flow_k`, before 3), so measurement noise near the bound no longer triggers it.
+
 # Version 1.3.0 - 2026-11-21
 
 Batches in worker processes and a paused garbage collector during a power flow.

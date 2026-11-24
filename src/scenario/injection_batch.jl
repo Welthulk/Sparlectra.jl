@@ -600,8 +600,8 @@ after a converged base; the base solve counts into `stats[:setup_s]`.
 `backend = :cpu` runs each scenario through `runpf!` on reused working
 copies of `net` (reset after every scenario), in worker processes, on Julia
 threads or serially: `executor` (`:auto`, `:threads`, `:processes`, else
-`runtime.parallel.executor`) picks, `:auto` takes processes from 2000 buses
-on and threads below ([Parallel Execution](@ref parallel_execution_processes)).
+`runtime.parallel.executor`) picks, `:auto` takes processes from 1000 buses
+on when the pool runs or the batch is large, threads otherwise ([Parallel Execution](@ref parallel_execution_processes)).
 The process batch uses the worker pool of [`start_batch_processes!`](@ref)
 (started on first use, at most `max_processes` or
 `runtime.parallel.max_processes` workers) and sends the net once per

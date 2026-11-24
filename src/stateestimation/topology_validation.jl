@@ -195,7 +195,7 @@ Checks (thresholds as sigma multiples, keywords mirror the
 
 - `:open_element_with_flow` (`k_open`, default 4.0): an OPEN branch or
   link carries an active flow/current measurement with `|value| > k * sigma`.
-- `:closed_element_without_flow` (`k_dead`, default 3.0): a CLOSED branch
+- `:closed_element_without_flow` (`k_dead`, default 4.0): a CLOSED branch
   whose present flow/current measurements are all below `k * sigma` at
   both ends, while the model expects a flow above `k * sigma` on it. The
   expectation comes from the net's present voltage state (case start

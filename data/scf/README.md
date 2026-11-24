@@ -137,9 +137,8 @@ SE service estimates the five released taps by default
 (`state_estimation.tap_estimation.enabled`) and ends at J 154.1, dof 207,
 after the fixation. Three 20 kV lines (`Osttal_Westsee`,
 `Falkried_Bornwik`, `Ostsee_Westhof`) carry about 3 MW at a flow sigma of
-1 MW; where the noise puts both readings below 3 MW the topology precheck
-reports them as closed elements without flow. The table is consistent
-with the model; the note is advisory.
+1 MW, below the 4 sigma the topology precheck needs before it reports a
+closed element without flow, so the precheck stays quiet on them.
 
 ## sp_case188 (188 buses, the benchmark)
 

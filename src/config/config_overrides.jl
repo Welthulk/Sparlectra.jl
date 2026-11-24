@@ -685,7 +685,11 @@ Write the case-scope keys of `config` (flat dotted keys) as the case
 configuration file of `case_file` ([`case_config_path`](@ref)), with the
 header (`config_version`, `scope: case`, `case:`). Keys outside the case
 scope are dropped with one warning naming them; an empty case scope removes
-an existing file instead of leaving a stale one. Returns the file path.
+an existing file instead of leaving a stale one. Whole-line comments of an
+existing file are kept (after the header, in their order), and a file whose
+keys and values would not change is left untouched, so a save from the Web
+UI does not strip the notes a user wrote into the file. Returns the file
+path.
 """
 function write_case_config(case_file::AbstractString, config::AbstractDict; form::AbstractDict = Dict{String,Any}())::String
   path = case_config_path(case_file)
@@ -694,7 +698,10 @@ function write_case_config(case_file::AbstractString, config::AbstractDict; form
   if isfile(path)
     raw_other = try
       load_yaml_dict(path)
-    catch
+    catch err
+      # an unreadable file (YAML subset error, IO error) names no other case;
+      # it is replaced below like any stale file of this case
+      (err isa ErrorException || err isa ArgumentError || err isa SystemError) || rethrow()
       nothing
     end
     other = raw_other === nothing ? "" : strip(string(get(raw_other, "case", "")))
@@ -717,11 +724,22 @@ function write_case_config(case_file::AbstractString, config::AbstractDict; form
   # options); they are form fields, not configuration keys, and never enter
   # the configuration resolution
   isempty(form) || (tree["form"] = Dict{String,Any}(String(k) => v for (k, v) in form))
+  header = string("config_version: ", CONFIG_VERSION_CURRENT, "\nscope: case\ncase: ", basename(String(case_file)), "\n")
+  body = sprint(io -> _write_yaml_dict(io, tree))
+  # the whole-line comments of the existing file survive the rewrite; when
+  # the keys and values are the same as written now, the file stays as it is
+  comments = String[]
+  if isfile(path)
+    old_lines = readlines(path)
+    comments = String[l for l in old_lines if startswith(lstrip(l), "#")]
+    old_content = join(String[l for l in old_lines if !startswith(lstrip(l), "#") && !isempty(strip(l))], "\n")
+    new_content = join(String[l for l in split(header * body, '\n') if !isempty(strip(l))], "\n")
+    old_content == new_content && return path
+  end
   open(path, "w") do io
-    println(io, "config_version: ", CONFIG_VERSION_CURRENT)
-    println(io, "scope: case")
-    println(io, "case: ", basename(String(case_file)))
-    _write_yaml_dict(io, tree)
+    print(io, header)
+    foreach(c -> println(io, c), comments)
+    print(io, body)
   end
   return path
 end

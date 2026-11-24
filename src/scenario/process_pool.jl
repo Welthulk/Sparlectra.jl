@@ -386,16 +386,21 @@ _process_memory_cap(buses::Int)::Int = max(1, floor(Int, 0.8 * Sys.free_memory()
 
 # The executor of a batch of `n` items on a network of `buses` buses:
 # (:serial | :threads | :processes, number of tasks or processes). An
-# explicit `executor` (keyword, else runtime.parallel.executor) wins; `auto`
-# takes processes for networks of at least _PROCESS_BATCH_MIN_BUSES buses
-# and threads below. The rule is from the executor probe with 8 workers:
-# below about 2000 buses processes gain less per batch (0.04 to 0.25 s on
-# 1354 buses) than one start of the pool costs (4 to 6 s, plus compiling on
-# every worker), from 2869 buses on they are 1.5 to 2 times faster than
-# threads, the gap growing with the net. When the free memory holds fewer
-# than two workers, `auto` takes threads. `parallel_enabled = false` and
-# batches below min_work_items run serially whatever the executor.
-const _PROCESS_BATCH_MIN_BUSES = 2000
+# explicit `executor` (keyword, else runtime.parallel.executor) wins.
+# `auto` takes processes for networks of at least _PROCESS_BATCH_MIN_BUSES
+# buses when the pool already holds the workers the batch uses, or when the
+# batch is large enough to pay the pool start (items x buses at least
+# _PROCESS_BATCH_COLD_WORK); threads otherwise. The rule is from the
+# executor crossover on 1.3.0 with 24 workers (264 items, pool running):
+# processes are 3.0 to 4.2 times faster from 1354 buses on, below 1000
+# buses the order changes with the batch size; a batch that starts the pool
+# (about 6 s) gains only from about 450 items on 2869 buses and 1100 to 3200
+# items on 1354 to 2000 buses, i.e. from about 3e6 item-buses. When the free
+# memory holds fewer than two workers, `auto` takes threads.
+# `parallel_enabled = false` and batches below min_work_items run serially
+# whatever the executor.
+const _PROCESS_BATCH_MIN_BUSES = 1000
+const _PROCESS_BATCH_COLD_WORK = 3.0e6
 
 function _resolve_batch_executor(executor::Union{Nothing,Symbol}, n::Int, buses::Int; parallel_enabled::Union{Nothing,Bool} = nothing, parallel_max_tasks::Union{Nothing,Int} = nothing, parallel_min_work_items::Union{Nothing,Int} = nothing, max_processes::Union{Nothing,Int} = nothing)
   on, cap, min_items = _resolve_parallel_runtime(parallel_enabled, parallel_max_tasks, parallel_min_work_items)
@@ -404,11 +409,13 @@ function _resolve_batch_executor(executor::Union{Nothing,Symbol}, n::Int, buses:
   ex in (:auto, :threads, :processes) || throw(ArgumentError("executor must be :auto, :threads or :processes, got :$(ex)"))
   (on && n >= min_items && n >= 2) || return (:serial, 1)
   auto = ex === :auto
+  k = min(n, something(max_processes, _parallel_max_processes(pcfg, buses)))
   if auto
-    ex = buses >= _PROCESS_BATCH_MIN_BUSES ? :processes : :threads
+    # a running pool costs nothing more; a cold one must be paid by the batch
+    warm = length(_BATCH_POOL) >= k
+    ex = (buses >= _PROCESS_BATCH_MIN_BUSES && (warm || n * buses >= _PROCESS_BATCH_COLD_WORK)) ? :processes : :threads
   end
   if ex === :processes
-    k = min(n, something(max_processes, _parallel_max_processes(pcfg, buses)))
     k >= 2 && return (:processes, k)
     auto || return (:serial, 1)
   end

@@ -585,7 +585,7 @@ state_estimation:
   # sigma multiples. Findings warn; nothing is ever switched automatically.
   topology_precheck: true
   topology_open_flow_k: 4.0
-  topology_dead_flow_k: 3.0
+  topology_dead_flow_k: 4.0
   topology_voltage_k: 4.0
   topology_kcl_k: 4.0
   topology_cluster_min: 3
