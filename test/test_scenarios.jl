@@ -823,10 +823,16 @@ function run_injection_batch_tests()
       println("      injection batch threaded against serial: SKIPPED (one Julia thread)")
     end
 
-    # the executor rule: auto takes processes on large networks, threads
-    # (or serial with one thread) on small ones; parallel off is serial
-    @test Sparlectra._resolve_batch_executor(:auto, 8, 9241; max_processes = 4) == (:processes, 4)
-    @test first(Sparlectra._resolve_batch_executor(:auto, 8, 14)) === (Threads.nthreads() > 1 ? :threads : :serial)
+    # the executor rule: auto takes processes from 1000 buses when the pool
+    # already holds the workers or the batch pays the pool start (items x
+    # buses at least 3e6), threads (or serial with one thread) otherwise;
+    # parallel off is serial
+    thr = Threads.nthreads() > 1 ? :threads : :serial
+    warm4 = length(Sparlectra._BATCH_POOL) >= 4
+    @test Sparlectra._resolve_batch_executor(:auto, 400, 9241; max_processes = 4) == (:processes, 4)
+    @test first(Sparlectra._resolve_batch_executor(:auto, 8, 9241; max_processes = 4)) === (warm4 ? :processes : thr)
+    @test first(Sparlectra._resolve_batch_executor(:auto, 4000, 999; max_processes = 4)) === thr
+    @test first(Sparlectra._resolve_batch_executor(:auto, 8, 14)) === thr
     @test Sparlectra._resolve_batch_executor(:processes, 8, 14; parallel_enabled = false) == (:serial, 1)
     @test Sparlectra._resolve_batch_executor(:processes, 3, 14; max_processes = 8, parallel_min_work_items = 1) == (:processes, 3)
     # a net too large for two workers in the free memory: auto falls back

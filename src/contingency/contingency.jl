@@ -699,8 +699,8 @@ The batch fans out over Julia threads in `runtime.parallel.max_tasks`
 chunks or over the worker processes of [`start_batch_processes!`](@ref)
 (gated by `runtime.parallel.*`; the three `parallel_*` keywords, `executor`
 and `max_processes` override the active configuration; `executor = :auto`
-takes processes from 2000 buses on). Parallel and serial runs produce
-identical results.
+takes processes from 1000 buses on when the pool runs or the batch is
+large). Parallel and serial runs produce identical results.
 
 `progress` (default `nothing`) is an optional callable invoked as
 `progress(done::Int, total::Int)` once after every finished outage, so a

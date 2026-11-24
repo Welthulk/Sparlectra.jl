@@ -71,7 +71,7 @@ worker processes on large networks.
 
 | Value | Batch runs |
 |---|---|
-| `auto` (default) | in processes for networks from 2000 buses on, on threads below |
+| `auto` (default) | in processes for networks from 1000 buses on when the worker pool already holds the workers or the batch is large enough to pay the pool start (items times buses at least 3e6); on threads otherwise |
 | `processes` | in the worker processes of the batch pool |
 | `threads` | on the Julia threads of this process |
 

@@ -2167,6 +2167,17 @@ mpc.branch = [
     # the writer never emits a byte order mark
     @test first(read(withcfg)) == UInt8('{')
     Sparlectra.write_case_config(withcfg, Dict{String,Any}("power_flow.max_iter" => 44))
+    # a user's comment survives a save: the same keys leave the file byte
+    # for byte unchanged, a changed value keeps the comment
+    cfg_path = Sparlectra.case_config_path(withcfg)
+    write(cfg_path, read(cfg_path, String) * "# start strategy chosen by hand\n")
+    before = read(cfg_path)
+    Sparlectra.write_case_config(withcfg, Dict{String,Any}("power_flow.max_iter" => 44))
+    @test read(cfg_path) == before
+    Sparlectra.write_case_config(withcfg, Dict{String,Any}("power_flow.max_iter" => 45))
+    after = read(cfg_path, String)
+    @test occursin("# start strategy chosen by hand", after) && occursin("max_iter: 45", after)
+    Sparlectra.write_case_config(withcfg, Dict{String,Any}("power_flow.max_iter" => 44))
     r1 = start_powerflow_run(Dict{String,Any}("casefile" => withcfg, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root_dir))
     @test occursin("max_iter: 44", read(joinpath(r1["output_dir"], "effective_config.yaml"), String))
     r2 = start_powerflow_run(Dict{String,Any}("casefile" => withcfg, "config_file" => Sparlectra.DEFAULT_SPARLECTRA_CONFIG_PATH, "output_root" => root_dir, "config_overrides" => Dict{String,Any}("power_flow.max_iter" => 55)))

@@ -33,8 +33,9 @@ events and N-2 pairs on the shipped SCF cases.
 
 The base `net` is never mutated: the batch solves a template copy, and
 every case runs on a working copy reset to the template after each case.
-On networks from 2000 buses the cases run in worker processes of the
-batch pool, below that on threads (`runtime.parallel.executor` or the
+On networks from 1000 buses the cases run in worker processes of the
+batch pool when the pool already runs or the batch is large enough to pay
+its start, otherwise on threads (`runtime.parallel.executor` or the
 keyword `executor`, see [Batches in worker processes](@ref parallel_execution_processes)).
 On threads the case list fans out over `runtime.parallel.max_tasks`
 chunks, one working copy per chunk; in processes every worker holds one
@@ -359,9 +360,10 @@ limits on.
 
 On the CPU (`backend = :cpu`) every scenario is a `runpf!` on a working
 copy of the net, reset to the net after each scenario. On networks from
-2000 buses the scenarios run in worker processes of the batch pool, one
-working copy per worker, each worker taking the next scenario when it is
-free; below that the copies are reused within a chunk and the chunks run
+1000 buses (pool running or batch large enough, see
+[Batches in worker processes](@ref parallel_execution_processes)) the
+scenarios run in worker processes of the batch pool, one working copy per
+worker, each worker taking the next scenario when it is free; otherwise the copies are reused within a chunk and the chunks run
 on Julia threads (`executor` and `max_processes`, `runtime.parallel`, the
 `parallel_*` keywords, see [Batches in worker processes](@ref parallel_execution_processes)).
 BLAS runs with one thread inside the batch (`blas_threads`), in the main
